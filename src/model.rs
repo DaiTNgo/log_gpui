@@ -1,3 +1,4 @@
+use crate::marker::MarkerType;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -62,7 +63,7 @@ pub struct LogEntry {
     pub index: usize,
     /// Unix timestamp in seconds (with subsecond precision)
     pub timestamp: f64,
-    /// Formatted time string
+    /// Formatted time string (e.g. 10:32:02.441)
     pub time_str: String,
     /// Time delta from previous displayed log entry in milliseconds
     pub delta_time_ms: Option<f64>,
@@ -74,9 +75,21 @@ pub struct LogEntry {
     pub payload: String,
     /// Raw unparsed line content
     pub raw_line: String,
-    /// Whether this entry is bookmarked by user
-    pub is_bookmarked: bool,
-    /// Highlight marker color if matched by a Marker filter
+    /// Custom Marker Type set by user or parser
+    pub marker: Option<MarkerType>,
+    /// Optional note written by user
+    pub note: Option<String>,
+    /// Request ID for distributed tracing investigation
+    pub request_id: Option<String>,
+    /// Trace ID
+    pub trace_id: Option<String>,
+    /// Key-value fields from structured JSON log
+    pub json_fields: Vec<(String, String)>,
+    /// Additional lines if this is a multi-line exception or stack trace
+    pub sub_lines: Vec<String>,
+    /// Whether multi-line content is expanded in editor
+    pub is_expanded: bool,
+    /// Highlight marker color if matched by a Marker filter (legacy support)
     pub marker_color: Option<String>,
 }
 
@@ -90,6 +103,9 @@ impl LogEntry {
         payload: String,
         raw_line: String,
     ) -> Self {
+        // Auto-assign passive error/warn marker if applicable
+        let auto_marker = MarkerType::from_log_level(level);
+
         Self {
             index,
             timestamp,
@@ -99,8 +115,31 @@ impl LogEntry {
             level,
             payload,
             raw_line,
-            is_bookmarked: false,
+            marker: auto_marker,
+            note: None,
+            request_id: None,
+            trace_id: None,
+            json_fields: Vec::new(),
+            sub_lines: Vec::new(),
+            is_expanded: false,
             marker_color: None,
+        }
+    }
+
+    /// Effective marker: user-assigned marker or passive error/warn marker
+    pub fn effective_marker(&self) -> Option<MarkerType> {
+        self.marker.or_else(|| MarkerType::from_log_level(self.level))
+    }
+
+    pub fn is_bookmarked(&self) -> bool {
+        matches!(self.marker, Some(MarkerType::Bookmark))
+    }
+
+    pub fn toggle_bookmark(&mut self) {
+        if self.is_bookmarked() {
+            self.marker = MarkerType::from_log_level(self.level);
+        } else {
+            self.marker = Some(MarkerType::Bookmark);
         }
     }
 }

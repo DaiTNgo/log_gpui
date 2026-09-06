@@ -1,8 +1,11 @@
 pub mod app;
 pub mod filter;
+pub mod marker;
 pub mod model;
 pub mod parser;
 pub mod sample;
+pub mod search;
+pub mod theme;
 pub mod ui;
 
 use app::AppView;
@@ -10,7 +13,7 @@ use gpui::{px, size, AppContext, Bounds, TitlebarOptions, WindowBounds, WindowOp
 use gpui_component::Root;
 
 fn main() {
-    let app = gpui_kit::application();
+    let app = gpui_kit::application().with_assets(gpui_kit::assets::Assets);
 
     app.run(|cx| {
         gpui_kit::init(cx);
@@ -18,11 +21,11 @@ fn main() {
         let window_options = WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
                 None,
-                size(px(1280.0), px(800.0)),
+                size(px(1440.0), px(900.0)),
                 cx,
             ))),
             titlebar: Some(TitlebarOptions {
-                title: Some("DLT Log Viewer (GPUI)".into()),
+                title: Some("Log Editor (Carbon Design)".into()),
                 ..Default::default()
             }),
             ..Default::default()

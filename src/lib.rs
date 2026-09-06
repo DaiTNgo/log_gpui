@@ -1,6 +1,9 @@
 pub mod app;
 pub mod filter;
+pub mod marker;
 pub mod model;
 pub mod parser;
 pub mod sample;
+pub mod search;
+pub mod theme;
 pub mod ui;

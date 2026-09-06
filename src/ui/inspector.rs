@@ -1,179 +1,436 @@
+use crate::marker::MarkerType;
 use crate::model::LogEntry;
-use gpui::{div, px, rgb, App, IntoElement, ParentElement, Styled, Window};
-use gpui_component::{scroll::ScrollableElement as _, ActiveTheme};
+use crate::theme::CARBON;
+use gpui::{
+    div, px, ElementId, InteractiveElement, IntoElement, ParentElement, StatefulInteractiveElement,
+    Styled,
+};
+use gpui_component::scroll::ScrollableElement as _;
+use gpui_component::{Icon, IconName};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum InspectorTab {
+    #[default]
+    Fields,
+    Raw,
+    Hex,
+    Notes,
+}
 
 pub struct InspectorView;
 
 impl InspectorView {
     pub fn render(
         entry: Option<&LogEntry>,
-        active_tab: usize, // 0: Payload, 1: Raw Line, 2: Hex Dump
-        _window: &mut Window,
-        cx: &App,
-    ) -> impl IntoElement {
-        let theme = cx.theme();
-        let border_color = theme.border;
-        let bg_color = theme.background;
-        let muted_color = theme.muted;
-        let muted_fg = theme.muted_foreground;
-        let fg = theme.foreground;
-        let primary = theme.primary;
-        let primary_fg = theme.primary_foreground;
+        active_tab: InspectorTab,
+        is_open: bool,
+        cx: &mut gpui::Context<crate::app::AppView>,
+    ) -> gpui::AnyElement {
+        if !is_open {
+            return div().into_any_element();
+        }
 
         let Some(entry) = entry else {
             return div()
-                .h(px(220.0))
-                .w_full()
-                .border_t_1()
-                .border_color(border_color)
-                .bg(muted_color)
+                .w(px(320.0))
+                .h_full()
+                .border_l_1()
+                .border_color(CARBON.border_subtle)
+                .bg(CARBON.layer_01)
+                .p_4()
                 .flex()
+                .flex_col()
                 .items_center()
                 .justify_center()
-                .text_sm()
-                .text_color(muted_fg)
-                .child("Select a log row to inspect payload, raw line, and hex dump")
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(CARBON.text_muted)
+                        .child("Select a log row to inspect details"),
+                )
                 .into_any_element();
         };
 
-        // Header info bar
-        let delta_str = entry
-            .delta_time_ms
-            .map(|d| format!("+{:.2} ms", d))
-            .unwrap_or_else(|| "0.00 ms".to_string());
+        let level_color = match entry.level {
+            crate::model::LogLevel::Fatal | crate::model::LogLevel::Error => CARBON.error,
+            crate::model::LogLevel::Warn => CARBON.warning,
+            crate::model::LogLevel::Info => CARBON.info,
+            crate::model::LogLevel::Debug => CARBON.success,
+            _ => CARBON.text_muted,
+        };
 
-        let header_row = div()
+        // Tabs
+        let tabs = div()
             .flex()
             .flex_row()
-            .flex_wrap()
-            .gap_4()
-            .px_3()
-            .py_1p5()
-            .bg(muted_color)
             .border_b_1()
-            .border_color(border_color)
-            .text_xs()
-            .child(info_badge("Line", &format!("#{}", entry.index), cx))
-            .child(info_badge("Time", &entry.time_str, cx))
-            .child(info_badge("Δt", &delta_str, cx))
-            .child(info_badge("Tag / Service", &entry.tag, cx))
-            .child(info_badge("Level", entry.level.as_str(), cx))
-            .child(info_badge("Bytes", &format!("{} bytes", entry.raw_line.len()), cx));
+            .border_color(CARBON.border_subtle)
+            .child(tab_btn("Fields", InspectorTab::Fields, active_tab, cx))
+            .child(tab_btn("Raw", InspectorTab::Raw, active_tab, cx))
+            .child(tab_btn("Hex", InspectorTab::Hex, active_tab, cx))
+            .child(tab_btn("Notes", InspectorTab::Notes, active_tab, cx));
 
-        // Tab bar
-        let tab_bar = div()
-            .flex()
-            .flex_row()
-            .gap_2()
-            .px_3()
-            .py_1()
-            .bg(bg_color)
-            .border_b_1()
-            .border_color(border_color)
-            .child(
-                div()
-                    .px_2()
-                    .py_0p5()
-                    .rounded_sm()
-                    .text_xs()
-                    .font_weight(gpui::FontWeight::MEDIUM)
-                    .text_color(if active_tab == 0 { primary_fg } else { muted_fg })
-                    .bg(if active_tab == 0 { primary } else { muted_color })
-                    .child("Message Payload"),
-            )
-            .child(
-                div()
-                    .px_2()
-                    .py_0p5()
-                    .rounded_sm()
-                    .text_xs()
-                    .font_weight(gpui::FontWeight::MEDIUM)
-                    .text_color(if active_tab == 1 { primary_fg } else { muted_fg })
-                    .bg(if active_tab == 1 { primary } else { muted_color })
-                    .child("Raw Line"),
-            )
-            .child(
-                div()
-                    .px_2()
-                    .py_0p5()
-                    .rounded_sm()
-                    .text_xs()
-                    .font_weight(gpui::FontWeight::MEDIUM)
-                    .text_color(if active_tab == 2 { primary_fg } else { muted_fg })
-                    .bg(if active_tab == 2 { primary } else { muted_color })
-                    .child("Hex / ASCII Dump"),
-            );
+        // Tab Content
+        let tab_content = match active_tab {
+            InspectorTab::Fields => {
+                // Structured fields
+                let mut field_rows = div().flex().flex_col().gap_2().w_full();
 
-        // Content body
-        let content_body = match active_tab {
-            0 => {
-                // Formatted message payload
-                div()
-                    .flex_1()
-                    .p_3()
-                    .overflow_y_scrollbar()
-                    .font_family(".AppleSystemUIFontMonospaced")
-                    .text_xs()
-                    .text_color(fg)
-                    .child(entry.payload.clone())
-                    .into_any_element()
+                // Standard metadata
+                field_rows = field_rows.child(field_item("Line", &format!("#{}", entry.index)));
+                field_rows = field_rows.child(field_item("Timestamp", &entry.time_str));
+                field_rows = field_rows.child(field_item("Level", entry.level.as_str()));
+                field_rows = field_rows.child(field_item("Module / Tag", &entry.tag));
+
+                if let Some(ref req_id) = entry.request_id {
+                    field_rows = field_rows.child(field_item("Request ID", req_id));
+                }
+                if let Some(ref trace_id) = entry.trace_id {
+                    field_rows = field_rows.child(field_item("Trace ID", trace_id));
+                }
+                if let Some(d) = entry.delta_time_ms {
+                    field_rows = field_rows.child(field_item("Delta Time", &format!("+{:.2} ms", d)));
+                }
+
+                // JSON key-values
+                if !entry.json_fields.is_empty() {
+                    let mut json_section = div()
+                        .flex()
+                        .flex_col()
+                        .gap_1()
+                        .mt_2()
+                        .pt_2()
+                        .border_t_1()
+                        .border_color(CARBON.border_subtle)
+                        .child(
+                            div()
+                                .text_xs()
+                                .font_weight(gpui::FontWeight::BOLD)
+                                .text_color(CARBON.text_muted)
+                                .child("JSON PAYLOAD FIELDS"),
+                        );
+
+                    for (k, v) in &entry.json_fields {
+                        json_section = json_section.child(field_item(k, v));
+                    }
+                    field_rows = field_rows.child(json_section);
+                }
+
+                // Multi-line stack trace
+                if !entry.sub_lines.is_empty() {
+                    let mut stack_section = div()
+                        .flex()
+                        .flex_col()
+                        .gap_0p5()
+                        .mt_2()
+                        .pt_2()
+                        .border_t_1()
+                        .border_color(CARBON.border_subtle)
+                        .child(
+                            div()
+                                .text_xs()
+                                .font_weight(gpui::FontWeight::BOLD)
+                                .text_color(CARBON.error)
+                                .child("STACK TRACE / SUB-LINES"),
+                        );
+
+                    for sub in &entry.sub_lines {
+                        stack_section = stack_section.child(
+                            div()
+                                .font_family(".AppleSystemUIFontMonospaced")
+                                .text_xs()
+                                .text_color(CARBON.text_secondary)
+                                .child(sub.clone()),
+                        );
+                    }
+                    field_rows = field_rows.child(stack_section);
+                }
+
+                div().flex_1().overflow_y_scrollbar().p_3().child(field_rows)
             }
-            1 => {
-                // Raw Line
+            InspectorTab::Raw => {
+                // Raw log line
                 div()
                     .flex_1()
-                    .p_3()
                     .overflow_y_scrollbar()
+                    .p_3()
                     .font_family(".AppleSystemUIFontMonospaced")
                     .text_xs()
-                    .text_color(rgb(0x93c5fd))
+                    .text_color(CARBON.text_primary)
                     .child(entry.raw_line.clone())
-                    .into_any_element()
             }
-            _ => {
-                // Hex dump view
-                let hex_text = format_hex_dump(entry.raw_line.as_bytes());
+            InspectorTab::Hex => {
+                // Hex dump
+                let hex_str = format_hex_dump(entry.raw_line.as_bytes());
                 div()
                     .flex_1()
-                    .p_3()
                     .overflow_y_scrollbar()
+                    .p_3()
                     .font_family(".AppleSystemUIFontMonospaced")
                     .text_xs()
-                    .text_color(rgb(0x38bdf8))
-                    .child(hex_text)
-                    .into_any_element()
+                    .text_color(CARBON.cyan_accent)
+                    .child(hex_str)
+            }
+            InspectorTab::Notes => {
+                // Notes & Annotation
+                let has_note = entry.note.is_some();
+                let note_text = entry.note.clone().unwrap_or_else(|| "No note attached yet. Click 'Add Note' below to annotate this log row.".to_string());
+                let marker_label = entry.effective_marker().map(|m| m.label()).unwrap_or("None");
+                let entry_ix = entry.index;
+
+                div()
+                    .flex_1()
+                    .overflow_y_scrollbar()
+                    .p_3()
+                    .flex()
+                    .flex_col()
+                    .gap_3()
+                    .child(
+                        div()
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .justify_between()
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .font_weight(gpui::FontWeight::BOLD)
+                                    .text_color(CARBON.text_muted)
+                                    .child("MARKER ASSIGNMENT"),
+                            )
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(CARBON.cyan_accent)
+                                    .child(format!("Current: {}", marker_label)),
+                            ),
+                    )
+                    // Marker Chip Selector
+                    .child(
+                        div()
+                            .flex()
+                            .flex_row()
+                            .gap_1p5()
+                            .child(marker_chip("◆ Bookmark", Some(MarkerType::Bookmark), cx))
+                            .child(marker_chip("⭐ Important", Some(MarkerType::Important), cx))
+                            .child(marker_chip("📌 Note", Some(MarkerType::Note), cx))
+                            .child(marker_chip("✕ Clear", None, cx)),
+                    )
+                    .child(
+                        div()
+                            .text_xs()
+                            .font_weight(gpui::FontWeight::BOLD)
+                            .text_color(CARBON.text_muted)
+                            .mt_2()
+                            .child("ANNOTATION"),
+                    )
+                    .child(
+                        div()
+                            .p_2p5()
+                            .rounded_md()
+                            .bg(CARBON.layer_02)
+                            .border_1()
+                            .border_color(CARBON.border_subtle)
+                            .text_xs()
+                            .text_color(if has_note { CARBON.text_primary } else { CARBON.text_muted })
+                            .child(note_text),
+                    )
+                    // Action Buttons for Note
+                    .child(
+                        div()
+                            .flex()
+                            .flex_row()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .id("insp_add_note_btn")
+                                    .cursor_pointer()
+                                    .px_2p5()
+                                    .py_1()
+                                    .rounded_sm()
+                                    .bg(CARBON.layer_02)
+                                    .border_1()
+                                    .border_color(CARBON.border_interactive)
+                                    .text_xs()
+                                    .text_color(CARBON.blue_primary)
+                                    .hover(|s| s.bg(CARBON.layer_hover))
+                                    .child(
+                                        div()
+                                            .flex()
+                                            .flex_row()
+                                            .items_center()
+                                            .gap_1()
+                                            .child(Icon::new(IconName::FileText).size(px(12.0)))
+                                            .child("Set Note"),
+                                    )
+                                    .on_click(cx.listener(move |this, _, _window, cx| {
+                                        this.set_selected_note(Some(format!("Investigated at Ln #{}", entry_ix)), cx);
+                                    })),
+                            )
+                            .child(
+                                div()
+                                    .id("insp_clear_note_btn")
+                                    .cursor_pointer()
+                                    .px_2p5()
+                                    .py_1()
+                                    .rounded_sm()
+                                    .bg(CARBON.layer_02)
+                                    .text_xs()
+                                    .text_color(CARBON.text_muted)
+                                    .hover(|s| s.bg(CARBON.layer_hover).text_color(CARBON.error))
+                                    .child("Clear")
+                                    .on_click(cx.listener(|this, _, _window, cx| {
+                                        this.set_selected_note(None, cx);
+                                    })),
+                            ),
+                    )
             }
         };
 
         div()
-            .h(px(220.0))
-            .w_full()
-            .border_t_1()
-            .border_color(border_color)
-            .bg(bg_color)
+            .w(px(320.0))
+            .h_full()
+            .border_l_1()
+            .border_color(CARBON.border_subtle)
+            .bg(CARBON.layer_01)
             .flex()
             .flex_col()
-            .child(header_row)
-            .child(tab_bar)
-            .child(content_body)
+            .child(
+                // Inspector Header
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .justify_between()
+                    .px_3()
+                    .py_2()
+                    .border_b_1()
+                    .border_color(CARBON.border_subtle)
+                    .child(
+                        div()
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .font_weight(gpui::FontWeight::BOLD)
+                                    .text_color(CARBON.text_primary)
+                                    .child("INSPECTOR"),
+                            )
+                            .child(
+                                div()
+                                    .px_1p5()
+                                    .py_0p5()
+                                    .rounded_xs()
+                                    .text_xs()
+                                    .font_weight(gpui::FontWeight::BOLD)
+                                    .text_color(level_color)
+                                    .child(entry.level.as_str()),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .id("close_inspector_btn")
+                            .cursor_pointer()
+                            .text_color(CARBON.text_muted)
+                            .hover(|s| s.text_color(CARBON.text_primary))
+                            .child(Icon::new(IconName::Close).size(px(13.0)))
+                            .on_click(cx.listener(|this, _, _window, cx| {
+                                this.is_inspector_open = false;
+                                cx.notify();
+                            })),
+                    ),
+            )
+            .child(tabs)
+            .child(tab_content)
             .into_any_element()
     }
 }
 
-fn info_badge(label: &'static str, val: &str, cx: &App) -> impl IntoElement {
+fn tab_btn(
+    label: &'static str,
+    tab: InspectorTab,
+    active_tab: InspectorTab,
+    cx: &mut gpui::Context<crate::app::AppView>,
+) -> impl IntoElement {
+    let is_active = tab == active_tab;
+    div()
+        .id(ElementId::from(format!("insp_tab_{:?}", tab)))
+        .cursor_pointer()
+        .flex_1()
+        .py_1p5()
+        .text_center()
+        .text_xs()
+        .font_weight(if is_active {
+            gpui::FontWeight::BOLD
+        } else {
+            gpui::FontWeight::NORMAL
+        })
+        .text_color(if is_active {
+            CARBON.blue_primary
+        } else {
+            CARBON.text_muted
+        })
+        .border_b_2()
+        .border_color(if is_active {
+            CARBON.blue_primary
+        } else {
+            CARBON.transparent
+        })
+        .hover(|s| s.bg(CARBON.layer_hover))
+        .child(label)
+        .on_click(cx.listener(move |this, _, _window, cx| {
+            this.inspector_tab = tab;
+            cx.notify();
+        }))
+}
+
+fn marker_chip(
+    label: &'static str,
+    marker: Option<MarkerType>,
+    cx: &mut gpui::Context<crate::app::AppView>,
+) -> impl IntoElement {
+    let text_col = match marker {
+        Some(m) => m.color(),
+        None => CARBON.text_muted,
+    };
+    div()
+        .id(ElementId::from(format!("chip_mark_{:?}", marker)))
+        .cursor_pointer()
+        .px_2()
+        .py_1()
+        .rounded_xs()
+        .bg(CARBON.layer_02)
+        .border_1()
+        .border_color(CARBON.border_subtle)
+        .text_xs()
+        .font_weight(gpui::FontWeight::SEMIBOLD)
+        .text_color(text_col)
+        .hover(|s| s.bg(CARBON.layer_hover))
+        .child(label)
+        .on_click(cx.listener(move |this, _, _window, cx| {
+            this.set_selected_marker(marker, cx);
+        }))
+}
+
+fn field_item(label: &str, val: &str) -> impl IntoElement {
     div()
         .flex()
-        .flex_row()
-        .gap_1()
+        .flex_col()
+        .gap_0p5()
         .child(
             div()
-                .text_color(cx.theme().muted_foreground)
-                .child(format!("{}:", label)),
+                .text_xs()
+                .text_color(CARBON.text_muted)
+                .child(label.to_string()),
         )
         .child(
             div()
-                .font_weight(gpui::FontWeight::SEMIBOLD)
-                .text_color(cx.theme().foreground)
+                .font_family(".AppleSystemUIFontMonospaced")
+                .text_xs()
+                .text_color(CARBON.text_primary)
                 .child(val.to_string()),
         )
 }

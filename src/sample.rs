@@ -1,67 +1,128 @@
+use crate::marker::MarkerType;
 use crate::model::{LogEntry, LogLevel};
 
 pub fn generate_sample_logs() -> Vec<LogEntry> {
     let mut entries = Vec::new();
-    let base_ts = 1757048400.0;
+    let base_ts = 1757048400.0; // Simulated timestamp
 
     let services = [
-        ("gateway", "HTTP GET /api/v1/users/me 200 OK (12ms)"),
-        ("auth-svc", "JWT token verified for user_id=4821"),
-        ("db-pool", "Acquired connection from pool: active=14, idle=6"),
-        ("redis", "CACHE HIT: key='session:usr:4821'"),
-        ("billing", "Webhook received from Stripe: charge.succeeded"),
-        ("worker", "Job #9921 processed in 142ms: send_welcome_email"),
-        ("orders", "Order #48912 created: total=$129.99, items=3"),
-        ("search", "Elasticsearch query executed: index='products', hits=42"),
-        ("notifier", "Push notification dispatched to device token"),
-        ("telemetry", "Prometheus metrics scraped by agent"),
-    ];
-
-    let events = [
-        (LogLevel::Info, "Request completed successfully"),
-        (LogLevel::Debug, "Debug context: trace_id=3a9f02c4b8, span_id=12a8"),
-        (LogLevel::Verbose, "Payload size: 1024 bytes, compression=gzip"),
-        (LogLevel::Warn, "Database query latency exceeded threshold: 245ms"),
-        (LogLevel::Error, "Connection timeout to upstream redis cluster (10.0.1.4:6379)"),
-        (LogLevel::Fatal, "Panic caught in worker goroutine: null pointer dereference"),
+        ("API", "HTTP GET /v2/checkout/session - 200 OK (14ms)"),
+        ("DB", "SELECT users.*, accounts.balance FROM users JOIN accounts ON users.id = accounts.user_id WHERE users.id = $1"),
+        ("AUTH", "JWT token validated: sub='usr_8829', roles=['admin', 'editor'], exp=1757052000"),
+        ("PAYMENT", "Stripe Charge initiated: amount=14900, currency='usd', customer='cus_N8x2A'"),
+        ("CACHE", "Redis CLUSTER FAILOVER: node redis-cluster-02 promoted to master"),
+        ("WORKER", "Async job execution: queue='high_priority', handler='GenerateInvoicePdf'"),
+        ("GATEWAY", "Inbound TLS handshake completed: cipher=TLS_AES_256_GCM_SHA384, proto=h2"),
     ];
 
     let mut current_ts = base_ts;
     let mut index = 0;
 
-    for round in 0..100 {
+    for round in 0..120 {
         for (i, (tag, default_msg)) in services.iter().enumerate() {
             index += 1;
-            let time_step = 0.005 * ((round * 3 + i) % 7 + 1) as f64;
+            let time_step = 0.003 * ((round * 5 + i) % 9 + 1) as f64;
             current_ts += time_step;
 
             let hours = ((current_ts as u64 / 3600) % 24) as u32;
             let mins = ((current_ts as u64 / 60) % 60) as u32;
             let secs = (current_ts as u64 % 60) as u32;
-            let micros = ((current_ts.fract()) * 1_000_000.0) as u32;
-            let time_str = format!("{:02}:{:02}:{:02}.{:06}", hours, mins, secs, micros);
+            let millis = ((current_ts.fract()) * 1_000.0) as u32;
+            let time_str = format!("{:02}:{:02}:{:02}.{:03}", hours, mins, secs, millis);
 
-            let (level, payload) = if round % 15 == 0 && i == 5 {
-                (events[5].0, format!("CRITICAL: {}", events[5].1))
-            } else if round % 8 == 0 && i == 4 {
-                (events[4].0, format!("ERROR: {}", events[4].1))
-            } else if round % 5 == 0 && i == 3 {
-                (events[3].0, format!("WARNING: {}", events[3].1))
-            } else if i % 4 == 0 {
-                (events[1].0, format!("{}: {}", default_msg, events[1].1))
+            let req_id = format!("req-{:04x}{:04x}", round % 99, i * 17);
+            let trace_id = format!("trace-{:06x}", round * 10 + i);
+
+            // Create specific scenarios
+            let (level, payload, sub_lines, custom_marker, note) = if round % 18 == 0 && i == 0 {
+                // Connection timeout in API
+                (
+                    LogLevel::Error,
+                    "Connection timeout to upstream cluster (10.0.1.4:8080) after 5000ms".to_string(),
+                    vec![
+                        "java.net.SocketTimeoutException: Read timed out".to_string(),
+                        "    at com.cloud.api.GatewayClient.execute(GatewayClient.java:142)".to_string(),
+                        "    at com.cloud.api.Router.handleRequest(Router.java:88)".to_string(),
+                        "    at io.netty.channel.AbstractChannelHandlerContext.fireChannelRead(Context.java:379)".to_string(),
+                    ],
+                    Some(MarkerType::Error),
+                    Some("Likely caused by backend DB restart during deployment".to_string()),
+                )
+            } else if round % 12 == 0 && i == 1 {
+                // Database lock timeout
+                (
+                    LogLevel::Error,
+                    "Deadlock detected: could not acquire exclusive row lock on pg_catalog.tx_log".to_string(),
+                    vec![
+                        "org.postgresql.util.PSQLException: ERROR: deadlock detected".to_string(),
+                        "    Detail: Process 1428 waits for ShareLock on transaction 88192".to_string(),
+                    ],
+                    Some(MarkerType::Error),
+                    None,
+                )
+            } else if round % 7 == 0 && i == 2 {
+                // Warning
+                (
+                    LogLevel::Warn,
+                    "Token expired: refresh requested from client IP 192.168.1.104".to_string(),
+                    Vec::new(),
+                    Some(MarkerType::Warning),
+                    None,
+                )
+            } else if round % 9 == 0 && i == 4 {
+                // Cache warning
+                (
+                    LogLevel::Warn,
+                    "Slow response from Redis master: latency 428ms exceeds p99 threshold (50ms)".to_string(),
+                    Vec::new(),
+                    Some(MarkerType::Warning),
+                    None,
+                )
+            } else if round % 25 == 0 && i == 3 {
+                // Important bookmark
+                (
+                    LogLevel::Info,
+                    "Payment confirmed: charge_id='ch_9921a8' settled with gateway".to_string(),
+                    Vec::new(),
+                    Some(MarkerType::Bookmark),
+                    Some("Reference transaction for QA audit".to_string()),
+                )
+            } else if round % 14 == 0 && i == 5 {
+                (
+                    LogLevel::Debug,
+                    "Worker queue status: pending=48, active=6, processed_per_sec=142".to_string(),
+                    Vec::new(),
+                    None,
+                    None,
+                )
+            } else if round % 11 == 0 {
+                (
+                    LogLevel::Debug,
+                    format!("Query cache stats: hit_rate=98.4%, tag={}", tag),
+                    Vec::new(),
+                    None,
+                    None,
+                )
             } else {
-                (events[0].0, default_msg.to_string())
+                (
+                    LogLevel::Info,
+                    default_msg.to_string(),
+                    Vec::new(),
+                    None,
+                    None,
+                )
             };
 
             let raw_line = format!(
-                "2026-09-05 {} [{}] [{}] {}",
+                "{} [{}] [{}] [req={}] {}",
                 time_str,
                 level.as_str(),
                 tag,
+                req_id,
                 payload
             );
 
-            let entry = LogEntry::new(
+            let mut entry = LogEntry::new(
                 index,
                 current_ts,
                 time_str,
@@ -70,6 +131,21 @@ pub fn generate_sample_logs() -> Vec<LogEntry> {
                 payload,
                 raw_line,
             );
+
+            if let Some(m) = custom_marker {
+                entry.marker = Some(m);
+            }
+            entry.note = note;
+            entry.request_id = Some(req_id.clone());
+            entry.trace_id = Some(trace_id);
+            entry.sub_lines = sub_lines;
+            entry.json_fields = vec![
+                ("service".to_string(), tag.to_string()),
+                ("level".to_string(), level.as_str().to_lowercase()),
+                ("requestId".to_string(), req_id),
+                ("latencyMs".to_string(), format!("{}", (round * 7 + i * 3) % 250)),
+                ("thread".to_string(), format!("tokio-worker-{}", i)),
+            ];
 
             entries.push(entry);
         }
