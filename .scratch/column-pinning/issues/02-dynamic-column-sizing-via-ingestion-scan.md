@@ -1,4 +1,4 @@
-Status: ready-for-agent
+Status: resolved
 
 # Dynamic Column Sizing via Ingestion Scan & Safety Floor
 
@@ -18,13 +18,22 @@ Enforce a minimal safety floor (`min_width` of 36–48px) to protect interactive
 
 ## Acceptance criteria
 
-- [ ] Parsing or loading a log stream tracks maximum character length per field in a single $O(1)$ ingestion pass.
-- [ ] Column widths for `TIMESTAMP`, `LEVEL`, and `MODULE` expand to accommodate their longest content without manual intervention.
-- [ ] Column width computation respects font size changes across Comfortable, Compact, and UltraCompact densities.
-- [ ] A minimum safety floor width (~36–48px) is enforced so no column can shrink below its title and interactive affordances.
-- [ ] The `MESSAGE` column continues to expand to fill remaining horizontal space and unconstrained text length.
-- [ ] Loading large log files (100k+ entries) exhibits zero measurable UI lag during width calculation.
+- [x] Parsing or loading a log stream tracks maximum character length per field in a single $O(1)$ ingestion pass.
+- [x] Column widths for `TIMESTAMP`, `LEVEL`, and `MODULE` expand to accommodate their longest content without manual intervention.
+- [x] Column width computation respects font size changes across Comfortable, Compact, and UltraCompact densities.
+- [x] A minimum safety floor width (~36–48px) is enforced so no column can shrink below its title and interactive affordances.
+- [x] The `MESSAGE` column continues to expand to fill remaining horizontal space and unconstrained text length.
+- [x] Loading large log files (100k+ entries) exhibits zero measurable UI lag during width calculation.
 
 ## Blocked by
 
 - .scratch/column-pinning/issues/01-prefactor-deprecate-word-wrap-and-anchor-gutter.md
+
+## Comments
+
+Resolved in Issue 02 implementation:
+1. Implemented `FieldMaxChars` to track maximum field lengths in a single O(1) pass per entry.
+2. Implemented `compute_column_width` using ADR 0003 formula: `max(min_width, (max_chars * W_char) + padding)`.
+3. Enforced safety floor `min_width` (36px for LEVEL, 48px for TIMESTAMP and MODULE) so columns cannot collapse into unclickable states.
+4. Wired automatic dynamic width recalculation on log ingestion (`update_from_entries`) and density changes (`update_density`).
+5. Unit tested in `tests/column_test.rs`, including 100k entries performance benchmark (<50ms).

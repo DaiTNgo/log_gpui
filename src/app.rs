@@ -79,8 +79,10 @@ impl AppView {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let focus_handle = cx.focus_handle();
         let scroll_handle = UniformListScrollHandle::new();
-
         let mut all_entries = generate_sample_logs();
+        let mut column_layout = crate::column::ColumnLayoutState::new();
+        column_layout.update_from_entries(&all_entries, Density::Compact);
+
         let filter_engine = FilterEngine::new();
         let visible = filter_engine.evaluate(&mut all_entries);
         let visible_indices = Arc::new(visible);
@@ -121,7 +123,7 @@ impl AppView {
             sidebar_state: SidebarState::Compact,
             active_rail_tab: ActiveRailTab::Files,
             density: Density::Compact,
-            column_layout: crate::column::ColumnLayoutState::new(),
+            column_layout,
             tail_enabled: false,
             focused_tag: None,
             focus_handle,
@@ -343,14 +345,17 @@ impl AppView {
             PaletteAction::GoPrevError => self.jump_to_prev_error(cx),
             PaletteAction::SetComfortable => {
                 self.density = Density::Comfortable;
+                self.column_layout.update_density(self.density);
                 cx.notify();
             }
             PaletteAction::SetCompact => {
                 self.density = Density::Compact;
+                self.column_layout.update_density(self.density);
                 cx.notify();
             }
             PaletteAction::SetUltraCompact => {
                 self.density = Density::UltraCompact;
+                self.column_layout.update_density(self.density);
                 cx.notify();
             }
             PaletteAction::ToggleTail => {
@@ -363,6 +368,7 @@ impl AppView {
             }
             PaletteAction::LoadDemo => {
                 self.all_entries = generate_sample_logs();
+                self.column_layout.update_from_entries(&self.all_entries, self.density);
                 self.file_name = "app.log".to_string();
                 self.file_format = "Standard Server Log".to_string();
                 self.apply_filters_and_refresh(cx);
@@ -386,6 +392,7 @@ impl AppView {
             match parse_file(&file_path) {
                 Ok(entries) => {
                     self.all_entries = entries;
+                    self.column_layout.update_from_entries(&self.all_entries, self.density);
                     self.file_name = name;
                     self.file_format = "Text Log".to_string();
                     self.apply_filters_and_refresh(cx);
@@ -753,6 +760,7 @@ impl Render for AppView {
                                     Density::Compact => Density::UltraCompact,
                                     Density::UltraCompact => Density::Comfortable,
                                 };
+                                this.column_layout.update_density(this.density);
                                 cx.notify();
                             })),
                     )

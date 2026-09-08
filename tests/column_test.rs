@@ -1,5 +1,8 @@
 use gpui::px;
 use log_gpui::column::{ColumnLayoutState, PinnableColumn};
+use log_gpui::column::{compute_column_width, FieldMaxChars};
+use log_gpui::model::{LogEntry, LogLevel};
+use log_gpui::theme::Density;
 
 #[test]
 fn test_default_column_layout_state() {
@@ -79,4 +82,146 @@ fn test_unpinned_column_positions_at_various_scroll_offsets() {
 
     // Gutter remains at x = 0
     assert_eq!(state.screen_gutter_offset(scroll_x), px(0.0));
+}
+
+#[test]
+fn test_field_max_chars_scan() {
+    let entries = vec![
+        LogEntry::new(
+            1,
+            0.0,
+            "12:34:56.789".to_string(), // 12 chars
+            "auth".to_string(),          // 4 chars
+            LogLevel::Info,             // "I" -> 1 char
+            "short msg".to_string(),
+            "".to_string(),
+        ),
+        LogEntry::new(
+            2,
+            1.0,
+            "2026-09-08 12:34:56.789123".to_string(), // 26 chars
+            "com.cloud.gateway.proxy.SessionManager".to_string(), // 38 chars
+            LogLevel::Error, // "E" -> 1 char
+            "another payload".to_string(),
+            "".to_string(),
+        ),
+    ];
+
+    let max_chars = FieldMaxChars::scan_entries(&entries);
+    assert_eq!(max_chars.timestamp, 26);
+    assert_eq!(max_chars.module, 38);
+    assert_eq!(max_chars.level, 1);
+}
+
+#[test]
+fn test_dynamic_column_width_formula() {
+    // Formula: Width = max(min_width, (max_chars * W_char) + padding)
+    // where W_char = 0.6 * font_size
+    let font_size = Density::Compact.font_size(); // 12.0
+    let char_width = 0.6 * font_size; // 7.2
+
+    // 1. Long timestamp (26 chars)
+    // Expected: 26 * 7.2 + 16.0 = 187.2 + 16.0 = 203.2 px
+    let ts_width = compute_column_width(PinnableColumn::Timestamp, 26, font_size, px(48.0));
+    assert_eq!(ts_width, px(26.0 * char_width + 16.0));
+    assert!(ts_width > px(120.0)); // Auto-expanded beyond legacy 120px
+
+    // 2. Long module (38 chars)
+    // Expected: 38 * 7.2 + 16.0 = 273.6 + 16.0 = 289.6 px
+    let mod_width = compute_column_width(PinnableColumn::Module, 38, font_size, px(48.0));
+    assert_eq!(mod_width, px(38.0 * char_width + 16.0));
+    let floored_ts = compute_column_width(PinnableColumn::Timestamp, 0, font_size, px(48.0));
+    assert_eq!(floored_ts, px(48.0));
+
+    let floored_lvl = compute_column_width(PinnableColumn::Level, 0, font_size, px(36.0));
+    assert_eq!(floored_lvl, px(36.0));
+}
+
+#[test]
+fn test_dynamic_width_across_densities() {
+    let max_chars = 25;
+
+    let width_comfortable = compute_column_width(
+        PinnableColumn::Timestamp,
+        max_chars,
+        Density::Comfortable.font_size(), // 13.0 -> W_char = 7.8
+        px(48.0),
+    );
+    let width_compact = compute_column_width(
+        PinnableColumn::Timestamp,
+        max_chars,
+        Density::Compact.font_size(), // 12.0 -> W_char = 7.2
+        px(48.0),
+    );
+    let width_ultra = compute_column_width(
+        PinnableColumn::Timestamp,
+        max_chars,
+        Density::UltraCompact.font_size(), // 11.0 -> W_char = 6.6
+        px(48.0),
+    );
+
+    // Comfortable > Compact > UltraCompact
+    assert!(width_comfortable > width_compact);
+    assert!(width_compact > width_ultra);
+    assert_eq!(width_comfortable, px(25.0 * (0.6 * 13.0) + 16.0)); // 211.0px
+    assert_eq!(width_compact, px(25.0 * (0.6 * 12.0) + 16.0)); // 196.0px
+    assert_eq!(width_ultra, px(25.0 * (0.6 * 11.0) + 16.0)); // 181.0px
+}
+
+#[test]
+fn test_column_layout_state_update_from_entries() {
+    let mut state = ColumnLayoutState::new();
+
+    let entries = vec![
+        LogEntry::new(
+            1,
+            0.0,
+            "2026-09-08 12:34:56.789".to_string(), // 23 chars
+            "api-service".to_string(),             // 11 chars
+            LogLevel::Info,
+            "msg".to_string(),
+            "".to_string(),
+        ),
+    ];
+
+    state.update_from_entries(&entries, Density::Compact);
+
+    // Widths must expand to fit longest entries
+    let expected_ts = px(23.0 * (0.6 * 12.0) + 16.0); // 23 * 7.2 + 16 = 181.6
+    let expected_mod = px(11.0 * (0.6 * 12.0) + 16.0); // 11 * 7.2 + 16 = 95.2 -> max(48, 95.2) = 95.2
+
+    assert_eq!(state.width(PinnableColumn::Timestamp), expected_ts);
+    assert_eq!(state.width(PinnableColumn::Module), expected_mod);
+
+    // Switching density recomputes widths automatically
+    state.update_density(Density::Comfortable);
+    let expected_ts_comfortable = px(23.0 * (0.6 * 13.0) + 16.0); // 23 * 7.8 + 16 = 195.4
+    assert_eq!(state.width(PinnableColumn::Timestamp), expected_ts_comfortable);
+}
+
+#[test]
+fn test_100k_entries_scan_performance() {
+    let dummy_entry = LogEntry::new(
+        1,
+        0.0,
+        "2026-09-08 12:34:56.789".to_string(),
+        "auth-worker-node-42".to_string(),
+        LogLevel::Warn,
+        "A somewhat long payload for testing high volume performance".to_string(),
+        "".to_string(),
+    );
+
+    let entries = vec![dummy_entry; 100_000];
+
+    let start = std::time::Instant::now();
+    let mut state = ColumnLayoutState::new();
+    state.update_from_entries(&entries, Density::Compact);
+    let elapsed = start.elapsed();
+
+    // 100k entries scan must complete well under 50ms (zero measurable UI lag)
+    assert!(
+        elapsed < std::time::Duration::from_millis(50),
+        "Scanning 100k entries took too long: {:?}",
+        elapsed
+    );
 }

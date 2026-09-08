@@ -1,3 +1,5 @@
+use crate::model::LogEntry;
+use crate::theme::Density;
 use gpui::{px, Pixels};
 use std::collections::{BTreeSet, HashMap};
 
@@ -17,11 +19,67 @@ pub enum PinnableColumn {
     Module,
 }
 
+/// Tracks the maximum character lengths per structured field observed across log entries.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct FieldMaxChars {
+    pub timestamp: usize,
+    pub level: usize,
+    pub module: usize,
+}
+
+impl FieldMaxChars {
+    pub const fn new() -> Self {
+        Self {
+            timestamp: 0,
+            level: 0,
+            module: 0,
+        }
+    }
+
+    /// Updates running maximums with a single log entry in O(1).
+    #[inline]
+    pub fn record_entry(&mut self, entry: &LogEntry) {
+        self.timestamp = self.timestamp.max(entry.time_str.chars().count());
+        self.level = self.level.max(entry.level.short_code().chars().count());
+        self.module = self.module.max(entry.tag.chars().count());
+    }
+
+    /// Scans a slice of log entries in a single O(N) pass, O(1) per entry.
+    pub fn scan_entries(entries: &[LogEntry]) -> Self {
+        let mut max_chars = Self::new();
+        for entry in entries {
+            max_chars.record_entry(entry);
+        }
+        max_chars
+    }
+}
+
+/// Computes dynamic column width based on ADR 0003:
+/// Width = max(min_width, (max_chars * W_char) + padding)
+/// where W_char = 0.6 * font_size.
+#[inline]
+pub fn compute_column_width(
+    col: PinnableColumn,
+    max_chars: usize,
+    font_size: f32,
+    min_width: Pixels,
+) -> Pixels {
+    let char_width = 0.6 * font_size;
+    let padding = match col {
+        PinnableColumn::Timestamp => 16.0,
+        PinnableColumn::Level => 24.0,
+        PinnableColumn::Module => 16.0,
+    };
+    let content_width = (max_chars as f32) * char_width + padding;
+    px(content_width).max(min_width)
+}
+
 #[derive(Debug, Clone)]
 pub struct ColumnLayoutState {
     pub pinned_columns: BTreeSet<PinnableColumn>,
     pub widths: HashMap<PinnableColumn, Pixels>,
     pub min_widths: HashMap<PinnableColumn, Pixels>,
+    pub max_chars: FieldMaxChars,
     pub gutter_width: Pixels,
     pub is_resizing: Option<(PinnableColumn, Pixels)>,
 }
@@ -48,6 +106,7 @@ impl ColumnLayoutState {
             pinned_columns: BTreeSet::new(),
             widths,
             min_widths,
+            max_chars: FieldMaxChars::new(),
             gutter_width: DEFAULT_GUTTER_WIDTH,
             is_resizing: None,
         }
@@ -80,6 +139,55 @@ impl ColumnLayoutState {
             PinnableColumn::Level => MIN_LEVEL_WIDTH,
             PinnableColumn::Module => MIN_MODULE_WIDTH,
         })
+    }
+
+    /// Sets manual column width with safety floor clamping.
+    #[inline]
+    pub fn set_width(&mut self, col: PinnableColumn, width: Pixels) {
+        let floor = self.min_width(col);
+        self.widths.insert(col, width.max(floor));
+    }
+
+    /// Updates dynamic column widths based on maximum characters observed in ingested entries.
+    pub fn update_from_entries(&mut self, entries: &[LogEntry], density: Density) {
+        self.max_chars = FieldMaxChars::scan_entries(entries);
+        self.recompute_widths(density);
+    }
+
+    /// Recomputes dynamic column widths when visual density (and thus monospace font size) changes.
+    pub fn update_density(&mut self, density: Density) {
+        self.recompute_widths(density);
+    }
+
+    /// Recalculates dynamic widths from recorded max_chars for a given density.
+    pub fn recompute_widths(&mut self, density: Density) {
+        let font_size = density.font_size();
+        for col in [
+            PinnableColumn::Timestamp,
+            PinnableColumn::Level,
+            PinnableColumn::Module,
+        ] {
+            let count = match col {
+                PinnableColumn::Timestamp => self.max_chars.timestamp,
+                PinnableColumn::Level => self.max_chars.level,
+                PinnableColumn::Module => self.max_chars.module,
+            };
+            let min = self.min_width(col);
+            let calculated = compute_column_width(col, count, font_size, min);
+            self.widths.insert(col, calculated);
+        }
+    }
+
+    /// Auto-fits a specific column back to its optimal dynamic width for the given density.
+    pub fn auto_fit(&mut self, col: PinnableColumn, density: Density) {
+        let count = match col {
+            PinnableColumn::Timestamp => self.max_chars.timestamp,
+            PinnableColumn::Level => self.max_chars.level,
+            PinnableColumn::Module => self.max_chars.module,
+        };
+        let min = self.min_width(col);
+        let calculated = compute_column_width(col, count, density.font_size(), min);
+        self.widths.insert(col, calculated);
     }
 
     /// Computes the sticky offset needed for the Gutter inside a horizontally scrolled row
