@@ -62,7 +62,7 @@ pub struct AppView {
     pub sidebar_state: SidebarState,
     pub active_rail_tab: ActiveRailTab,
     pub density: Density,
-    pub word_wrap: bool,
+    pub column_layout: crate::column::ColumnLayoutState,
     pub tail_enabled: bool,
     pub focused_tag: Option<String>,
 
@@ -121,7 +121,7 @@ impl AppView {
             sidebar_state: SidebarState::Compact,
             active_rail_tab: ActiveRailTab::Files,
             density: Density::Compact,
-            word_wrap: false,
+            column_layout: crate::column::ColumnLayoutState::new(),
             tail_enabled: false,
             focused_tag: None,
             focus_handle,
@@ -341,10 +341,6 @@ impl AppView {
             }
             PaletteAction::GoNextError => self.jump_to_next_error(cx),
             PaletteAction::GoPrevError => self.jump_to_prev_error(cx),
-            PaletteAction::ToggleWrap => {
-                self.word_wrap = !self.word_wrap;
-                cx.notify();
-            }
             PaletteAction::SetComfortable => {
                 self.density = Density::Comfortable;
                 cx.notify();
@@ -436,10 +432,6 @@ impl AppView {
             }
             (true, false, false, "b") => {
                 self.toggle_sidebar(cx);
-            }
-            (false, false, true, "z") => {
-                self.word_wrap = !self.word_wrap;
-                cx.notify();
             }
             (false, false, false, "b") => {
                 self.toggle_bookmark_current_line(cx);
@@ -764,32 +756,6 @@ impl Render for AppView {
                                 cx.notify();
                             })),
                     )
-                    // Word wrap toggle
-                    .child(
-                        div()
-                            .id("btn_toggle_wrap")
-                            .cursor_pointer()
-                            .px_2()
-                            .py_1()
-                            .rounded_md()
-                            .bg(if self.word_wrap {
-                                ZED.ghost_selected
-                            } else {
-                                ZED.transparent
-                            })
-                            .hover(|s| s.bg(ZED.ghost_hover))
-                            .text_xs()
-                            .text_color(if self.word_wrap {
-                                ZED.text_accent
-                            } else {
-                                ZED.text_muted
-                            })
-                            .child(if self.word_wrap { "Wrap: ON" } else { "Wrap: OFF" })
-                            .on_click(cx.listener(|this, _, _window, cx| {
-                                this.word_wrap = !this.word_wrap;
-                                cx.notify();
-                            })),
-                    )
                     // Inspector toggle
                     .child(
                         div()
@@ -1067,7 +1033,7 @@ impl Render for AppView {
                 visible_indices: visible_arc.clone(),
                 selected_row_pos: self.selected_row_pos,
                 density: self.density,
-                word_wrap: self.word_wrap,
+                column_layout: &self.column_layout,
                 focused_tag: self.focused_tag.as_deref(),
                 search_state: &self.search_state,
                 scroll_handle: &self.scroll_handle,

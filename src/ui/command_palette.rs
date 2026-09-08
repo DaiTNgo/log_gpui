@@ -20,7 +20,6 @@ pub enum PaletteAction {
     ShowContext,
     GoNextError,
     GoPrevError,
-    ToggleWrap,
     SetComfortable,
     SetCompact,
     SetUltraCompact,
@@ -62,11 +61,6 @@ impl CommandPalette {
                 name: "Navigate: Jump to Previous Error",
                 shortcut: "⌘⇧E",
                 action: PaletteAction::GoPrevError,
-            },
-            PaletteCommand {
-                name: "View: Toggle Word Wrap",
-                shortcut: "⌥Z",
-                action: PaletteAction::ToggleWrap,
             },
             PaletteCommand {
                 name: "Density: Compact (Default)",

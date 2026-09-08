@@ -1,4 +1,5 @@
 pub mod app;
+pub mod column;
 pub mod filter;
 pub mod marker;
 pub mod model;

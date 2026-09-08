@@ -2,7 +2,6 @@ use crate::marker::RulerMark;
 use crate::model::{LogEntry, LogLevel};
 use crate::search::SearchState;
 use crate::theme::{Density, ZED};
-use gpui::prelude::FluentBuilder;
 use gpui::{
     div, px, uniform_list, DefiniteLength, ElementId, InteractiveElement,
     IntoElement, ListHorizontalSizingBehavior, ParentElement, StatefulInteractiveElement,
@@ -17,7 +16,7 @@ pub struct CanvasViewState<'a> {
     pub visible_indices: Arc<Vec<usize>>,
     pub selected_row_pos: Option<usize>,
     pub density: Density,
-    pub word_wrap: bool,
+    pub column_layout: &'a crate::column::ColumnLayoutState,
     pub focused_tag: Option<&'a str>,
     pub search_state: &'a SearchState,
     pub scroll_handle: &'a UniformListScrollHandle,
@@ -31,7 +30,12 @@ impl LogCanvas {
         let row_height = state.density.row_height();
         let font_size = state.density.font_size();
 
+        let gutter_width = state.column_layout.gutter_width();
+        let scroll_x = (-state.scroll_handle.0.borrow().base_handle.offset().x).max(px(0.0));
+
         // 1. Column Headers (Zed Minimalist Header with subtle border divider)
+        // Stationary Gutter (# and •) stays anchored at x = 0.
+        // Data columns shift by -scroll_x, remaining synchronized with row cells.
         let header = div()
             .h(px(26.0))
             .w_full()
@@ -45,41 +49,70 @@ impl LogCanvas {
             .font_weight(gpui::FontWeight::SEMIBOLD)
             .text_color(ZED.text_muted)
             .child(
+                // Stationary Gutter Header
                 div()
-                    .w(px(64.0))
-                    .px_2()
-                    .text_right()
-                    .child("#"),
+                    .flex_shrink_0()
+                    .w(gutter_width)
+                    .h_full()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .bg(ZED.surface_background)
+                    .child(
+                        div()
+                            .w(px(64.0))
+                            .px_2()
+                            .text_right()
+                            .child("#"),
+                    )
+                    .child(
+                        div()
+                            .w(px(24.0))
+                            .text_center()
+                            .child("•"),
+                    ),
             )
             .child(
-                div()
-                    .w(px(24.0))
-                    .text_center()
-                    .child("•"),
-            )
-            .child(
-                div()
-                    .w(px(120.0))
-                    .px_2()
-                    .child("TIMESTAMP"),
-            )
-            .child(
-                div()
-                    .w(px(68.0))
-                    .px_1()
-                    .child("LEVEL"),
-            )
-            .child(
-                div()
-                    .w(px(100.0))
-                    .px_2()
-                    .child("MODULE"),
-            )
-            .child(
+                // Scrollable Columns Header (clipped at left edge by overflow_hidden)
                 div()
                     .flex_1()
-                    .px_2()
-                    .child("MESSAGE"),
+                    .h_full()
+                    .overflow_hidden()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .child(
+                        div()
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .relative()
+                            .left(-scroll_x)
+                            .child(
+                                div()
+                                    .w(px(120.0))
+                                    .px_2()
+                                    .child("TIMESTAMP"),
+                            )
+                            .child(
+                                div()
+                                    .w(px(68.0))
+                                    .px_1()
+                                    .child("LEVEL"),
+                            )
+                            .child(
+                                div()
+                                    .w(px(100.0))
+                                    .px_2()
+                                    .child("MODULE"),
+                            )
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .px_2()
+                                    .child("MESSAGE"),
+                            ),
+                    ),
             )
             .child(
                 div()
@@ -103,28 +136,24 @@ impl LogCanvas {
             .copied()
             .collect();
         let selected_row_pos = state.selected_row_pos;
-        let word_wrap = state.word_wrap;
         let view = state.view.clone();
+        let scroll_handle_for_rows = state.scroll_handle.clone();
 
-        let longest_vis_pos = if !word_wrap {
-            visible_clone
-                .iter()
-                .enumerate()
-                .max_by_key(|(_, entry_ix)| {
-                    entries_clone.get(**entry_ix).map(|e| e.payload.len()).unwrap_or(0)
-                })
-                .map(|(vis_pos, _)| vis_pos)
-                .unwrap_or(0)
-        } else {
-            0
-        };
+        let longest_vis_pos = visible_clone
+            .iter()
+            .enumerate()
+            .max_by_key(|(_, entry_ix)| {
+                entries_clone.get(**entry_ix).map(|e| e.payload.len()).unwrap_or(0)
+            })
+            .map(|(vis_pos, _)| vis_pos)
+            .unwrap_or(0);
 
         let list = uniform_list(
             "log_canvas_list",
             total_visible,
             move |range, _window, _cx| {
+                let scroll_x = (-scroll_handle_for_rows.0.borrow().base_handle.offset().x).max(px(0.0));
                 let mut rows = Vec::with_capacity(range.len());
-
                 for vis_pos in range {
                     let Some(&entry_ix) = visible_clone.get(vis_pos) else {
                         continue;
@@ -184,34 +213,43 @@ impl LogCanvas {
                     let sub_count = entry.sub_lines.len();
                     let view_for_row = view.clone();
 
+                    let row_bg = if is_selected {
+                        ZED.active_line_bg
+                    } else if is_current_search_match {
+                        ZED.search_current_bg
+                    } else if is_search_match {
+                        ZED.search_match_bg
+                    } else {
+                        ZED.editor_background
+                    };
+
+                    let border_color = if is_selected {
+                        ZED.border_focused
+                    } else if is_current_search_match {
+                        ZED.search_current_border
+                    } else {
+                        ZED.border_transparent
+                    };
+
+                    let line_num_color = if is_selected {
+                        ZED.gutter_active_line_number
+                    } else {
+                        ZED.gutter_line_number
+                    };
+
                     let row_element = div()
                         .id(ElementId::from(vis_pos))
                         .cursor_pointer()
                         .h(px(row_height))
                         .min_w_full()
+                        .relative()
                         .flex()
                         .flex_row()
                         .items_center()
                         .font_family(".AppleSystemUIFontMonospaced")
                         .text_size(px(font_size))
-                        .bg(if is_selected {
-                            ZED.active_line_bg
-                        } else if is_current_search_match {
-                            ZED.search_current_bg
-                        } else if is_search_match {
-                            ZED.search_match_bg
-                        } else {
-                            ZED.editor_background
-                        })
+                        .bg(row_bg)
                         .opacity(if is_dimmed { 0.35 } else { 1.0 })
-                        .border_l_2()
-                        .border_color(if is_selected {
-                            ZED.border_focused
-                        } else if is_current_search_match {
-                            ZED.search_current_border
-                        } else {
-                            ZED.border_transparent
-                        })
                         .hover(|s| {
                             if !is_selected {
                                 s.bg(ZED.element_hover)
@@ -225,97 +263,119 @@ impl LogCanvas {
                                 cx.notify();
                             });
                         })
-                        // Gutter: Line Number
+                        // 1. Horizontally Scrolling Data Columns
+                        // Shifted by gutter_width so columns start adjacent to Gutter at scroll_x = 0
                         .child(
                             div()
-                                .flex_shrink_0()
-                                .w(px(64.0))
-                                .px_2()
-                                .text_right()
-                                .text_color(if is_selected {
-                                    ZED.gutter_active_line_number
-                                } else {
-                                    ZED.gutter_line_number
-                                })
-                                .child(format!("{}", entry.index)),
-                        )
-                        // Gutter: Marker Icon
-                        .child(
-                            div()
-                                .flex_shrink_0()
-                                .w(px(24.0))
                                 .flex()
+                                .flex_row()
                                 .items_center()
-                                .justify_center()
-                                .text_xs()
-                                .font_weight(gpui::FontWeight::BOLD)
-                                .text_color(marker_color)
-                                .child(marker_symbol),
-                        )
-                        // Column: Timestamp
-                        .child(
-                            div()
-                                .flex_shrink_0()
-                                .w(px(120.0))
-                                .px_2()
-                                .text_color(ZED.text_muted)
-                                .truncate()
-                                .child(entry.time_str.clone()),
-                        )
-                        // Column: Level (Interactive quick-filter)
-                        .child(
-                            div()
-                                .flex_shrink_0()
-                                .w(px(68.0))
-                                .px_1()
-                                .child(level_badge),
-                        )
-                        // Column: Module / Tag (Interactive quick-filter)
-                        .child(tag_element.flex_shrink_0())
-                        // Column: Message Payload with horizontal scroll support
-                        .child(
-                            div()
-                                .flex_1()
-                                .px_2()
-                                .text_color(match entry.level {
-                                    LogLevel::Fatal | LogLevel::Error => ZED.error,
-                                    LogLevel::Warn => ZED.warning,
-                                    _ => ZED.text,
-                                })
-                                .when(!word_wrap, |s| s.whitespace_nowrap())
-                                .child(entry.payload.clone()),
-                        )
-                        // Breathing space at the right end of unconstrained rows
-                        .when(!word_wrap, |s| s.pr_16())
-                        // Multi-line stack trace toggle indicator if present
-                        .child(if sub_count > 0 {
-                            let view_for_fold = view.clone();
-                            div()
-                                .flex_shrink_0()
-                                .id(ElementId::from(("fold", vis_pos)))
-                                .cursor_pointer()
-                                .px_2()
-                                .text_xs()
-                                .text_color(if is_expanded {
-                                    ZED.text_accent
+                                .ml(gutter_width)
+                                // Column: Timestamp
+                                .child(
+                                    div()
+                                        .flex_shrink_0()
+                                        .w(px(120.0))
+                                        .px_2()
+                                        .text_color(ZED.text_muted)
+                                        .truncate()
+                                        .child(entry.time_str.clone()),
+                                )
+                                // Column: Level (Interactive quick-filter)
+                                .child(
+                                    div()
+                                        .flex_shrink_0()
+                                        .w(px(68.0))
+                                        .px_1()
+                                        .child(level_badge),
+                                )
+                                // Column: Module / Tag (Interactive quick-filter)
+                                .child(tag_element.flex_shrink_0())
+                                // Column: Message Payload (Unconstrained single-line layout)
+                                .child(
+                                    div()
+                                        .flex_1()
+                                        .px_2()
+                                        .text_color(match entry.level {
+                                            LogLevel::Fatal | LogLevel::Error => ZED.error,
+                                            LogLevel::Warn => ZED.warning,
+                                            _ => ZED.text,
+                                        })
+                                        .whitespace_nowrap()
+                                        .child(entry.payload.clone()),
+                                )
+                                // Breathing space at the right end of unconstrained rows
+                                .pr_16()
+                                // Multi-line stack trace toggle indicator if present
+                                .child(if sub_count > 0 {
+                                    let view_for_fold = view.clone();
+                                    div()
+                                        .flex_shrink_0()
+                                        .id(ElementId::from(("fold", vis_pos)))
+                                        .cursor_pointer()
+                                        .px_2()
+                                        .text_xs()
+                                        .text_color(if is_expanded {
+                                            ZED.text_accent
+                                        } else {
+                                            ZED.text_muted
+                                        })
+                                        .hover(|s| s.text_color(ZED.text))
+                                        .child(if is_expanded {
+                                            format!("[{} lines] ∨", sub_count)
+                                        } else {
+                                            format!("[{} lines] ›", sub_count)
+                                        })
+                                        .on_click(move |_event, _window, cx| {
+                                            view_for_fold.update(cx, |this, cx| {
+                                                this.toggle_row_expansion(entry_ix, cx);
+                                            });
+                                        })
+                                        .into_any_element()
                                 } else {
-                                    ZED.text_muted
-                                })
-                                .hover(|s| s.text_color(ZED.text))
-                                .child(if is_expanded {
-                                    format!("[{} lines] ∨", sub_count)
-                                } else {
-                                    format!("[{} lines] ›", sub_count)
-                                })
-                                .on_click(move |_event, _window, cx| {
-                                    view_for_fold.update(cx, |this, cx| {
-                                        this.toggle_row_expansion(entry_ix, cx);
-                                    });
-                                })
-                                .into_any_element()
-                        } else {
-                            div().into_any_element()
-                        });
+                                    div().into_any_element()
+                                }),
+                        )
+                        // 2. Permanently Anchored Gutter (Stationary at x = 0)
+                        // Absolute positioning with left = scroll_x counteracts the row's horizontal offset.
+                        // Opaque row_bg ensures scrolling columns pass cleanly underneath.
+                        .child(
+                            div()
+                                .absolute()
+                                .top_0()
+                                .bottom_0()
+                                .left(scroll_x)
+                                .w(gutter_width)
+                                .flex()
+                                .flex_row()
+                                .items_center()
+                                .bg(row_bg)
+                                .border_l_2()
+                                .border_color(border_color)
+                                // Gutter: Line Number
+                                .child(
+                                    div()
+                                        .flex_shrink_0()
+                                        .w(px(64.0))
+                                        .px_2()
+                                        .text_right()
+                                        .text_color(line_num_color)
+                                        .child(format!("{}", entry.index)),
+                                )
+                                // Gutter: Marker Icon
+                                .child(
+                                    div()
+                                        .flex_shrink_0()
+                                        .w(px(24.0))
+                                        .flex()
+                                        .items_center()
+                                        .justify_center()
+                                        .text_xs()
+                                        .font_weight(gpui::FontWeight::BOLD)
+                                        .text_color(marker_color)
+                                        .child(marker_symbol),
+                                ),
+                        );
 
                     rows.push(row_element);
                 }
@@ -325,11 +385,7 @@ impl LogCanvas {
         )
         .size_full()
         .with_width_from_item(Some(longest_vis_pos))
-        .with_horizontal_sizing_behavior(if word_wrap {
-            ListHorizontalSizingBehavior::FitList
-        } else {
-            ListHorizontalSizingBehavior::Unconstrained
-        })
+        .with_horizontal_sizing_behavior(ListHorizontalSizingBehavior::Unconstrained)
         .track_scroll(state.scroll_handle);
 
         // 3. Overview Ruler (Minimap at right edge - 16px)
