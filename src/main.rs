@@ -25,7 +25,7 @@ fn main() {
                 cx,
             ))),
             titlebar: Some(TitlebarOptions {
-                title: Some("Log Editor (Carbon Design)".into()),
+                title: Some("Log Editor (Zed Minimalism)".into()),
                 ..Default::default()
             }),
             ..Default::default()

@@ -1,6 +1,6 @@
 use crate::filter::{ConditionField, ConditionOp, FilterEngine, LogicMode};
 use crate::model::LogLevel;
-use crate::theme::CARBON;
+use crate::theme::ZED;
 use gpui::{
     div, px, ElementId, InteractiveElement, IntoElement, ParentElement, StatefulInteractiveElement,
     Styled,
@@ -34,10 +34,10 @@ impl FilterPopover {
                 .justify_between()
                 .px_2()
                 .py_1()
-                .bg(CARBON.layer_01)
-                .rounded_sm()
+                .bg(ZED.element_background)
+                .rounded_md()
                 .border_1()
-                .border_color(CARBON.border_subtle)
+                .border_color(ZED.border_variant)
                 .child(
                     div()
                         .flex()
@@ -48,20 +48,20 @@ impl FilterPopover {
                             div()
                                 .text_xs()
                                 .font_weight(gpui::FontWeight::SEMIBOLD)
-                                .text_color(CARBON.text_primary)
+                                .text_color(ZED.text)
                                 .child(field_str),
                         )
                         .child(
                             div()
                                 .text_xs()
-                                .text_color(CARBON.text_muted)
+                                .text_color(ZED.text_muted)
                                 .child(op_str),
                         )
                         .child(
                             div()
                                 .text_xs()
                                 .font_weight(gpui::FontWeight::MEDIUM)
-                                .text_color(CARBON.blue_primary)
+                                .text_color(ZED.text_accent)
                                 .child(val_str),
                         ),
                 )
@@ -72,7 +72,10 @@ impl FilterPopover {
                         .flex()
                         .items_center()
                         .justify_center()
-                        .text_color(CARBON.error)
+                        .p_0p5()
+                        .rounded_xs()
+                        .text_color(ZED.text_muted)
+                        .hover(|s| s.bg(ZED.ghost_hover).text_color(ZED.error))
                         .child(Icon::new(IconName::Close).size(px(11.0)))
                         .on_click(cx.listener(move |this, _, _window, cx| {
                             this.remove_filter_condition(cond_id, cx);
@@ -84,12 +87,12 @@ impl FilterPopover {
 
         div()
             .absolute()
-            .top(px(48.0))
+            .top(px(42.0))
             .left(px(240.0))
             .w(px(380.0))
-            .bg(CARBON.layer_02)
+            .bg(ZED.elevated_surface)
             .border_1()
-            .border_color(CARBON.border_strong)
+            .border_color(ZED.border)
             .rounded_md()
             .shadow_xl()
             .p_3()
@@ -104,21 +107,23 @@ impl FilterPopover {
                     .items_center()
                     .justify_between()
                     .border_b_1()
-                    .border_color(CARBON.border_subtle)
+                    .border_color(ZED.border_variant)
                     .pb_2()
                     .child(
                         div()
                             .text_xs()
-                            .font_weight(gpui::FontWeight::BOLD)
-                            .text_color(CARBON.text_primary)
-                            .child("FILTER BUILDER"),
+                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                            .text_color(ZED.text)
+                            .child("Filter Builder"),
                     )
                     .child(
                         div()
                             .id("close_filter_builder")
                             .cursor_pointer()
-                            .text_color(CARBON.text_muted)
-                            .hover(|s| s.text_color(CARBON.text_primary))
+                            .p_1()
+                            .rounded_md()
+                            .text_color(ZED.icon_muted)
+                            .hover(|s| s.bg(ZED.ghost_hover).text_color(ZED.icon_hover))
                             .child(Icon::new(IconName::Close).size(px(13.0)))
                             .on_click(cx.listener(|this, _, _window, cx| {
                                 this.toggle_filter_builder(cx);
@@ -132,7 +137,7 @@ impl FilterPopover {
                         .py_3()
                         .text_center()
                         .text_xs()
-                        .text_color(CARBON.text_muted)
+                        .text_color(ZED.text_muted)
                         .child("No filter conditions. Add one below or click a log value.")
                         .into_any_element()
                 } else {
@@ -153,13 +158,13 @@ impl FilterPopover {
                             .cursor_pointer()
                             .px_2()
                             .py_0p5()
-                            .rounded_sm()
-                            .bg(CARBON.layer_01)
+                            .rounded_md()
+                            .bg(ZED.element_background)
                             .border_1()
-                            .border_color(CARBON.border_subtle)
+                            .border_color(ZED.error_border)
                             .text_xs()
-                            .text_color(CARBON.error)
-                            .hover(|s| s.bg(CARBON.layer_hover))
+                            .text_color(ZED.error)
+                            .hover(|s| s.bg(ZED.ghost_hover))
                             .child("+ Level is ERROR")
                             .on_click(cx.listener(|this, _, _window, cx| {
                                 this.filter_engine.add_condition(
@@ -176,13 +181,13 @@ impl FilterPopover {
                             .cursor_pointer()
                             .px_2()
                             .py_0p5()
-                            .rounded_sm()
-                            .bg(CARBON.layer_01)
+                            .rounded_md()
+                            .bg(ZED.element_background)
                             .border_1()
-                            .border_color(CARBON.border_subtle)
+                            .border_color(ZED.warning_border)
                             .text_xs()
-                            .text_color(CARBON.warning)
-                            .hover(|s| s.bg(CARBON.layer_hover))
+                            .text_color(ZED.warning)
+                            .hover(|s| s.bg(ZED.ghost_hover))
                             .child("+ Level is WARN")
                             .on_click(cx.listener(|this, _, _window, cx| {
                                 this.filter_engine.add_condition(
@@ -199,13 +204,13 @@ impl FilterPopover {
                             .cursor_pointer()
                             .px_2()
                             .py_0p5()
-                            .rounded_sm()
-                            .bg(CARBON.layer_01)
+                            .rounded_md()
+                            .bg(ZED.element_background)
                             .border_1()
-                            .border_color(CARBON.border_subtle)
+                            .border_color(ZED.border_variant)
                             .text_xs()
-                            .text_color(CARBON.text_secondary)
-                            .hover(|s| s.bg(CARBON.layer_hover))
+                            .text_color(ZED.text_muted)
+                            .hover(|s| s.bg(ZED.ghost_hover).text_color(ZED.text))
                             .child("+ Module is API")
                             .on_click(cx.listener(|this, _, _window, cx| {
                                 this.filter_engine.add_condition(
@@ -222,13 +227,13 @@ impl FilterPopover {
                             .cursor_pointer()
                             .px_2()
                             .py_0p5()
-                            .rounded_sm()
-                            .bg(CARBON.layer_01)
+                            .rounded_md()
+                            .bg(ZED.element_background)
                             .border_1()
-                            .border_color(CARBON.border_subtle)
+                            .border_color(ZED.border_variant)
                             .text_xs()
-                            .text_color(CARBON.text_secondary)
-                            .hover(|s| s.bg(CARBON.layer_hover))
+                            .text_color(ZED.text_muted)
+                            .hover(|s| s.bg(ZED.ghost_hover).text_color(ZED.text))
                             .child("+ Module is DB")
                             .on_click(cx.listener(|this, _, _window, cx| {
                                 this.filter_engine.add_condition(
@@ -249,7 +254,7 @@ impl FilterPopover {
                     .justify_between()
                     .pt_2()
                     .border_t_1()
-                    .border_color(CARBON.border_subtle)
+                    .border_color(ZED.border_variant)
                     .child(
                         div()
                             .flex()
@@ -259,7 +264,7 @@ impl FilterPopover {
                             .child(
                                 div()
                                     .text_xs()
-                                    .text_color(CARBON.text_muted)
+                                    .text_color(ZED.text_muted)
                                     .child("Match:"),
                             )
                             .child(
@@ -270,17 +275,24 @@ impl FilterPopover {
                                     .py_0p5()
                                     .rounded_xs()
                                     .text_xs()
-                                    .font_weight(gpui::FontWeight::BOLD)
+                                    .font_weight(gpui::FontWeight::SEMIBOLD)
                                     .bg(if filter_engine.logic_mode == LogicMode::All {
-                                        CARBON.blue_primary
+                                        ZED.element_selected
                                     } else {
-                                        CARBON.layer_01
+                                        ZED.element_background
+                                    })
+                                    .border_1()
+                                    .border_color(if filter_engine.logic_mode == LogicMode::All {
+                                        ZED.border_focused
+                                    } else {
+                                        ZED.border_variant
                                     })
                                     .text_color(if filter_engine.logic_mode == LogicMode::All {
-                                        CARBON.text_on_color
+                                        ZED.text_accent
                                     } else {
-                                        CARBON.text_muted
+                                        ZED.text_muted
                                     })
+                                    .hover(|s| s.bg(ZED.ghost_hover))
                                     .child("ALL (AND)")
                                     .on_click(cx.listener(|this, _, _window, cx| {
                                         this.filter_engine.logic_mode = LogicMode::All;
@@ -295,17 +307,24 @@ impl FilterPopover {
                                     .py_0p5()
                                     .rounded_xs()
                                     .text_xs()
-                                    .font_weight(gpui::FontWeight::BOLD)
+                                    .font_weight(gpui::FontWeight::SEMIBOLD)
                                     .bg(if filter_engine.logic_mode == LogicMode::Any {
-                                        CARBON.blue_primary
+                                        ZED.element_selected
                                     } else {
-                                        CARBON.layer_01
+                                        ZED.element_background
+                                    })
+                                    .border_1()
+                                    .border_color(if filter_engine.logic_mode == LogicMode::Any {
+                                        ZED.border_focused
+                                    } else {
+                                        ZED.border_variant
                                     })
                                     .text_color(if filter_engine.logic_mode == LogicMode::Any {
-                                        CARBON.text_on_color
+                                        ZED.text_accent
                                     } else {
-                                        CARBON.text_muted
+                                        ZED.text_muted
                                     })
+                                    .hover(|s| s.bg(ZED.ghost_hover))
                                     .child("ANY (OR)")
                                     .on_click(cx.listener(|this, _, _window, cx| {
                                         this.filter_engine.logic_mode = LogicMode::Any;
@@ -324,10 +343,10 @@ impl FilterPopover {
                                     .cursor_pointer()
                                     .px_2()
                                     .py_0p5()
-                                    .rounded_sm()
+                                    .rounded_md()
                                     .text_xs()
-                                    .text_color(CARBON.text_muted)
-                                    .hover(|s| s.text_color(CARBON.text_primary))
+                                    .text_color(ZED.text_muted)
+                                    .hover(|s| s.bg(ZED.ghost_hover).text_color(ZED.text))
                                     .child("Clear")
                                     .on_click(cx.listener(|this, _, _window, cx| {
                                         this.filter_engine.clear();
@@ -340,12 +359,14 @@ impl FilterPopover {
                                     .cursor_pointer()
                                     .px_2p5()
                                     .py_0p5()
-                                    .rounded_sm()
-                                    .bg(CARBON.blue_primary)
+                                    .rounded_md()
+                                    .bg(ZED.element_selected)
+                                    .border_1()
+                                    .border_color(ZED.border_focused)
                                     .text_xs()
                                     .font_weight(gpui::FontWeight::MEDIUM)
-                                    .text_color(CARBON.text_on_color)
-                                    .hover(|s| s.bg(CARBON.blue_hover))
+                                    .text_color(ZED.text_accent)
+                                    .hover(|s| s.bg(ZED.ghost_hover))
                                     .child("Apply")
                                     .on_click(cx.listener(|this, _, _window, cx| {
                                         this.toggle_filter_builder(cx);
@@ -392,9 +413,9 @@ impl FilterPopover {
             .top(px(menu.y))
             .left(px(menu.x))
             .w(px(200.0))
-            .bg(CARBON.layer_02)
+            .bg(ZED.elevated_surface)
             .border_1()
-            .border_color(CARBON.border_strong)
+            .border_color(ZED.border)
             .rounded_md()
             .shadow_2xl()
             .p_1()
@@ -406,10 +427,10 @@ impl FilterPopover {
                     .px_2()
                     .py_1()
                     .text_xs()
-                    .font_weight(gpui::FontWeight::BOLD)
-                    .text_color(CARBON.text_muted)
+                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                    .text_color(ZED.text_muted)
                     .border_b_1()
-                    .border_color(CARBON.border_subtle)
+                    .border_color(ZED.border_variant)
                     .child(title),
             )
             .child(
@@ -418,10 +439,10 @@ impl FilterPopover {
                     .cursor_pointer()
                     .px_2()
                     .py_1()
-                    .rounded_xs()
+                    .rounded_md()
                     .text_xs()
-                    .text_color(CARBON.text_primary)
-                    .hover(|s| s.bg(CARBON.layer_hover).text_color(CARBON.blue_primary))
+                    .text_color(ZED.text)
+                    .hover(|s| s.bg(ZED.ghost_hover).text_color(ZED.text_accent))
                     .child(filter_label)
                     .on_click(cx.listener(move |this, _, _window, cx| {
                         match &kind_clone1 {
@@ -438,10 +459,10 @@ impl FilterPopover {
                     .cursor_pointer()
                     .px_2()
                     .py_1()
-                    .rounded_xs()
+                    .rounded_md()
                     .text_xs()
-                    .text_color(CARBON.text_primary)
-                    .hover(|s| s.bg(CARBON.layer_hover).text_color(CARBON.error))
+                    .text_color(ZED.text)
+                    .hover(|s| s.bg(ZED.ghost_hover).text_color(ZED.error))
                     .child(hide_label)
                     .on_click(cx.listener(move |this, _, _window, cx| {
                         match &kind_clone2 {
@@ -458,10 +479,10 @@ impl FilterPopover {
                     .cursor_pointer()
                     .px_2()
                     .py_1()
-                    .rounded_xs()
+                    .rounded_md()
                     .text_xs()
-                    .text_color(CARBON.text_primary)
-                    .hover(|s| s.bg(CARBON.layer_hover).text_color(CARBON.cyan_accent))
+                    .text_color(ZED.text)
+                    .hover(|s| s.bg(ZED.ghost_hover).text_color(ZED.text_accent))
                     .child(search_label)
                     .on_click(cx.listener(move |this, _, _window, cx| {
                         let query = match &kind_clone3 {

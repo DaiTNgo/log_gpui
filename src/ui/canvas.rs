@@ -1,10 +1,10 @@
-use crate::marker::{RulerMark};
+use crate::marker::RulerMark;
 use crate::model::{LogEntry, LogLevel};
 use crate::search::SearchState;
-use crate::theme::{Density, CARBON};
+use crate::theme::{Density, ZED};
 use gpui::prelude::FluentBuilder;
 use gpui::{
-    div, px, rgb, uniform_list, DefiniteLength, ElementId, InteractiveElement,
+    div, px, uniform_list, DefiniteLength, ElementId, InteractiveElement,
     IntoElement, ListHorizontalSizingBehavior, ParentElement, StatefulInteractiveElement,
     Styled, UniformListScrollHandle,
 };
@@ -31,19 +31,19 @@ impl LogCanvas {
         let row_height = state.density.row_height();
         let font_size = state.density.font_size();
 
-        // 1. Column Headers (Subtle, minimalist, no heavy table grid)
+        // 1. Column Headers (Zed Minimalist Header with subtle border divider)
         let header = div()
             .h(px(26.0))
             .w_full()
             .flex()
             .flex_row()
             .items_center()
-            .bg(CARBON.layer_01)
+            .bg(ZED.surface_background)
             .border_b_1()
-            .border_color(CARBON.border_subtle)
+            .border_color(ZED.border_variant)
             .text_xs()
             .font_weight(gpui::FontWeight::SEMIBOLD)
-            .text_color(CARBON.text_muted)
+            .text_color(ZED.text_muted)
             .child(
                 div()
                     .w(px(64.0))
@@ -146,7 +146,7 @@ impl LogCanvas {
                     let effective_marker = entry.effective_marker();
                     let (marker_symbol, marker_color) = match effective_marker {
                         Some(m) => (m.symbol(), m.color()),
-                        None => (" ", CARBON.transparent),
+                        None => (" ", ZED.transparent),
                     };
 
                     let level_val = entry.level;
@@ -169,7 +169,7 @@ impl LogCanvas {
                         .w(px(100.0))
                         .px_2()
                         .font_weight(gpui::FontWeight::SEMIBOLD)
-                        .text_color(CARBON.purple_accent)
+                        .text_color(ZED.text_accent)
                         .truncate()
                         .hover(|s| s.underline())
                         .child(tag_val.clone())
@@ -195,28 +195,26 @@ impl LogCanvas {
                         .font_family(".AppleSystemUIFontMonospaced")
                         .text_size(px(font_size))
                         .bg(if is_selected {
-                            CARBON.layer_selected
+                            ZED.active_line_bg
                         } else if is_current_search_match {
-                            CARBON.search_current_bg
+                            ZED.search_current_bg
                         } else if is_search_match {
-                            CARBON.search_match_bg
-                        } else if vis_pos % 2 == 1 {
-                            rgb(0x1a1a1a) // Subtle alternating shade
+                            ZED.search_match_bg
                         } else {
-                            CARBON.bg
+                            ZED.editor_background
                         })
                         .opacity(if is_dimmed { 0.35 } else { 1.0 })
                         .border_l_2()
                         .border_color(if is_selected {
-                            CARBON.border_interactive
+                            ZED.border_focused
                         } else if is_current_search_match {
-                            CARBON.search_current_border
+                            ZED.search_current_border
                         } else {
-                            CARBON.transparent
+                            ZED.border_transparent
                         })
                         .hover(|s| {
                             if !is_selected {
-                                s.bg(CARBON.layer_hover)
+                                s.bg(ZED.element_hover)
                             } else {
                                 s
                             }
@@ -234,7 +232,11 @@ impl LogCanvas {
                                 .w(px(64.0))
                                 .px_2()
                                 .text_right()
-                                .text_color(CARBON.text_muted)
+                                .text_color(if is_selected {
+                                    ZED.gutter_active_line_number
+                                } else {
+                                    ZED.gutter_line_number
+                                })
                                 .child(format!("{}", entry.index)),
                         )
                         // Gutter: Marker Icon
@@ -256,7 +258,7 @@ impl LogCanvas {
                                 .flex_shrink_0()
                                 .w(px(120.0))
                                 .px_2()
-                                .text_color(CARBON.text_muted)
+                                .text_color(ZED.text_muted)
                                 .truncate()
                                 .child(entry.time_str.clone()),
                         )
@@ -276,9 +278,9 @@ impl LogCanvas {
                                 .flex_1()
                                 .px_2()
                                 .text_color(match entry.level {
-                                    LogLevel::Fatal | LogLevel::Error => CARBON.error,
-                                    LogLevel::Warn => CARBON.warning,
-                                    _ => CARBON.text_primary,
+                                    LogLevel::Fatal | LogLevel::Error => ZED.error,
+                                    LogLevel::Warn => ZED.warning,
+                                    _ => ZED.text,
                                 })
                                 .when(!word_wrap, |s| s.whitespace_nowrap())
                                 .child(entry.payload.clone()),
@@ -295,11 +297,11 @@ impl LogCanvas {
                                 .px_2()
                                 .text_xs()
                                 .text_color(if is_expanded {
-                                    CARBON.cyan_accent
+                                    ZED.text_accent
                                 } else {
-                                    CARBON.text_muted
+                                    ZED.text_muted
                                 })
-                                .hover(|s| s.text_color(CARBON.text_primary))
+                                .hover(|s| s.text_color(ZED.text))
                                 .child(if is_expanded {
                                     format!("[{} lines] ∨", sub_count)
                                 } else {
@@ -336,9 +338,9 @@ impl LogCanvas {
         let mut ruler_elements = div()
             .w(px(16.0))
             .h_full()
-            .bg(CARBON.layer_01)
+            .bg(ZED.surface_background)
             .border_l_1()
-            .border_color(CARBON.border_subtle)
+            .border_color(ZED.border_variant)
             .relative();
 
         for mark in ruler_marks {
@@ -388,7 +390,7 @@ impl LogCanvas {
             .h_full()
             .flex()
             .flex_col()
-            .bg(CARBON.bg)
+            .bg(ZED.editor_background)
             .child(header)
             .child(
                 div()
@@ -412,22 +414,24 @@ impl LogCanvas {
 }
 
 fn render_level_badge(level: LogLevel) -> gpui::Div {
-    let (fg, bg) = match level {
-        LogLevel::Fatal => (CARBON.text_on_color, rgb(0x991b1b)),
-        LogLevel::Error => (CARBON.error, CARBON.error_bg),
-        LogLevel::Warn => (CARBON.warning, CARBON.warning_bg),
-        LogLevel::Info => (CARBON.info, CARBON.info_bg),
-        LogLevel::Debug => (CARBON.success, CARBON.success_bg),
-        LogLevel::Verbose => (CARBON.text_muted, CARBON.layer_02),
-        LogLevel::Unknown => (CARBON.text_disabled, CARBON.layer_01),
+    let (fg, bg, border) = match level {
+        LogLevel::Fatal => (ZED.error, ZED.error_bg, ZED.error_border),
+        LogLevel::Error => (ZED.error, ZED.error_bg, ZED.error_border),
+        LogLevel::Warn => (ZED.warning, ZED.warning_bg, ZED.warning_border),
+        LogLevel::Info => (ZED.info, ZED.info_bg, ZED.info_border),
+        LogLevel::Debug => (ZED.debug, ZED.debug_bg, ZED.border_variant),
+        LogLevel::Verbose => (ZED.text_muted, ZED.element_background, ZED.border_variant),
+        LogLevel::Unknown => (ZED.text_disabled, ZED.element_background, ZED.border_variant),
     };
 
     div()
         .px_1p5()
         .py_0p5()
         .rounded_xs()
+        .border_1()
+        .border_color(border)
         .text_xs()
-        .font_weight(gpui::FontWeight::BOLD)
+        .font_weight(gpui::FontWeight::SEMIBOLD)
         .text_color(fg)
         .bg(bg)
         .child(level.short_code())
@@ -462,7 +466,7 @@ fn compute_ruler_marks(
                 marks.push(RulerMark {
                     position: pos,
                     entry_index: entry_ix,
-                    color: CARBON.search_current_border,
+                    color: ZED.search_current_border,
                     marker_type: None,
                     is_search: true,
                 });

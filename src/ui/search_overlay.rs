@@ -1,5 +1,5 @@
 use crate::search::SearchState;
-use crate::theme::CARBON;
+use crate::theme::ZED;
 use gpui::{
     div, px, InteractiveElement, IntoElement, ParentElement, StatefulInteractiveElement,
     Styled,
@@ -36,12 +36,12 @@ impl SearchOverlay {
 
         div()
             .absolute()
-            .top(px(48.0))
+            .top(px(42.0))
             .right(px(32.0))
             .w(px(360.0))
-            .bg(CARBON.layer_02)
+            .bg(ZED.elevated_surface)
             .border_1()
-            .border_color(CARBON.border_strong)
+            .border_color(ZED.border)
             .rounded_md()
             .shadow_lg()
             .p_2()
@@ -57,7 +57,7 @@ impl SearchOverlay {
                     .gap_2()
                     .child(
                         div()
-                            .text_color(CARBON.text_muted)
+                            .text_color(ZED.icon_muted)
                             .child(Icon::new(IconName::Search).size(px(14.0))),
                     )
                     .child(
@@ -69,11 +69,10 @@ impl SearchOverlay {
                         div()
                             .id("close_search_btn")
                             .cursor_pointer()
-                            .px_1p5()
-                            .py_0p5()
-                            .rounded_sm()
-                            .text_color(CARBON.text_muted)
-                            .hover(|s| s.bg(CARBON.layer_hover).text_color(CARBON.text_primary))
+                            .p_1()
+                            .rounded_md()
+                            .text_color(ZED.icon_muted)
+                            .hover(|s| s.bg(ZED.ghost_hover).text_color(ZED.icon_hover))
                             .child(Icon::new(IconName::Close).size(px(13.0)))
                             .on_click(cx.listener(|this, _, _window, cx| {
                                 this.toggle_search(cx);
@@ -101,21 +100,27 @@ impl SearchOverlay {
                                     .cursor_pointer()
                                     .px_1p5()
                                     .py_0p5()
-                                    .rounded_sm()
+                                    .rounded_xs()
+                                    .border_1()
+                                    .border_color(if case_active {
+                                        ZED.border_focused
+                                    } else {
+                                        ZED.border_variant
+                                    })
                                     .text_xs()
                                     .font_family(".AppleSystemUIFontMonospaced")
-                                    .font_weight(gpui::FontWeight::BOLD)
+                                    .font_weight(gpui::FontWeight::SEMIBOLD)
                                     .bg(if case_active {
-                                        CARBON.blue_primary
+                                        ZED.element_selected
                                     } else {
-                                        CARBON.layer_01
+                                        ZED.element_background
                                     })
                                     .text_color(if case_active {
-                                        CARBON.text_on_color
+                                        ZED.text_accent
                                     } else {
-                                        CARBON.text_muted
+                                        ZED.text_muted
                                     })
-                                    .hover(|s| s.border_1().border_color(CARBON.border_interactive))
+                                    .hover(|s| s.bg(ZED.ghost_hover))
                                     .child("Aa")
                                     .on_click(cx.listener(|this, _, _window, cx| {
                                         this.search_state.toggle_case();
@@ -128,21 +133,27 @@ impl SearchOverlay {
                                     .cursor_pointer()
                                     .px_1p5()
                                     .py_0p5()
-                                    .rounded_sm()
+                                    .rounded_xs()
+                                    .border_1()
+                                    .border_color(if regex_active {
+                                        ZED.border_focused
+                                    } else {
+                                        ZED.border_variant
+                                    })
                                     .text_xs()
                                     .font_family(".AppleSystemUIFontMonospaced")
-                                    .font_weight(gpui::FontWeight::BOLD)
+                                    .font_weight(gpui::FontWeight::SEMIBOLD)
                                     .bg(if regex_active {
-                                        CARBON.blue_primary
+                                        ZED.element_selected
                                     } else {
-                                        CARBON.layer_01
+                                        ZED.element_background
                                     })
                                     .text_color(if regex_active {
-                                        CARBON.text_on_color
+                                        ZED.text_accent
                                     } else {
-                                        CARBON.text_muted
+                                        ZED.text_muted
                                     })
-                                    .hover(|s| s.border_1().border_color(CARBON.border_interactive))
+                                    .hover(|s| s.bg(ZED.ghost_hover))
                                     .child(".*")
                                     .on_click(cx.listener(|this, _, _window, cx| {
                                         this.search_state.toggle_regex();
@@ -155,21 +166,27 @@ impl SearchOverlay {
                                     .cursor_pointer()
                                     .px_1p5()
                                     .py_0p5()
-                                    .rounded_sm()
+                                    .rounded_xs()
+                                    .border_1()
+                                    .border_color(if word_active {
+                                        ZED.border_focused
+                                    } else {
+                                        ZED.border_variant
+                                    })
                                     .text_xs()
                                     .font_family(".AppleSystemUIFontMonospaced")
-                                    .font_weight(gpui::FontWeight::BOLD)
+                                    .font_weight(gpui::FontWeight::SEMIBOLD)
                                     .bg(if word_active {
-                                        CARBON.blue_primary
+                                        ZED.element_selected
                                     } else {
-                                        CARBON.layer_01
+                                        ZED.element_background
                                     })
                                     .text_color(if word_active {
-                                        CARBON.text_on_color
+                                        ZED.text_accent
                                     } else {
-                                        CARBON.text_muted
+                                        ZED.text_muted
                                     })
-                                    .hover(|s| s.border_1().border_color(CARBON.border_interactive))
+                                    .hover(|s| s.bg(ZED.ghost_hover))
                                     .child("↔")
                                     .on_click(cx.listener(|this, _, _window, cx| {
                                         this.search_state.toggle_whole_word();
@@ -183,15 +200,15 @@ impl SearchOverlay {
                             .flex()
                             .flex_row()
                             .items_center()
-                            .gap_2()
+                            .gap_1p5()
                             .child(
                                 div()
                                     .text_xs()
                                     .font_family(".AppleSystemUIFontMonospaced")
                                     .text_color(if total > 0 {
-                                        CARBON.text_primary
+                                        ZED.text
                                     } else {
-                                        CARBON.text_muted
+                                        ZED.text_muted
                                     })
                                     .child(match_text),
                             )
@@ -199,12 +216,10 @@ impl SearchOverlay {
                                 div()
                                     .id("prev_match_btn")
                                     .cursor_pointer()
-                                    .px_1p5()
-                                    .py_0p5()
-                                    .rounded_sm()
-                                    .bg(CARBON.layer_01)
-                                    .text_color(CARBON.text_secondary)
-                                    .hover(|s| s.bg(CARBON.layer_hover).text_color(CARBON.text_primary))
+                                    .p_1()
+                                    .rounded_md()
+                                    .hover(|s| s.bg(ZED.ghost_hover).text_color(ZED.icon_hover))
+                                    .text_color(ZED.icon_muted)
                                     .child(Icon::new(IconName::ChevronUp).size(px(12.0)))
                                     .on_click(cx.listener(|this, _, _window, cx| {
                                         this.jump_prev_match(cx);
@@ -214,12 +229,10 @@ impl SearchOverlay {
                                 div()
                                     .id("next_match_btn")
                                     .cursor_pointer()
-                                    .px_1p5()
-                                    .py_0p5()
-                                    .rounded_sm()
-                                    .bg(CARBON.layer_01)
-                                    .text_color(CARBON.text_secondary)
-                                    .hover(|s| s.bg(CARBON.layer_hover).text_color(CARBON.text_primary))
+                                    .p_1()
+                                    .rounded_md()
+                                    .hover(|s| s.bg(ZED.ghost_hover).text_color(ZED.icon_hover))
+                                    .text_color(ZED.icon_muted)
                                     .child(Icon::new(IconName::ChevronDown).size(px(12.0)))
                                     .on_click(cx.listener(|this, _, _window, cx| {
                                         this.jump_next_match(cx);

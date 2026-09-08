@@ -1,6 +1,6 @@
 use crate::model::LogLevel;
-use crate::theme::CARBON;
-use gpui::{rgb, Rgba};
+use crate::theme::ZED;
+use gpui::Rgba;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -35,11 +35,11 @@ impl MarkerType {
 
     pub fn color(&self) -> Rgba {
         match self {
-            MarkerType::Error => CARBON.error,
-            MarkerType::Warning => CARBON.warning,
-            MarkerType::Bookmark => CARBON.cyan_accent,
-            MarkerType::Important => CARBON.purple_accent,
-            MarkerType::Note => rgb(0x42be65),
+            MarkerType::Error => ZED.error,
+            MarkerType::Warning => ZED.warning,
+            MarkerType::Bookmark => ZED.text_accent,
+            MarkerType::Important => ZED.warning,
+            MarkerType::Note => ZED.success,
         }
     }
 

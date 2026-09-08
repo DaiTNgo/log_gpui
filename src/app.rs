@@ -4,7 +4,7 @@ use crate::model::{LogEntry, LogLevel};
 use crate::parser::parse_file;
 use crate::sample::generate_sample_logs;
 use crate::search::SearchState;
-use crate::theme::{Density, CARBON};
+use crate::theme::{Density, ZED};
 use crate::ui::canvas::{CanvasViewState, LogCanvas};
 use crate::ui::command_palette::{CommandPalette, PaletteAction};
 use crate::ui::context_view::ContextModal;
@@ -497,40 +497,45 @@ impl Render for AppView {
         let entries_arc = Arc::new(self.all_entries.clone());
         let visible_arc = self.visible_indices.clone();
 
-        // 1. Top Window Chrome
+        // 1. Top Window Chrome (H: 36px, Integrated Minimalist Header)
         let window_chrome = div()
+            .h(px(36.0))
             .flex()
             .flex_row()
             .items_center()
             .justify_between()
             .px_3()
-            .py_1p5()
-            .bg(CARBON.layer_01)
+            .bg(ZED.surface_background)
             .border_b_1()
-            .border_color(CARBON.border_subtle)
+            .border_color(ZED.border_variant)
             .child(
                 div()
                     .flex()
                     .flex_row()
                     .items_center()
-                    .gap_2()
+                    .gap_2p5()
                     .child(
                         div()
                             .text_xs()
-                            .font_weight(gpui::FontWeight::BOLD)
-                            .text_color(CARBON.text_primary)
-                            .child("● Log Editor"),
+                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                            .text_color(ZED.text)
+                            .child("Zed Logs"),
                     )
                     .child(
                         div()
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .gap_1p5()
                             .px_2()
                             .py_0p5()
-                            .rounded_xs()
-                            .bg(CARBON.bg)
+                            .rounded_md()
+                            .bg(ZED.element_background)
                             .border_1()
-                            .border_color(CARBON.border_subtle)
+                            .border_color(ZED.border_variant)
                             .text_xs()
-                            .text_color(CARBON.text_secondary)
+                            .text_color(ZED.text_muted)
+                            .child(Icon::new(IconName::FileText).size(px(12.0)))
                             .child(self.file_name.clone()),
                     ),
             )
@@ -539,19 +544,31 @@ impl Render for AppView {
                     .flex()
                     .flex_row()
                     .items_center()
-                    .gap_2()
+                    .gap_1p5()
                     .child(
                         div()
                             .id("btn_cmd_pal")
                             .cursor_pointer()
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .gap_1p5()
                             .px_2()
-                            .py_0p5()
-                            .rounded_sm()
-                            .bg(CARBON.layer_02)
+                            .py_1()
+                            .rounded_md()
+                            .hover(|s| s.bg(ZED.ghost_hover))
                             .text_xs()
-                            .text_color(CARBON.text_secondary)
-                            .hover(|s| s.bg(CARBON.layer_hover).text_color(CARBON.text_primary))
-                            .child("⌘K Palette")
+                            .text_color(ZED.text_muted)
+                            .child(
+                                div()
+                                    .px_1()
+                                    .py_0p5()
+                                    .rounded_xs()
+                                    .bg(ZED.element_background)
+                                    .text_color(ZED.text_muted)
+                                    .child("⌘K"),
+                            )
+                            .child("Palette")
                             .on_click(cx.listener(|this, _, _window, cx| {
                                 this.is_palette_open = !this.is_palette_open;
                                 cx.notify();
@@ -561,13 +578,17 @@ impl Render for AppView {
                         div()
                             .id("btn_open_file")
                             .cursor_pointer()
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .gap_1p5()
                             .px_2()
-                            .py_0p5()
-                            .rounded_sm()
-                            .bg(CARBON.layer_02)
+                            .py_1()
+                            .rounded_md()
+                            .hover(|s| s.bg(ZED.ghost_hover))
                             .text_xs()
-                            .text_color(CARBON.text_secondary)
-                            .hover(|s| s.bg(CARBON.layer_hover).text_color(CARBON.text_primary))
+                            .text_color(ZED.text_muted)
+                            .child(Icon::new(IconName::FolderOpen).size(px(12.0)))
                             .child("Open...")
                             .on_click(cx.listener(|this, _, _window, cx| {
                                 this.open_file_dialog(cx);
@@ -575,8 +596,8 @@ impl Render for AppView {
                     ),
             );
 
-        // 2. Editor Toolbar (File tab, Search trigger, Filter Chips, More actions)
-        let mut filter_chips = div().flex().flex_row().items_center().gap_1();
+        // 2. Editor Toolbar (H: 34px, Search trigger, Filter Chips, View Controls)
+        let mut filter_chips = div().flex().flex_row().items_center().gap_1p5();
 
         for cond in &self.filter_engine.conditions {
             if !cond.enabled || cond.value.trim().is_empty() {
@@ -591,22 +612,21 @@ impl Render for AppView {
                 .flex()
                 .flex_row()
                 .items_center()
-                .gap_1()
+                .gap_1p5()
                 .px_2()
                 .py_0p5()
-                .rounded_sm()
-                .bg(CARBON.layer_02)
+                .rounded_md()
+                .bg(ZED.element_background)
                 .border_1()
-                .border_color(CARBON.blue_primary)
+                .border_color(ZED.border_variant)
                 .text_xs()
-                .font_weight(gpui::FontWeight::SEMIBOLD)
-                .text_color(CARBON.blue_primary)
+                .text_color(ZED.text_accent)
                 .child(label)
                 .child(
                     div()
                         .text_xs()
-                        .text_color(CARBON.text_muted)
-                        .hover(|s| s.text_color(CARBON.error))
+                        .text_color(ZED.text_muted)
+                        .hover(|s| s.text_color(ZED.error))
                         .child("×"),
                 )
                 .on_click(cx.listener(move |this, _, _window, cx| {
@@ -617,15 +637,15 @@ impl Render for AppView {
         }
 
         let editor_toolbar = div()
+            .h(px(34.0))
             .flex()
             .flex_row()
             .items_center()
             .justify_between()
             .px_3()
-            .py_1p5()
-            .bg(CARBON.layer_01)
+            .bg(ZED.surface_background)
             .border_b_1()
-            .border_color(CARBON.border_subtle)
+            .border_color(ZED.border_variant)
             .child(
                 div()
                     .flex()
@@ -643,13 +663,13 @@ impl Render for AppView {
                             .gap_2()
                             .px_2p5()
                             .py_1()
-                            .rounded_sm()
-                            .bg(CARBON.bg)
+                            .rounded_md()
+                            .bg(ZED.element_background)
                             .border_1()
                             .border_color(if self.search_state.is_open {
-                                CARBON.blue_primary
+                                ZED.border_focused
                             } else {
-                                CARBON.border_subtle
+                                ZED.border_variant
                             })
                             .text_xs()
                             .child(
@@ -657,23 +677,31 @@ impl Render for AppView {
                                     .flex()
                                     .flex_row()
                                     .items_center()
-                                    .gap_1()
-                                    .text_color(CARBON.text_muted)
+                                    .gap_1p5()
+                                    .text_color(ZED.icon)
                                     .child(Icon::new(IconName::Search).size(px(13.0)))
                                     .when(self.search_state.query.is_empty(), |this| {
-                                        this.child("Search")
+                                        this.child(
+                                            div()
+                                                .text_color(ZED.text_placeholder)
+                                                .child("Search in logs..."),
+                                        )
                                     }),
                             )
                             .child(if !self.search_state.query.is_empty() {
                                 let (c, t) = self.search_state.current_match_display();
                                 div()
                                     .font_family(".AppleSystemUIFontMonospaced")
-                                    .text_color(CARBON.text_primary)
+                                    .text_color(ZED.text)
                                     .child(format!("{}  {}/{}", self.search_state.query, c, t))
                                     .into_any_element()
                             } else {
                                 div()
-                                    .text_color(CARBON.text_muted)
+                                    .px_1()
+                                    .py_0p5()
+                                    .rounded_xs()
+                                    .bg(ZED.surface_background)
+                                    .text_color(ZED.text_muted)
                                     .child("⌘F")
                                     .into_any_element()
                             })
@@ -690,21 +718,19 @@ impl Render for AppView {
                             .cursor_pointer()
                             .px_2()
                             .py_1()
-                            .rounded_sm()
+                            .rounded_md()
                             .bg(if self.is_filter_builder_open {
-                                CARBON.blue_primary
+                                ZED.ghost_selected
                             } else {
-                                CARBON.bg
+                                ZED.transparent
                             })
-                            .border_1()
-                            .border_color(CARBON.border_subtle)
+                            .hover(|s| s.bg(ZED.ghost_hover))
                             .text_xs()
                             .text_color(if self.is_filter_builder_open {
-                                CARBON.text_on_color
+                                ZED.text_accent
                             } else {
-                                CARBON.text_secondary
+                                ZED.text_muted
                             })
-                            .hover(|s| s.bg(CARBON.layer_hover))
                             .child("+ Filter")
                             .on_click(cx.listener(|this, _, _window, cx| {
                                 this.toggle_filter_builder(cx);
@@ -716,7 +742,7 @@ impl Render for AppView {
                     .flex()
                     .flex_row()
                     .items_center()
-                    .gap_2()
+                    .gap_1()
                     // Density toggle
                     .child(
                         div()
@@ -724,13 +750,10 @@ impl Render for AppView {
                             .cursor_pointer()
                             .px_2()
                             .py_1()
-                            .rounded_sm()
-                            .bg(CARBON.bg)
-                            .border_1()
-                            .border_color(CARBON.border_subtle)
+                            .rounded_md()
+                            .hover(|s| s.bg(ZED.ghost_hover))
                             .text_xs()
-                            .text_color(CARBON.text_muted)
-                            .hover(|s| s.text_color(CARBON.text_primary))
+                            .text_color(ZED.text_muted)
                             .child(format!("Density: {}", self.density.as_str()))
                             .on_click(cx.listener(|this, _, _window, cx| {
                                 this.density = match this.density {
@@ -748,21 +771,19 @@ impl Render for AppView {
                             .cursor_pointer()
                             .px_2()
                             .py_1()
-                            .rounded_sm()
+                            .rounded_md()
                             .bg(if self.word_wrap {
-                                CARBON.layer_02
+                                ZED.ghost_selected
                             } else {
-                                CARBON.bg
+                                ZED.transparent
                             })
-                            .border_1()
-                            .border_color(CARBON.border_subtle)
+                            .hover(|s| s.bg(ZED.ghost_hover))
                             .text_xs()
                             .text_color(if self.word_wrap {
-                                CARBON.blue_primary
+                                ZED.text_accent
                             } else {
-                                CARBON.text_muted
+                                ZED.text_muted
                             })
-                            .hover(|s| s.text_color(CARBON.text_primary))
                             .child(if self.word_wrap { "Wrap: ON" } else { "Wrap: OFF" })
                             .on_click(cx.listener(|this, _, _window, cx| {
                                 this.word_wrap = !this.word_wrap;
@@ -776,21 +797,19 @@ impl Render for AppView {
                             .cursor_pointer()
                             .px_2()
                             .py_1()
-                            .rounded_sm()
+                            .rounded_md()
                             .bg(if self.is_inspector_open {
-                                CARBON.blue_primary
+                                ZED.ghost_selected
                             } else {
-                                CARBON.bg
+                                ZED.transparent
                             })
-                            .border_1()
-                            .border_color(CARBON.border_subtle)
+                            .hover(|s| s.bg(ZED.ghost_hover))
                             .text_xs()
                             .text_color(if self.is_inspector_open {
-                                CARBON.text_on_color
+                                ZED.text_accent
                             } else {
-                                CARBON.text_muted
+                                ZED.text_muted
                             })
-                            .hover(|s| s.text_color(CARBON.text_primary))
                             .child("Inspector ⌘I")
                             .on_click(cx.listener(|this, _, _window, cx| {
                                 this.is_inspector_open = !this.is_inspector_open;
@@ -799,19 +818,19 @@ impl Render for AppView {
                     ),
             );
 
-        // 3. Activity Rail (48px, hidden when SidebarState::Hidden)
+        // 3. Activity Rail (W: 40px, Minimalist Icon Bar)
         let rail = if self.sidebar_state != SidebarState::Hidden {
             div()
-                .w(px(48.0))
+                .w(px(40.0))
                 .h_full()
-                .bg(CARBON.layer_01)
+                .bg(ZED.surface_background)
                 .border_r_1()
-                .border_color(CARBON.border_subtle)
+                .border_color(ZED.border_variant)
                 .flex()
                 .flex_col()
                 .items_center()
                 .py_2()
-                .gap_3()
+                .gap_2()
                 .child(rail_icon(
                     "rail_files",
                     IconName::Folder,
@@ -865,7 +884,7 @@ impl Render for AppView {
             div().into_any_element()
         };
 
-        // 4. Collapsible Sidebar (220px when expanded)
+        // 4. Collapsible Sidebar Drawer (W: 240px when expanded)
         let sidebar_content = if self.sidebar_state == SidebarState::Expanded {
             let mut list = div().flex().flex_col().gap_1().w_full();
 
@@ -874,8 +893,8 @@ impl Render for AppView {
                     list = list.child(
                         div()
                             .text_xs()
-                            .font_weight(gpui::FontWeight::BOLD)
-                            .text_color(CARBON.text_muted)
+                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                            .text_color(ZED.text_muted)
                             .mb_2()
                             .child("BOOKMARKS & MARKERS"),
                     );
@@ -896,8 +915,8 @@ impl Render for AppView {
                                     .gap_2()
                                     .px_2()
                                     .py_1()
-                                    .rounded_sm()
-                                    .hover(|s| s.bg(CARBON.layer_hover))
+                                    .rounded_md()
+                                    .hover(|s| s.bg(ZED.ghost_hover))
                                     .child(
                                         div()
                                             .font_weight(gpui::FontWeight::BOLD)
@@ -907,14 +926,14 @@ impl Render for AppView {
                                     .child(
                                         div()
                                             .text_xs()
-                                            .text_color(CARBON.text_muted)
+                                            .text_color(ZED.text_muted)
                                             .child(format!("#{}", entry.index)),
                                     )
                                     .child(
                                         div()
                                             .flex_1()
                                             .text_xs()
-                                            .text_color(CARBON.text_primary)
+                                            .text_color(ZED.text)
                                             .truncate()
                                             .child(entry.payload.clone()),
                                     )
@@ -931,8 +950,8 @@ impl Render for AppView {
                     list = list.child(
                         div()
                             .text_xs()
-                            .font_weight(gpui::FontWeight::BOLD)
-                            .text_color(CARBON.text_muted)
+                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                            .text_color(ZED.text_muted)
                             .mb_2()
                             .child("MODULES"),
                     );
@@ -951,21 +970,21 @@ impl Render for AppView {
                             .justify_between()
                             .px_2()
                             .py_1()
-                            .rounded_sm()
+                            .rounded_md()
                             .bg(if is_focused {
-                                CARBON.blue_primary
+                                ZED.element_selected
                             } else {
-                                CARBON.bg
+                                ZED.transparent
                             })
-                            .hover(|s| s.bg(CARBON.layer_hover))
+                            .hover(|s| s.bg(ZED.ghost_hover))
                             .child(
                                 div()
                                     .text_xs()
                                     .font_weight(gpui::FontWeight::MEDIUM)
                                     .text_color(if is_focused {
-                                        CARBON.text_on_color
+                                        ZED.text_accent
                                     } else {
-                                        CARBON.text_primary
+                                        ZED.text
                                     })
                                     .child(mod_name),
                             )
@@ -985,8 +1004,8 @@ impl Render for AppView {
                     list = list.child(
                         div()
                             .text_xs()
-                            .font_weight(gpui::FontWeight::BOLD)
-                            .text_color(CARBON.text_muted)
+                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                            .text_color(ZED.text_muted)
                             .mb_2()
                             .child("WORKSPACE LOGS"),
                     );
@@ -997,17 +1016,18 @@ impl Render for AppView {
                         let item = div()
                             .px_2()
                             .py_1()
-                            .rounded_sm()
+                            .rounded_md()
+                            .hover(|s| s.bg(ZED.ghost_hover))
                             .text_xs()
                             .font_weight(if is_curr {
-                                gpui::FontWeight::BOLD
+                                gpui::FontWeight::SEMIBOLD
                             } else {
                                 gpui::FontWeight::NORMAL
                             })
                             .text_color(if is_curr {
-                                CARBON.blue_primary
+                                ZED.text_accent
                             } else {
-                                CARBON.text_secondary
+                                ZED.text_muted
                             })
                             .child(
                                 div()
@@ -1024,11 +1044,11 @@ impl Render for AppView {
             }
 
             div()
-                .w(px(220.0))
+                .w(px(240.0))
                 .h_full()
-                .bg(CARBON.layer_01)
+                .bg(ZED.surface_background)
                 .border_r_1()
-                .border_color(CARBON.border_subtle)
+                .border_color(ZED.border_variant)
                 .p_3()
                 .overflow_y_scrollbar()
                 .child(list)
@@ -1037,7 +1057,7 @@ impl Render for AppView {
             div().into_any_element()
         };
 
-        // 5. Center Log Canvas
+        // 5. Center Log Canvas (Editor Canvas)
         let selected_entry = self.selected_entry();
 
         let log_canvas = LogCanvas::render(
@@ -1062,7 +1082,7 @@ impl Render for AppView {
             cx,
         );
 
-        // 7. Status Bar (Bottom)
+        // 7. Status Bar (H: 24px, Minimalist Footer)
         let total_count = self.all_entries.len();
         let visible_count = self.visible_indices.len();
         let filter_pct = if total_count > 0 {
@@ -1081,33 +1101,40 @@ impl Render for AppView {
             .items_center()
             .justify_between()
             .px_3()
-            .bg(CARBON.layer_01)
+            .bg(ZED.surface_background)
             .border_t_1()
-            .border_color(CARBON.border_subtle)
+            .border_color(ZED.border_variant)
             .text_xs()
             .font_family(".AppleSystemUIFontMonospaced")
-            .text_color(CARBON.text_muted)
+            .text_color(ZED.text_muted)
             .child(
                 div()
                     .flex()
                     .flex_row()
                     .items_center()
-                    .gap_3()
+                    .gap_2p5()
                     .child(div().child(format!("Ln {}", current_line_num)))
+                    .child(div().text_color(ZED.border_variant).child("·"))
                     .child(div().child(format!("{},{:03} events", total_count / 1000, total_count % 1000)))
+                    .child(div().text_color(ZED.border_variant).child("·"))
                     .child(if filter_pct > 0.0 {
                         div()
-                            .text_color(CARBON.blue_primary)
+                            .text_color(ZED.text_accent)
                             .child(format!("Filtered {:.1}%", filter_pct))
                             .into_any_element()
                     } else {
                         div().child("All Visible").into_any_element()
                     })
+                    .child(div().text_color(ZED.border_variant).child("·"))
                     .child(div().child("UTF-8"))
                     .child(if let Some(ref t) = self.focused_tag {
                         div()
-                            .text_color(CARBON.purple_accent)
-                            .child(format!("Focus: [{}]", t))
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .gap_2p5()
+                            .child(div().text_color(ZED.border_variant).child("·"))
+                            .child(div().text_color(ZED.text_accent).child(format!("Focus: [{}]", t)))
                             .into_any_element()
                     } else {
                         div().into_any_element()
@@ -1123,10 +1150,14 @@ impl Render for AppView {
                         div()
                             .id("btn_status_tail")
                             .cursor_pointer()
+                            .px_1p5()
+                            .py_0p5()
+                            .rounded_xs()
+                            .hover(|s| s.bg(ZED.ghost_hover))
                             .text_color(if self.tail_enabled {
-                                CARBON.success
+                                ZED.success
                             } else {
-                                CARBON.text_muted
+                                ZED.text_muted
                             })
                             .child(if self.tail_enabled {
                                 "Tail: ON ●"
@@ -1140,7 +1171,7 @@ impl Render for AppView {
                     ),
             );
 
-        // 8. Overlays
+        // 8. Floating Overlays
         let search_overlay = SearchOverlay::render(
             &self.search_state,
             &self.search_input,
@@ -1168,14 +1199,14 @@ impl Render for AppView {
 
         let command_palette = CommandPalette::render(self.is_palette_open, cx);
 
-        // Main Layout Container
+        // Main Layout Container (Base Window Canvas)
         div()
             .track_focus(&self.focus_handle)
             .on_key_down(cx.listener(|this, event: &KeyDownEvent, _window, cx| {
                 this.handle_key_down(event, cx);
             }))
             .size_full()
-            .bg(CARBON.bg)
+            .bg(ZED.background)
             .flex()
             .flex_col()
             .relative()
@@ -1219,24 +1250,18 @@ fn rail_icon(
         .items_center()
         .justify_center()
         .bg(if is_active {
-            CARBON.layer_02
+            ZED.ghost_selected
         } else {
-            CARBON.transparent
+            ZED.transparent
         })
-        .border_1()
-        .border_color(if is_active {
-            CARBON.blue_primary
-        } else {
-            CARBON.transparent
-        })
-        .hover(|s| s.bg(CARBON.layer_hover))
+        .hover(|s| s.bg(ZED.ghost_hover))
         .child(
             Icon::new(icon)
                 .size(px(16.0))
                 .text_color(if is_active {
-                    CARBON.blue_primary
+                    ZED.icon_accent
                 } else {
-                    CARBON.text_secondary
+                    ZED.icon_muted
                 }),
         )
         .on_click(on_click)

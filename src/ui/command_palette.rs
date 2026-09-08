@@ -1,4 +1,4 @@
-use crate::theme::CARBON;
+use crate::theme::ZED;
 use gpui::{
     div, px, ElementId, InteractiveElement, IntoElement, ParentElement, StatefulInteractiveElement,
     Styled,
@@ -128,20 +128,20 @@ impl CommandPalette {
                 .justify_between()
                 .px_3()
                 .py_2()
-                .rounded_sm()
-                .hover(|s| s.bg(CARBON.layer_hover).text_color(CARBON.text_primary))
+                .rounded_md()
+                .hover(|s| s.bg(ZED.ghost_hover).text_color(ZED.text))
                 .child(
                     div()
                         .text_xs()
                         .font_weight(gpui::FontWeight::MEDIUM)
-                        .text_color(CARBON.text_primary)
+                        .text_color(ZED.text)
                         .child(cmd.name),
                 )
                 .child(
                     div()
                         .text_xs()
                         .font_family(".AppleSystemUIFontMonospaced")
-                        .text_color(CARBON.text_muted)
+                        .text_color(ZED.text_muted)
                         .child(cmd.shortcut),
                 )
                 .on_click(cx.listener(move |this, _, _window, cx| {
@@ -154,7 +154,7 @@ impl CommandPalette {
         div()
             .absolute()
             .inset_0()
-            .bg(gpui::rgba(0x000000aa))
+            .bg(gpui::rgba(0x00000088))
             .flex()
             .items_start()
             .justify_center()
@@ -162,9 +162,9 @@ impl CommandPalette {
             .child(
                 div()
                     .w(px(520.0))
-                    .bg(CARBON.layer_02)
+                    .bg(ZED.elevated_surface)
                     .border_1()
-                    .border_color(CARBON.border_strong)
+                    .border_color(ZED.border)
                     .rounded_lg()
                     .shadow_2xl()
                     .p_3()
@@ -178,21 +178,22 @@ impl CommandPalette {
                             .items_center()
                             .justify_between()
                             .border_b_1()
-                            .border_color(CARBON.border_subtle)
+                            .border_color(ZED.border_variant)
                             .pb_2()
                             .child(
                                 div()
                                     .text_xs()
-                                    .font_weight(gpui::FontWeight::BOLD)
-                                    .text_color(CARBON.text_muted)
-                                    .child("COMMAND PALETTE (⌘K)"),
+                                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                                    .text_color(ZED.text_muted)
+                                    .child("COMMAND PALETTE"),
                             )
                             .child(
                                 div()
                                     .id("close_pal")
                                     .cursor_pointer()
                                     .text_xs()
-                                    .text_color(CARBON.text_muted)
+                                    .text_color(ZED.text_muted)
+                                    .hover(|s| s.text_color(ZED.text))
                                     .child("Esc to Close")
                                     .on_click(cx.listener(|this, _, _window, cx| {
                                         this.is_palette_open = false;
