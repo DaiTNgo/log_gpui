@@ -24,9 +24,20 @@ static RE_SYSLOG: LazyLock<Regex> = LazyLock::new(|| {
         .unwrap()
 });
 
+#[derive(Debug, Clone)]
+pub struct ParseResult {
+    pub entries: Vec<LogEntry>,
+    pub max_chars: crate::column::FieldMaxChars,
+}
+
 pub fn parse_text_bytes(bytes: &[u8]) -> anyhow::Result<Vec<LogEntry>> {
+    parse_text_bytes_with_max_chars(bytes).map(|res| res.entries)
+}
+
+pub fn parse_text_bytes_with_max_chars(bytes: &[u8]) -> anyhow::Result<ParseResult> {
     let content = String::from_utf8_lossy(bytes);
     let mut entries = Vec::new();
+    let mut max_chars = crate::column::FieldMaxChars::new();
     let mut prev_ts = 0.0;
 
     for (i, line) in content.lines().enumerate() {
@@ -41,6 +52,7 @@ pub fn parse_text_bytes(bytes: &[u8]) -> anyhow::Result<Vec<LogEntry>> {
             if let Ok(json_val) = serde_json::from_str::<Value>(line_trimmed) {
                 if let Some(entry) = parse_json_log_entry(index, &json_val, line, prev_ts) {
                     prev_ts = entry.timestamp;
+                    max_chars.record_entry(&entry);
                     entries.push(entry);
                     continue;
                 }
@@ -128,10 +140,12 @@ pub fn parse_text_bytes(bytes: &[u8]) -> anyhow::Result<Vec<LogEntry>> {
         }
 
         prev_ts = timestamp;
-        entries.push(LogEntry::new(index, timestamp, time_str, tag, level, payload, line.to_string()));
+        let entry = LogEntry::new(index, timestamp, time_str, tag, level, payload, line.to_string());
+        max_chars.record_entry(&entry);
+        entries.push(entry);
     }
 
-    Ok(entries)
+    Ok(ParseResult { entries, max_chars })
 }
 
 fn parse_json_log_entry(index: usize, json: &Value, raw_line: &str, prev_ts: f64) -> Option<LogEntry> {

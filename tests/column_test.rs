@@ -130,11 +130,16 @@ fn test_dynamic_column_width_formula() {
     // Expected: 38 * 7.2 + 16.0 = 273.6 + 16.0 = 289.6 px
     let mod_width = compute_column_width(PinnableColumn::Module, 38, font_size, px(48.0));
     assert_eq!(mod_width, px(38.0 * char_width + 16.0));
+    // 3. Safety floor and title floor enforcement:
+    // 0 chars floored by title length so column headers never truncate
     let floored_ts = compute_column_width(PinnableColumn::Timestamp, 0, font_size, px(48.0));
-    assert_eq!(floored_ts, px(48.0));
+    assert_eq!(floored_ts, px(9.0 * char_width + 16.0)); // 80.8px >= 48.0px
 
     let floored_lvl = compute_column_width(PinnableColumn::Level, 0, font_size, px(36.0));
-    assert_eq!(floored_lvl, px(36.0));
+    assert_eq!(floored_lvl, px(5.0 * char_width + 24.0)); // 60.0px >= 36.0px
+
+    let floored_mod = compute_column_width(PinnableColumn::Module, 0, font_size, px(48.0));
+    assert_eq!(floored_mod, px(6.0 * char_width + 16.0)); // 59.2px >= 48.0px
 }
 
 #[test]
@@ -166,8 +171,17 @@ fn test_dynamic_width_across_densities() {
     assert_eq!(width_comfortable, px(25.0 * (0.6 * 13.0) + 16.0)); // 211.0px
     assert_eq!(width_compact, px(25.0 * (0.6 * 12.0) + 16.0)); // 196.0px
     assert_eq!(width_ultra, px(25.0 * (0.6 * 11.0) + 16.0)); // 181.0px
-}
 
+    // LEVEL column width also properly scales with density
+    let lvl_comfortable = compute_column_width(PinnableColumn::Level, 1, Density::Comfortable.font_size(), px(36.0));
+    let lvl_compact = compute_column_width(PinnableColumn::Level, 1, Density::Compact.font_size(), px(36.0));
+    let lvl_ultra = compute_column_width(PinnableColumn::Level, 1, Density::UltraCompact.font_size(), px(36.0));
+    assert!(lvl_comfortable > lvl_compact);
+    assert!(lvl_compact > lvl_ultra);
+    assert_eq!(lvl_comfortable, px(5.0 * (0.6 * 13.0) + 24.0)); // 63.0px
+    assert_eq!(lvl_compact, px(5.0 * (0.6 * 12.0) + 24.0)); // 60.0px
+    assert_eq!(lvl_ultra, px(5.0 * (0.6 * 11.0) + 24.0)); // 57.0px
+}
 #[test]
 fn test_column_layout_state_update_from_entries() {
     let mut state = ColumnLayoutState::new();
@@ -224,4 +238,14 @@ fn test_100k_entries_scan_performance() {
         "Scanning 100k entries took too long: {:?}",
         elapsed
     );
+}
+
+#[test]
+fn test_parser_tracks_field_max_chars_during_ingestion() {
+    let raw = b"2026-09-08 12:34:56.789123 [WARN] [com.example.service.Auth] User signed in\n";
+    let res = log_gpui::parser::text::parse_text_bytes_with_max_chars(raw).unwrap();
+    assert_eq!(res.entries.len(), 1);
+    assert_eq!(res.max_chars.timestamp, 26);
+    assert_eq!(res.max_chars.module, 24);
+    assert_eq!(res.max_chars.level, 1);
 }

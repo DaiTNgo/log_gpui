@@ -19,6 +19,18 @@ pub enum PinnableColumn {
     Module,
 }
 
+impl PinnableColumn {
+    /// Returns the character length of the column header title to prevent title truncation.
+    #[inline]
+    pub const fn title_chars(&self) -> usize {
+        match self {
+            PinnableColumn::Timestamp => 9, // "TIMESTAMP"
+            PinnableColumn::Level => 5,     // "LEVEL"
+            PinnableColumn::Module => 6,    // "MODULE"
+        }
+    }
+}
+
 /// Tracks the maximum character lengths per structured field observed across log entries.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct FieldMaxChars {
@@ -57,6 +69,8 @@ impl FieldMaxChars {
 /// Computes dynamic column width based on ADR 0003:
 /// Width = max(min_width, (max_chars * W_char) + padding)
 /// where W_char = 0.6 * font_size.
+/// Also ensures effective character length is at least the column title length
+/// so column headers never truncate and widths scale consistently with font size.
 #[inline]
 pub fn compute_column_width(
     col: PinnableColumn,
@@ -65,12 +79,13 @@ pub fn compute_column_width(
     min_width: Pixels,
 ) -> Pixels {
     let char_width = 0.6 * font_size;
+    let effective_chars = max_chars.max(col.title_chars());
     let padding = match col {
         PinnableColumn::Timestamp => 16.0,
         PinnableColumn::Level => 24.0,
         PinnableColumn::Module => 16.0,
     };
-    let content_width = (max_chars as f32) * char_width + padding;
+    let content_width = (effective_chars as f32) * char_width + padding;
     px(content_width).max(min_width)
 }
 
@@ -155,26 +170,19 @@ impl ColumnLayoutState {
     }
 
     /// Recomputes dynamic column widths when visual density (and thus monospace font size) changes.
+    #[inline]
     pub fn update_density(&mut self, density: Density) {
         self.recompute_widths(density);
     }
 
     /// Recalculates dynamic widths from recorded max_chars for a given density.
     pub fn recompute_widths(&mut self, density: Density) {
-        let font_size = density.font_size();
         for col in [
             PinnableColumn::Timestamp,
             PinnableColumn::Level,
             PinnableColumn::Module,
         ] {
-            let count = match col {
-                PinnableColumn::Timestamp => self.max_chars.timestamp,
-                PinnableColumn::Level => self.max_chars.level,
-                PinnableColumn::Module => self.max_chars.module,
-            };
-            let min = self.min_width(col);
-            let calculated = compute_column_width(col, count, font_size, min);
-            self.widths.insert(col, calculated);
+            self.auto_fit(col, density);
         }
     }
 

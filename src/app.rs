@@ -390,9 +390,10 @@ impl AppView {
                 .unwrap_or_else(|| "Unknown File".to_string());
 
             match parse_file(&file_path) {
-                Ok(entries) => {
-                    self.all_entries = entries;
-                    self.column_layout.update_from_entries(&self.all_entries, self.density);
+                Ok(result) => {
+                    self.all_entries = result.entries;
+                    self.column_layout.max_chars = result.max_chars;
+                    self.column_layout.update_density(self.density);
                     self.file_name = name;
                     self.file_format = "Text Log".to_string();
                     self.apply_filters_and_refresh(cx);
