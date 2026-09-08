@@ -1,6 +1,7 @@
 use gpui::px;
-use log_gpui::column::{ColumnLayoutState, PinnableColumn};
-use log_gpui::column::{compute_column_width, FieldMaxChars};
+use log_gpui::column::{
+    compute_column_width, ColumnLayoutState, FieldMaxChars, IconName, PinToggleState, PinnableColumn,
+};
 use log_gpui::model::{LogEntry, LogLevel};
 use log_gpui::theme::Density;
 
@@ -248,4 +249,176 @@ fn test_parser_tracks_field_max_chars_during_ingestion() {
     assert_eq!(res.max_chars.timestamp, 26);
     assert_eq!(res.max_chars.module, 24);
     assert_eq!(res.max_chars.level, 1);
+}
+
+#[test]
+fn test_pin_state_engine_defaults_and_transitions() {
+    let mut state = ColumnLayoutState::new();
+
+    // Acceptance criteria 1: All data columns start in the unpinned state by default
+    assert!(!state.is_pinned(PinnableColumn::Timestamp));
+    assert!(!state.is_pinned(PinnableColumn::Level));
+    assert!(!state.is_pinned(PinnableColumn::Module));
+    assert!(state.pinned_columns().is_empty());
+    assert_eq!(
+        state.unpinned_columns(),
+        vec![
+            PinnableColumn::Timestamp,
+            PinnableColumn::Level,
+            PinnableColumn::Module
+        ]
+    );
+
+    // Pin a column
+    let newly_pinned = state.pin(PinnableColumn::Timestamp);
+    assert!(newly_pinned);
+    assert!(state.is_pinned(PinnableColumn::Timestamp));
+    assert_eq!(state.pinned_columns(), &[PinnableColumn::Timestamp]);
+
+    // Pinning again is a no-op
+    assert!(!state.pin(PinnableColumn::Timestamp));
+
+    // Toggle pin off
+    let is_pinned_now = state.toggle_pin(PinnableColumn::Timestamp);
+    assert!(!is_pinned_now);
+    assert!(!state.is_pinned(PinnableColumn::Timestamp));
+    assert!(state.pinned_columns().is_empty());
+
+    // Toggle pin on
+    let is_pinned_now = state.toggle_pin(PinnableColumn::Level);
+    assert!(is_pinned_now);
+    assert!(state.is_pinned(PinnableColumn::Level));
+
+    // Unpin
+    let was_pinned = state.unpin(PinnableColumn::Level);
+    assert!(was_pinned);
+    assert!(!state.is_pinned(PinnableColumn::Level));
+}
+
+#[test]
+fn test_pin_state_engine_schema_order_preservation() {
+    let mut state = ColumnLayoutState::new();
+
+    // Domain rule 3: When multiple columns are pinned, they always maintain their original
+    // schema ordering (TIMESTAMP -> LEVEL -> MODULE) at the anchor boundary, regardless
+    // of the sequence in which they were toggled.
+    state.pin(PinnableColumn::Module);
+    state.pin(PinnableColumn::Timestamp);
+
+    // Toggled Module first, then Timestamp:
+    // Ordered result MUST be [Timestamp, Module]
+    assert_eq!(
+        state.pinned_columns(),
+        &[PinnableColumn::Timestamp, PinnableColumn::Module]
+    );
+    assert_eq!(state.unpinned_columns(), vec![PinnableColumn::Level]);
+
+    // Pin Level as well
+    state.pin(PinnableColumn::Level);
+    assert_eq!(
+        state.pinned_columns(),
+        &[
+            PinnableColumn::Timestamp,
+            PinnableColumn::Level,
+            PinnableColumn::Module
+        ]
+    );
+    assert!(state.unpinned_columns().is_empty());
+
+    // Unpin all reset
+    state.unpin_all();
+    assert!(state.pinned_columns().is_empty());
+    assert_eq!(
+        state.unpinned_columns(),
+        vec![
+            PinnableColumn::Timestamp,
+            PinnableColumn::Level,
+            PinnableColumn::Module
+        ]
+    );
+}
+
+#[test]
+fn test_pinnability_rules() {
+    // Acceptance criteria 5 & Domain rule 2: Only metadata columns are pinnable.
+    // Gutter is permanently anchored; MESSAGE is permanently unpinnable.
+    assert!(PinnableColumn::is_pinnable("TIMESTAMP"));
+    assert!(PinnableColumn::is_pinnable("LEVEL"));
+    assert!(PinnableColumn::is_pinnable("MODULE"));
+    assert!(!PinnableColumn::is_pinnable("MESSAGE"));
+    assert!(!PinnableColumn::is_pinnable("GUTTER"));
+    assert!(!PinnableColumn::is_pinnable("#"));
+}
+
+#[test]
+fn test_pin_toggle_interaction_states() {
+    let mut state = ColumnLayoutState::new();
+
+    // 1. Unpinned (Idle): Icon hidden to keep minimalist theme clean
+    assert_eq!(
+        state.pin_toggle_state(PinnableColumn::Timestamp),
+        PinToggleState::UnpinnedIdle
+    );
+    assert_eq!(PinToggleState::UnpinnedIdle.icon(), None);
+    assert!(!PinToggleState::UnpinnedIdle.is_visible());
+
+    // 2. Unpinned (Hover): Header hover reveals muted pin icon (PushPinSimple, text_muted)
+    state.set_header_hovered(PinnableColumn::Timestamp, true);
+    assert_eq!(
+        state.pin_toggle_state(PinnableColumn::Timestamp),
+        PinToggleState::UnpinnedHover
+    );
+    assert_eq!(
+        PinToggleState::UnpinnedHover.icon(),
+        Some(IconName::PushPinSimple)
+    );
+    assert!(PinToggleState::UnpinnedHover.is_visible());
+
+    // Other columns remain UnpinnedIdle
+    assert_eq!(
+        state.pin_toggle_state(PinnableColumn::Level),
+        PinToggleState::UnpinnedIdle
+    );
+
+    // 3. Pinned (Active): Clicking pin marks it pinned, persistently visible with accent emphasis
+    state.pin(PinnableColumn::Timestamp);
+    state.set_header_hovered(PinnableColumn::Timestamp, false);
+    state.set_toggle_hovered(PinnableColumn::Timestamp, false);
+    assert_eq!(
+        state.pin_toggle_state(PinnableColumn::Timestamp),
+        PinToggleState::PinnedActive
+    );
+    assert_eq!(
+        PinToggleState::PinnedActive.icon(),
+        Some(IconName::PushPinSimple)
+    );
+    assert!(PinToggleState::PinnedActive.is_visible());
+
+    // Header hovered while pinned still shows active accent pin if toggle itself is not hovered
+    state.set_header_hovered(PinnableColumn::Timestamp, true);
+    assert_eq!(
+        state.pin_toggle_state(PinnableColumn::Timestamp),
+        PinToggleState::PinnedActive
+    );
+
+    // 4. Pinned (Hover): Hovering the toggle button displays unpin release affordance (PushPinSimpleSlash)
+    state.set_toggle_hovered(PinnableColumn::Timestamp, true);
+    assert_eq!(
+        state.pin_toggle_state(PinnableColumn::Timestamp),
+        PinToggleState::PinnedHover
+    );
+    assert_eq!(
+        PinToggleState::PinnedHover.icon(),
+        Some(IconName::PushPinSimpleSlash)
+    );
+    assert!(PinToggleState::PinnedHover.is_visible());
+
+    // Clicking pinned column releases pin
+    state.toggle_pin(PinnableColumn::Timestamp);
+    state.set_toggle_hovered(PinnableColumn::Timestamp, false);
+    state.set_header_hovered(PinnableColumn::Timestamp, false);
+    assert_eq!(
+        state.pin_toggle_state(PinnableColumn::Timestamp),
+        PinToggleState::UnpinnedIdle
+    );
 }

@@ -10,7 +10,7 @@ use gpui::{
 use gpui_component::scroll::ScrollableElement as _;
 use std::sync::Arc;
 
-use crate::column::PinnableColumn;
+use crate::column::{PinToggleState, PinnableColumn};
 
 /// Helper to extract horizontal scroll offset from UniformListScrollHandle.
 #[inline]
@@ -100,22 +100,25 @@ impl LogCanvas {
                             .relative()
                             .left(-scroll_x)
                             .child(
-                                div()
-                                    .w(timestamp_width)
-                                    .px_2()
-                                    .child("TIMESTAMP"),
+                                render_pinnable_column_header(
+                                    PinnableColumn::Timestamp,
+                                    timestamp_width,
+                                    &state,
+                                ),
                             )
                             .child(
-                                div()
-                                    .w(level_width)
-                                    .px_1()
-                                    .child("LEVEL"),
+                                render_pinnable_column_header(
+                                    PinnableColumn::Level,
+                                    level_width,
+                                    &state,
+                                ),
                             )
                             .child(
-                                div()
-                                    .w(module_width)
-                                    .px_2()
-                                    .child("MODULE"),
+                                render_pinnable_column_header(
+                                    PinnableColumn::Module,
+                                    module_width,
+                                    &state,
+                                )
                             )
                             .child(
                                 div()
@@ -498,6 +501,97 @@ impl LogCanvas {
             )
             .into_any_element()
     }
+}
+
+fn render_pinnable_column_header(
+    col: PinnableColumn,
+    width: Pixels,
+    state: &CanvasViewState,
+) -> impl IntoElement {
+    let toggle_state = state.column_layout.pin_toggle_state(col);
+    let view_header = state.view.clone();
+    let view_toggle = state.view.clone();
+    let view_click = state.view.clone();
+
+    // In UnpinnedIdle state, render a non-interactive spacer so it never intercepts clicks
+    let toggle_element = match toggle_state {
+        PinToggleState::UnpinnedIdle => div().w(px(16.0)).h(px(16.0)).into_any_element(),
+        state_variant => {
+            if let Some(icon) = state_variant.icon() {
+                let (icon_color, is_active_hover) = match state_variant {
+                    PinToggleState::UnpinnedHover => (ZED.text_muted, false),
+                    PinToggleState::PinnedActive => (ZED.text_accent, false),
+                    PinToggleState::PinnedHover => (ZED.text_accent, true),
+                    _ => (ZED.text_muted, false),
+                };
+
+                let mut btn = div()
+                    .id(ElementId::from(("pin_toggle", col as usize)))
+                    .cursor_pointer()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .w(px(16.0))
+                    .h(px(16.0))
+                    .rounded_md()
+                    .hover(|s| s.bg(ZED.ghost_hover).text_color(ZED.icon_hover))
+                    .on_hover(move |is_hovered, _window, cx| {
+                        view_toggle.update(cx, |this, cx| {
+                            this.set_column_toggle_hovered(col, *is_hovered, cx);
+                        });
+                    })
+                    .on_click(move |_event, _window, cx| {
+                        cx.stop_propagation();
+                        view_click.update(cx, |this, cx| {
+                            this.toggle_pin_column(col, cx);
+                        });
+                    });
+
+                if is_active_hover {
+                    btn = btn.bg(ZED.ghost_hover);
+                }
+
+                btn.child(
+                    gpui::svg()
+                        .size(px(12.0))
+                        .text_color(icon_color)
+                        .data(icon.svg_data()),
+                )
+                .into_any_element()
+            } else {
+                div().w(px(16.0)).h(px(16.0)).into_any_element()
+            }
+        }
+    };
+
+    let mut header_div = div()
+        .id(ElementId::from(("header_col", col as usize)))
+        .flex_shrink_0()
+        .w(width)
+        .h_full()
+        .flex()
+        .flex_row()
+        .items_center()
+        .justify_between()
+        .on_hover(move |is_hovered, _window, cx| {
+            view_header.update(cx, |this, cx| {
+                this.set_column_header_hovered(col, *is_hovered, cx);
+            });
+        });
+
+    if col.is_compact() {
+        header_div = header_div.px_1();
+    } else {
+        header_div = header_div.px_2();
+    }
+
+    header_div
+        .child(
+            div()
+                .truncate()
+                .child(col.label()),
+        )
+        .child(toggle_element)
 }
 
 fn render_level_badge(level: LogLevel) -> gpui::Div {

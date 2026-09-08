@@ -20,6 +20,31 @@ pub enum PinnableColumn {
 }
 
 impl PinnableColumn {
+    pub const ALL: [PinnableColumn; 3] = [
+        PinnableColumn::Timestamp,
+        PinnableColumn::Level,
+        PinnableColumn::Module,
+    ];
+
+    #[inline]
+    pub fn is_pinnable(name: &str) -> bool {
+        matches!(name.to_ascii_uppercase().as_str(), "TIMESTAMP" | "LEVEL" | "MODULE")
+    }
+
+    #[inline]
+    pub fn label(self) -> &'static str {
+        match self {
+            PinnableColumn::Timestamp => "TIMESTAMP",
+            PinnableColumn::Level => "LEVEL",
+            PinnableColumn::Module => "MODULE",
+        }
+    }
+
+    #[inline]
+    pub fn is_compact(self) -> bool {
+        matches!(self, PinnableColumn::Level)
+    }
+
     /// Returns the character length of the column header title to prevent title truncation.
     #[inline]
     pub const fn title_chars(&self) -> usize {
@@ -28,6 +53,56 @@ impl PinnableColumn {
             PinnableColumn::Level => 5,     // "LEVEL"
             PinnableColumn::Module => 6,    // "MODULE"
         }
+    }
+}
+
+pub const PUSH_PIN_SIMPLE_SVG: &[u8] = br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" fill="currentColor"><path d="M216,168h-9.29L185.54,48H192a8,8,0,0,0,0-16H64a8,8,0,0,0,0,16h6.46L49.29,168H40a8,8,0,0,0,0,16h80v56a8,8,0,0,0,16,0V184h80a8,8,0,0,0,0-16ZM86.71,48h82.58l21.17,120H65.54Z"/></svg>"#;
+
+pub const PUSH_PIN_SIMPLE_SLASH_SVG: &[u8] = br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" fill="currentColor"><path d="M83.25,40a8,8,0,0,1,8-8H192a8,8,0,0,1,0,16h-6.46l18.75,106.3a8,8,0,0,1-6.48,9.26,7.52,7.52,0,0,1-1.4.13,8,8,0,0,1-7.87-6.61L169.29,48h-78A8,8,0,0,1,83.25,40ZM213.38,221.92a8,8,0,0,1-11.3-.54L168.1,184H136v56a8,8,0,0,1-16,0V184H40a8,8,0,0,1,0-16h9.29L66.24,72,42.08,45.38A8,8,0,1,1,53.92,34.62l160,176A8,8,0,0,1,213.38,221.92ZM153.55,168,79.84,86.92,65.54,168Z"/></svg>"#;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum IconName {
+    PushPinSimple,
+    PushPinSimpleSlash,
+}
+
+impl IconName {
+    #[inline]
+    pub fn svg_data(self) -> &'static [u8] {
+        match self {
+            IconName::PushPinSimple => PUSH_PIN_SIMPLE_SVG,
+            IconName::PushPinSimpleSlash => PUSH_PIN_SIMPLE_SLASH_SVG,
+        }
+    }
+}
+
+/// Pin Toggle interaction states defined in CONTEXT.md and Issue 03.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum PinToggleState {
+    /// Icon hidden to keep the minimalist theme clean.
+    UnpinnedIdle,
+    /// Revealed with muted emphasis (`text_muted`) on Column Header hover.
+    UnpinnedHover,
+    /// Persistently visible with accent emphasis (`text_accent`).
+    PinnedActive,
+    /// Displays an unpin release affordance (`PushPinSimpleSlash`).
+    PinnedHover,
+}
+
+impl PinToggleState {
+    #[inline]
+    pub fn icon(self) -> Option<IconName> {
+        match self {
+            PinToggleState::UnpinnedIdle => None,
+            PinToggleState::UnpinnedHover => Some(IconName::PushPinSimple),
+            PinToggleState::PinnedActive => Some(IconName::PushPinSimple),
+            PinToggleState::PinnedHover => Some(IconName::PushPinSimpleSlash),
+        }
+    }
+
+    #[inline]
+    pub fn is_visible(self) -> bool {
+        !matches!(self, PinToggleState::UnpinnedIdle)
     }
 }
 
@@ -92,11 +167,14 @@ pub fn compute_column_width(
 #[derive(Debug, Clone)]
 pub struct ColumnLayoutState {
     pub pinned_columns: BTreeSet<PinnableColumn>,
+    pub ordered_pinned: Vec<PinnableColumn>,
     pub widths: HashMap<PinnableColumn, Pixels>,
     pub min_widths: HashMap<PinnableColumn, Pixels>,
     pub max_chars: FieldMaxChars,
     pub gutter_width: Pixels,
     pub is_resizing: Option<(PinnableColumn, Pixels)>,
+    pub hovered_header: Option<PinnableColumn>,
+    pub hovered_toggle: Option<PinnableColumn>,
 }
 
 impl Default for ColumnLayoutState {
@@ -119,11 +197,14 @@ impl ColumnLayoutState {
 
         Self {
             pinned_columns: BTreeSet::new(),
+            ordered_pinned: Vec::new(),
             widths,
             min_widths,
             max_chars: FieldMaxChars::new(),
             gutter_width: DEFAULT_GUTTER_WIDTH,
             is_resizing: None,
+            hovered_header: None,
+            hovered_toggle: None,
         }
     }
 
@@ -136,6 +217,106 @@ impl ColumnLayoutState {
     #[inline]
     pub fn gutter_width(&self) -> Pixels {
         self.gutter_width
+    }
+
+    #[inline]
+    pub fn is_pinned(&self, col: PinnableColumn) -> bool {
+        self.pinned_columns.contains(&col)
+    }
+
+    pub fn pin(&mut self, col: PinnableColumn) -> bool {
+        let inserted = self.pinned_columns.insert(col);
+        if inserted {
+            self.sync_ordered_pinned();
+        }
+        inserted
+    }
+
+    pub fn unpin(&mut self, col: PinnableColumn) -> bool {
+        let removed = self.pinned_columns.remove(&col);
+        if removed {
+            self.sync_ordered_pinned();
+        }
+        removed
+    }
+
+    pub fn toggle_pin(&mut self, col: PinnableColumn) -> bool {
+        if self.pinned_columns.contains(&col) {
+            self.pinned_columns.remove(&col);
+            self.sync_ordered_pinned();
+            false
+        } else {
+            self.pinned_columns.insert(col);
+            self.sync_ordered_pinned();
+            true
+        }
+    }
+
+    pub fn unpin_all(&mut self) {
+        self.pinned_columns.clear();
+        self.ordered_pinned.clear();
+    }
+
+    fn sync_ordered_pinned(&mut self) {
+        self.ordered_pinned = self.pinned_columns.iter().copied().collect();
+    }
+
+    /// Returns pinned columns in natural schema order (`TIMESTAMP` -> `LEVEL` -> `MODULE`).
+    #[inline]
+    pub fn pinned_columns(&self) -> &[PinnableColumn] {
+        &self.ordered_pinned
+    }
+
+    /// Returns unpinned columns in natural schema order.
+    pub fn unpinned_columns(&self) -> Vec<PinnableColumn> {
+        PinnableColumn::ALL
+            .iter()
+            .copied()
+            .filter(|col| !self.is_pinned(*col))
+            .collect()
+    }
+
+    pub fn set_header_hovered(&mut self, col: PinnableColumn, hovered: bool) {
+        if hovered {
+            self.hovered_header = Some(col);
+        } else if self.hovered_header == Some(col) {
+            self.hovered_header = None;
+        }
+    }
+
+    pub fn set_toggle_hovered(&mut self, col: PinnableColumn, hovered: bool) {
+        if hovered {
+            self.hovered_toggle = Some(col);
+        } else if self.hovered_toggle == Some(col) {
+            self.hovered_toggle = None;
+        }
+    }
+
+    pub fn pin_toggle_state(&self, col: PinnableColumn) -> PinToggleState {
+        let is_header_hovered = self.hovered_header == Some(col);
+        let is_toggle_hovered = self.hovered_toggle == Some(col);
+        self.pin_toggle_state_with(col, is_header_hovered, is_toggle_hovered)
+    }
+
+    pub fn pin_toggle_state_with(
+        &self,
+        col: PinnableColumn,
+        header_hovered: bool,
+        toggle_hovered: bool,
+    ) -> PinToggleState {
+        if self.is_pinned(col) {
+            if toggle_hovered {
+                PinToggleState::PinnedHover
+            } else {
+                PinToggleState::PinnedActive
+            }
+        } else {
+            if header_hovered || toggle_hovered {
+                PinToggleState::UnpinnedHover
+            } else {
+                PinToggleState::UnpinnedIdle
+            }
+        }
     }
 
     #[inline]

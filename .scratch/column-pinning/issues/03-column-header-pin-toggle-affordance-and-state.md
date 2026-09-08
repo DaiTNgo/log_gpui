@@ -1,4 +1,4 @@
-Status: ready-for-agent
+Status: resolved
 
 # Column Header Pin Toggle Affordance & Pin State Engine
 
@@ -20,13 +20,23 @@ Clicking the toggle toggles the pinned state of the column, storing it in the ap
 
 ## Acceptance criteria
 
-- [ ] All data columns start in the unpinned state by default upon application load.
-- [ ] Hovering over the `TIMESTAMP`, `LEVEL`, or `MODULE` column headers displays the pin toggle icon.
-- [ ] Clicking an unpinned column's toggle marks it as pinned and activates the persistent accent icon.
-- [ ] Clicking a pinned column's toggle releases the pin and returns the icon to the unpinned hover/idle state.
-- [ ] The `MESSAGE` column header does not show a pin toggle.
-- [ ] Pin toggle clicks do not propagate into column sorting or row selection.
+- [x] All data columns start in the unpinned state by default upon application load.
+- [x] Hovering over the `TIMESTAMP`, `LEVEL`, or `MODULE` column headers displays the pin toggle icon.
+- [x] Clicking an unpinned column's toggle marks it as pinned and activates the persistent accent icon.
+- [x] Clicking a pinned column's toggle releases the pin and returns the icon to the unpinned hover/idle state.
+- [x] The `MESSAGE` column header does not show a pin toggle.
+- [x] Pin toggle clicks do not propagate into column sorting or row selection.
 
 ## Blocked by
 
 - .scratch/column-pinning/issues/01-prefactor-deprecate-word-wrap-and-anchor-gutter.md
+
+## Comments
+
+Resolved in Issue 03 implementation:
+1. Implemented pin state engine on `ColumnLayoutState` in `src/column.rs` (`pin()`, `unpin()`, `toggle_pin()`, `pinned_columns()`, `unpinned_columns()`).
+2. Guaranteed schema ordering preservation (`TIMESTAMP` -> `LEVEL` -> `MODULE`) using `BTreeSet` and pre-sorted `ordered_pinned` slice.
+3. Enforced four distinct `PinToggleState` interaction states (`UnpinnedIdle`, `UnpinnedHover`, `PinnedActive`, `PinnedHover`) and embedded Phosphor SVG icon data for `PushPinSimple` and `PushPinSimpleSlash`.
+4. Wired reactive pin actions and hover state tracking in `AppView` (`toggle_pin_column`, `set_column_header_hovered`, `set_column_toggle_hovered`).
+5. Rendered interactive pin toggles on `TIMESTAMP`, `LEVEL`, and `MODULE` headers with `stop_propagation()` on click in `src/ui/canvas.rs`. The `MESSAGE` column remains permanently unpinnable without a toggle.
+6. Verified via comprehensive unit tests in `tests/column_test.rs`. Full test suite passes.

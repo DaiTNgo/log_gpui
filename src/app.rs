@@ -405,6 +405,36 @@ impl AppView {
         }
     }
 
+    pub fn toggle_pin_column(&mut self, col: crate::column::PinnableColumn, cx: &mut Context<Self>) {
+        self.column_layout.toggle_pin(col);
+        cx.notify();
+    }
+
+    pub fn unpin_all_columns(&mut self, cx: &mut Context<Self>) {
+        self.column_layout.unpin_all();
+        cx.notify();
+    }
+
+    pub fn set_column_header_hovered(
+        &mut self,
+        col: crate::column::PinnableColumn,
+        hovered: bool,
+        cx: &mut Context<Self>,
+    ) {
+        self.column_layout.set_header_hovered(col, hovered);
+        cx.notify();
+    }
+
+    pub fn set_column_toggle_hovered(
+        &mut self,
+        col: crate::column::PinnableColumn,
+        hovered: bool,
+        cx: &mut Context<Self>,
+    ) {
+        self.column_layout.set_toggle_hovered(col, hovered);
+        cx.notify();
+    }
+
     fn handle_key_down(&mut self, event: &KeyDownEvent, cx: &mut Context<Self>) {
         let key = event.keystroke.key.as_str();
         let cmd = event.keystroke.modifiers.platform || event.keystroke.modifiers.control;
