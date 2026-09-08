@@ -88,7 +88,7 @@ A unified horizontal canvas featuring **Sticky Columns**, interactive **Pin Togg
      - Pinned columns are anchored immediately adjacent to the Gutter (offset `88px`), ordered by their natural schema sequence (`TIMESTAMP` $\rightarrow$ `LEVEL` $\rightarrow$ `MODULE`).
      - Unpinned columns receive an offset shifted by `-scroll_x`.
      - A partition divider element with border and shadow is placed at the right boundary of the sticky section.
-   - Each column header includes an interactive pin button (with hover reveal and active states) and a resize handle.
+   - Each column header includes an interactive Pin Toggle (with hover reveal and active states) and a resize handle.
 
 4. **Deprecation of Word Wrap**:
    - The `word_wrap` toggle is removed from the toolbar, application state, and canvas options.

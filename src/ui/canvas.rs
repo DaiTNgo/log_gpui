@@ -4,11 +4,19 @@ use crate::search::SearchState;
 use crate::theme::{Density, ZED};
 use gpui::{
     div, px, uniform_list, DefiniteLength, ElementId, InteractiveElement,
-    IntoElement, ListHorizontalSizingBehavior, ParentElement, StatefulInteractiveElement,
-    Styled, UniformListScrollHandle,
+    IntoElement, ListHorizontalSizingBehavior, ParentElement, Pixels,
+    StatefulInteractiveElement, Styled, UniformListScrollHandle,
 };
 use gpui_component::scroll::ScrollableElement as _;
 use std::sync::Arc;
+
+use crate::column::PinnableColumn;
+
+/// Helper to extract horizontal scroll offset from UniformListScrollHandle.
+#[inline]
+pub fn horizontal_scroll_x(scroll_handle: &UniformListScrollHandle) -> Pixels {
+    (-scroll_handle.0.borrow().base_handle.offset().x).max(px(0.0))
+}
 
 pub struct CanvasViewState<'a> {
     pub view: gpui::Entity<crate::app::AppView>,
@@ -31,7 +39,10 @@ impl LogCanvas {
         let font_size = state.density.font_size();
 
         let gutter_width = state.column_layout.gutter_width();
-        let scroll_x = (-state.scroll_handle.0.borrow().base_handle.offset().x).max(px(0.0));
+        let timestamp_width = state.column_layout.width(PinnableColumn::Timestamp);
+        let level_width = state.column_layout.width(PinnableColumn::Level);
+        let module_width = state.column_layout.width(PinnableColumn::Module);
+        let scroll_x = horizontal_scroll_x(state.scroll_handle);
 
         // 1. Column Headers (Zed Minimalist Header with subtle border divider)
         // Stationary Gutter (# and •) stays anchored at x = 0.
@@ -90,19 +101,19 @@ impl LogCanvas {
                             .left(-scroll_x)
                             .child(
                                 div()
-                                    .w(px(120.0))
+                                    .w(timestamp_width)
                                     .px_2()
                                     .child("TIMESTAMP"),
                             )
                             .child(
                                 div()
-                                    .w(px(68.0))
+                                    .w(level_width)
                                     .px_1()
                                     .child("LEVEL"),
                             )
                             .child(
                                 div()
-                                    .w(px(100.0))
+                                    .w(module_width)
                                     .px_2()
                                     .child("MODULE"),
                             )
@@ -138,7 +149,7 @@ impl LogCanvas {
         let selected_row_pos = state.selected_row_pos;
         let view = state.view.clone();
         let scroll_handle_for_rows = state.scroll_handle.clone();
-
+        let column_layout_for_rows = state.column_layout.clone();
         let longest_vis_pos = visible_clone
             .iter()
             .enumerate()
@@ -152,7 +163,10 @@ impl LogCanvas {
             "log_canvas_list",
             total_visible,
             move |range, _window, _cx| {
-                let scroll_x = (-scroll_handle_for_rows.0.borrow().base_handle.offset().x).max(px(0.0));
+                let scroll_x = horizontal_scroll_x(&scroll_handle_for_rows);
+                let timestamp_width = column_layout_for_rows.width(PinnableColumn::Timestamp);
+                let level_width = column_layout_for_rows.width(PinnableColumn::Level);
+                let module_width = column_layout_for_rows.width(PinnableColumn::Module);
                 let mut rows = Vec::with_capacity(range.len());
                 for vis_pos in range {
                     let Some(&entry_ix) = visible_clone.get(vis_pos) else {
@@ -211,7 +225,6 @@ impl LogCanvas {
 
                     let is_expanded = entry.is_expanded;
                     let sub_count = entry.sub_lines.len();
-                    let view_for_row = view.clone();
 
                     let row_bg = if is_selected {
                         ZED.active_line_bg
@@ -236,6 +249,9 @@ impl LogCanvas {
                     } else {
                         ZED.gutter_line_number
                     };
+
+                    let view_for_row = view.clone();
+                    let view_for_gutter = view.clone();
 
                     let row_element = div()
                         .id(ElementId::from(vis_pos))
@@ -275,7 +291,7 @@ impl LogCanvas {
                                 .child(
                                     div()
                                         .flex_shrink_0()
-                                        .w(px(120.0))
+                                        .w(timestamp_width)
                                         .px_2()
                                         .text_color(ZED.text_muted)
                                         .truncate()
@@ -285,12 +301,12 @@ impl LogCanvas {
                                 .child(
                                     div()
                                         .flex_shrink_0()
-                                        .w(px(68.0))
+                                        .w(level_width)
                                         .px_1()
                                         .child(level_badge),
                                 )
                                 // Column: Module / Tag (Interactive quick-filter)
-                                .child(tag_element.flex_shrink_0())
+                                .child(tag_element.w(module_width).flex_shrink_0())
                                 // Column: Message Payload (Unconstrained single-line layout)
                                 .child(
                                     div()
@@ -341,6 +357,8 @@ impl LogCanvas {
                         // Opaque row_bg ensures scrolling columns pass cleanly underneath.
                         .child(
                             div()
+                                .id(ElementId::from(("gutter", vis_pos)))
+                                .cursor_pointer()
                                 .absolute()
                                 .top_0()
                                 .bottom_0()
@@ -350,6 +368,19 @@ impl LogCanvas {
                                 .flex_row()
                                 .items_center()
                                 .bg(row_bg)
+                                .hover(move |s| {
+                                    if !is_selected {
+                                        s.bg(ZED.element_hover)
+                                    } else {
+                                        s
+                                    }
+                                })
+                                .on_click(move |_event, _window, cx| {
+                                    view_for_gutter.update(cx, |this, cx| {
+                                        this.selected_row_pos = Some(vis_pos);
+                                        cx.notify();
+                                    });
+                                })
                                 .border_l_2()
                                 .border_color(border_color)
                                 // Gutter: Line Number

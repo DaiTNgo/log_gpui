@@ -14,7 +14,7 @@ When `scroll_x == 0`, all columns render in their natural schema sequence (`Gutt
 
 When `scroll_x > 0`:
 - Pinned columns remain anchored (sticky) immediately to the right of the Gutter.
-- If multiple columns are pinned (e.g. both `MODULE` and `TIMESTAMP`), they are strictly laid out in their natural schema order (`TIMESTAMP` before `MODULE`), regardless of the sequence in which the user clicked their pin buttons.
+- If multiple columns are pinned (e.g. both `MODULE` and `TIMESTAMP`), they are strictly laid out in their natural schema order (`TIMESTAMP` before `MODULE`), regardless of the sequence in which the user clicked their Pin Toggles.
 - Unpinned columns and the message payload scroll horizontally underneath the anchored partition.
 - A vertical **Partition Divider** appears at the right boundary of the sticky columns, featuring a subtle border and an elevation shadow (`shadow-sm`) while content scrolls underneath.
 - Row cell click handlers (such as clicking on Level to add a level filter, or Module to filter by tag) remain fully operational when columns are sticky.
