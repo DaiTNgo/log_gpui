@@ -376,6 +376,9 @@ impl AppView {
             PaletteAction::OpenFile => {
                 self.open_file_dialog(cx);
             }
+            PaletteAction::UnpinAllColumns => {
+                self.unpin_all_columns(cx);
+            }
         }
     }
 
@@ -432,6 +435,31 @@ impl AppView {
         cx: &mut Context<Self>,
     ) {
         self.column_layout.set_toggle_hovered(col, hovered);
+        cx.notify();
+    }
+
+    pub fn start_resizing_column(
+        &mut self,
+        col: crate::column::PinnableColumn,
+        start_x: gpui::Pixels,
+        cx: &mut Context<Self>,
+    ) {
+        self.column_layout.start_resizing(col, start_x);
+        cx.notify();
+    }
+
+    pub fn update_column_resize(&mut self, current_x: gpui::Pixels, cx: &mut Context<Self>) {
+        self.column_layout.update_resizing(current_x);
+        cx.notify();
+    }
+
+    pub fn finish_resizing_column(&mut self, cx: &mut Context<Self>) {
+        self.column_layout.finish_resizing();
+        cx.notify();
+    }
+
+    pub fn auto_fit_column(&mut self, col: crate::column::PinnableColumn, cx: &mut Context<Self>) {
+        self.column_layout.auto_fit(col, self.density);
         cx.notify();
     }
 

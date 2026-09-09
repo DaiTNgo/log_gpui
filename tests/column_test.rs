@@ -422,3 +422,123 @@ fn test_pin_toggle_interaction_states() {
         PinToggleState::UnpinnedIdle
     );
 }
+
+#[test]
+fn test_column_resize_drag_and_safety_floor() {
+    let mut state = ColumnLayoutState::new();
+
+    // Default width is 120px, min_width safety floor is 48px
+    assert_eq!(state.width(PinnableColumn::Timestamp), px(120.0));
+    assert_eq!(state.min_width(PinnableColumn::Timestamp), px(48.0));
+    assert!(state.is_resizing.is_none());
+    assert!(!state.is_resizing_column(PinnableColumn::Timestamp));
+
+    // Start dragging resize handle at mouse position x = 200px
+    state.start_resizing(PinnableColumn::Timestamp, px(200.0));
+    assert_eq!(
+        state.is_resizing,
+        Some((PinnableColumn::Timestamp, px(120.0)))
+    );
+    assert!(state.is_resizing_column(PinnableColumn::Timestamp));
+    assert!(!state.is_resizing_column(PinnableColumn::Level));
+
+    // Drag to the right (+60px): mouse moves to 260px
+    state.update_resizing(px(260.0));
+    assert_eq!(state.width(PinnableColumn::Timestamp), px(180.0));
+
+    // Drag smoothly further right (+20px): mouse moves to 280px
+    state.update_resizing(px(280.0));
+    assert_eq!(state.width(PinnableColumn::Timestamp), px(200.0));
+
+    // Drag to the left: mouse moves to 150px (-50px from start) -> width should be 120 - 50 = 70px
+    state.update_resizing(px(150.0));
+    assert_eq!(state.width(PinnableColumn::Timestamp), px(70.0));
+
+    // Drag left past safety floor: mouse moves to 50px (-150px from start -> 120 - 150 = -30px)
+    // Invariant: min_width safety floor strictly protects column from collapsing below 48px
+    state.update_resizing(px(50.0));
+    assert_eq!(state.width(PinnableColumn::Timestamp), px(48.0));
+
+    // Drag way past zero into negative coords: still clamped at 48px
+    state.update_resizing(px(-500.0));
+    assert_eq!(state.width(PinnableColumn::Timestamp), px(48.0));
+
+    // Finish resizing releases drag state
+    state.finish_resizing();
+    assert!(state.is_resizing.is_none());
+    assert!(!state.is_resizing_column(PinnableColumn::Timestamp));
+    // Width persists post-drag
+    assert_eq!(state.width(PinnableColumn::Timestamp), px(48.0));
+}
+
+#[test]
+fn test_column_resize_all_pinnable_columns_safety_floors() {
+    let mut state = ColumnLayoutState::new();
+
+    // Level column safety floor is 36px
+    assert_eq!(state.min_width(PinnableColumn::Level), px(36.0));
+    state.start_resizing(PinnableColumn::Level, px(100.0));
+    state.update_resizing(px(0.0)); // attempted shrink by 100px
+    assert_eq!(state.width(PinnableColumn::Level), px(36.0));
+    state.finish_resizing();
+
+    // Module column safety floor is 48px
+    assert_eq!(state.min_width(PinnableColumn::Module), px(48.0));
+    state.start_resizing(PinnableColumn::Module, px(100.0));
+    state.update_resizing(px(0.0)); // attempted shrink by 100px
+    assert_eq!(state.width(PinnableColumn::Module), px(48.0));
+    state.finish_resizing();
+}
+
+#[test]
+fn test_column_resize_double_click_auto_fit() {
+    let mut state = ColumnLayoutState::new();
+
+    let entries = vec![
+        LogEntry::new(
+            1,
+            0.0,
+            "2026-09-09T14:32:01.123456Z".to_string(),
+            "auth::service::token_validator".to_string(),
+            LogLevel::Info,
+            "Token validated successfully".to_string(),
+            "".to_string(),
+        ),
+    ];
+
+    state.update_from_entries(&entries, Density::Compact);
+    let auto_fit_width = state.width(PinnableColumn::Module);
+
+    // Manually drag/resize Module column to a custom wide width
+    state.set_width(PinnableColumn::Module, px(420.0));
+    assert_eq!(state.width(PinnableColumn::Module), px(420.0));
+    assert_ne!(state.width(PinnableColumn::Module), auto_fit_width);
+
+    // Double-clicking the resize handle triggers auto-fit back to optimal content width
+    state.auto_fit(PinnableColumn::Module, Density::Compact);
+    assert_eq!(state.width(PinnableColumn::Module), auto_fit_width);
+}
+
+#[test]
+fn test_command_palette_unpin_all_action() {
+    use log_gpui::ui::command_palette::{CommandPalette, PaletteAction};
+
+    // 1. Verify Command Palette lists "Columns: Unpin All"
+    let commands = CommandPalette::list();
+    let unpin_cmd = commands
+        .iter()
+        .find(|cmd| cmd.name == "Columns: Unpin All")
+        .expect("Command Palette must display 'Columns: Unpin All'");
+
+    assert!(matches!(unpin_cmd.action, PaletteAction::UnpinAllColumns));
+
+    // 2. Verify triggering unpin_all releases all pinned columns
+    let mut state = ColumnLayoutState::new();
+    state.pin(PinnableColumn::Timestamp);
+    state.pin(PinnableColumn::Module);
+    assert_eq!(state.pinned_columns().len(), 2);
+
+    state.unpin_all();
+    assert!(state.pinned_columns().is_empty());
+    assert_eq!(state.unpinned_columns().len(), 3);
+}

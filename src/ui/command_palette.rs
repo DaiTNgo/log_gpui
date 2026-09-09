@@ -27,6 +27,7 @@ pub enum PaletteAction {
     ToggleInspector,
     LoadDemo,
     OpenFile,
+    UnpinAllColumns,
 }
 
 impl CommandPalette {
@@ -96,6 +97,11 @@ impl CommandPalette {
                 name: "Data: Reload Sample Logs",
                 shortcut: "",
                 action: PaletteAction::LoadDemo,
+            },
+            PaletteCommand {
+                name: "Columns: Unpin All",
+                shortcut: "",
+                action: PaletteAction::UnpinAllColumns,
             },
         ]
     }

@@ -3,15 +3,27 @@ use crate::model::{LogEntry, LogLevel};
 use crate::search::SearchState;
 use crate::theme::{Density, ZED};
 use gpui::{
-    div, px, uniform_list, DefiniteLength, ElementId, InteractiveElement,
-    IntoElement, ListHorizontalSizingBehavior, ParentElement, Pixels,
-    StatefulInteractiveElement, Styled, UniformListScrollHandle,
+    div, prelude::FluentBuilder as _, px, uniform_list, AppContext as _, DefiniteLength,
+    ElementId, InteractiveElement, IntoElement, ListHorizontalSizingBehavior, MouseButton,
+    ParentElement, Pixels, Render, StatefulInteractiveElement, Styled, UniformListScrollHandle,
+    Window,
 };
 use gpui_component::scroll::ScrollableElement as _;
 use std::sync::Arc;
 
 use crate::column::{PinToggleState, PinnableColumn};
 
+
+#[derive(Clone)]
+pub struct ResizeColumn {
+    pub col: PinnableColumn,
+}
+
+impl Render for ResizeColumn {
+    fn render(&mut self, _window: &mut Window, _cx: &mut gpui::Context<Self>) -> impl IntoElement {
+        div()
+    }
+}
 /// Helper to extract horizontal scroll offset from UniformListScrollHandle.
 #[inline]
 pub fn horizontal_scroll_x(scroll_handle: &UniformListScrollHandle) -> Pixels {
@@ -569,6 +581,7 @@ fn render_pinnable_column_header(
         .flex_shrink_0()
         .w(width)
         .h_full()
+        .relative()
         .flex()
         .flex_row()
         .items_center()
@@ -585,13 +598,74 @@ fn render_pinnable_column_header(
         header_div = header_div.px_2();
     }
 
+    let view_resize = state.view.clone();
+    let view_drag_move = state.view.clone();
+    let view_drag_end_up = state.view.clone();
+    let view_drag_end_out = state.view.clone();
+    let is_resizing_this_col = state.column_layout.is_resizing_column(col);
+
+    let resize_handle = div()
+        .id(ElementId::from(("col_resize_handle", col as usize)))
+        .occlude()
+        .cursor_col_resize()
+        .absolute()
+        .top_0()
+        .bottom_0()
+        .right_0()
+        .w(px(6.0))
+        .h_full()
+        .hover(|s| s.bg(ZED.ghost_hover))
+        .when(is_resizing_this_col, |s| s.bg(ZED.ghost_selected))
+        .on_drag(ResizeColumn { col }, |drag, _point, _window, cx| {
+            cx.stop_propagation();
+            cx.new(|_| drag.clone())
+        })
+        .on_drag_move(move |e: &gpui::DragMoveEvent<ResizeColumn>, _window, cx| {
+            view_drag_move.update(cx, |this, cx| {
+                this.update_column_resize(e.event.position.x, cx);
+            });
+        })
+        .on_mouse_down(MouseButton::Left, move |event, _window, cx| {
+            cx.stop_propagation();
+            if event.click_count >= 2 {
+                view_resize.update(cx, |this, cx| {
+                    this.auto_fit_column(col, cx);
+                });
+            } else {
+                view_resize.update(cx, |this, cx| {
+                    this.start_resizing_column(col, event.position.x, cx);
+                });
+            }
+        })
+        .on_mouse_up(MouseButton::Left, move |_event, _window, cx| {
+            view_drag_end_up.update(cx, |this, cx| {
+                this.finish_resizing_column(cx);
+            });
+        })
+        .on_mouse_up_out(MouseButton::Left, move |_event, _window, cx| {
+            view_drag_end_out.update(cx, |this, cx| {
+                this.finish_resizing_column(cx);
+            });
+        })
+        .on_click(move |_event, _window, cx| {
+            cx.stop_propagation();
+        });
+
     header_div
         .child(
             div()
                 .truncate()
                 .child(col.label()),
         )
-        .child(toggle_element)
+        .child(
+            div()
+                .flex()
+                .flex_row()
+                .items_center()
+                .mr_1()
+                .child(toggle_element),
+        )
+        .child(resize_handle)
 }
 
 fn render_level_badge(level: LogLevel) -> gpui::Div {

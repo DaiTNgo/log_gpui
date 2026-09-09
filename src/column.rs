@@ -173,6 +173,7 @@ pub struct ColumnLayoutState {
     pub max_chars: FieldMaxChars,
     pub gutter_width: Pixels,
     pub is_resizing: Option<(PinnableColumn, Pixels)>,
+    pub resize_start_x: Option<Pixels>,
     pub hovered_header: Option<PinnableColumn>,
     pub hovered_toggle: Option<PinnableColumn>,
 }
@@ -203,6 +204,7 @@ impl ColumnLayoutState {
             max_chars: FieldMaxChars::new(),
             gutter_width: DEFAULT_GUTTER_WIDTH,
             is_resizing: None,
+            resize_start_x: None,
             hovered_header: None,
             hovered_toggle: None,
         }
@@ -342,6 +344,30 @@ impl ColumnLayoutState {
     pub fn set_width(&mut self, col: PinnableColumn, width: Pixels) {
         let floor = self.min_width(col);
         self.widths.insert(col, width.max(floor));
+    }
+
+    #[inline]
+    pub fn is_resizing_column(&self, col: PinnableColumn) -> bool {
+        matches!(self.is_resizing, Some((c, _)) if c == col)
+    }
+
+    pub fn start_resizing(&mut self, col: PinnableColumn, start_x: Pixels) {
+        let initial_width = self.width(col);
+        self.is_resizing = Some((col, initial_width));
+        self.resize_start_x = Some(start_x);
+    }
+
+    pub fn update_resizing(&mut self, current_x: Pixels) {
+        if let (Some((col, initial_width)), Some(start_x)) = (self.is_resizing, self.resize_start_x) {
+            let delta = current_x - start_x;
+            let new_width = initial_width + delta;
+            self.set_width(col, new_width);
+        }
+    }
+
+    pub fn finish_resizing(&mut self) {
+        self.is_resizing = None;
+        self.resize_start_x = None;
     }
 
     /// Updates dynamic column widths based on maximum characters observed in ingested entries.
