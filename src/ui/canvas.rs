@@ -51,9 +51,6 @@ impl LogCanvas {
         let font_size = state.density.font_size();
 
         let gutter_width = state.column_layout.gutter_width();
-        let timestamp_width = state.column_layout.width(PinnableColumn::Timestamp);
-        let level_width = state.column_layout.width(PinnableColumn::Level);
-        let module_width = state.column_layout.width(PinnableColumn::Module);
         let scroll_x = horizontal_scroll_x(state.scroll_handle);
 
         let sticky_partition_width = state.column_layout.sticky_partition_width();
@@ -64,13 +61,7 @@ impl LogCanvas {
         // 1. Column Headers (Zed Minimalist Header with Unified Sticky Partition)
         // Pinned columns anchor to the left margin in schema order
         // Unpinned columns and MESSAGE scroll horizontally underneath
-        let is_scrolled = scroll_x > px(0.0);
-        let anchored_width = if is_scrolled {
-            sticky_partition_width
-        } else {
-            gutter_width
-        };
-
+        let anchored_width = sticky_partition_width;
         let mut anchored_header = div()
             .absolute()
             .top_0()
@@ -109,13 +100,11 @@ impl LogCanvas {
                     ),
             );
 
-        if is_scrolled {
-            for pinned in pinned_columns {
-                let w = state.column_layout.width(*pinned);
-                anchored_header = anchored_header.child(
-                    render_pinnable_column_header(*pinned, w, true, &state),
-                );
-            }
+        for pinned in pinned_columns {
+            let w = state.column_layout.width(*pinned);
+            anchored_header = anchored_header.child(
+                render_pinnable_column_header(*pinned, w, true, &state),
+            );
         }
 
         let mut scrolling_header_cols = div()
@@ -126,13 +115,7 @@ impl LogCanvas {
             .left(-scroll_x)
             .ml(anchored_width);
 
-        let visible_scrolling_columns: &[PinnableColumn] = if is_scrolled {
-            &unpinned_columns
-        } else {
-            &PinnableColumn::ALL
-        };
-
-        for col in visible_scrolling_columns {
+        for col in &unpinned_columns {
             let w = state.column_layout.width(*col);
             scrolling_header_cols = scrolling_header_cols.child(
                 render_pinnable_column_header(*col, w, false, &state),
@@ -210,10 +193,7 @@ impl LogCanvas {
             total_visible,
             move |range, _window, _cx| {
                 let scroll_x = horizontal_scroll_x(&scroll_handle_for_rows);
-                let timestamp_width = column_layout_for_rows.width(PinnableColumn::Timestamp);
-                let level_width = column_layout_for_rows.width(PinnableColumn::Level);
-                let module_width = column_layout_for_rows.width(PinnableColumn::Module);
-                let sticky_partition_width = column_layout_for_rows.sticky_partition_width();
+                let anchored_width = column_layout_for_rows.sticky_partition_width();
                 let unpinned_columns_for_rows = column_layout_for_rows.unpinned_columns();
                 let mut rows = Vec::with_capacity(range.len());
                 for vis_pos in range {
@@ -283,8 +263,6 @@ impl LogCanvas {
                         .font_family(".AppleSystemUIFontMonospaced")
                         .text_size(px(font_size))
                         .bg(row_bg)
-                        .border_l_2()
-                        .border_color(border_color)
                         .opacity(if is_dimmed { 0.35 } else { 1.0 })
                         .hover(|s| {
                             if !is_selected {
@@ -302,26 +280,13 @@ impl LogCanvas {
                         // 1. Horizontally Scrolling Data Columns
                         // Shifted by gutter_width so columns start adjacent to Gutter at scroll_x = 0
                         .child({
-                            let is_scrolled = scroll_x > px(0.0);
-                            let anchored_width = if is_scrolled {
-                                sticky_partition_width
-                            } else {
-                                gutter_width
-                            };
-
-                            let visible_scrolling_columns: &[PinnableColumn] = if is_scrolled {
-                                &unpinned_columns_for_rows
-                            } else {
-                                &PinnableColumn::ALL
-                            };
-
                             let mut scrolling_cols = div()
                                 .flex()
                                 .flex_row()
                                 .items_center()
                                 .ml(anchored_width);
 
-                            for col in visible_scrolling_columns {
+                            for col in &unpinned_columns_for_rows {
                                 scrolling_cols = scrolling_cols.child(render_column_cell(
                                     *col,
                                     &column_layout_for_rows,
@@ -382,30 +347,22 @@ impl LogCanvas {
                         // Absolute positioning with left = scroll_x counteracts the row's horizontal offset.
                         // Opaque row_bg ensures scrolling columns pass cleanly underneath.
                         .child({
-                            let is_scrolled = scroll_x > px(0.0);
                             let is_divider_active = ColumnLayoutState::is_partition_divider_active(scroll_x);
-                            let sticky_partition_width = column_layout_for_rows.sticky_partition_width();
                             let pinned_columns = column_layout_for_rows.pinned_columns();
+                            let total_cover_width = scroll_x + anchored_width;
 
-                            let anchored_width = if is_scrolled {
-                                sticky_partition_width
-                            } else {
-                                gutter_width
-                            };
-
-                            let mut anchored_row_partition = div()
+                            div()
                                 .id(ElementId::from(("anchored_partition", vis_pos)))
                                 .cursor_pointer()
                                 .absolute()
                                 .top_0()
                                 .bottom_0()
-                                .left(scroll_x)
-                                .w(anchored_width)
+                                .left_0()
+                                .w(total_cover_width)
                                 .flex()
                                 .flex_row()
                                 .items_center()
                                 .bg(row_bg)
-                                .map(|d| apply_partition_divider_style(d, is_divider_active))
                                 .hover(move |s| {
                                     if !is_selected {
                                         s.bg(ZED.element_hover)
@@ -419,45 +376,54 @@ impl LogCanvas {
                                         cx.notify();
                                     });
                                 })
-
-                                // Gutter: Line Number
-                                .child(
-                                    div()
-                                        .flex_shrink_0()
-                                        .w(px(64.0))
-                                        .px_2()
-                                        .text_right()
-                                        .text_color(line_num_color)
-                                        .child(format!("{}", entry.index)),
-                                )
-                                // Gutter: Marker Icon
-                                .child(
-                                    div()
-                                        .flex_shrink_0()
-                                        .w(px(24.0))
+                                .child({
+                                    let mut inner = div()
                                         .flex()
+                                        .flex_row()
                                         .items_center()
-                                        .justify_center()
-                                        .text_xs()
-                                        .font_weight(gpui::FontWeight::BOLD)
-                                        .text_color(marker_color)
-                                        .child(marker_symbol),
-                                );
+                                        .h_full()
+                                        .ml(scroll_x)
+                                        .w(anchored_width)
+                                        .border_l_2()
+                                        .border_color(border_color)
+                                        .map(|d| apply_partition_divider_style(d, is_divider_active))
+                                        // Gutter: Line Number
+                                        .child(
+                                            div()
+                                                .flex_shrink_0()
+                                                .w(px(64.0))
+                                                .px_2()
+                                                .text_right()
+                                                .text_color(line_num_color)
+                                                .child(format!("{}", entry.index)),
+                                        )
+                                        // Gutter: Marker Icon
+                                        .child(
+                                            div()
+                                                .flex_shrink_0()
+                                                .w(px(24.0))
+                                                .flex()
+                                                .items_center()
+                                                .justify_center()
+                                                .text_xs()
+                                                .font_weight(gpui::FontWeight::BOLD)
+                                                .text_color(marker_color)
+                                                .child(marker_symbol),
+                                        );
 
-                            if is_scrolled {
-                                for pinned in pinned_columns {
-                                    anchored_row_partition = anchored_row_partition.child(render_column_cell(
-                                        *pinned,
-                                        &column_layout_for_rows,
-                                        entry,
-                                        vis_pos,
-                                        view.clone(),
-                                        true,
-                                    ));
-                                }
-                            }
+                                    for pinned in pinned_columns {
+                                        inner = inner.child(render_column_cell(
+                                            *pinned,
+                                            &column_layout_for_rows,
+                                            entry,
+                                            vis_pos,
+                                            view.clone(),
+                                            true,
+                                        ));
+                                    }
 
-                            anchored_row_partition
+                                    inner
+                                })
                         });
 
                     rows.push(row_element);
