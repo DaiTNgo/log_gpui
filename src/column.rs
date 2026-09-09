@@ -278,6 +278,26 @@ impl ColumnLayoutState {
             .collect()
     }
 
+    /// Sum of the widths of all currently pinned columns.
+    #[inline]
+    pub fn pinned_width(&self) -> Pixels {
+        self.pinned_columns()
+            .iter()
+            .map(|col| self.width(*col))
+            .sum()
+    }
+
+    /// Total width of the anchored section (Gutter + all pinned columns).
+    #[inline]
+    pub fn sticky_partition_width(&self) -> Pixels {
+        self.gutter_width + self.pinned_width()
+    }
+    /// Whether the partition divider's elevation shadow is active (scroll_x > 0).
+    #[inline]
+    pub fn is_partition_divider_active(scroll_x: Pixels) -> bool {
+        scroll_x > px(0.0)
+    }
+
     pub fn set_header_hovered(&mut self, col: PinnableColumn, hovered: bool) {
         if hovered {
             self.hovered_header = Some(col);

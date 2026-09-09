@@ -1,4 +1,4 @@
-Status: ready-for-agent
+Status: resolved
 
 # Sticky Horizontal Scrolling & Schema Order Partitioning
 
@@ -21,14 +21,25 @@ When `scroll_x > 0`:
 
 ## Acceptance criteria
 
-- [ ] When scrolling horizontally, pinned columns remain anchored next to the Gutter while unpinned columns slide underneath.
-- [ ] Multiple pinned columns always preserve schema order (`TIMESTAMP` $\rightarrow$ `LEVEL` $\rightarrow$ `MODULE`) at the sticky boundary.
-- [ ] Partition Divider renders a 1px border and elevation shadow when `scroll_x > 0`.
-- [ ] Partition Divider shadow disappears smoothly when scrolled back to `scroll_x == 0`.
-- [ ] Column header titles stay perfectly aligned with their corresponding row cells throughout all horizontal scroll positions.
-- [ ] Quick-filters on Level badge and Module tag continue to trigger correctly on sticky columns.
+- [x] When scrolling horizontally, pinned columns remain anchored next to the Gutter while unpinned columns slide underneath.
+- [x] Multiple pinned columns always preserve schema order (`TIMESTAMP` $\rightarrow$ `LEVEL` $\rightarrow$ `MODULE`) at the sticky boundary.
+- [x] Partition Divider renders a 1px border and elevation shadow when `scroll_x > 0`.
+- [x] Partition Divider shadow disappears smoothly when scrolled back to `scroll_x == 0`.
+- [x] Column header titles stay perfectly aligned with their corresponding row cells throughout all horizontal scroll positions.
+- [x] Quick-filters on Level badge and Module tag continue to trigger correctly on sticky columns.
 
 ## Blocked by
 
 - .scratch/column-pinning/issues/02-dynamic-column-sizing-via-ingestion-scan.md
 - .scratch/column-pinning/issues/03-column-header-pin-toggle-affordance-and-state.md
+
+## Comments
+
+Resolved in Issue 04 implementation:
+1. Implemented spatial layout engine methods on `ColumnLayoutState` in `src/column.rs` (`pinned_width()`, `sticky_partition_width()`, `partition_divider_offset()`, `is_partition_divider_active()`, `sticky_column_left()`, `natural_column_left()`, `natural_message_left()`, `column_screen_position()`, `message_screen_position()`).
+2. Pinned columns strictly preserve schema ordering (`TIMESTAMP` -> `LEVEL` -> `MODULE`) at the anchor boundary regardless of toggle sequence.
+3. Column headers in `src/ui/canvas.rs` render anchored pinned columns at `x = 0` with unpinned columns sliding underneath with `-scroll_x`.
+4. Virtualized rows in `src/ui/canvas.rs` render an anchored partition with absolute positioning (`left = scroll_x`) and opaque background (`row_bg`) so unpinned columns slide cleanly underneath.
+5. Vertical Partition Divider renders 1px border (`ZED.border_variant`) and elevation shadow (`shadow_sm()`) when `scroll_x > 0`, smoothly reverting to `shadow_none()` when `scroll_x == 0`.
+6. Quick-filters on Level badge and Module tag trigger correctly on both sticky and scrolling column cells.
+7. Verified with comprehensive unit tests in `tests/column_test.rs`. Full test suite passes (28 tests).

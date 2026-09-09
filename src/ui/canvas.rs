@@ -11,7 +11,7 @@ use gpui::{
 use gpui_component::scroll::ScrollableElement as _;
 use std::sync::Arc;
 
-use crate::column::{PinToggleState, PinnableColumn};
+use crate::column::{ColumnLayoutState, PinToggleState, PinnableColumn};
 
 
 #[derive(Clone)]
@@ -56,21 +56,34 @@ impl LogCanvas {
         let module_width = state.column_layout.width(PinnableColumn::Module);
         let scroll_x = horizontal_scroll_x(state.scroll_handle);
 
-        // 1. Column Headers (Zed Minimalist Header with subtle border divider)
-        // Stationary Gutter (# and •) stays anchored at x = 0.
-        // Data columns shift by -scroll_x, remaining synchronized with row cells.
-        let header = div()
-            .h(px(26.0))
-            .w_full()
+        let sticky_partition_width = state.column_layout.sticky_partition_width();
+        let is_divider_active = ColumnLayoutState::is_partition_divider_active(scroll_x);
+        let pinned_columns = state.column_layout.pinned_columns();
+        let unpinned_columns = state.column_layout.unpinned_columns();
+
+        // 1. Column Headers (Zed Minimalist Header with Unified Sticky Partition)
+        // Pinned columns anchor to the left margin in schema order
+        // Unpinned columns and MESSAGE scroll horizontally underneath
+        let is_scrolled = scroll_x > px(0.0);
+        let anchored_width = if is_scrolled {
+            sticky_partition_width
+        } else {
+            gutter_width
+        };
+
+        let mut anchored_header = div()
+            .absolute()
+            .top_0()
+            .bottom_0()
+            .left_0()
+            .w(anchored_width)
             .flex()
             .flex_row()
             .items_center()
             .bg(ZED.surface_background)
             .border_b_1()
             .border_color(ZED.border_variant)
-            .text_xs()
-            .font_weight(gpui::FontWeight::SEMIBOLD)
-            .text_color(ZED.text_muted)
+            .map(|d| apply_partition_divider_style(d, is_divider_active))
             .child(
                 // Stationary Gutter Header
                 div()
@@ -94,57 +107,75 @@ impl LogCanvas {
                             .text_center()
                             .child("•"),
                     ),
-            )
+            );
+
+        if is_scrolled {
+            for pinned in pinned_columns {
+                let w = state.column_layout.width(*pinned);
+                anchored_header = anchored_header.child(
+                    render_pinnable_column_header(*pinned, w, true, &state),
+                );
+            }
+        }
+
+        let mut scrolling_header_cols = div()
+            .flex()
+            .flex_row()
+            .items_center()
+            .relative()
+            .left(-scroll_x)
+            .ml(anchored_width);
+
+        let visible_scrolling_columns: &[PinnableColumn] = if is_scrolled {
+            &unpinned_columns
+        } else {
+            &PinnableColumn::ALL
+        };
+
+        for col in visible_scrolling_columns {
+            let w = state.column_layout.width(*col);
+            scrolling_header_cols = scrolling_header_cols.child(
+                render_pinnable_column_header(*col, w, false, &state),
+            );
+        }
+
+        scrolling_header_cols = scrolling_header_cols.child(
+            div()
+                .flex_1()
+                .px_2()
+                .child("MESSAGE"),
+        );
+
+        let header = div()
+            .h(px(26.0))
+            .w_full()
+            .relative()
+            .overflow_hidden()
+            .flex()
+            .flex_row()
+            .items_center()
+            .bg(ZED.surface_background)
+            .border_b_1()
+            .border_color(ZED.border_variant)
+            .text_xs()
+            .font_weight(gpui::FontWeight::SEMIBOLD)
+            .text_color(ZED.text_muted)
             .child(
-                // Scrollable Columns Header (clipped at left edge by overflow_hidden)
+                // Base scrolling columns container
                 div()
                     .flex_1()
                     .h_full()
-                    .overflow_hidden()
                     .flex()
                     .flex_row()
                     .items_center()
-                    .child(
-                        div()
-                            .flex()
-                            .flex_row()
-                            .items_center()
-                            .relative()
-                            .left(-scroll_x)
-                            .child(
-                                render_pinnable_column_header(
-                                    PinnableColumn::Timestamp,
-                                    timestamp_width,
-                                    &state,
-                                ),
-                            )
-                            .child(
-                                render_pinnable_column_header(
-                                    PinnableColumn::Level,
-                                    level_width,
-                                    &state,
-                                ),
-                            )
-                            .child(
-                                render_pinnable_column_header(
-                                    PinnableColumn::Module,
-                                    module_width,
-                                    &state,
-                                )
-                            )
-                            .child(
-                                div()
-                                    .flex_1()
-                                    .px_2()
-                                    .child("MESSAGE"),
-                            ),
-                    ),
+                    .child(scrolling_header_cols),
             )
             .child(
                 div()
                     .w(px(16.0)) // Spacer for overview ruler
                     .child(""),
-            );
+            )
+            .child(anchored_header);
 
         // 2. Virtualized List using uniform_list
         let entries_clone = state.entries.clone();
@@ -182,6 +213,8 @@ impl LogCanvas {
                 let timestamp_width = column_layout_for_rows.width(PinnableColumn::Timestamp);
                 let level_width = column_layout_for_rows.width(PinnableColumn::Level);
                 let module_width = column_layout_for_rows.width(PinnableColumn::Module);
+                let sticky_partition_width = column_layout_for_rows.sticky_partition_width();
+                let unpinned_columns_for_rows = column_layout_for_rows.unpinned_columns();
                 let mut rows = Vec::with_capacity(range.len());
                 for vis_pos in range {
                     let Some(&entry_ix) = visible_clone.get(vis_pos) else {
@@ -207,36 +240,6 @@ impl LogCanvas {
                         None => (" ", ZED.transparent),
                     };
 
-                    let level_val = entry.level;
-                    let view_for_lvl = view.clone();
-                    let level_badge = render_level_badge(level_val)
-                        .id(ElementId::from(("lvl", vis_pos)))
-                        .cursor_pointer()
-                        .hover(|s| s.opacity(0.8))
-                        .on_click(move |_event, _window, cx| {
-                            view_for_lvl.update(cx, |this, cx| {
-                                this.add_quick_filter_level(level_val, cx);
-                            });
-                        });
-
-                    let tag_val = entry.tag.clone();
-                    let view_for_tag = view.clone();
-                    let tag_element = div()
-                        .id(ElementId::from(("mod", vis_pos)))
-                        .cursor_pointer()
-                        .w(px(100.0))
-                        .px_2()
-                        .font_weight(gpui::FontWeight::SEMIBOLD)
-                        .text_color(ZED.text_accent)
-                        .truncate()
-                        .hover(|s| s.underline())
-                        .child(tag_val.clone())
-                        .on_click(move |_event, _window, cx| {
-                            let tag = tag_val.clone();
-                            view_for_tag.update(cx, |this, cx| {
-                                this.add_quick_filter_module(&tag, cx);
-                            });
-                        });
 
                     let is_expanded = entry.is_expanded;
                     let sub_count = entry.sub_lines.len();
@@ -280,6 +283,8 @@ impl LogCanvas {
                         .font_family(".AppleSystemUIFontMonospaced")
                         .text_size(px(font_size))
                         .bg(row_bg)
+                        .border_l_2()
+                        .border_color(border_color)
                         .opacity(if is_dimmed { 0.35 } else { 1.0 })
                         .hover(|s| {
                             if !is_selected {
@@ -296,32 +301,38 @@ impl LogCanvas {
                         })
                         // 1. Horizontally Scrolling Data Columns
                         // Shifted by gutter_width so columns start adjacent to Gutter at scroll_x = 0
-                        .child(
-                            div()
+                        .child({
+                            let is_scrolled = scroll_x > px(0.0);
+                            let anchored_width = if is_scrolled {
+                                sticky_partition_width
+                            } else {
+                                gutter_width
+                            };
+
+                            let visible_scrolling_columns: &[PinnableColumn] = if is_scrolled {
+                                &unpinned_columns_for_rows
+                            } else {
+                                &PinnableColumn::ALL
+                            };
+
+                            let mut scrolling_cols = div()
                                 .flex()
                                 .flex_row()
                                 .items_center()
-                                .ml(gutter_width)
-                                // Column: Timestamp
-                                .child(
-                                    div()
-                                        .flex_shrink_0()
-                                        .w(timestamp_width)
-                                        .px_2()
-                                        .text_color(ZED.text_muted)
-                                        .truncate()
-                                        .child(entry.time_str.clone()),
-                                )
-                                // Column: Level (Interactive quick-filter)
-                                .child(
-                                    div()
-                                        .flex_shrink_0()
-                                        .w(level_width)
-                                        .px_1()
-                                        .child(level_badge),
-                                )
-                                // Column: Module / Tag (Interactive quick-filter)
-                                .child(tag_element.w(module_width).flex_shrink_0())
+                                .ml(anchored_width);
+
+                            for col in visible_scrolling_columns {
+                                scrolling_cols = scrolling_cols.child(render_column_cell(
+                                    *col,
+                                    &column_layout_for_rows,
+                                    entry,
+                                    vis_pos,
+                                    view.clone(),
+                                    false,
+                                ));
+                            }
+
+                            scrolling_cols
                                 // Column: Message Payload (Unconstrained single-line layout)
                                 .child(
                                     div()
@@ -365,24 +376,36 @@ impl LogCanvas {
                                         .into_any_element()
                                 } else {
                                     div().into_any_element()
-                                }),
-                        )
-                        // 2. Permanently Anchored Gutter (Stationary at x = 0)
+                                })
+                        })
+                        // 2. Anchored Partition (Stationary at x = 0 with Gutter + Sticky Columns + Partition Divider)
                         // Absolute positioning with left = scroll_x counteracts the row's horizontal offset.
                         // Opaque row_bg ensures scrolling columns pass cleanly underneath.
-                        .child(
-                            div()
-                                .id(ElementId::from(("gutter", vis_pos)))
+                        .child({
+                            let is_scrolled = scroll_x > px(0.0);
+                            let is_divider_active = ColumnLayoutState::is_partition_divider_active(scroll_x);
+                            let sticky_partition_width = column_layout_for_rows.sticky_partition_width();
+                            let pinned_columns = column_layout_for_rows.pinned_columns();
+
+                            let anchored_width = if is_scrolled {
+                                sticky_partition_width
+                            } else {
+                                gutter_width
+                            };
+
+                            let mut anchored_row_partition = div()
+                                .id(ElementId::from(("anchored_partition", vis_pos)))
                                 .cursor_pointer()
                                 .absolute()
                                 .top_0()
                                 .bottom_0()
                                 .left(scroll_x)
-                                .w(gutter_width)
+                                .w(anchored_width)
                                 .flex()
                                 .flex_row()
                                 .items_center()
                                 .bg(row_bg)
+                                .map(|d| apply_partition_divider_style(d, is_divider_active))
                                 .hover(move |s| {
                                     if !is_selected {
                                         s.bg(ZED.element_hover)
@@ -396,8 +419,7 @@ impl LogCanvas {
                                         cx.notify();
                                     });
                                 })
-                                .border_l_2()
-                                .border_color(border_color)
+
                                 // Gutter: Line Number
                                 .child(
                                     div()
@@ -420,8 +442,23 @@ impl LogCanvas {
                                         .font_weight(gpui::FontWeight::BOLD)
                                         .text_color(marker_color)
                                         .child(marker_symbol),
-                                ),
-                        );
+                                );
+
+                            if is_scrolled {
+                                for pinned in pinned_columns {
+                                    anchored_row_partition = anchored_row_partition.child(render_column_cell(
+                                        *pinned,
+                                        &column_layout_for_rows,
+                                        entry,
+                                        vis_pos,
+                                        view.clone(),
+                                        true,
+                                    ));
+                                }
+                            }
+
+                            anchored_row_partition
+                        });
 
                     rows.push(row_element);
                 }
@@ -518,6 +555,7 @@ impl LogCanvas {
 fn render_pinnable_column_header(
     col: PinnableColumn,
     width: Pixels,
+    is_sticky: bool,
     state: &CanvasViewState,
 ) -> impl IntoElement {
     let toggle_state = state.column_layout.pin_toggle_state(col);
@@ -538,7 +576,7 @@ fn render_pinnable_column_header(
                 };
 
                 let mut btn = div()
-                    .id(ElementId::from(("pin_toggle", col as usize)))
+                    .id(ElementId::from((if is_sticky { "sticky_pin_toggle" } else { "pin_toggle" }, col as usize)))
                     .cursor_pointer()
                     .flex()
                     .items_center()
@@ -546,6 +584,7 @@ fn render_pinnable_column_header(
                     .w(px(16.0))
                     .h(px(16.0))
                     .rounded_md()
+                    .text_color(icon_color)
                     .hover(|s| s.bg(ZED.ghost_hover).text_color(ZED.icon_hover))
                     .on_hover(move |is_hovered, _window, cx| {
                         view_toggle.update(cx, |this, cx| {
@@ -566,7 +605,6 @@ fn render_pinnable_column_header(
                 btn.child(
                     gpui::svg()
                         .size(px(12.0))
-                        .text_color(icon_color)
                         .data(icon.svg_data()),
                 )
                 .into_any_element()
@@ -577,7 +615,7 @@ fn render_pinnable_column_header(
     };
 
     let mut header_div = div()
-        .id(ElementId::from(("header_col", col as usize)))
+        .id(ElementId::from((if is_sticky { "sticky_header_col" } else { "header_col" }, col as usize)))
         .flex_shrink_0()
         .w(width)
         .h_full()
@@ -668,6 +706,67 @@ fn render_pinnable_column_header(
         .child(resize_handle)
 }
 
+fn render_timestamp_cell(time_str: &str, width: Pixels) -> impl IntoElement {
+    div()
+        .flex_shrink_0()
+        .w(width)
+        .px_2()
+        .text_color(ZED.text_muted)
+        .truncate()
+        .child(time_str.to_string())
+}
+
+fn render_level_cell(
+    level_val: LogLevel,
+    width: Pixels,
+    id_prefix: &'static str,
+    vis_pos: usize,
+    view: gpui::Entity<crate::app::AppView>,
+) -> impl IntoElement {
+    div()
+        .flex_shrink_0()
+        .w(width)
+        .px_1()
+        .child(
+            render_level_badge(level_val)
+                .id(ElementId::from((id_prefix, vis_pos)))
+                .cursor_pointer()
+                .hover(|s| s.opacity(0.8))
+                .on_click(move |_event, _window, cx| {
+                    view.update(cx, |this, cx| {
+                        this.add_quick_filter_level(level_val, cx);
+                    });
+                }),
+        )
+}
+
+fn render_module_cell(
+    tag_val: &str,
+    width: Pixels,
+    id_prefix: &'static str,
+    vis_pos: usize,
+    view: gpui::Entity<crate::app::AppView>,
+) -> impl IntoElement {
+    let tag = tag_val.to_string();
+    div()
+        .id(ElementId::from((id_prefix, vis_pos)))
+        .cursor_pointer()
+        .w(width)
+        .flex_shrink_0()
+        .px_2()
+        .font_weight(gpui::FontWeight::SEMIBOLD)
+        .text_color(ZED.text_accent)
+        .truncate()
+        .hover(|s| s.underline())
+        .child(tag.clone())
+        .on_click(move |_event, _window, cx| {
+            let t = tag.clone();
+            view.update(cx, |this, cx| {
+                this.add_quick_filter_module(&t, cx);
+            });
+        })
+}
+
 fn render_level_badge(level: LogLevel) -> gpui::Div {
     let (fg, bg, border) = match level {
         LogLevel::Fatal => (ZED.error, ZED.error_bg, ZED.error_border),
@@ -690,6 +789,50 @@ fn render_level_badge(level: LogLevel) -> gpui::Div {
         .text_color(fg)
         .bg(bg)
         .child(level.short_code())
+}
+
+fn apply_partition_divider_style<T: gpui::Styled>(element: T, is_active: bool) -> T {
+    if is_active {
+        element
+            .border_r_1()
+            .border_color(ZED.border_variant)
+            .shadow_sm()
+    } else {
+        element.shadow_none()
+    }
+}
+
+fn render_column_cell(
+    col: PinnableColumn,
+    layout: &ColumnLayoutState,
+    entry: &LogEntry,
+    vis_pos: usize,
+    view: gpui::Entity<crate::app::AppView>,
+    is_sticky: bool,
+) -> impl IntoElement {
+    let id_prefix = if is_sticky {
+        match col {
+            PinnableColumn::Timestamp => "sticky_ts",
+            PinnableColumn::Level => "sticky_lvl",
+            PinnableColumn::Module => "sticky_mod",
+        }
+    } else {
+        match col {
+            PinnableColumn::Timestamp => "ts",
+            PinnableColumn::Level => "lvl",
+            PinnableColumn::Module => "mod",
+        }
+    };
+    let width = layout.width(col);
+    match col {
+        PinnableColumn::Timestamp => render_timestamp_cell(&entry.time_str, width).into_any_element(),
+        PinnableColumn::Level => {
+            render_level_cell(entry.level, width, id_prefix, vis_pos, view).into_any_element()
+        }
+        PinnableColumn::Module => {
+            render_module_cell(&entry.tag, width, id_prefix, vis_pos, view).into_any_element()
+        }
+    }
 }
 
 fn compute_ruler_marks(

@@ -542,3 +542,53 @@ fn test_command_palette_unpin_all_action() {
     assert!(state.pinned_columns().is_empty());
     assert_eq!(state.unpinned_columns().len(), 3);
 }
+
+#[test]
+fn test_sticky_partition_width_calculation() {
+    let mut state = ColumnLayoutState::new();
+
+    // Default: only Gutter (88px) is anchored
+    assert_eq!(state.pinned_width(), px(0.0));
+    assert_eq!(state.sticky_partition_width(), px(88.0));
+
+    // Pin Timestamp (120px)
+    state.pin(PinnableColumn::Timestamp);
+    assert_eq!(state.pinned_width(), px(120.0));
+    assert_eq!(state.sticky_partition_width(), px(208.0)); // 88 + 120
+
+    // Pin Module (100px)
+    state.pin(PinnableColumn::Module);
+    assert_eq!(state.pinned_width(), px(220.0)); // 120 + 100
+    assert_eq!(state.sticky_partition_width(), px(308.0)); // 88 + 220
+
+    // Pin Level (68px)
+    state.pin(PinnableColumn::Level);
+    assert_eq!(state.pinned_width(), px(288.0)); // 120 + 68 + 100
+    assert_eq!(state.sticky_partition_width(), px(376.0)); // 88 + 288
+
+    // Unpin all resets back to gutter width
+    state.unpin_all();
+    assert_eq!(state.pinned_width(), px(0.0));
+    assert_eq!(state.sticky_partition_width(), px(88.0));
+}
+
+#[test]
+fn test_partition_divider_active_state() {
+    let mut state = ColumnLayoutState::new();
+
+    // Acceptance criteria:
+    // - Partition Divider shadow disappears when scroll_x == 0
+    // - Partition Divider renders elevation shadow when scroll_x > 0
+    assert!(!ColumnLayoutState::is_partition_divider_active(px(0.0)));
+    assert!(ColumnLayoutState::is_partition_divider_active(px(1.0)));
+    assert!(ColumnLayoutState::is_partition_divider_active(px(50.0)));
+    assert!(ColumnLayoutState::is_partition_divider_active(px(1024.0)));
+
+    // Anchored boundary matches sticky_partition_width
+    assert_eq!(state.sticky_partition_width(), px(88.0));
+    state.pin(PinnableColumn::Timestamp);
+    assert_eq!(state.sticky_partition_width(), px(208.0));
+    state.pin(PinnableColumn::Level);
+    assert_eq!(state.sticky_partition_width(), px(276.0));
+}
+
