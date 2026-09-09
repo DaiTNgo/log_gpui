@@ -298,6 +298,65 @@ impl ColumnLayoutState {
         scroll_x > px(0.0)
     }
 
+    /// Position of the vertical Partition Divider at the right boundary of the sticky partition.
+    #[inline]
+    pub fn partition_divider_offset(&self) -> Pixels {
+        self.sticky_partition_width()
+    }
+
+    /// Natural schema position of a column at scroll_x = 0.
+    #[inline]
+    pub fn natural_column_left(&self, col: PinnableColumn) -> Pixels {
+        match col {
+            PinnableColumn::Timestamp => self.gutter_width,
+            PinnableColumn::Level => self.gutter_width + self.width(PinnableColumn::Timestamp),
+            PinnableColumn::Module => {
+                self.gutter_width
+                    + self.width(PinnableColumn::Timestamp)
+                    + self.width(PinnableColumn::Level)
+            }
+        }
+    }
+
+    /// Natural schema position of the MESSAGE column at scroll_x = 0.
+    #[inline]
+    pub fn natural_message_left(&self) -> Pixels {
+        self.natural_column_left(PinnableColumn::Module) + self.width(PinnableColumn::Module)
+    }
+
+    /// Target anchored position of a column when sticky. Returns None if not pinned.
+    pub fn sticky_column_left(&self, col: PinnableColumn) -> Option<Pixels> {
+        if !self.is_pinned(col) {
+            return None;
+        }
+        let mut offset = self.gutter_width;
+        for pinned in self.pinned_columns() {
+            if *pinned == col {
+                return Some(offset);
+            }
+            offset += self.width(*pinned);
+        }
+        None
+    }
+
+    /// Computes the net screen position for a column, implementing true sticky positioning:
+    /// (natural_left - scroll_x).max(sticky_target).
+    #[inline]
+    pub fn column_screen_position(&self, col: PinnableColumn, scroll_x: Pixels) -> Pixels {
+        let natural = self.natural_column_left(col);
+        if let Some(sticky_target) = self.sticky_column_left(col) {
+            (natural - scroll_x).max(sticky_target)
+        } else {
+            natural - scroll_x
+        }
+    }
+
+    /// Computes the net screen position for the MESSAGE column given horizontal scroll offset.
+    #[inline]
+    pub fn message_screen_position(&self, scroll_x: Pixels) -> Pixels {
+        self.natural_message_left() - scroll_x
+    }
+
     pub fn set_header_hovered(&mut self, col: PinnableColumn, hovered: bool) {
         if hovered {
             self.hovered_header = Some(col);

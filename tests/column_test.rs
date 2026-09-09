@@ -590,5 +590,28 @@ fn test_partition_divider_active_state() {
     assert_eq!(state.sticky_partition_width(), px(208.0));
     state.pin(PinnableColumn::Level);
     assert_eq!(state.sticky_partition_width(), px(276.0));
+    assert_eq!(state.partition_divider_offset(), px(276.0));
+}
+
+#[test]
+fn test_sticky_column_positioning_and_schema_ordering() {
+    let mut state = ColumnLayoutState::new();
+    state.pin(PinnableColumn::Timestamp);
+    state.pin(PinnableColumn::Module);
+
+    // Schema ordering: Timestamp is at 88px, Module is at 88 + 120 = 208px
+    assert_eq!(state.sticky_column_left(PinnableColumn::Timestamp), Some(px(88.0)));
+    assert_eq!(state.sticky_column_left(PinnableColumn::Module), Some(px(208.0)));
+    assert_eq!(state.sticky_column_left(PinnableColumn::Level), None);
+
+    // Screen positioning:
+    // Timestamp is anchored at 88px for all scroll offsets
+    assert_eq!(state.column_screen_position(PinnableColumn::Timestamp, px(0.0)), px(88.0));
+    assert_eq!(state.column_screen_position(PinnableColumn::Timestamp, px(50.0)), px(88.0));
+    assert_eq!(state.column_screen_position(PinnableColumn::Timestamp, px(200.0)), px(88.0));
+
+    // Unpinned Level slides underneath:
+    assert_eq!(state.column_screen_position(PinnableColumn::Level, px(0.0)), px(208.0));
+    assert_eq!(state.column_screen_position(PinnableColumn::Level, px(50.0)), px(158.0));
 }
 
