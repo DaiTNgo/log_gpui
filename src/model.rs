@@ -143,3 +143,48 @@ impl LogEntry {
         }
     }
 }
+
+impl From<&crate::parser::event::LogEvent> for LogEntry {
+    fn from(event: &crate::parser::event::LogEvent) -> Self {
+        Self::from_event(event)
+    }
+}
+
+impl LogEntry {
+    /// Convert a schema-typed `LogEvent` back into the rendering model.
+    pub fn from_event(event: &crate::parser::event::LogEvent) -> Self {
+        let level = event
+            .get_field("level")
+            .and_then(|v| v.as_str())
+            .map(LogLevel::from_str)
+            .unwrap_or(LogLevel::Unknown);
+        let tag = event
+            .get_field("module")
+            .and_then(|v| v.as_str())
+            .unwrap_or("app")
+            .to_string();
+        let request_id = event.get_field("requestId").and_then(|v| v.as_str()).map(|s| s.to_string());
+
+        let mut json_fields: Vec<(String, String)> = Vec::new();
+        for (name, value) in &event.fields {
+            if matches!(name.as_str(), "level" | "module" | "time" | "message" | "requestId") {
+                continue;
+            }
+            json_fields.push((name.clone(), value.to_string_value()));
+        }
+        json_fields.sort();
+
+        let mut entry = LogEntry::new(
+            event.index,
+            event.timestamp,
+            event.time_str.clone(),
+            tag,
+            level,
+            event.message.clone(),
+            event.raw_line.clone(),
+        );
+        entry.request_id = request_id;
+        entry.json_fields = json_fields;
+        entry
+    }
+}

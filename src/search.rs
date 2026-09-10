@@ -1,7 +1,9 @@
 use crate::model::LogEntry;
+use crate::query::ast::QueryExpression;
 use regex::Regex;
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SearchState {
     pub is_open: bool,
     pub query: String,
@@ -12,6 +14,10 @@ pub struct SearchState {
     pub matched_visible_indices: Vec<usize>,
     /// Current selected match position in `matched_visible_indices` (0-based)
     pub current_match_idx: usize,
+    /// Parsed query-language expression for `query` when it parses cleanly;
+    /// otherwise `None` (falls back to plain substring / regex matching).
+    #[serde(skip)]
+    pub parsed_query: Option<QueryExpression>,
 }
 
 impl Default for SearchState {
@@ -24,6 +30,7 @@ impl Default for SearchState {
             whole_word: false,
             matched_visible_indices: Vec::new(),
             current_match_idx: 0,
+            parsed_query: None,
         }
     }
 }
@@ -105,8 +112,20 @@ impl SearchState {
         builder.build().ok()
     }
 
+    /// Re-parse the current query text into a `QueryExpression` when it is
+    /// valid query language; otherwise clears the parsed query.
+    pub fn reparse(&mut self) {
+        let text = self.query.trim();
+        if text.is_empty() {
+            self.parsed_query = None;
+            return;
+        }
+        self.parsed_query = crate::query::parser::parse(text).ok();
+    }
+
     /// Update matching rows in visible_indices
     pub fn update_matches(&mut self, entries: &[LogEntry], visible_indices: &[usize]) {
+        self.reparse();
         self.matched_visible_indices.clear();
         let q = self.query.trim();
         if q.is_empty() {
@@ -114,18 +133,28 @@ impl SearchState {
             return;
         }
 
-        let Some(re) = self.build_regex() else {
-            self.current_match_idx = 0;
-            return;
-        };
+        if let Some(expr) = &self.parsed_query {
+            for (vis_pos, &entry_ix) in visible_indices.iter().enumerate() {
+                if let Some(entry) = entries.get(entry_ix) {
+                    if crate::query::engine::QueryEngine::evaluate_entry(entry, expr) {
+                        self.matched_visible_indices.push(vis_pos);
+                    }
+                }
+            }
+        } else {
+            let Some(re) = self.build_regex() else {
+                self.current_match_idx = 0;
+                return;
+            };
 
-        for (vis_pos, &entry_ix) in visible_indices.iter().enumerate() {
-            if let Some(entry) = entries.get(entry_ix) {
-                if re.is_match(&entry.payload)
-                    || re.is_match(&entry.tag)
-                    || re.is_match(&entry.raw_line)
-                {
-                    self.matched_visible_indices.push(vis_pos);
+            for (vis_pos, &entry_ix) in visible_indices.iter().enumerate() {
+                if let Some(entry) = entries.get(entry_ix) {
+                    if re.is_match(&entry.payload)
+                        || re.is_match(&entry.tag)
+                        || re.is_match(&entry.raw_line)
+                    {
+                        self.matched_visible_indices.push(vis_pos);
+                    }
                 }
             }
         }
@@ -137,6 +166,9 @@ impl SearchState {
 
     /// Find match byte ranges in a given text for highlight rendering
     pub fn find_ranges(&self, text: &str) -> Vec<(usize, usize)> {
+        if let Some(expr) = &self.parsed_query {
+            return crate::query::engine::QueryEngine::find_ranges_in_text(text, expr);
+        }
         let Some(re) = self.build_regex() else {
             return Vec::new();
         };

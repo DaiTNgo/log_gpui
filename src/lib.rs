@@ -1,9 +1,11 @@
 pub mod app;
 pub mod column;
 pub mod filter;
+pub mod infrastructure;
 pub mod marker;
 pub mod model;
 pub mod parser;
+pub mod query;
 pub mod sample;
 pub mod search;
 pub mod theme;

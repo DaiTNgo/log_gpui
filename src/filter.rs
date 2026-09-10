@@ -1,4 +1,7 @@
 use crate::model::{LogEntry, LogLevel};
+use crate::query::ast::{GroupOperator, QueryExpression};
+use crate::query::operator::QueryOperator;
+use crate::query::value::QueryValue;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 
@@ -53,8 +56,10 @@ impl ConditionOp {
     }
 }
 
+/// A filter row shown in the Filter Popover UI. Evaluation is delegated to the
+/// shared `QueryEngine` via `FilterEngine::to_query_expression`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FilterCondition {
+pub struct FilterRow {
     pub id: usize,
     pub field: ConditionField,
     pub op: ConditionOp,
@@ -62,7 +67,7 @@ pub struct FilterCondition {
     pub enabled: bool,
 }
 
-impl FilterCondition {
+impl FilterRow {
     pub fn new(id: usize, field: ConditionField, op: ConditionOp, value: String) -> Self {
         Self {
             id,
@@ -86,6 +91,25 @@ impl FilterCondition {
             }
             ConditionField::RequestId => format!("req:{}", self.value),
         }
+    }
+
+    /// Map this row onto a query-language condition. Returns `None` for
+    /// operators without an AST equivalent (forcing the legacy path).
+    fn to_query_condition(&self) -> Option<(String, QueryOperator, QueryValue)> {
+        let field = match self.field {
+            ConditionField::Level => "level",
+            ConditionField::Module => "module",
+            ConditionField::Message => "message",
+            ConditionField::RequestId => "requestId",
+        };
+        let op = match self.op {
+            ConditionOp::Is => QueryOperator::Eq,
+            ConditionOp::IsNot => QueryOperator::Neq,
+            ConditionOp::Contains => QueryOperator::Contains,
+            ConditionOp::MatchesRegex => QueryOperator::Matches,
+            ConditionOp::NotContains => return None,
+        };
+        Some((field.to_string(), op, QueryValue::String(self.value.clone())))
     }
 
     pub fn matches(&self, entry: &LogEntry) -> bool {
@@ -128,7 +152,7 @@ pub enum LogicMode {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FilterEngine {
-    pub conditions: Vec<FilterCondition>,
+    pub conditions: Vec<FilterRow>,
     pub logic_mode: LogicMode,
 }
 
@@ -152,7 +176,7 @@ impl FilterEngine {
 
     pub fn add_condition(&mut self, field: ConditionField, op: ConditionOp, value: String) -> usize {
         let id = next_filter_id();
-        self.conditions.push(FilterCondition::new(id, field, op, value));
+        self.conditions.push(FilterRow::new(id, field, op, value));
         id
     }
 
@@ -184,9 +208,38 @@ impl FilterEngine {
         self.add_condition(ConditionField::Module, ConditionOp::IsNot, module.to_string());
     }
 
-    /// Evaluate active filters on all entries and return visible indices
+    /// Build a query-language expression from the enabled, non-empty rows.
+    /// Returns `None` when rows cannot map to the AST (e.g. `NotContains`).
+    pub fn to_query_expression(&self) -> Option<QueryExpression> {
+        let active_conditions: Vec<&FilterRow> = self
+            .conditions
+            .iter()
+            .filter(|c| c.enabled && !c.value.trim().is_empty())
+            .collect();
+        if active_conditions.is_empty() {
+            return None;
+        }
+
+        let mut children = Vec::with_capacity(active_conditions.len());
+        for cond in active_conditions {
+            let (field, op, value) = cond.to_query_condition()?;
+            children.push(QueryExpression::Condition(crate::query::ast::QueryCondition::new(
+                &field, op, value,
+            )));
+        }
+
+        let operator = match self.logic_mode {
+            LogicMode::All => GroupOperator::And,
+            LogicMode::Any => GroupOperator::Or,
+        };
+        Some(QueryExpression::group(operator, children))
+    }
+
+    /// Evaluate active filters on all entries and return visible indices.
+    /// Delegates to the shared `QueryEngine` when possible; falls back to the
+    /// per-row matcher for rows without an AST equivalent.
     pub fn evaluate(&self, entries: &mut [LogEntry]) -> Vec<usize> {
-        let active_conditions: Vec<&FilterCondition> = self
+        let active_conditions: Vec<&FilterRow> = self
             .conditions
             .iter()
             .filter(|c| c.enabled && !c.value.trim().is_empty())
@@ -202,6 +255,16 @@ impl FilterEngine {
 
         let mut visible = Vec::with_capacity(entries.len());
         let mut prev_ts: Option<f64> = None;
+
+        if let Some(expr) = self.to_query_expression() {
+            for (idx, entry) in entries.iter_mut().enumerate() {
+                if crate::query::engine::QueryEngine::evaluate_entry(entry, &expr) {
+                    update_entry_delta_time(entry, &mut prev_ts);
+                    visible.push(idx);
+                }
+            }
+            return visible;
+        }
 
         for (idx, entry) in entries.iter_mut().enumerate() {
             let passes = match self.logic_mode {
