@@ -1,4 +1,5 @@
 pub mod ast;
+pub mod completion_provider;
 pub mod diagnostic;
 pub mod engine;
 pub mod language_service;

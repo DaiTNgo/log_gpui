@@ -112,15 +112,18 @@ fn test_search_and_query_language() {
 }
 
 #[test]
-fn test_search_plain_text_falls_back_to_regex() {
+fn test_search_invalid_query_sets_parse_error_and_no_matches() {
     let entries = fixtures();
     let visible = vec![0, 1, 2, 3];
 
     let mut search = SearchState::new();
+    // Bare text is not valid query language → parse error, no matches.
     search.query = "timeout".into();
     search.update_matches(&entries, &visible);
     assert!(search.parsed_query.is_none());
-    assert_eq!(search.matched_visible_indices, vec![1]);
+    assert!(search.parse_error.is_some());
+    assert!(search.parse_error.unwrap().message().contains("expected"));
+    assert!(search.matched_visible_indices.is_empty());
 }
 
 #[test]

@@ -10,15 +10,10 @@ use gpui_component::{Icon, IconName};
 pub struct FilterPopover;
 
 impl FilterPopover {
-    pub fn render_builder(
+    pub fn render_builder_content(
         filter_engine: &FilterEngine,
-        is_open: bool,
         cx: &mut gpui::Context<crate::app::AppView>,
     ) -> gpui::AnyElement {
-        if !is_open {
-            return div().into_any_element();
-        }
-
         let mut conditions_list = div().flex().flex_col().gap_1p5().w_full();
 
         for cond in &filter_engine.conditions {
@@ -85,53 +80,11 @@ impl FilterPopover {
             conditions_list = conditions_list.child(row);
         }
 
-        div()
-            .absolute()
-            .top(px(42.0))
-            .left(px(240.0))
-            .w(px(380.0))
-            .bg(ZED.elevated_surface)
-            .border_1()
-            .border_color(ZED.border)
-            .rounded_md()
-            .shadow_xl()
-            .p_3()
+div()
             .flex()
             .flex_col()
             .gap_2p5()
             .child(
-                // Header
-                div()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .justify_between()
-                    .border_b_1()
-                    .border_color(ZED.border_variant)
-                    .pb_2()
-                    .child(
-                        div()
-                            .text_xs()
-                            .font_weight(gpui::FontWeight::SEMIBOLD)
-                            .text_color(ZED.text)
-                            .child("Filter Builder"),
-                    )
-                    .child(
-                        div()
-                            .id("close_filter_builder")
-                            .cursor_pointer()
-                            .p_1()
-                            .rounded_md()
-                            .text_color(ZED.icon_muted)
-                            .hover(|s| s.bg(ZED.ghost_hover).text_color(ZED.icon_hover))
-                            .child(Icon::new(IconName::Close).size(px(13.0)))
-                            .on_click(cx.listener(|this, _, _window, cx| {
-                                this.toggle_filter_builder(cx);
-                            })),
-                    ),
-            )
-            .child(
-                // Condition items
                 if filter_engine.conditions.is_empty() {
                     div()
                         .py_3()

@@ -10,6 +10,7 @@ pub mod sample;
 pub mod search;
 pub mod theme;
 pub mod ui;
+pub mod workspace;
 
 use app::AppView;
 use gpui::{px, size, AppContext, Bounds, TitlebarOptions, WindowBounds, WindowOptions};

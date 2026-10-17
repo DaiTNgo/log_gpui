@@ -448,21 +448,41 @@ impl LogCanvas {
             .border_color(ZED.border_variant)
             .relative();
 
-        for mark in ruler_marks {
-            let mark_el = div()
-                .absolute()
-                .top(DefiniteLength::Fraction(mark.position))
-                .left(px(3.0))
-                .w(px(10.0))
-                .h(px(3.0))
-                .rounded_xs()
-                .bg(mark.color);
+        for mark in &ruler_marks {
+            let mark_el = if mark.is_current_match {
+                div()
+                    .absolute()
+                    .top(DefiniteLength::Fraction(mark.position))
+                    .left(px(2.0))
+                    .w(px(12.0))
+                    .h(px(5.0))
+                    .rounded_xs()
+                    .bg(ZED.search_current_border)
+                    .border_1()
+                    .border_color(ZED.search_current_border)
+                    .shadow_sm()
+            } else {
+                div()
+                    .absolute()
+                    .top(DefiniteLength::Fraction(mark.position))
+                    .left(px(3.0))
+                    .w(px(10.0))
+                    .h(px(3.0))
+                    .rounded_xs()
+                    .bg(mark.color)
+            };
 
             ruler_elements = ruler_elements.child(mark_el);
         }
 
         // Clickable surface on overview ruler to jump to line
+        // or jump to the nearest search match when a query is active.
         let view_for_ruler = state.view.clone();
+        let search_marks: Vec<(f32, usize)> = ruler_marks
+            .iter()
+            .filter(|m| m.is_search)
+            .map(|m| (m.position, m.entry_index))
+            .collect();
         let ruler_interactive = div()
             .id("overview_ruler")
             .cursor_pointer()
@@ -480,6 +500,25 @@ impl LogCanvas {
                 } else {
                     0.0
                 };
+
+                if !search_marks.is_empty() {
+                    let nearest = search_marks
+                        .iter()
+                        .min_by(|a, b| {
+                            (a.0 - ratio)
+                                .abs()
+                                .partial_cmp(&(b.0 - ratio).abs())
+                                .unwrap()
+                        })
+                        .copied();
+                    if let Some((_, entry_ix)) = nearest {
+                        view_for_ruler.update(cx, |this, cx| {
+                            this.jump_to_match_by_entry(entry_ix, cx);
+                        });
+                        return;
+                    }
+                }
+
                 view_for_ruler.update(cx, |this, cx| {
                     let total = this.visible_indices.len();
                     if total > 0 {
@@ -489,7 +528,11 @@ impl LogCanvas {
                 });
             });
 
-        // 4. Combined Canvas Container
+        // 4. Match Navigator (floating overlay, top-right of the list area)
+        let match_navigator =
+            crate::ui::match_navigator::MatchNavigator::render(state.search_state, &state.view);
+
+        // 5. Combined Canvas Container
         div()
             .flex_1()
             .h_full()
@@ -503,6 +546,7 @@ impl LogCanvas {
                     .h_full()
                     .flex()
                     .flex_row()
+                    .relative()
                     .child(
                         div()
                             .id("canvas_list_container")
@@ -512,7 +556,8 @@ impl LogCanvas {
                             .horizontal_scrollbar(state.scroll_handle)
                             .child(list),
                     )
-                    .child(ruler_interactive),
+                    .child(ruler_interactive)
+                    .when_some(match_navigator, |this, nav| this.child(nav)),
             )
             .into_any_element()
     }
@@ -571,6 +616,7 @@ fn render_pinnable_column_header(
                 btn.child(
                     gpui::svg()
                         .size(px(12.0))
+                        .text_color(icon_color)
                         .data(icon.svg_data()),
                 )
                 .into_any_element()
@@ -823,16 +869,26 @@ fn compute_ruler_marks(
                     color: marker.color(),
                     marker_type: Some(marker),
                     is_search: false,
+                    is_current_match: false,
                 });
             } else if !search_state.query.trim().is_empty()
                 && search_state.matched_visible_indices.contains(&vis_pos)
             {
+                let is_current = search_state
+                    .matched_visible_indices
+                    .get(search_state.current_match_idx)
+                    == Some(&vis_pos);
                 marks.push(RulerMark {
                     position: pos,
                     entry_index: entry_ix,
-                    color: ZED.search_current_border,
+                    color: if is_current {
+                        ZED.search_current_border
+                    } else {
+                        ZED.search_current_border
+                    },
                     marker_type: None,
                     is_search: true,
+                    is_current_match: is_current,
                 });
             }
         }

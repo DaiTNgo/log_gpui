@@ -59,10 +59,7 @@ fn test_search_find_modes() {
     let visible_indices = vec![0, 1, 2];
 
     let mut search = SearchState::new();
-    search.query = "timeout".into();
-    search.case_sensitive = false;
-    search.is_regex = false;
-    search.whole_word = false;
+    search.query = "message contains timeout".into();
 
     search.update_matches(&entries, &visible_indices);
     // Finds row 0 and 1 (case insensitive)

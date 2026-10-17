@@ -3857,6 +3857,7 @@ dependencies = [
  "gpui-component",
  "gpui-kit",
  "gpui-pre",
+ "lsp-types",
  "regex",
  "rfd",
  "serde",

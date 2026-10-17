@@ -1,38 +1,23 @@
 use crate::model::LogEntry;
 use crate::query::ast::QueryExpression;
-use regex::Regex;
+use crate::query::parser::ParseError;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct SearchState {
     pub is_open: bool,
     pub query: String,
-    pub case_sensitive: bool,
-    pub is_regex: bool,
-    pub whole_word: bool,
     /// Indices of matching rows in the `visible_indices` list
     pub matched_visible_indices: Vec<usize>,
     /// Current selected match position in `matched_visible_indices` (0-based)
     pub current_match_idx: usize,
-    /// Parsed query-language expression for `query` when it parses cleanly;
-    /// otherwise `None` (falls back to plain substring / regex matching).
+    /// Parsed query-language expression for `query` when it parses cleanly.
     #[serde(skip)]
     pub parsed_query: Option<QueryExpression>,
-}
-
-impl Default for SearchState {
-    fn default() -> Self {
-        Self {
-            is_open: false,
-            query: String::new(),
-            case_sensitive: false,
-            is_regex: false,
-            whole_word: false,
-            matched_visible_indices: Vec::new(),
-            current_match_idx: 0,
-            parsed_query: None,
-        }
-    }
+    /// Human-readable parse error for the current `query`, when it is invalid
+    /// query language. `None` when the query is empty or valid.
+    #[serde(skip)]
+    pub parse_error: Option<ParseError>,
 }
 
 impl SearchState {
@@ -73,108 +58,52 @@ impl SearchState {
         Some(self.matched_visible_indices[self.current_match_idx])
     }
 
-    pub fn toggle_case(&mut self) {
-        self.case_sensitive = !self.case_sensitive;
-    }
-
-    pub fn toggle_regex(&mut self) {
-        self.is_regex = !self.is_regex;
-    }
-
-    pub fn toggle_whole_word(&mut self) {
-        self.whole_word = !self.whole_word;
-    }
-
-    /// Build regex pattern based on options
-    pub fn build_regex(&self) -> Option<Regex> {
-        let q = self.query.trim();
-        if q.is_empty() {
-            return None;
-        }
-
-        let pattern = if self.is_regex {
-            if self.whole_word {
-                format!(r"\b(?:{})\b", q)
-            } else {
-                q.to_string()
-            }
-        } else {
-            let escaped = regex::escape(q);
-            if self.whole_word {
-                format!(r"\b{}\b", escaped)
-            } else {
-                escaped
-            }
-        };
-
-        let mut builder = regex::RegexBuilder::new(&pattern);
-        builder.case_insensitive(!self.case_sensitive);
-        builder.build().ok()
-    }
-
-    /// Re-parse the current query text into a `QueryExpression` when it is
-    /// valid query language; otherwise clears the parsed query.
+    /// Re-parse the current query text into a `QueryExpression`, recording a
+    /// human-readable `parse_error` when the text is not valid query language.
     pub fn reparse(&mut self) {
         let text = self.query.trim();
         if text.is_empty() {
             self.parsed_query = None;
+            self.parse_error = None;
             return;
         }
-        self.parsed_query = crate::query::parser::parse(text).ok();
+        match crate::query::parser::parse(text) {
+            Ok(expr) => {
+                self.parsed_query = Some(expr);
+                self.parse_error = None;
+            }
+            Err(err) => {
+                self.parsed_query = None;
+                self.parse_error = Some(err);
+            }
+        }
     }
 
-    /// Update matching rows in visible_indices
+    /// Update matching rows in visible_indices using the parsed query language.
+    /// Invalid query text produces no matches.
     pub fn update_matches(&mut self, entries: &[LogEntry], visible_indices: &[usize]) {
         self.reparse();
         self.matched_visible_indices.clear();
-        let q = self.query.trim();
-        if q.is_empty() {
-            self.current_match_idx = 0;
+        self.current_match_idx = 0;
+        let Some(expr) = &self.parsed_query else {
             return;
-        }
+        };
 
-        if let Some(expr) = &self.parsed_query {
-            for (vis_pos, &entry_ix) in visible_indices.iter().enumerate() {
-                if let Some(entry) = entries.get(entry_ix) {
-                    if crate::query::engine::QueryEngine::evaluate_entry(entry, expr) {
-                        self.matched_visible_indices.push(vis_pos);
-                    }
+        for (vis_pos, &entry_ix) in visible_indices.iter().enumerate() {
+            if let Some(entry) = entries.get(entry_ix) {
+                if crate::query::engine::QueryEngine::evaluate_entry(entry, expr) {
+                    self.matched_visible_indices.push(vis_pos);
                 }
             }
-        } else {
-            let Some(re) = self.build_regex() else {
-                self.current_match_idx = 0;
-                return;
-            };
-
-            for (vis_pos, &entry_ix) in visible_indices.iter().enumerate() {
-                if let Some(entry) = entries.get(entry_ix) {
-                    if re.is_match(&entry.payload)
-                        || re.is_match(&entry.tag)
-                        || re.is_match(&entry.raw_line)
-                    {
-                        self.matched_visible_indices.push(vis_pos);
-                    }
-                }
-            }
-        }
-
-        if self.current_match_idx >= self.matched_visible_indices.len() {
-            self.current_match_idx = 0;
         }
     }
 
-    /// Find match byte ranges in a given text for highlight rendering
+    /// Find match byte ranges in a given text for highlight rendering, based on
+    /// the parsed query language. Invalid/empty queries highlight nothing.
     pub fn find_ranges(&self, text: &str) -> Vec<(usize, usize)> {
-        if let Some(expr) = &self.parsed_query {
-            return crate::query::engine::QueryEngine::find_ranges_in_text(text, expr);
-        }
-        let Some(re) = self.build_regex() else {
+        let Some(expr) = &self.parsed_query else {
             return Vec::new();
         };
-
-        re.find_iter(text)
-            .map(|m| (m.start(), m.end()))
-            .collect()
+        crate::query::engine::QueryEngine::find_ranges_in_text(text, expr)
     }
 }

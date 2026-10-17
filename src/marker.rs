@@ -75,6 +75,8 @@ pub struct RulerMark {
     pub marker_type: Option<MarkerType>,
     /// Whether this is a search result match
     pub is_search: bool,
+    /// Whether this is the currently selected search match
+    pub is_current_match: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

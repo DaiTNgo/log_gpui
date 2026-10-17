@@ -1,6 +1,7 @@
 use crate::model::LogEntry;
 use crate::theme::Density;
 use gpui::{px, Pixels};
+use serde::{Deserialize, Serialize};
 use std::collections::{BTreeSet, HashMap};
 
 pub const DEFAULT_GUTTER_WIDTH: Pixels = px(88.0);
@@ -12,7 +13,7 @@ pub const MIN_TIMESTAMP_WIDTH: Pixels = px(48.0);
 pub const MIN_LEVEL_WIDTH: Pixels = px(36.0);
 pub const MIN_MODULE_WIDTH: Pixels = px(48.0);
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum PinnableColumn {
     Timestamp,
     Level,
@@ -107,7 +108,7 @@ impl PinToggleState {
 }
 
 /// Tracks the maximum character lengths per structured field observed across log entries.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct FieldMaxChars {
     pub timestamp: usize,
     pub level: usize,
@@ -164,7 +165,7 @@ pub fn compute_column_width(
     px(content_width).max(min_width)
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ColumnLayoutState {
     pub pinned_columns: BTreeSet<PinnableColumn>,
     pub ordered_pinned: Vec<PinnableColumn>,
@@ -267,6 +268,21 @@ impl ColumnLayoutState {
     #[inline]
     pub fn pinned_columns(&self) -> &[PinnableColumn] {
         &self.ordered_pinned
+    }
+
+    /// Read-only access to all column widths keyed by column.
+    #[inline]
+    pub fn widths(&self) -> &HashMap<PinnableColumn, Pixels> {
+        &self.widths
+    }
+
+    /// Reset all column widths back to their defaults, discarding manual
+    /// adjustments and dynamic sizing (used when restoring a saved view).
+    pub fn reset_widths_to_defaults(&mut self) {
+        self.widths.clear();
+        self.widths.insert(PinnableColumn::Timestamp, DEFAULT_TIMESTAMP_WIDTH);
+        self.widths.insert(PinnableColumn::Level, DEFAULT_LEVEL_WIDTH);
+        self.widths.insert(PinnableColumn::Module, DEFAULT_MODULE_WIDTH);
     }
 
     /// Returns unpinned columns in natural schema order.

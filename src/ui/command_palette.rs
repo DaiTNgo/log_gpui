@@ -28,6 +28,9 @@ pub enum PaletteAction {
     LoadDemo,
     OpenFile,
     UnpinAllColumns,
+    ToggleProjectSwitcher,
+    ToggleViewPanel,
+    ToggleMarkerPanel,
 }
 
 impl CommandPalette {
@@ -42,6 +45,16 @@ impl CommandPalette {
                 name: "Filter: Open Filter Builder",
                 shortcut: "⌘⇧F",
                 action: PaletteAction::ToggleFilter,
+            },
+            PaletteCommand {
+                name: "View: Open View Panel",
+                shortcut: "⌘⇧V",
+                action: PaletteAction::ToggleViewPanel,
+            },
+            PaletteCommand {
+                name: "Marker: Open Marker Panel",
+                shortcut: "⌘⇧M",
+                action: PaletteAction::ToggleMarkerPanel,
             },
             PaletteCommand {
                 name: "Bookmark: Toggle Bookmark on Selected Line",
@@ -92,6 +105,11 @@ impl CommandPalette {
                 name: "File: Open Log File...",
                 shortcut: "⌘O",
                 action: PaletteAction::OpenFile,
+            },
+            PaletteCommand {
+                name: "Project: Switch Project",
+                shortcut: "⌘P",
+                action: PaletteAction::ToggleProjectSwitcher,
             },
             PaletteCommand {
                 name: "Data: Reload Sample Logs",
