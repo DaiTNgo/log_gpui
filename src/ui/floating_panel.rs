@@ -1,10 +1,11 @@
-use crate::theme::ZED;
+
 use gpui::{
     div, px, AppContext, ElementId, InteractiveElement, IntoElement, MouseButton, ParentElement,
     Render, StatefulInteractiveElement, Styled, Window,
 };
 use gpui_component::scroll::ScrollableElement as _;
-use gpui_component::{Icon, IconName};
+use gpui_component::{Icon};
+use gpui_kit::assets::IconName;
 
 /// Which floating tool panel a given overlay represents.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -186,7 +187,6 @@ impl FloatingPanel {
             .justify_between()
             .px_2()
             .border_b_1()
-            .border_color(ZED.border_variant)
             .child(
                 div()
                     .flex()
@@ -195,14 +195,12 @@ impl FloatingPanel {
                     .gap_1p5()
                     .child(
                         div()
-                            .text_color(ZED.icon_muted)
                             .child(Icon::new(kind.icon()).size(px(13.0))),
                     )
                     .child(
                         div()
                             .text_xs()
                             .font_weight(gpui::FontWeight::SEMIBOLD)
-                            .text_color(ZED.text)
                             .child(kind.title()),
                     ),
             )
@@ -212,8 +210,6 @@ impl FloatingPanel {
                     .cursor_pointer()
                     .p_1()
                     .rounded_md()
-                    .text_color(ZED.icon_muted)
-                    .hover(|s| s.bg(ZED.ghost_hover).text_color(ZED.icon_hover))
                     .child(Icon::new(IconName::Close).size(px(13.0)))
                     .on_click(cx.listener(move |this, _, _window, cx| {
                         this.toggle_panel(kind, cx);
@@ -267,9 +263,7 @@ let mut handles = Vec::new();
             .top(px(state.y))
             .w(px(state.w))
             .h(px(state.h))
-            .bg(ZED.elevated_surface)
             .border_1()
-            .border_color(ZED.border)
             .rounded_lg()
             .shadow_2xl()
             .flex()

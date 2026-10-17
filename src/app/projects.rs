@@ -96,6 +96,15 @@ impl AppView {
         }
     }
 
+    /// Rename a project (ignores blank names).
+    pub fn rename_project(&mut self, project_id: &str, name: &str, cx: &mut Context<Self>) {
+        let name = name.trim();
+        if !name.is_empty() {
+            self.workspace_state.rename_project(project_id, name);
+        }
+        cx.notify();
+    }
+
     pub fn begin_project_rename(&mut self, project_id: &str, cx: &mut Context<Self>) {
         self.project_renaming = Some(project_id.to_string());
         self.project_rename_buffer.clear();

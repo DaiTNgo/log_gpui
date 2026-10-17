@@ -1,0 +1,5 @@
+2026-07-08 11:04:07.312 INFO  [server.ts:24]  listening on http://localhost:3000
+2026-07-08 11:04:07.312 DEBUG [db/pool.ts:12]  pool acquired conn#7 in 1.2ms
+2026-07-08 11:04:07.312 INFO  [agent/planner.ts:88]  tool search 142ms · 318t
+2026-07-08 11:04:07.312 WARN  [cache.ts:51]  cache miss user:42:profile
+2026-07-08 11:04:07.312 ERROR [billing.ts:140]  charge failed

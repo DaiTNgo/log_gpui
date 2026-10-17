@@ -8,6 +8,6 @@ pub mod parser;
 pub mod query;
 pub mod sample;
 pub mod search;
-pub mod theme;
+pub mod density;
 pub mod ui;
 pub mod workspace;

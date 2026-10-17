@@ -1,9 +1,9 @@
 use gpui::px;
 use log_gpui::column::{
-    compute_column_width, ColumnLayoutState, FieldMaxChars, IconName, PinToggleState, PinnableColumn,
+    compute_column_width, ColumnLayoutState, FieldMaxChars, PinToggleState, PinnableColumn,
 };
 use log_gpui::model::{LogEntry, LogLevel};
-use log_gpui::theme::Density;
+use log_gpui::density::Density;
 
 #[test]
 fn test_default_column_layout_state() {
@@ -45,7 +45,7 @@ fn test_gutter_stationary_anchor_invariant() {
 
 #[test]
 fn test_density_uniform_row_heights() {
-    use log_gpui::theme::Density;
+    use log_gpui::density::Density;
 
     // Fixed single-line row heights ensuring virtualization performance across all densities
     assert_eq!(Density::Comfortable.row_height(), 30.0);
@@ -370,7 +370,7 @@ fn test_pin_toggle_interaction_states() {
     );
     assert_eq!(
         PinToggleState::UnpinnedHover.icon(),
-        Some(IconName::PushPinSimple)
+        Some(gpui_kit::assets::IconName::Pin)
     );
     assert!(PinToggleState::UnpinnedHover.is_visible());
 
@@ -390,7 +390,7 @@ fn test_pin_toggle_interaction_states() {
     );
     assert_eq!(
         PinToggleState::PinnedActive.icon(),
-        Some(IconName::PushPinSimple)
+        Some(gpui_kit::assets::IconName::Pin)
     );
     assert!(PinToggleState::PinnedActive.is_visible());
 
@@ -409,7 +409,7 @@ fn test_pin_toggle_interaction_states() {
     );
     assert_eq!(
         PinToggleState::PinnedHover.icon(),
-        Some(IconName::PushPinSimpleSlash)
+        Some(gpui_kit::assets::IconName::PinOff)
     );
     assert!(PinToggleState::PinnedHover.is_visible());
 

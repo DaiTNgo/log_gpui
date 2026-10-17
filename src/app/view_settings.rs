@@ -1,14 +1,26 @@
 //! Logic: density, tail, columns, sidebar and drawer state.
 
 use super::AppView;
-use crate::theme::Density;
+use crate::density::Density;
 use gpui::{
     Context,
 };
 
 impl AppView {
+    /// Left sidebar (Projects): `⌘B` / header toggle.
     pub fn toggle_sidebar(&mut self, cx: &mut Context<Self>) {
-        self.sidebar_state.toggle_drawer();
+        self.sidebar_state.toggle();
+        cx.notify();
+    }
+
+    /// Right context sidebar (Files / Investigations / Saved Views / Markers).
+    pub fn toggle_context_sidebar(&mut self, cx: &mut Context<Self>) {
+        self.context_sidebar.toggle();
+        cx.notify();
+    }
+
+    pub fn show_context_tab(&mut self, tab: crate::workspace::state::ContextTab, cx: &mut Context<Self>) {
+        self.context_sidebar.show_tab(tab);
         cx.notify();
     }
 
@@ -19,6 +31,15 @@ impl AppView {
             self.expanded_projects.insert(project_id.to_string());
         }
         cx.notify();
+    }
+
+    /// Header action: collapse every project, or expand all when none is expanded.
+    pub fn toggle_all_projects(&mut self, cx: &mut Context<Self>) {
+        if self.expanded_projects.is_empty() {
+            self.expand_all_projects(cx);
+        } else {
+            self.collapse_all_projects(cx);
+        }
     }
 
     pub fn collapse_all_projects(&mut self, cx: &mut Context<Self>) {
@@ -105,8 +126,7 @@ impl AppView {
     }
 
     pub fn update_drawer_resize(&mut self, current_x: gpui::Pixels, cx: &mut Context<Self>) {
-        let new_w = f32::from(current_x) - crate::ui::sidebar::RAIL_WIDTH;
-        self.sidebar_state.set_drawer_width(new_w);
+        self.sidebar_state.set_width(f32::from(current_x));
         cx.notify();
     }
 
@@ -116,7 +136,7 @@ impl AppView {
     }
 
     pub fn reset_drawer_width(&mut self, cx: &mut Context<Self>) {
-        self.sidebar_state.reset_drawer_width();
+        self.sidebar_state.reset_width();
         cx.notify();
     }
 }

@@ -7,6 +7,7 @@ mod commands;
 mod keyboard;
 mod panels;
 mod projects;
+pub mod rename;
 mod search;
 mod selection;
 mod tabs;
@@ -19,14 +20,14 @@ use crate::filter::FilterEngine;
 use crate::model::LogEntry;
 use crate::sample::generate_sample_logs;
 use crate::search::SearchState;
-use crate::theme::Density;
+use crate::density::Density;
 use crate::ui::filter_popover::QuickLogMenu;
 use crate::ui::floating_panel::{
     FloatingPanelState, PanelGesture, PanelKind,
 };
 use crate::ui::inspector::InspectorTab;
 use crate::workspace::project::{LogFileDescriptor, ProjectColorAccent};
-use crate::workspace::state::{SidebarStateMachine, WorkspaceState};
+use crate::workspace::state::{ContextSidebarState, LeftSidebarState, WorkspaceState};
 use crate::workspace::working_set::TabSessionState;
 use gpui::{
     App, AppContext, Context, Entity, FocusHandle, Focusable, UniformListScrollHandle,
@@ -73,8 +74,12 @@ pub struct AppView {
     pub project_rename_buffer: String,
 
     // Sidebar state
-    pub sidebar_state: SidebarStateMachine,
+    pub sidebar_state: LeftSidebarState,
+    pub context_sidebar: ContextSidebarState,
     pub expanded_projects: HashSet<String>,
+
+    /// Inline rename of a sidebar row (project or log file), if any.
+    pub renaming: Option<rename::RenameState>,
 
     pub focus_handle: FocusHandle,
 }
@@ -98,7 +103,7 @@ impl AppView {
         let visible_indices = Arc::new(visible);
 
 let search_input = cx.new(|cx| {
-            EditorState::new(window, cx).placeholder("level in (info, warn) && message contains error...")
+            EditorState::new(window, cx).placeholder("Search ...")
         });
         {
             let schema = crate::query::schema::LogSchema::for_log_fields();
@@ -206,8 +211,10 @@ let search_input = cx.new(|cx| {
             project_switcher_index: 0,
             project_renaming: None,
             project_rename_buffer: String::new(),
-            sidebar_state: SidebarStateMachine::new(),
+            sidebar_state: LeftSidebarState::new(),
+            context_sidebar: ContextSidebarState::new(),
             expanded_projects: HashSet::new(),
+            renaming: None,
             focus_handle,
         }
     }

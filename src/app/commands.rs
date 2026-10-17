@@ -4,7 +4,7 @@ use super::AppView;
 use crate::column::FieldMaxChars;
 use crate::parser::parse_file;
 use crate::sample::generate_sample_logs;
-use crate::theme::Density;
+use crate::density::Density;
 use crate::ui::command_palette::PaletteAction;
 use crate::ui::floating_panel::PanelKind;
 use gpui::{
@@ -73,11 +73,15 @@ impl AppView {
         }
     }
 
+    /// Pick and open a log file. The native dialog is awaited off the event handler: running a
+    /// blocking modal inside a click handler re-enters the app while it is still borrowed.
     pub fn open_file_dialog(&mut self, cx: &mut Context<Self>) {
-        if let Some(file_path) = rfd::FileDialog::new()
-            .add_filter("Log Files (*.log, *.txt, *.json)", &["log", "txt", "json", "jsonl"])
-            .pick_file()
-        {
+        cx.spawn(async move |this, cx| {
+            // No extension filter: any file can be imported (the parser reads raw bytes).
+            let Some(handle) = rfd::AsyncFileDialog::new().pick_file().await else {
+                return;
+            };
+            let file_path = handle.path().to_path_buf();
             let name = file_path
                 .file_name()
                 .map(|n| n.to_string_lossy().to_string())
@@ -86,20 +90,24 @@ impl AppView {
             match parse_file(&file_path) {
                 Ok(result) => {
                     let file_id = file_path.to_string_lossy().to_string();
-                    self.column_layout.max_chars = result.max_chars;
-                    self.open_log_file_in_tab(
-                        file_id,
-                        name,
-                        result.entries,
-                        result.max_chars,
-                        cx,
-                    );
-                    self.file_format = "Text Log".to_string();
+                    this.update(cx, |this, cx| {
+                        this.column_layout.max_chars = result.max_chars;
+                        this.open_log_file_in_tab(
+                            file_id,
+                            name,
+                            result.entries,
+                            result.max_chars,
+                            cx,
+                        );
+                        this.file_format = "Text Log".to_string();
+                    })
+                    .ok();
                 }
                 Err(e) => {
                     eprintln!("Failed to parse file: {:?}", e);
                 }
             }
-        }
+        })
+        .detach();
     }
 }

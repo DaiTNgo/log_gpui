@@ -1,12 +1,13 @@
 use crate::marker::MarkerType;
 use crate::model::LogEntry;
-use crate::theme::ZED;
+
 use gpui::{
     div, px, ElementId, InteractiveElement, IntoElement, ParentElement, StatefulInteractiveElement,
     Styled,
 };
 use gpui_component::scroll::ScrollableElement as _;
-use gpui_component::{Icon, IconName};
+use gpui_component::{Icon};
+use gpui_kit::assets::IconName;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum InspectorTab {
@@ -35,8 +36,6 @@ impl InspectorView {
                 .w(px(280.0))
                 .h_full()
                 .border_l_1()
-                .border_color(ZED.border_variant)
-                .bg(ZED.surface_background)
                 .p_4()
                 .flex()
                 .flex_col()
@@ -45,26 +44,17 @@ impl InspectorView {
                 .child(
                     div()
                         .text_xs()
-                        .text_color(ZED.text_muted)
                         .child("Select a log row to inspect details"),
                 )
                 .into_any_element();
         };
 
-        let (level_fg, level_bg, level_border) = match entry.level {
-            crate::model::LogLevel::Fatal | crate::model::LogLevel::Error => (ZED.error, ZED.error_bg, ZED.error_border),
-            crate::model::LogLevel::Warn => (ZED.warning, ZED.warning_bg, ZED.warning_border),
-            crate::model::LogLevel::Info => (ZED.info, ZED.info_bg, ZED.info_border),
-            crate::model::LogLevel::Debug => (ZED.debug, ZED.debug_bg, ZED.border_variant),
-            _ => (ZED.text_muted, ZED.element_background, ZED.border_variant),
-        };
 
         // Tabs
         let tabs = div()
             .flex()
             .flex_row()
             .border_b_1()
-            .border_color(ZED.border_variant)
             .child(tab_btn("Fields", InspectorTab::Fields, active_tab, cx))
             .child(tab_btn("Raw", InspectorTab::Raw, active_tab, cx))
             .child(tab_btn("Hex", InspectorTab::Hex, active_tab, cx))
@@ -101,12 +91,10 @@ impl InspectorView {
                         .mt_2()
                         .pt_2()
                         .border_t_1()
-                        .border_color(ZED.border_variant)
                         .child(
                             div()
                                 .text_xs()
                                 .font_weight(gpui::FontWeight::SEMIBOLD)
-                                .text_color(ZED.text_muted)
                                 .child("JSON PAYLOAD FIELDS"),
                         );
 
@@ -125,12 +113,10 @@ impl InspectorView {
                         .mt_2()
                         .pt_2()
                         .border_t_1()
-                        .border_color(ZED.border_variant)
                         .child(
                             div()
                                 .text_xs()
                                 .font_weight(gpui::FontWeight::SEMIBOLD)
-                                .text_color(ZED.error)
                                 .child("STACK TRACE / SUB-LINES"),
                         );
 
@@ -139,7 +125,6 @@ impl InspectorView {
                             div()
                                 .font_family(".AppleSystemUIFontMonospaced")
                                 .text_xs()
-                                .text_color(ZED.text_muted)
                                 .child(sub.clone()),
                         );
                     }
@@ -156,7 +141,6 @@ impl InspectorView {
                     .p_3()
                     .font_family(".AppleSystemUIFontMonospaced")
                     .text_xs()
-                    .text_color(ZED.text)
                     .child(entry.raw_line.clone())
             }
             InspectorTab::Hex => {
@@ -168,12 +152,10 @@ impl InspectorView {
                     .p_3()
                     .font_family(".AppleSystemUIFontMonospaced")
                     .text_xs()
-                    .text_color(ZED.text_accent)
                     .child(hex_str)
             }
             InspectorTab::Notes => {
                 // Notes & Annotation
-                let has_note = entry.note.is_some();
                 let note_text = entry.note.clone().unwrap_or_else(|| "No note attached yet. Click 'Set Note' below to annotate this log row.".to_string());
                 let marker_label = entry.effective_marker().map(|m| m.label()).unwrap_or("None");
                 let entry_ix = entry.index;
@@ -195,13 +177,11 @@ impl InspectorView {
                                 div()
                                     .text_xs()
                                     .font_weight(gpui::FontWeight::SEMIBOLD)
-                                    .text_color(ZED.text_muted)
                                     .child("MARKER ASSIGNMENT"),
                             )
                             .child(
                                 div()
                                     .text_xs()
-                                    .text_color(ZED.text_accent)
                                     .child(format!("Current: {}", marker_label)),
                             ),
                     )
@@ -220,7 +200,6 @@ impl InspectorView {
                         div()
                             .text_xs()
                             .font_weight(gpui::FontWeight::SEMIBOLD)
-                            .text_color(ZED.text_muted)
                             .mt_2()
                             .child("ANNOTATION"),
                     )
@@ -228,11 +207,8 @@ impl InspectorView {
                         div()
                             .p_2p5()
                             .rounded_md()
-                            .bg(ZED.element_background)
                             .border_1()
-                            .border_color(ZED.border_variant)
                             .text_xs()
-                            .text_color(if has_note { ZED.text } else { ZED.text_muted })
                             .child(note_text),
                     )
                     // Action Buttons for Note
@@ -252,12 +228,8 @@ impl InspectorView {
                                     .px_2p5()
                                     .py_1()
                                     .rounded_md()
-                                    .bg(ZED.element_background)
                                     .border_1()
-                                    .border_color(ZED.border_variant)
-                                    .hover(|s| s.bg(ZED.ghost_hover))
                                     .text_xs()
-                                    .text_color(ZED.text_accent)
                                     .child(Icon::new(IconName::FileText).size(px(12.0)))
                                     .child("Set Note")
                                     .on_click(cx.listener(move |this, _, _window, cx| {
@@ -271,13 +243,8 @@ impl InspectorView {
                                     .px_2p5()
                                     .py_1()
                                     .rounded_md()
-                                    .bg(ZED.element_background)
                                     .border_1()
-                                    .border_color(ZED.border_variant)
-                                    .hover(|s| s.bg(ZED.ghost_hover))
                                     .text_xs()
-                                    .text_color(ZED.text_muted)
-                                    .hover(|s| s.text_color(ZED.error))
                                     .child("Clear")
                                     .on_click(cx.listener(|this, _, _window, cx| {
                                         this.set_selected_note(None, cx);
@@ -291,8 +258,6 @@ impl InspectorView {
             .w(px(280.0))
             .h_full()
             .border_l_1()
-            .border_color(ZED.border_variant)
-            .bg(ZED.surface_background)
             .flex()
             .flex_col()
             .child(
@@ -305,7 +270,6 @@ impl InspectorView {
                     .px_3()
                     .py_2()
                     .border_b_1()
-                    .border_color(ZED.border_variant)
                     .child(
                         div()
                             .flex()
@@ -316,7 +280,6 @@ impl InspectorView {
                                 div()
                                     .text_xs()
                                     .font_weight(gpui::FontWeight::SEMIBOLD)
-                                    .text_color(ZED.text)
                                     .child("Inspector"),
                             )
                             .child(
@@ -325,11 +288,8 @@ impl InspectorView {
                                     .py_0p5()
                                     .rounded_xs()
                                     .border_1()
-                                    .border_color(level_border)
-                                    .bg(level_bg)
                                     .text_xs()
                                     .font_weight(gpui::FontWeight::SEMIBOLD)
-                                    .text_color(level_fg)
                                     .child(entry.level.as_str()),
                             ),
                     )
@@ -339,9 +299,6 @@ impl InspectorView {
                             .cursor_pointer()
                             .p_1()
                             .rounded_md()
-                            .hover(|s| s.bg(ZED.ghost_hover))
-                            .text_color(ZED.icon_muted)
-                            .hover(|s| s.text_color(ZED.icon_hover))
                             .child(Icon::new(IconName::Close).size(px(13.0)))
                             .on_click(cx.listener(|this, _, _window, cx| {
                                 this.is_inspector_open = false;
@@ -374,18 +331,7 @@ fn tab_btn(
         } else {
             gpui::FontWeight::NORMAL
         })
-        .text_color(if is_active {
-            ZED.text_accent
-        } else {
-            ZED.text_muted
-        })
         .border_b_2()
-        .border_color(if is_active {
-            ZED.border_focused
-        } else {
-            ZED.border_transparent
-        })
-        .hover(|s| s.bg(ZED.ghost_hover))
         .child(label)
         .on_click(cx.listener(move |this, _, _window, cx| {
             this.inspector_tab = tab;
@@ -398,23 +344,15 @@ fn marker_chip(
     marker: Option<MarkerType>,
     cx: &mut gpui::Context<crate::app::AppView>,
 ) -> impl IntoElement {
-    let text_col = match marker {
-        Some(m) => m.color(),
-        None => ZED.text_muted,
-    };
     div()
         .id(ElementId::from(format!("chip_mark_{:?}", marker)))
         .cursor_pointer()
         .px_2()
         .py_1()
         .rounded_md()
-        .bg(ZED.element_background)
         .border_1()
-        .border_color(ZED.border_variant)
         .text_xs()
         .font_weight(gpui::FontWeight::SEMIBOLD)
-        .text_color(text_col)
-        .hover(|s| s.bg(ZED.ghost_hover))
         .child(label)
         .on_click(cx.listener(move |this, _, _window, cx| {
             this.set_selected_marker(marker, cx);
@@ -429,14 +367,12 @@ fn field_item(label: &str, val: &str) -> impl IntoElement {
         .child(
             div()
                 .text_xs()
-                .text_color(ZED.text_muted)
                 .child(label.to_string()),
         )
         .child(
             div()
                 .font_family(".AppleSystemUIFontMonospaced")
                 .text_xs()
-                .text_color(ZED.text)
                 .child(val.to_string()),
         )
 }

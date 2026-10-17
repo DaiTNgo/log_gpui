@@ -6,7 +6,7 @@ Status: ready-for-agent
 
 ## What to build
 
-Elevate working sets into isolated `Project` containers governed by a top-level `WorkspaceState`, and replace the static title header with an interactive **Project Switcher**.
+Elevate working sets into isolated `Project` containers governed by a top-level `WorkspaceState`, and add an interactive **Project Switcher** to the window header.
 
 Each Project represents an isolated investigation space (e.g. `Payment Service`, `E-Commerce Core`) containing:
 - Project identity (unique ID, display name, color accent badge)
@@ -14,7 +14,7 @@ Each Project represents an isolated investigation space (e.g. `Payment Service`,
 - Active Working Set (ordered open tabs and active tab index)
 - Project-level configurations
 
-The top-left window chrome replaces the static title with an interactive Project Switcher affordance displaying the project's colored badge and name with a dropdown chevron (e.g. `[🟦 Payment Service ⌄]`). Clicking this trigger or pressing `⌘P` / `⌘⌥P` opens a modal project switcher palette that supports:
+The window header places an interactive Project Switcher affordance immediately after the left-sidebar toggle (which sits next to the macOS traffic lights), displaying the project's colored badge and name with a dropdown chevron (e.g. `[🟦 Payment Service ⌄]`). Clicking this trigger or pressing `⌘P` / `⌘⌥P` opens a modal project switcher palette that supports:
 - Fuzzy-filtering across existing projects
 - Highlighting the currently active project
 - Adding a new project by selecting a local directory containing log files

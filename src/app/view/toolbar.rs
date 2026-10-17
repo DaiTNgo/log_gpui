@@ -1,287 +1,158 @@
-//! UI: editor toolbar.
+//! UI: editor toolbar built from gpui-kit components (Editor, Button, Tag).
 
 use super::AppView;
-use crate::theme::ZED;
 use crate::ui::floating_panel::PanelKind;
-use gpui::{
-    div, px, Context, ElementId, InteractiveElement, IntoElement, MouseButton,
-    ParentElement, SharedString, StatefulInteractiveElement, Styled, prelude::FluentBuilder as _,
-};
-use gpui_component::{input::Editor, Icon, IconName};
+use gpui::prelude::FluentBuilder as _;
+use gpui::{div, px, Context, IntoElement, ParentElement, SharedString, Styled};
+use gpui_component::button::{Button, ButtonVariants as _};
+use gpui_component::input::Editor;
+use gpui_component::tag::Tag;
+use gpui_component::{h_flex, ActiveTheme as _, Icon, Selectable as _, Sizable as _};
+use gpui_kit::assets::IconName;
 
 impl AppView {
-    /// Editor toolbar: search field, active filter chips and panel toggles.
+    /// Editor toolbar: query search field, active filter chips and panel toggles.
     pub(super) fn render_editor_toolbar(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
-        let mut filter_chips = div().flex().flex_row().items_center().gap_1p5();
-
+        let mut filter_chips = h_flex().gap_1();
         for cond in &self.filter_engine.conditions {
             if !cond.enabled || cond.value.trim().is_empty() {
                 continue;
             }
             let cond_id = cond.id;
-            let label = cond.to_chip_label();
-
-            let chip = div()
-                .id(ElementId::from(format!("chip_{}", cond_id)))
-                .cursor_pointer()
-                .flex()
-                .flex_row()
-                .items_center()
-                .gap_1p5()
-                .px_2()
-                .py_0p5()
-                .rounded_md()
-                .bg(ZED.element_background)
-                .border_1()
-                .border_color(ZED.border_variant)
-                .text_xs()
-                .text_color(ZED.text_accent)
-                .child(label)
-                .child(
-                    div()
-                        .text_xs()
-                        .text_color(ZED.text_muted)
-                        .hover(|s| s.text_color(ZED.error))
-                        .child("×"),
-                )
-                .on_click(cx.listener(move |this, _, _window, cx| {
-                    this.remove_filter_condition(cond_id, cx);
-                }));
-
-            filter_chips = filter_chips.child(chip);
+            filter_chips = filter_chips.child(
+                Button::new(("filter-chip", cond_id))
+                    .outline()
+                    .xsmall()
+                    .label(cond.to_chip_label())
+                    .icon(IconName::Close)
+                    .on_click(cx.listener(move |this, _, _window, cx| {
+                        this.remove_filter_condition(cond_id, cx);
+                    })),
+            );
         }
 
-        div()
-            .h(px(34.0))
-            .flex()
-            .flex_row()
-            .items_center()
-            .justify_between()
+        let parse_error = self.search_state.parse_error.as_ref().map(|e| {
+            let msg = e.message();
+            if msg.chars().count() > 48 {
+                format!("! {}", msg.chars().take(48).collect::<String>())
+            } else {
+                format!("! {}", msg)
+            }
+        });
+
+        let (match_cur, match_total) = self.search_state.current_match_display();
+
+        let panel_toggle = |id: &'static str, label: &'static str, kind: PanelKind, cx: &mut Context<Self>| {
+            Button::new(id)
+                .ghost()
+                .xsmall()
+                .label(label)
+                .selected(self.panel(kind).open)
+                .on_click(cx.listener(move |this, _, _window, cx| this.toggle_panel(kind, cx)))
+        };
+
+        h_flex()
+            .w_full()
             .px_3()
-            .bg(ZED.surface_background)
-            .border_b_1()
-            .border_color(ZED.border_variant)
+            .py_1()
+            .gap_2()
+            .items_center()
+            // Query editor (query-LSP completions) in a bordered search box
             .child(
-                div()
-                    .w_full()
-                    .flex()
-                    .flex_row()
+                h_flex()
+                    .flex_1()
+                    .min_w(px(0.0))
+                    .gap_3()
                     .items_center()
-                    .gap_2()
-                    // Full-width search field: query editor (query-LSP completions)
                     .child(
-                        div()
-                            .id("toolbar_search_field")
+                        h_flex()
                             .flex_1()
                             .min_w(px(0.0))
-                            .flex()
-                            .flex_row()
-                            .items_center()
+                            .h(px(32.0))
+                            .px_2()
                             .gap_2()
-                            .px_2p5()
-                            .py_1()
+                            .items_center()
                             .rounded_md()
-                            .bg(ZED.element_background)
                             .border_1()
-                            .border_color(if self.search_state.is_open {
-                                ZED.border_focused
-                            } else {
-                                ZED.border_variant
-                            })
-                            .hover(|s| s.border_color(ZED.border_focused))
+                            .border_color(cx.theme().border)
+                            .bg(cx.theme().background)
                             .child(
-                                div()
-                                    .text_color(ZED.icon)
-                                    .child(Icon::new(IconName::Search).size(px(13.0))),
+                                Icon::new(IconName::Search)
+                                    .size_4()
+                                    .text_color(cx.theme().muted_foreground),
                             )
                             .child(
                                 div()
                                     .flex_1()
                                     .min_w(px(0.0))
-                                    .child(
-                                        Editor::new(&self.search_input)
-                                            .appearance(false)
-                                            .bordered(false)
-                                            .h(px(24.0)),
-                                    ),
+                                    .child(Editor::new(&self.search_input).appearance(false).h(px(28.0))),
                             )
                             .when(
                                 self.search_state.is_open && !self.search_state.query.is_empty(),
                                 |this| {
                                     this.child(
-                                        div()
-                                            .id("toolbar_search_clear")
-                                            .cursor_pointer()
-                                            .px_1()
-                                            .rounded_xs()
-                                            .hover(|s| s.bg(ZED.ghost_hover))
-                                            .text_color(ZED.text_muted)
-                                            .child("×")
+                                        Button::new("search-clear")
+                                            .ghost()
+                                            .xsmall()
+                                            .icon(IconName::Close)
                                             .on_click(cx.listener(|this, _, window, cx| {
                                                 this.search_input.update(cx, |state, cx| {
-                                                    state.replace_all(
-                                                        SharedString::from(""),
-                                                        window,
-                                                        cx,
-                                                    );
+                                                    state.replace_all(SharedString::from(""), window, cx);
                                                 });
                                                 this.run_search(cx);
-                                                this.search_input.update(cx, |state, cx| {
-                                                    state.focus(window, cx);
-                                                });
+                                                this.search_input
+                                                    .update(cx, |state, cx| state.focus(window, cx));
                                             })),
                                     )
                                 },
                             )
-                            .when(!self.search_state.is_open, |this| {
-                                this.child(
-                                    div()
-                                        .px_1()
-                                        .py_0p5()
-                                        .rounded_xs()
-                                        .bg(ZED.surface_background)
-                                        .text_color(ZED.text_muted)
-                                        .child("⌘F"),
-                                )
-                            })
-                            .when(self.search_state.parse_error.is_some(), |this| {
-                                let msg = self
-                                    .search_state
-                                    .parse_error
-                                    .as_ref()
-                                    .map(|e| e.message())
-                                    .unwrap_or_default();
-                                let shown = if msg.chars().count() > 48 {
-                                    format!("! {}", msg.chars().take(48).collect::<String>())
-                                } else {
-                                    format!("! {}", msg)
-                                };
-                                this.child(
-                                    div()
-                                        .flex()
-                                        .flex_row()
-                                        .items_center()
-                                        .gap_1p5()
-                                        .px_2()
-                                        .py_0p5()
-                                        .rounded_xs()
-                                        .bg(ZED.error_bg)
-                                        .text_xs()
-                                        .font_family(".AppleSystemUIFontMonospaced")
-                                        .text_color(ZED.error)
-                                        .child(shown),
-                                )
-                            })
-                            .on_mouse_down(
-                                MouseButton::Left,
-                                cx.listener(|this, _, window, cx| {
-                                    this.activate_search(window, cx);
-                                }),
-                            ),
+                            .when_some(parse_error, |this, shown| this.child(Tag::danger().child(shown))),
                     )
-                    // Active Filter Chips
-                    .child(filter_chips)
-                    // Tool panels: View / Filter / Marker
+                    // Match navigator: prev / next / current-of-total
                     .child(
-                        div()
-                            .flex()
-                            .flex_row()
-                            .items_center()
+                        h_flex()
                             .gap_1()
+                            .items_center()
+                            .text_color(cx.theme().muted_foreground)
                             .child(
-                                div()
-                                    .id("toolbar_btn_view")
-                                    .cursor_pointer()
-                                    .px_2()
-                                    .py_1()
-                                    .rounded_md()
-                                    .bg(if self.panel(PanelKind::View).open {
-                                        ZED.ghost_selected
-                                    } else {
-                                        ZED.transparent
-                                    })
-                                    .hover(|s| s.bg(ZED.ghost_hover))
-                                    .text_xs()
-                                    .text_color(if self.panel(PanelKind::View).open {
-                                        ZED.text_accent
-                                    } else {
-                                        ZED.text_muted
-                                    })
-                                    .child("View ⌘⇧V")
+                                Button::new("match-prev")
+                                    .ghost()
+                                    .xsmall()
+                                    .icon(IconName::ChevronLeft)
                                     .on_click(cx.listener(|this, _, _window, cx| {
-                                        this.toggle_panel(PanelKind::View, cx);
+                                        this.jump_prev_match(cx);
+                                    })),
+                            )
+                            .child(
+                                Button::new("match-next")
+                                    .ghost()
+                                    .xsmall()
+                                    .icon(IconName::ChevronRight)
+                                    .on_click(cx.listener(|this, _, _window, cx| {
+                                        this.jump_next_match(cx);
                                     })),
                             )
                             .child(
                                 div()
-                                    .id("toolbar_btn_filter")
-                                    .cursor_pointer()
-                                    .px_2()
-                                    .py_1()
-                                    .rounded_md()
-                                    .bg(if self.panel(PanelKind::Filter).open {
-                                        ZED.ghost_selected
-                                    } else {
-                                        ZED.transparent
-                                    })
-                                    .hover(|s| s.bg(ZED.ghost_hover))
-                                    .text_xs()
-                                    .text_color(if self.panel(PanelKind::Filter).open {
-                                        ZED.text_accent
-                                    } else {
-                                        ZED.text_muted
-                                    })
-                                    .child("Filter ⌘⇧F")
-                                    .on_click(cx.listener(|this, _, _window, cx| {
-                                        this.toggle_filter_builder(cx);
-                                    })),
-                            )
-                            .child(
-                                div()
-                                    .id("toolbar_btn_marker")
-                                    .cursor_pointer()
-                                    .px_2()
-                                    .py_1()
-                                    .rounded_md()
-                                    .bg(if self.panel(PanelKind::Marker).open {
-                                        ZED.ghost_selected
-                                    } else {
-                                        ZED.transparent
-                                    })
-                                    .hover(|s| s.bg(ZED.ghost_hover))
-                                    .text_xs()
-                                    .text_color(if self.panel(PanelKind::Marker).open {
-                                        ZED.text_accent
-                                    } else {
-                                        ZED.text_muted
-                                    })
-                                    .child("Marker ⌘⇧M")
-                                    .on_click(cx.listener(|this, _, _window, cx| {
-                                        this.toggle_panel(PanelKind::Marker, cx);
-                                    })),
+                                    .min_w(px(48.0))
+                                    .text_sm()
+                                    .child(format!("{}/{}", match_cur, match_total)),
                             ),
-                    )
-                    // Inspector toggle
+                    ),
+            )
+            .child(filter_chips)
+            .child(
+                h_flex()
+                    .gap_1()
+                    .child(panel_toggle("toolbar-view", "View", PanelKind::View, cx))
+                    .child(panel_toggle("toolbar-filter", "Filter", PanelKind::Filter, cx))
+                    .child(panel_toggle("toolbar-marker", "Marker", PanelKind::Marker, cx))
                     .child(
-                        div()
-                            .id("btn_toggle_inspector")
-                            .cursor_pointer()
-                            .px_2()
-                            .py_1()
-                            .rounded_md()
-                            .bg(if self.is_inspector_open {
-                                ZED.ghost_selected
-                            } else {
-                                ZED.transparent
-                            })
-                            .hover(|s| s.bg(ZED.ghost_hover))
-                            .text_xs()
-                            .text_color(if self.is_inspector_open {
-                                ZED.text_accent
-                            } else {
-                                ZED.text_muted
-                            })
-                            .child("Inspector ⌘I")
+                        Button::new("toolbar-inspector")
+                            .ghost()
+                            .xsmall()
+                            .label("Inspector")
+                            .selected(self.is_inspector_open)
                             .on_click(cx.listener(|this, _, _window, cx| {
                                 this.is_inspector_open = !this.is_inspector_open;
                                 cx.notify();

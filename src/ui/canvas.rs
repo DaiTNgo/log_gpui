@@ -1,7 +1,7 @@
 use crate::marker::RulerMark;
 use crate::model::{LogEntry, LogLevel};
 use crate::search::SearchState;
-use crate::theme::{Density, ZED};
+use crate::density::Density;
 use gpui::{
     div, prelude::FluentBuilder as _, px, uniform_list, AppContext as _, DefiniteLength,
     ElementId, InteractiveElement, IntoElement, ListHorizontalSizingBehavior, MouseButton,
@@ -9,6 +9,7 @@ use gpui::{
     Window,
 };
 use gpui_component::scroll::ScrollableElement as _;
+use gpui_component::Icon;
 use std::sync::Arc;
 
 use crate::column::{ColumnLayoutState, PinToggleState, PinnableColumn};
@@ -71,9 +72,7 @@ impl LogCanvas {
             .flex()
             .flex_row()
             .items_center()
-            .bg(ZED.surface_background)
             .border_b_1()
-            .border_color(ZED.border_variant)
             .map(|d| apply_partition_divider_style(d, is_divider_active))
             .child(
                 // Stationary Gutter Header
@@ -84,7 +83,6 @@ impl LogCanvas {
                     .flex()
                     .flex_row()
                     .items_center()
-                    .bg(ZED.surface_background)
                     .child(
                         div()
                             .w(px(64.0))
@@ -137,12 +135,9 @@ impl LogCanvas {
             .flex()
             .flex_row()
             .items_center()
-            .bg(ZED.surface_background)
             .border_b_1()
-            .border_color(ZED.border_variant)
             .text_xs()
             .font_weight(gpui::FontWeight::SEMIBOLD)
-            .text_color(ZED.text_muted)
             .child(
                 // Base scrolling columns container
                 div()
@@ -164,18 +159,6 @@ impl LogCanvas {
         let entries_clone = state.entries.clone();
         let visible_clone = state.visible_indices.clone();
         let focused_tag_str = state.focused_tag.map(|s| s.to_string());
-        let current_search_vis_pos = state
-            .search_state
-            .matched_visible_indices
-            .get(state.search_state.current_match_idx)
-            .copied();
-        let search_matched_set: std::collections::HashSet<usize> = state
-            .search_state
-            .matched_visible_indices
-            .iter()
-            .copied()
-            .collect();
-        let selected_row_pos = state.selected_row_pos;
         let view = state.view.clone();
         let scroll_handle_for_rows = state.scroll_handle.clone();
         let column_layout_for_rows = state.column_layout.clone();
@@ -204,10 +187,6 @@ impl LogCanvas {
                         continue;
                     };
 
-                    let is_selected = selected_row_pos == Some(vis_pos);
-                    let is_current_search_match = current_search_vis_pos == Some(vis_pos);
-                    let is_search_match = search_matched_set.contains(&vis_pos);
-
                     let is_dimmed = if let Some(ref tag) = focused_tag_str {
                         !entry.tag.eq_ignore_ascii_case(tag)
                     } else {
@@ -215,38 +194,14 @@ impl LogCanvas {
                     };
 
                     let effective_marker = entry.effective_marker();
-                    let (marker_symbol, marker_color) = match effective_marker {
-                        Some(m) => (m.symbol(), m.color()),
-                        None => (" ", ZED.transparent),
+                    let marker_symbol = match effective_marker {
+                        Some(m) => m.symbol(),
+                        None => " ",
                     };
 
 
                     let is_expanded = entry.is_expanded;
                     let sub_count = entry.sub_lines.len();
-
-                    let row_bg = if is_selected {
-                        ZED.active_line_bg
-                    } else if is_current_search_match {
-                        ZED.search_current_bg
-                    } else if is_search_match {
-                        ZED.search_match_bg
-                    } else {
-                        ZED.editor_background
-                    };
-
-                    let border_color = if is_selected {
-                        ZED.border_focused
-                    } else if is_current_search_match {
-                        ZED.search_current_border
-                    } else {
-                        ZED.border_transparent
-                    };
-
-                    let line_num_color = if is_selected {
-                        ZED.gutter_active_line_number
-                    } else {
-                        ZED.gutter_line_number
-                    };
 
                     let view_for_row = view.clone();
                     let view_for_gutter = view.clone();
@@ -262,15 +217,7 @@ impl LogCanvas {
                         .items_center()
                         .font_family(".AppleSystemUIFontMonospaced")
                         .text_size(px(font_size))
-                        .bg(row_bg)
                         .opacity(if is_dimmed { 0.35 } else { 1.0 })
-                        .hover(|s| {
-                            if !is_selected {
-                                s.bg(ZED.element_hover)
-                            } else {
-                                s
-                            }
-                        })
                         .on_click(move |_event, _window, cx| {
                             view_for_row.update(cx, |this, cx| {
                                 this.selected_row_pos = Some(vis_pos);
@@ -303,11 +250,6 @@ impl LogCanvas {
                                     div()
                                         .flex_1()
                                         .px_2()
-                                        .text_color(match entry.level {
-                                            LogLevel::Fatal | LogLevel::Error => ZED.error,
-                                            LogLevel::Warn => ZED.warning,
-                                            _ => ZED.text,
-                                        })
                                         .whitespace_nowrap()
                                         .child(entry.payload.clone()),
                                 )
@@ -322,12 +264,6 @@ impl LogCanvas {
                                         .cursor_pointer()
                                         .px_2()
                                         .text_xs()
-                                        .text_color(if is_expanded {
-                                            ZED.text_accent
-                                        } else {
-                                            ZED.text_muted
-                                        })
-                                        .hover(|s| s.text_color(ZED.text))
                                         .child(if is_expanded {
                                             format!("[{} lines] ∨", sub_count)
                                         } else {
@@ -362,14 +298,6 @@ impl LogCanvas {
                                 .flex()
                                 .flex_row()
                                 .items_center()
-                                .bg(row_bg)
-                                .hover(move |s| {
-                                    if !is_selected {
-                                        s.bg(ZED.element_hover)
-                                    } else {
-                                        s
-                                    }
-                                })
                                 .on_click(move |_event, _window, cx| {
                                     view_for_gutter.update(cx, |this, cx| {
                                         this.selected_row_pos = Some(vis_pos);
@@ -385,7 +313,6 @@ impl LogCanvas {
                                         .ml(scroll_x)
                                         .w(anchored_width)
                                         .border_l_2()
-                                        .border_color(border_color)
                                         .map(|d| apply_partition_divider_style(d, is_divider_active))
                                         // Gutter: Line Number
                                         .child(
@@ -394,7 +321,6 @@ impl LogCanvas {
                                                 .w(px(64.0))
                                                 .px_2()
                                                 .text_right()
-                                                .text_color(line_num_color)
                                                 .child(format!("{}", entry.index)),
                                         )
                                         // Gutter: Marker Icon
@@ -407,7 +333,6 @@ impl LogCanvas {
                                                 .justify_center()
                                                 .text_xs()
                                                 .font_weight(gpui::FontWeight::BOLD)
-                                                .text_color(marker_color)
                                                 .child(marker_symbol),
                                         );
 
@@ -443,9 +368,7 @@ impl LogCanvas {
         let mut ruler_elements = div()
             .w(px(16.0))
             .h_full()
-            .bg(ZED.surface_background)
             .border_l_1()
-            .border_color(ZED.border_variant)
             .relative();
 
         for mark in &ruler_marks {
@@ -457,9 +380,7 @@ impl LogCanvas {
                     .w(px(12.0))
                     .h(px(5.0))
                     .rounded_xs()
-                    .bg(ZED.search_current_border)
                     .border_1()
-                    .border_color(ZED.search_current_border)
                     .shadow_sm()
             } else {
                 div()
@@ -469,7 +390,6 @@ impl LogCanvas {
                     .w(px(10.0))
                     .h(px(3.0))
                     .rounded_xs()
-                    .bg(mark.color)
             };
 
             ruler_elements = ruler_elements.child(mark_el);
@@ -528,17 +448,12 @@ impl LogCanvas {
                 });
             });
 
-        // 4. Match Navigator (floating overlay, top-right of the list area)
-        let match_navigator =
-            crate::ui::match_navigator::MatchNavigator::render(state.search_state, &state.view);
-
         // 5. Combined Canvas Container
         div()
             .flex_1()
             .h_full()
             .flex()
             .flex_col()
-            .bg(ZED.editor_background)
             .child(header)
             .child(
                 div()
@@ -556,8 +471,7 @@ impl LogCanvas {
                             .horizontal_scrollbar(state.scroll_handle)
                             .child(list),
                     )
-                    .child(ruler_interactive)
-                    .when_some(match_navigator, |this, nav| this.child(nav)),
+                    .child(ruler_interactive),
             )
             .into_any_element()
     }
@@ -579,14 +493,8 @@ fn render_pinnable_column_header(
         PinToggleState::UnpinnedIdle => div().w(px(16.0)).h(px(16.0)).into_any_element(),
         state_variant => {
             if let Some(icon) = state_variant.icon() {
-                let (icon_color, is_active_hover) = match state_variant {
-                    PinToggleState::UnpinnedHover => (ZED.text_muted, false),
-                    PinToggleState::PinnedActive => (ZED.text_accent, false),
-                    PinToggleState::PinnedHover => (ZED.text_accent, true),
-                    _ => (ZED.text_muted, false),
-                };
-
-                let mut btn = div()
+                
+                let btn = div()
                     .id(ElementId::from((if is_sticky { "sticky_pin_toggle" } else { "pin_toggle" }, col as usize)))
                     .cursor_pointer()
                     .flex()
@@ -595,8 +503,6 @@ fn render_pinnable_column_header(
                     .w(px(16.0))
                     .h(px(16.0))
                     .rounded_md()
-                    .text_color(icon_color)
-                    .hover(|s| s.bg(ZED.ghost_hover).text_color(ZED.icon_hover))
                     .on_hover(move |is_hovered, _window, cx| {
                         view_toggle.update(cx, |this, cx| {
                             this.set_column_toggle_hovered(col, *is_hovered, cx);
@@ -609,15 +515,8 @@ fn render_pinnable_column_header(
                         });
                     });
 
-                if is_active_hover {
-                    btn = btn.bg(ZED.ghost_hover);
-                }
-
                 btn.child(
-                    gpui::svg()
-                        .size(px(12.0))
-                        .text_color(icon_color)
-                        .data(icon.svg_data()),
+                    Icon::new(icon).size_3(),
                 )
                 .into_any_element()
             } else {
@@ -652,7 +551,6 @@ fn render_pinnable_column_header(
     let view_drag_move = state.view.clone();
     let view_drag_end_up = state.view.clone();
     let view_drag_end_out = state.view.clone();
-    let is_resizing_this_col = state.column_layout.is_resizing_column(col);
 
     let resize_handle = div()
         .id(ElementId::from(("col_resize_handle", col as usize)))
@@ -664,8 +562,6 @@ fn render_pinnable_column_header(
         .right_0()
         .w(px(6.0))
         .h_full()
-        .hover(|s| s.bg(ZED.ghost_hover))
-        .when(is_resizing_this_col, |s| s.bg(ZED.ghost_selected))
         .on_drag(ResizeColumn { col }, |drag, _point, _window, cx| {
             cx.stop_propagation();
             cx.new(|_| drag.clone())
@@ -723,7 +619,6 @@ fn render_timestamp_cell(time_str: &str, width: Pixels) -> impl IntoElement {
         .flex_shrink_0()
         .w(width)
         .px_2()
-        .text_color(ZED.text_muted)
         .truncate()
         .child(time_str.to_string())
 }
@@ -743,7 +638,7 @@ fn render_level_cell(
             render_level_badge(level_val)
                 .id(ElementId::from((id_prefix, vis_pos)))
                 .cursor_pointer()
-                .hover(|s| s.opacity(0.8))
+                .hover(move |s| s.opacity(0.8))
                 .on_click(move |_event, _window, cx| {
                     view.update(cx, |this, cx| {
                         this.add_quick_filter_level(level_val, cx);
@@ -767,9 +662,8 @@ fn render_module_cell(
         .flex_shrink_0()
         .px_2()
         .font_weight(gpui::FontWeight::SEMIBOLD)
-        .text_color(ZED.text_accent)
         .truncate()
-        .hover(|s| s.underline())
+        .hover(move |s| s.underline())
         .child(tag.clone())
         .on_click(move |_event, _window, cx| {
             let t = tag.clone();
@@ -780,26 +674,14 @@ fn render_module_cell(
 }
 
 fn render_level_badge(level: LogLevel) -> gpui::Div {
-    let (fg, bg, border) = match level {
-        LogLevel::Fatal => (ZED.error, ZED.error_bg, ZED.error_border),
-        LogLevel::Error => (ZED.error, ZED.error_bg, ZED.error_border),
-        LogLevel::Warn => (ZED.warning, ZED.warning_bg, ZED.warning_border),
-        LogLevel::Info => (ZED.info, ZED.info_bg, ZED.info_border),
-        LogLevel::Debug => (ZED.debug, ZED.debug_bg, ZED.border_variant),
-        LogLevel::Verbose => (ZED.text_muted, ZED.element_background, ZED.border_variant),
-        LogLevel::Unknown => (ZED.text_disabled, ZED.element_background, ZED.border_variant),
-    };
 
     div()
         .px_1p5()
         .py_0p5()
         .rounded_xs()
         .border_1()
-        .border_color(border)
         .text_xs()
         .font_weight(gpui::FontWeight::SEMIBOLD)
-        .text_color(fg)
-        .bg(bg)
         .child(level.short_code())
 }
 
@@ -807,7 +689,6 @@ fn apply_partition_divider_style<T: gpui::Styled>(element: T, is_active: bool) -
     if is_active {
         element
             .border_r_1()
-            .border_color(ZED.border_variant)
             .shadow_sm()
     } else {
         element.shadow_none()
@@ -866,7 +747,6 @@ fn compute_ruler_marks(
                 marks.push(RulerMark {
                     position: pos,
                     entry_index: entry_ix,
-                    color: marker.color(),
                     marker_type: Some(marker),
                     is_search: false,
                     is_current_match: false,
@@ -881,11 +761,6 @@ fn compute_ruler_marks(
                 marks.push(RulerMark {
                     position: pos,
                     entry_index: entry_ix,
-                    color: if is_current {
-                        ZED.search_current_border
-                    } else {
-                        ZED.search_current_border
-                    },
                     marker_type: None,
                     is_search: true,
                     is_current_match: is_current,

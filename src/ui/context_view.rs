@@ -1,10 +1,11 @@
 use crate::model::LogEntry;
-use crate::theme::ZED;
+
 use gpui::{
     div, px, InteractiveElement, IntoElement, ParentElement, StatefulInteractiveElement,
     Styled,
 };
-use gpui_component::{Icon, IconName};
+use gpui_component::{Icon};
+use gpui_kit::assets::IconName;
 
 pub struct ContextModal;
 
@@ -39,13 +40,6 @@ impl ContextModal {
             let entry = &all_entries[ix];
             let is_selected = ix == target_ix;
 
-            let level_color = match entry.level {
-                crate::model::LogLevel::Fatal | crate::model::LogLevel::Error => ZED.error,
-                crate::model::LogLevel::Warn => ZED.warning,
-                crate::model::LogLevel::Info => ZED.info,
-                crate::model::LogLevel::Debug => ZED.debug,
-                _ => ZED.text_muted,
-            };
 
             let row = div()
                 .flex()
@@ -55,27 +49,12 @@ impl ContextModal {
                 .px_2()
                 .py_1()
                 .rounded_md()
-                .bg(if is_selected {
-                    ZED.active_line_bg
-                } else {
-                    ZED.element_background
-                })
                 .border_1()
-                .border_color(if is_selected {
-                    ZED.border_focused
-                } else {
-                    ZED.border_transparent
-                })
                 .font_family(".AppleSystemUIFontMonospaced")
                 .text_xs()
                 .child(
                     div()
                         .w(px(50.0))
-                        .text_color(if is_selected {
-                            ZED.text_accent
-                        } else {
-                            ZED.text_muted
-                        })
                         .font_weight(if is_selected {
                             gpui::FontWeight::SEMIBOLD
                         } else {
@@ -86,31 +65,23 @@ impl ContextModal {
                 .child(
                     div()
                         .w(px(90.0))
-                        .text_color(ZED.text_muted)
                         .child(entry.time_str.clone()),
                 )
                 .child(
                     div()
                         .w(px(56.0))
                         .font_weight(gpui::FontWeight::SEMIBOLD)
-                        .text_color(level_color)
                         .child(entry.level.as_str()),
                 )
                 .child(
                     div()
                         .w(px(80.0))
                         .font_weight(gpui::FontWeight::SEMIBOLD)
-                        .text_color(ZED.text_accent)
                         .child(entry.tag.clone()),
                 )
                 .child(
                     div()
                         .flex_1()
-                        .text_color(if is_selected {
-                            ZED.text
-                        } else {
-                            ZED.text_muted
-                        })
                         .truncate()
                         .child(entry.payload.clone()),
                 )
@@ -119,10 +90,7 @@ impl ContextModal {
                         .px_1p5()
                         .py_0p5()
                         .rounded_xs()
-                        .bg(ZED.element_selected)
                         .border_1()
-                        .border_color(ZED.border_focused)
-                        .text_color(ZED.text_accent)
                         .text_xs()
                         .font_weight(gpui::FontWeight::SEMIBOLD)
                         .child("SELECTED")
@@ -146,9 +114,7 @@ impl ContextModal {
                 div()
                     .w(px(800.0))
                     .max_h(px(550.0))
-                    .bg(ZED.elevated_surface)
                     .border_1()
-                    .border_color(ZED.border)
                     .rounded_lg()
                     .shadow_2xl()
                     .p_4()
@@ -162,7 +128,6 @@ impl ContextModal {
                             .items_center()
                             .justify_between()
                             .border_b_1()
-                            .border_color(ZED.border_variant)
                             .pb_2()
                             .child(
                                 div()
@@ -174,13 +139,11 @@ impl ContextModal {
                                         div()
                                             .text_sm()
                                             .font_weight(gpui::FontWeight::SEMIBOLD)
-                                            .text_color(ZED.text)
                                             .child("SURROUNDING CONTEXT"),
                                     )
                                     .child(
                                         div()
                                             .text_xs()
-                                            .text_color(ZED.text_muted)
                                             .child(format!(
                                                 "Unfiltered chronological log stream around Line #{}",
                                                 target_entry.index
@@ -195,8 +158,6 @@ impl ContextModal {
                                     .py_1()
                                     .rounded_md()
                                     .text_xs()
-                                    .text_color(ZED.text_muted)
-                                    .hover(|s| s.bg(ZED.ghost_hover).text_color(ZED.text))
                                     .child(
                                         div()
                                             .flex()
@@ -217,9 +178,7 @@ impl ContextModal {
                         div()
                             .pt_2()
                             .border_t_1()
-                            .border_color(ZED.border_variant)
                             .text_xs()
-                            .text_color(ZED.text_muted)
                             .child("Showing ±5 lines from raw log stream to inspect what happened immediately prior to and after this event."),
                     ),
             )

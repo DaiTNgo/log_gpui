@@ -1,4 +1,4 @@
-use crate::theme::ZED;
+
 use crate::workspace::project::{Project, ProjectColorAccent};
 use gpui::{
     div, px, ElementId, InteractiveElement, IntoElement, ParentElement, StatefulInteractiveElement,
@@ -13,7 +13,7 @@ impl ProjectSwitcher {
         is_open: bool,
         projects: &[Project],
         active_id: Option<&str>,
-        selected_index: usize,
+        _selected_index: usize,
         renaming_id: Option<&str>,
         rename_buffer: &str,
         cx: &mut gpui::Context<crate::app::AppView>,
@@ -24,9 +24,8 @@ impl ProjectSwitcher {
 
         let mut list = div().flex().flex_col().gap_0p5().w_full();
 
-        for (ix, proj) in projects.iter().enumerate() {
+        for proj in projects.iter() {
             let is_active = active_id == Some(proj.id.as_str());
-            let is_selected = selected_index == ix;
             let proj_id = proj.id.clone();
             let proj_name = proj.name.clone();
             let swatch = accent_swatch(proj.color);
@@ -43,13 +42,11 @@ impl ProjectSwitcher {
                 div()
                     .text_xs()
                     .font_family(".AppleSystemUIFontMonospaced")
-                    .text_color(ZED.text)
                     .child(format!("{}▏", shown))
             } else {
                 div()
                     .text_xs()
                     .font_weight(gpui::FontWeight::MEDIUM)
-                    .text_color(if is_active { ZED.text_accent } else { ZED.text })
                     .child(proj_name.clone())
             };
 
@@ -71,7 +68,6 @@ impl ProjectSwitcher {
                         .py_0p5()
                         .rounded_xs()
                         .text_xs()
-                        .text_color(ZED.text_muted)
                         .child("ACTIVE")
                         .into_any_element()
                 } else {
@@ -89,14 +85,6 @@ impl ProjectSwitcher {
                 .px_2()
                 .py_1p5()
                 .rounded_md()
-                .bg(if is_selected {
-                    ZED.ghost_selected
-                } else if is_active {
-                    ZED.element_selected
-                } else {
-                    ZED.transparent
-                })
-                .hover(|s| s.bg(if is_selected { ZED.ghost_selected } else { ZED.ghost_hover }))
                 .child(left)
                 .child(
                     div()
@@ -106,8 +94,6 @@ impl ProjectSwitcher {
                         .py_0p5()
                         .rounded_md()
                         .text_xs()
-                        .text_color(ZED.text_muted)
-                        .hover(|s| s.bg(ZED.ghost_hover).text_color(ZED.text))
                         .child("✎")
                         .on_click(cx.listener(move |this, _, _window, cx| {
                             this.begin_project_rename(&rename_btn_id, cx);
@@ -121,8 +107,6 @@ impl ProjectSwitcher {
                         .py_0p5()
                         .rounded_md()
                         .text_xs()
-                        .text_color(ZED.text_muted)
-                        .hover(|s| s.bg(ZED.ghost_hover).text_color(ZED.error))
                         .child("×")
                         .on_click(cx.listener(move |this, _, _window, cx| {
                             this.remove_project_at(&remove_btn_id, cx);
@@ -145,10 +129,7 @@ impl ProjectSwitcher {
             .mt_1()
             .rounded_md()
             .border_t_1()
-            .border_color(ZED.border_variant)
             .text_xs()
-            .text_color(ZED.text_accent)
-            .hover(|s| s.bg(ZED.ghost_hover))
             .child(div().font_weight(gpui::FontWeight::SEMIBOLD).child("+ New Project"))
             .on_click(cx.listener(|this, _, _window, cx| {
                 this.create_new_project(cx);
@@ -165,9 +146,7 @@ impl ProjectSwitcher {
             .child(
                 div()
                     .w(px(440.0))
-                    .bg(ZED.elevated_surface)
                     .border_1()
-                    .border_color(ZED.border)
                     .rounded_lg()
                     .shadow_2xl()
                     .p_3()
@@ -181,13 +160,11 @@ impl ProjectSwitcher {
                             .items_center()
                             .justify_between()
                             .border_b_1()
-                            .border_color(ZED.border_variant)
                             .pb_2()
                             .child(
                                 div()
                                     .text_xs()
                                     .font_weight(gpui::FontWeight::SEMIBOLD)
-                                    .text_color(ZED.text_muted)
                                     .child("PROJECT SWITCHER"),
                             )
                             .child(
@@ -195,8 +172,6 @@ impl ProjectSwitcher {
                                     .id("proj_esc")
                                     .cursor_pointer()
                                     .text_xs()
-                                    .text_color(ZED.text_muted)
-                                    .hover(|s| s.text_color(ZED.text))
                                     .child("Esc to Close")
                                     .on_click(cx.listener(|this, _, _window, cx| {
                                         this.project_switcher_open = false;

@@ -14,5 +14,5 @@ pub use investigation::{CaseStatus, InvestigationCase, LogAnchor};
 pub use project::{LogFileDescriptor, Project, ProjectColorAccent};
 pub use saved_view::{CorrelationHit, CorrelationResult, SavedView, nearest_timestamp_index, search_across_files};
 pub use session::{SessionManifest, SessionPersistence};
-pub use state::{ActivityRailTab, SidebarState, SidebarStateMachine, WorkspaceState};
+pub use state::{ContextSidebarState, ContextTab, LeftSidebarState, WorkspaceState};
 pub use working_set::{TabSessionState, TabTarget, WorkingSet, WorkspaceTab};

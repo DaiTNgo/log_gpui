@@ -8,7 +8,7 @@ mod toolbar;
 mod view_panel;
 
 use super::AppView;
-use crate::theme::ZED;
+
 use crate::ui::canvas::{CanvasViewState, LogCanvas};
 use crate::ui::command_palette::CommandPalette;
 use crate::ui::context_view::ContextModal;
@@ -16,8 +16,9 @@ use crate::ui::filter_popover::FilterPopover;
 use crate::ui::floating_panel::{FloatingPanel, PanelKind};
 use crate::ui::inspector::InspectorView;
 use crate::ui::project_switcher::ProjectSwitcher;
+use crate::ui::context_sidebar::ContextSidebar;
 use crate::ui::sidebar::SidebarView;
-use gpui::{
+use gpui::{px, 
     div, Context, InteractiveElement, IntoElement, KeyDownEvent,
     ParentElement, Render, Styled,
     Window,
@@ -25,12 +26,13 @@ use gpui::{
 use std::sync::Arc;
 
 impl Render for AppView {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let entries_arc = Arc::new(self.all_entries.clone());
         let visible_arc = self.visible_indices.clone();
 
-        let window_chrome = self.render_window_chrome(cx);
+        let window_chrome = self.render_window_chrome(window, cx);
         let editor_toolbar = self.render_editor_toolbar(cx);
+        let tab_bar = self.render_tab_bar(cx);
 
         // Floating tool panel contents (View / Filter / Marker)
         let marker_panel_content = self.render_marker_panel_content(cx);
@@ -113,13 +115,24 @@ impl Render for AppView {
         let sidebar_view = SidebarView::render(
             &self.sidebar_state,
             &self.workspace_state,
-            &self.expanded_projects,
-            &self.all_entries,
-            &self.visible_indices,
-            self.density,
-            self.tail_enabled,
+            self.renaming.as_ref(),
             cx,
         );
+
+        // Right context sidebar: only for a focused log file tab.
+        let context_sidebar = self
+            .context_sidebar
+            .is_shown(self.active_tab_is_log_file())
+            .then(|| {
+                ContextSidebar::render(
+                    &self.context_sidebar,
+                    &self.workspace_state,
+                    &self.all_entries,
+                    &self.visible_indices,
+                    self.renaming.as_ref(),
+                    cx,
+                )
+            });
 
         // Main Layout Container (Base Window Canvas)
         div()
@@ -128,23 +141,34 @@ impl Render for AppView {
                 this.handle_key_down(event, window, cx);
             }))
             .size_full()
-            .bg(ZED.background)
             .flex()
             .flex_col()
             .relative()
             .child(window_chrome)
-            .child(editor_toolbar)
-            .child(self.render_tab_bar(cx))
+            // Three columns: left sidebar | main view | right sidebar(s).
             .child(
                 div()
                     .flex_1()
-                    .h_full()
+                    .min_h(px(0.0))
+                    .w_full()
                     .flex()
                     .flex_row()
                     .relative()
                     .child(sidebar_view)
-                    .child(log_canvas)
-                    .child(inspector_view),
+                    // Main view: tabs, search, then the log canvas.
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w(px(0.0))
+                            .h_full()
+                            .flex()
+                            .flex_col()
+                            .child(tab_bar)
+                            .child(editor_toolbar)
+                            .child(log_canvas),
+                    )
+                    .child(inspector_view)
+                    .children(context_sidebar),
             )
             .child(status_bar)
             // Floating Overlays

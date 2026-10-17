@@ -154,128 +154,128 @@ impl WorkspaceState {
     }
 }
 
-/// Drawer visibility state machine implementing progressive disclosure.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum SidebarState {
-    /// Fully collapsed: neither rail nor drawer visible.
-    Hidden,
-    /// 40px rail visible, contextual drawer collapsed to 0px.
-    Compact,
-    /// 40px rail visible + 240px contextual drawer expanded.
-    Expanded,
-}
-
-/// Modules reachable from the 40px Activity Rail.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum ActivityRailTab {
-    Files,
-    Investigations,
-    SavedViews,
-    Markers,
-    Settings,
-}
-
-impl ActivityRailTab {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            ActivityRailTab::Files => "Files",
-            ActivityRailTab::Investigations => "Investigations",
-            ActivityRailTab::SavedViews => "Saved Views",
-            ActivityRailTab::Markers => "Markers",
-            ActivityRailTab::Settings => "Settings",
-        }
-    }
-}
-
 pub const DEFAULT_DRAWER_WIDTH: f32 = 240.0;
 pub const MIN_DRAWER_WIDTH: f32 = 180.0;
 pub const MAX_DRAWER_WIDTH: f32 = 500.0;
+pub const CONTEXT_SIDEBAR_WIDTH: f32 = 260.0;
 
 fn default_drawer_width() -> f32 {
     DEFAULT_DRAWER_WIDTH
 }
 
-/// Headless drawer/rail state machine. Governs the interaction between the
-/// 40px Activity Rail and the resizable Contextual Drawer without GPUI deps.
+fn default_true() -> bool {
+    true
+}
+
+/// Headless state of the left sidebar, which manages Projects (project tree
+/// with each project's log files) and hosts Settings at the bottom.
+///
+/// Toggled from the window header (next to the macOS traffic lights) or `⌘B`.
+/// There is no activity rail: the sidebar is either fully visible or hidden.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SidebarStateMachine {
-    pub state: SidebarState,
-    pub active_tab: ActivityRailTab,
+pub struct LeftSidebarState {
+    #[serde(default = "default_true")]
+    pub visible: bool,
     #[serde(default = "default_drawer_width")]
-    pub drawer_width: f32,
+    pub width: f32,
     #[serde(skip)]
     pub is_resizing: bool,
 }
 
-impl Default for SidebarStateMachine {
+impl Default for LeftSidebarState {
     fn default() -> Self {
         Self {
-            state: SidebarState::Compact,
-            active_tab: ActivityRailTab::Files,
-            drawer_width: DEFAULT_DRAWER_WIDTH,
+            visible: true,
+            width: DEFAULT_DRAWER_WIDTH,
             is_resizing: false,
         }
     }
 }
-impl SidebarStateMachine {
+
+impl LeftSidebarState {
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Clicking the active rail icon: if expanded with that tab active,
-    /// collapse to Compact Focus Mode.
-    pub fn activate_tab(&mut self, tab: ActivityRailTab) {
-        if self.state == SidebarState::Expanded && self.active_tab == tab {
-            self.state = SidebarState::Compact;
-        } else {
-            self.active_tab = tab;
-            self.state = SidebarState::Expanded;
+    /// `⌘B` / header toggle: Hidden <-> Expanded.
+    pub fn toggle(&mut self) {
+        self.visible = !self.visible;
+    }
+
+    pub fn set_width(&mut self, width: f32) {
+        self.width = width.clamp(MIN_DRAWER_WIDTH, MAX_DRAWER_WIDTH);
+    }
+
+    pub fn reset_width(&mut self) {
+        self.width = DEFAULT_DRAWER_WIDTH;
+    }
+}
+
+/// Sections of the right context sidebar (scoped to the active project and
+/// the currently focused log file).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum ContextTab {
+    Files,
+    Investigations,
+    SavedViews,
+    Markers,
+}
+
+impl ContextTab {
+    pub const ALL: [ContextTab; 4] = [
+        ContextTab::Files,
+        ContextTab::Investigations,
+        ContextTab::SavedViews,
+        ContextTab::Markers,
+    ];
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ContextTab::Files => "Files",
+            ContextTab::Investigations => "Investigations",
+            ContextTab::SavedViews => "Saved Views",
+            ContextTab::Markers => "Markers",
         }
     }
+}
 
-    /// `⌘B`: toggle drawer visibility. Expands if hidden/compact (keeping the
-    /// current rail tab), collapses to Compact if expanded.
-    pub fn toggle_drawer(&mut self) {
-        self.state = match self.state {
-            SidebarState::Expanded => SidebarState::Compact,
-            SidebarState::Compact => SidebarState::Expanded,
-            SidebarState::Hidden => SidebarState::Expanded,
-        };
+/// Headless state of the right context sidebar (Files / Investigations /
+/// Saved Views / Markers). Independent from the Inspector panel. It is only
+/// meaningful while a log file tab is focused.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ContextSidebarState {
+    pub visible: bool,
+    pub active_tab: ContextTab,
+}
+
+impl Default for ContextSidebarState {
+    fn default() -> Self {
+        Self {
+            visible: false,
+            active_tab: ContextTab::Files,
+        }
+    }
+}
+
+impl ContextSidebarState {
+    pub fn new() -> Self {
+        Self::default()
     }
 
-    /// Legacy cycle through Expanded -> Compact -> Hidden -> Expanded.
-    pub fn cycle(&mut self) {
-        self.state = match self.state {
-            SidebarState::Expanded => SidebarState::Compact,
-            SidebarState::Compact => SidebarState::Hidden,
-            SidebarState::Hidden => SidebarState::Expanded,
-        };
+    /// Header toggle: show/hide the sidebar, keeping the current section.
+    pub fn toggle(&mut self) {
+        self.visible = !self.visible;
     }
 
-    /// `⌘⇧E`, `⌘⇧I` etc: activate a specific rail tab and expand the drawer.
-    pub fn expand_tab(&mut self, tab: ActivityRailTab) {
+    /// Show the sidebar on a specific section.
+    pub fn show_tab(&mut self, tab: ContextTab) {
         self.active_tab = tab;
-        self.state = SidebarState::Expanded;
+        self.visible = true;
     }
 
-    pub fn is_expanded(&self) -> bool {
-        self.state == SidebarState::Expanded
-    }
-
-    /// Whether the 40px rail (and any drawer content area) is visible.
-    pub fn drawer_visible(&self) -> bool {
-        self.state == SidebarState::Expanded
-    }
-
-    pub fn rail_visible(&self) -> bool {
-        self.state != SidebarState::Hidden
-    }
-
-    pub fn set_drawer_width(&mut self, width: f32) {
-        self.drawer_width = width.clamp(MIN_DRAWER_WIDTH, MAX_DRAWER_WIDTH);
-    }
-
-    pub fn reset_drawer_width(&mut self) {
-        self.drawer_width = DEFAULT_DRAWER_WIDTH;
+    /// Whether the sidebar is actually rendered: it needs both the visible
+    /// flag and a focused log file tab.
+    pub fn is_shown(&self, has_log_file_tab: bool) -> bool {
+        self.visible && has_log_file_tab
     }
 }

@@ -1,6 +1,5 @@
 use crate::model::LogLevel;
-use crate::theme::ZED;
-use gpui::Rgba;
+
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -33,16 +32,6 @@ impl MarkerType {
         }
     }
 
-    pub fn color(&self) -> Rgba {
-        match self {
-            MarkerType::Error => ZED.error,
-            MarkerType::Warning => ZED.warning,
-            MarkerType::Bookmark => ZED.text_accent,
-            MarkerType::Important => ZED.warning,
-            MarkerType::Note => ZED.success,
-        }
-    }
-
     pub fn from_log_level(level: LogLevel) -> Option<Self> {
         match level {
             LogLevel::Fatal | LogLevel::Error => Some(MarkerType::Error),
@@ -69,8 +58,6 @@ pub struct RulerMark {
     pub position: f32,
     /// Absolute row index in the all_entries
     pub entry_index: usize,
-    /// Color of the mark
-    pub color: Rgba,
     /// Type for tooltip / semantics
     pub marker_type: Option<MarkerType>,
     /// Whether this is a search result match

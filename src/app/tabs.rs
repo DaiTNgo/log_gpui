@@ -3,7 +3,7 @@
 use super::AppView;
 use crate::column::{ColumnLayoutState, FieldMaxChars};
 use crate::filter::FilterEngine;
-use crate::model::{LogEntry, LogLevel};
+use crate::model::LogEntry;
 use crate::search::SearchState;
 use crate::workspace::project::{LogFileDescriptor, Project};
 use crate::workspace::working_set::{TabSessionState, TabTarget, WorkingSet};
@@ -16,6 +16,14 @@ impl AppView {
     // The live editor fields (filter/search/layout/selection) mirror the active
     // tab's `TabSessionState`. Every tab switch persists the current session out
     // to the domain WorkingSet and restores the newly focused tab's session in.
+
+    /// Whether the focused tab hosts a log file (gates the context sidebar).
+    pub(crate) fn active_tab_is_log_file(&self) -> bool {
+        self.active_project()
+            .and_then(|p| p.working_set.active_tab())
+            .map(|t| matches!(t.target, TabTarget::LogFile { .. }))
+            .unwrap_or(false)
+    }
 
     pub(crate) fn active_project(&self) -> Option<&Project> {
         self.workspace_state.active_project()
@@ -226,25 +234,46 @@ impl AppView {
         }
     }
 
-    /// Scan cached entries for error/warning presence used by the tab indicator.
-    pub(crate) fn scan_hazards(&self, file_id: &str) -> (bool, bool) {
-        self.entries_cache
-            .get(file_id)
-            .map(|entries| {
-                let mut error = false;
-                let mut warn = false;
-                for entry in entries {
-                    match entry.level {
-                        LogLevel::Fatal | LogLevel::Error => error = true,
-                        LogLevel::Warn => warn = true,
-                        _ => {}
-                    }
-                    if error && warn {
-                        break;
-                    }
-                }
-                (error, warn)
-            })
-            .unwrap_or((false, false))
+    /// Rename a registered file's display name (ignores blank names).
+    pub fn rename_file(&mut self, project_id: &str, file_id: &str, name: &str, cx: &mut Context<Self>) {
+        let name = name.trim();
+        if !name.is_empty() {
+            if let Some(file) = self
+                .workspace_state
+                .project_mut(project_id)
+                .and_then(|p| p.files.iter_mut().find(|f| f.file_id == file_id))
+            {
+                file.display_name = name.to_string();
+            }
+        }
+        cx.notify();
     }
+
+    /// Remove a file from a project's registry (closing its tab). The file on
+    /// disk is never touched; cached entries are dropped once no project uses it.
+    pub fn remove_file_from_project(&mut self, project_id: &str, file_id: &str, cx: &mut Context<Self>) {
+        if self.active_project().map(|p| p.id.as_str()) == Some(project_id) {
+            self.close_tab_for_file(file_id, cx);
+        }
+        let target = TabTarget::LogFile {
+            file_id: file_id.to_string(),
+        };
+        if let Some(proj) = self.workspace_state.project_mut(project_id) {
+            if let Some(idx) = proj.working_set.find_tab(&target) {
+                proj.working_set.close_tab(idx);
+            }
+            proj.unregister_file(file_id);
+        }
+        let still_used = self
+            .workspace_state
+            .projects
+            .iter()
+            .any(|p| p.file(file_id).is_some());
+        if !still_used {
+            self.entries_cache.remove(file_id);
+            self.max_chars_by_file.remove(file_id);
+        }
+        cx.notify();
+    }
+
 }

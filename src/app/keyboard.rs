@@ -133,25 +133,17 @@ impl AppView {
             (true, false, false, "w") => {
                 self.close_active_tab(cx);
             }
+            (true, false, true, "b") => {
+                self.toggle_context_sidebar(cx);
+            }
             (true, true, false, "B") => {
-                self.sidebar_state
-                    .expand_tab(crate::workspace::state::ActivityRailTab::Files);
-                cx.notify();
+                self.show_context_tab(crate::workspace::state::ContextTab::Files, cx);
             }
             (true, true, false, "I") => {
-                self.sidebar_state
-                    .expand_tab(crate::workspace::state::ActivityRailTab::Investigations);
-                cx.notify();
+                self.show_context_tab(crate::workspace::state::ContextTab::Investigations, cx);
             }
             (true, true, false, "S") => {
-                self.sidebar_state
-                    .expand_tab(crate::workspace::state::ActivityRailTab::SavedViews);
-                cx.notify();
-            }
-            (true, true, false, "M") => {
-                self.sidebar_state
-                    .expand_tab(crate::workspace::state::ActivityRailTab::Markers);
-                cx.notify();
+                self.show_context_tab(crate::workspace::state::ContextTab::SavedViews, cx);
             }
             (false, false, false, "b") => {
                 self.toggle_bookmark_current_line(cx);

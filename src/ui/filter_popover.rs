@@ -1,11 +1,12 @@
 use crate::filter::{ConditionField, ConditionOp, FilterEngine, LogicMode};
 use crate::model::LogLevel;
-use crate::theme::ZED;
+
 use gpui::{
     div, px, ElementId, InteractiveElement, IntoElement, ParentElement, StatefulInteractiveElement,
     Styled,
 };
-use gpui_component::{Icon, IconName};
+use gpui_component::{Icon};
+use gpui_kit::assets::IconName;
 
 pub struct FilterPopover;
 
@@ -29,10 +30,8 @@ impl FilterPopover {
                 .justify_between()
                 .px_2()
                 .py_1()
-                .bg(ZED.element_background)
                 .rounded_md()
                 .border_1()
-                .border_color(ZED.border_variant)
                 .child(
                     div()
                         .flex()
@@ -43,20 +42,17 @@ impl FilterPopover {
                             div()
                                 .text_xs()
                                 .font_weight(gpui::FontWeight::SEMIBOLD)
-                                .text_color(ZED.text)
                                 .child(field_str),
                         )
                         .child(
                             div()
                                 .text_xs()
-                                .text_color(ZED.text_muted)
                                 .child(op_str),
                         )
                         .child(
                             div()
                                 .text_xs()
                                 .font_weight(gpui::FontWeight::MEDIUM)
-                                .text_color(ZED.text_accent)
                                 .child(val_str),
                         ),
                 )
@@ -69,8 +65,6 @@ impl FilterPopover {
                         .justify_center()
                         .p_0p5()
                         .rounded_xs()
-                        .text_color(ZED.text_muted)
-                        .hover(|s| s.bg(ZED.ghost_hover).text_color(ZED.error))
                         .child(Icon::new(IconName::Close).size(px(11.0)))
                         .on_click(cx.listener(move |this, _, _window, cx| {
                             this.remove_filter_condition(cond_id, cx);
@@ -90,7 +84,6 @@ div()
                         .py_3()
                         .text_center()
                         .text_xs()
-                        .text_color(ZED.text_muted)
                         .child("No filter conditions. Add one below or click a log value.")
                         .into_any_element()
                 } else {
@@ -112,12 +105,8 @@ div()
                             .px_2()
                             .py_0p5()
                             .rounded_md()
-                            .bg(ZED.element_background)
                             .border_1()
-                            .border_color(ZED.error_border)
                             .text_xs()
-                            .text_color(ZED.error)
-                            .hover(|s| s.bg(ZED.ghost_hover))
                             .child("+ Level is ERROR")
                             .on_click(cx.listener(|this, _, _window, cx| {
                                 this.filter_engine.add_condition(
@@ -135,12 +124,8 @@ div()
                             .px_2()
                             .py_0p5()
                             .rounded_md()
-                            .bg(ZED.element_background)
                             .border_1()
-                            .border_color(ZED.warning_border)
                             .text_xs()
-                            .text_color(ZED.warning)
-                            .hover(|s| s.bg(ZED.ghost_hover))
                             .child("+ Level is WARN")
                             .on_click(cx.listener(|this, _, _window, cx| {
                                 this.filter_engine.add_condition(
@@ -158,12 +143,8 @@ div()
                             .px_2()
                             .py_0p5()
                             .rounded_md()
-                            .bg(ZED.element_background)
                             .border_1()
-                            .border_color(ZED.border_variant)
                             .text_xs()
-                            .text_color(ZED.text_muted)
-                            .hover(|s| s.bg(ZED.ghost_hover).text_color(ZED.text))
                             .child("+ Module is API")
                             .on_click(cx.listener(|this, _, _window, cx| {
                                 this.filter_engine.add_condition(
@@ -181,12 +162,8 @@ div()
                             .px_2()
                             .py_0p5()
                             .rounded_md()
-                            .bg(ZED.element_background)
                             .border_1()
-                            .border_color(ZED.border_variant)
                             .text_xs()
-                            .text_color(ZED.text_muted)
-                            .hover(|s| s.bg(ZED.ghost_hover).text_color(ZED.text))
                             .child("+ Module is DB")
                             .on_click(cx.listener(|this, _, _window, cx| {
                                 this.filter_engine.add_condition(
@@ -207,7 +184,6 @@ div()
                     .justify_between()
                     .pt_2()
                     .border_t_1()
-                    .border_color(ZED.border_variant)
                     .child(
                         div()
                             .flex()
@@ -217,7 +193,6 @@ div()
                             .child(
                                 div()
                                     .text_xs()
-                                    .text_color(ZED.text_muted)
                                     .child("Match:"),
                             )
                             .child(
@@ -229,23 +204,7 @@ div()
                                     .rounded_xs()
                                     .text_xs()
                                     .font_weight(gpui::FontWeight::SEMIBOLD)
-                                    .bg(if filter_engine.logic_mode == LogicMode::All {
-                                        ZED.element_selected
-                                    } else {
-                                        ZED.element_background
-                                    })
                                     .border_1()
-                                    .border_color(if filter_engine.logic_mode == LogicMode::All {
-                                        ZED.border_focused
-                                    } else {
-                                        ZED.border_variant
-                                    })
-                                    .text_color(if filter_engine.logic_mode == LogicMode::All {
-                                        ZED.text_accent
-                                    } else {
-                                        ZED.text_muted
-                                    })
-                                    .hover(|s| s.bg(ZED.ghost_hover))
                                     .child("ALL (AND)")
                                     .on_click(cx.listener(|this, _, _window, cx| {
                                         this.filter_engine.logic_mode = LogicMode::All;
@@ -261,23 +220,7 @@ div()
                                     .rounded_xs()
                                     .text_xs()
                                     .font_weight(gpui::FontWeight::SEMIBOLD)
-                                    .bg(if filter_engine.logic_mode == LogicMode::Any {
-                                        ZED.element_selected
-                                    } else {
-                                        ZED.element_background
-                                    })
                                     .border_1()
-                                    .border_color(if filter_engine.logic_mode == LogicMode::Any {
-                                        ZED.border_focused
-                                    } else {
-                                        ZED.border_variant
-                                    })
-                                    .text_color(if filter_engine.logic_mode == LogicMode::Any {
-                                        ZED.text_accent
-                                    } else {
-                                        ZED.text_muted
-                                    })
-                                    .hover(|s| s.bg(ZED.ghost_hover))
                                     .child("ANY (OR)")
                                     .on_click(cx.listener(|this, _, _window, cx| {
                                         this.filter_engine.logic_mode = LogicMode::Any;
@@ -298,8 +241,6 @@ div()
                                     .py_0p5()
                                     .rounded_md()
                                     .text_xs()
-                                    .text_color(ZED.text_muted)
-                                    .hover(|s| s.bg(ZED.ghost_hover).text_color(ZED.text))
                                     .child("Clear")
                                     .on_click(cx.listener(|this, _, _window, cx| {
                                         this.filter_engine.clear();
@@ -313,13 +254,9 @@ div()
                                     .px_2p5()
                                     .py_0p5()
                                     .rounded_md()
-                                    .bg(ZED.element_selected)
                                     .border_1()
-                                    .border_color(ZED.border_focused)
                                     .text_xs()
                                     .font_weight(gpui::FontWeight::MEDIUM)
-                                    .text_color(ZED.text_accent)
-                                    .hover(|s| s.bg(ZED.ghost_hover))
                                     .child("Apply")
                                     .on_click(cx.listener(|this, _, _window, cx| {
                                         this.toggle_filter_builder(cx);
@@ -366,9 +303,7 @@ div()
             .top(px(menu.y))
             .left(px(menu.x))
             .w(px(200.0))
-            .bg(ZED.elevated_surface)
             .border_1()
-            .border_color(ZED.border)
             .rounded_md()
             .shadow_2xl()
             .p_1()
@@ -381,9 +316,7 @@ div()
                     .py_1()
                     .text_xs()
                     .font_weight(gpui::FontWeight::SEMIBOLD)
-                    .text_color(ZED.text_muted)
                     .border_b_1()
-                    .border_color(ZED.border_variant)
                     .child(title),
             )
             .child(
@@ -394,8 +327,6 @@ div()
                     .py_1()
                     .rounded_md()
                     .text_xs()
-                    .text_color(ZED.text)
-                    .hover(|s| s.bg(ZED.ghost_hover).text_color(ZED.text_accent))
                     .child(filter_label)
                     .on_click(cx.listener(move |this, _, _window, cx| {
                         match &kind_clone1 {
@@ -414,8 +345,6 @@ div()
                     .py_1()
                     .rounded_md()
                     .text_xs()
-                    .text_color(ZED.text)
-                    .hover(|s| s.bg(ZED.ghost_hover).text_color(ZED.error))
                     .child(hide_label)
                     .on_click(cx.listener(move |this, _, _window, cx| {
                         match &kind_clone2 {
@@ -434,8 +363,6 @@ div()
                     .py_1()
                     .rounded_md()
                     .text_xs()
-                    .text_color(ZED.text)
-                    .hover(|s| s.bg(ZED.ghost_hover).text_color(ZED.text_accent))
                     .child(search_label)
                     .on_click(cx.listener(move |this, _, _window, cx| {
                         let query = match &kind_clone3 {

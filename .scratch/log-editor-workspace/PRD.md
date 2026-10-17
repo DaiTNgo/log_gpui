@@ -21,9 +21,9 @@ Transform `log_gpui` from a simple log viewer into a dedicated **Log Editor & In
 $$\mathbf{Workspace\ /\ Project} \longrightarrow \mathbf{Working\ Set\ (Open\ Tabs)} \longrightarrow \mathbf{Log\ Editor\ Canvas}$$
 
 1. **Project as an Investigation Space**: A Project represents a cohesive system or service cluster (e.g. `Payment Service`, `E-Commerce Core`). It owns a registry of log files, saved filter presets, investigation cases, cross-file markers, and session layouts.
-2. **Project Switcher**: A minimalist, high-speed breadcrumb/dropdown switcher located at the top-left chrome. It allows switching between projects in under 16ms with zero visual bleed between unrelated services.
+2. **Project Switcher**: A minimalist, high-speed breadcrumb/dropdown switcher in the window header, right after the left-sidebar toggle. It allows switching between projects in under 16ms with zero visual bleed between unrelated services.
 3. **Multi-Tab Working Set Bar**: Positioned directly above the Unified Canvas. Tabs represent the engineer's active working memory. A tab can host an individual log file (`api.log`), an investigation casefile (`INC-142`), or a merged chronological chronicle. Closing a tab removes it from working memory without deleting it from the Project.
-4. **Contextual Navigation Drawer & Activity Rail**: A 40px Activity Rail (`Files`, `Investigations`, `Saved Views`, `Markers`, `Settings`) paired with an expandable 240px Contextual Drawer. It provides progressive disclosure, keeping the screen minimal and focused while offering deep navigation when needed.
+4. **Two Sidebars**: A **left sidebar** manages Projects (project tree with each project's log files, Settings pinned at the bottom). A **right context sidebar** (Files, Investigations, Saved Views, Markers) is available while a log file tab is focused. Both toggle from the window header; the Inspector stays a separate panel.
 5. **Investigation Cases & Cross-File Evidence Trail**: Engineers can create named investigation cases (e.g. `INC-142: Upstream Timeout`) and attach log line anchors across multiple open files. Markers synchronize across logs via timestamp correlation.
 6. **Persistent Log Sessions**: Project workspace state—including open tabs, active tab index, filter conditions, search queries, pinned columns, and cursor positions—is automatically preserved across app restarts.
 
@@ -52,34 +52,35 @@ $$\mathbf{Workspace\ /\ Project} \longrightarrow \mathbf{Working\ Set\ (Open\ Ta
 18. As a developer, I want to middle-click a tab to close it, matching standard native desktop ergonomics.
 19. As a developer, I want to drag and drop tabs along the Tab Bar to reorder my working set, so that I can position related logs side by side.
 
-### Activity Rail & Contextual Drawer (Progressive Disclosure)
-20. As a developer who values screen real estate, I want a 40px Activity Rail on the far left that lets me toggle drawers for Files, Investigations, Saved Views, Markers, and Settings, so that navigation controls do not crowd the log stream.
-21. As a developer, I want clicking the active rail icon to collapse the 240px drawer into Compact Focus Mode, so that 100% of horizontal window space is dedicated to the Log Canvas and Sticky Columns.
-22. As a developer in Compact Focus Mode, I want clicking any rail icon to smoothly expand the Contextual Drawer, so that I can access project assets on demand.
-23. As a developer, I want keyboard shortcuts (`⌘B` to toggle drawer, `⌘⇧E` for Files, `⌘⇧I` for Investigations) to control sidebar visibility, so that I can expand and collapse drawers without a mouse.
-24. As a developer viewing the Files drawer, I want to see registered project files grouped by subfolder or categorized by service, so that large file sets remain organized.
-25. As a developer viewing the Files drawer, I want a "+ Add Log File..." action to register external log files into the active project, so that ad-hoc logs can be ingested quickly.
-26. As a developer, I want hover actions on files in the Files drawer (Open in New Tab, Close, Remove from Project), so that file management is direct and discoverable.
+### Left Sidebar (Projects) & Right Context Sidebar
+20. As a developer who values screen real estate, I want a left sidebar listing my projects and their log files that I can hide entirely, so that navigation does not crowd the log stream.
+21. As a macOS user, I want the sidebar toggle in the window header next to the traffic lights (and at the left edge in full screen), so that it is always reachable.
+22. As a developer, I want `⌘B` to toggle the left sidebar and `⌘⌥B` to toggle the right context sidebar, so that I can control both from the keyboard.
+23. As a developer with a log file focused, I want a right context sidebar with Files, Investigations, Saved Views and Markers for the active project, so that project assets are one click away without leaving the log.
+24. As a developer viewing the context Files section, I want to see the active project's files with open indicators, so that I know what is in my working set.
+25. As a developer, I want "+ Add Log File..." in the Files section to register external log files into the active project, so that ad-hoc logs can be ingested quickly.
+26. As a developer, I want hover actions on files (close tab), so that file management is direct and discoverable.
+27. As a developer, I want Settings at the bottom of the left sidebar, so that preferences never compete with project navigation.
 
 ### Investigation Cases & Evidence Trails
-27. As an incident commander, I want to create an Investigation Case (e.g. `INC-142: Payment Gateway Timeout`) inside the active project, so that all evidence related to a specific outage is gathered in one place.
-28. As a developer inspecting a row in `api.log`, I want to right-click or press a hotkey (`⌘M` / `⌘K → Pin to Investigation`) to anchor that row into the active Investigation Case, so that I capture the exact moment of failure.
-29. As a developer anchoring a log line, I want to attach a markdown note (e.g. "Upstream Stripe TCP SYN timeout observed"), so that I preserve my diagnostic hypothesis alongside the raw log entry.
-30. As a developer opening an Investigation Case in the Tab Bar, I want to see a unified Chronological Evidence Trail displaying all anchored lines from all participating files in chronological order, so that I can see the exact timeline of cross-service degradation.
-31. As a developer viewing an evidence trail item, I want clicking it to navigate directly to that file, open it in a tab if necessary, and scroll smoothly to the target line, so that verifying raw context is instantaneous.
-32. As an SRE concluding an incident, I want an "Export Post-Mortem Markdown" action that converts the Investigation Case and all anchored log snippets into a clean markdown document, so that writing the incident report requires zero manual copy-pasting.
-33. As an engineer working with active cases, I want each investigation to have a status state (`Active`, `Root Cause Identified`, `Mitigated`, `Archived`), so that team members can track investigative progress.
+28. As an incident commander, I want to create an Investigation Case (e.g. `INC-142: Payment Gateway Timeout`) inside the active project, so that all evidence related to a specific outage is gathered in one place.
+29. As a developer inspecting a row in `api.log`, I want to right-click or press a hotkey (`⌘M` / `⌘K → Pin to Investigation`) to anchor that row into the active Investigation Case, so that I capture the exact moment of failure.
+30. As a developer anchoring a log line, I want to attach a markdown note (e.g. "Upstream Stripe TCP SYN timeout observed"), so that I preserve my diagnostic hypothesis alongside the raw log entry.
+31. As a developer opening an Investigation Case in the Tab Bar, I want to see a unified Chronological Evidence Trail displaying all anchored lines from all participating files in chronological order, so that I can see the exact timeline of cross-service degradation.
+32. As a developer viewing an evidence trail item, I want clicking it to navigate directly to that file, open it in a tab if necessary, and scroll smoothly to the target line, so that verifying raw context is instantaneous.
+33. As an SRE concluding an incident, I want an "Export Post-Mortem Markdown" action that converts the Investigation Case and all anchored log snippets into a clean markdown document, so that writing the incident report requires zero manual copy-pasting.
+34. As an engineer working with active cases, I want each investigation to have a status state (`Active`, `Root Cause Identified`, `Mitigated`, `Archived`), so that team members can track investigative progress.
 
 ### Saved Views & Multi-Log Correlations
-34. As a developer who frequently filters for 5xx errors across multiple microservices, I want to save an active filter and column configuration as a "Saved View" within my project, so that I can re-apply complex filter chains with one click.
-35. As a developer, I want Saved Views to appear in the dedicated Views drawer, so that I can execute them on any active log file.
-36. As a developer correlating distributed events, I want to click a `request_id` or `trace_id` in `api.log` and choose "Search Across All Project Files", so that I can trace a transaction through `worker.log` and `nginx.log` without manual copy-paste.
-37. As an engineer inspecting two open tabs, I want an optional "Synchronize Timestamp Scrolling" toggle in the status bar, so that scrolling one log file automatically aligns the other open log tab to the closest timestamp.
+35. As a developer who frequently filters for 5xx errors across multiple microservices, I want to save an active filter and column configuration as a "Saved View" within my project, so that I can re-apply complex filter chains with one click.
+36. As a developer, I want Saved Views to appear in the dedicated Views drawer, so that I can execute them on any active log file.
+37. As a developer correlating distributed events, I want to click a `request_id` or `trace_id` in `api.log` and choose "Search Across All Project Files", so that I can trace a transaction through `worker.log` and `nginx.log` without manual copy-paste.
+38. As an engineer inspecting two open tabs, I want an optional "Synchronize Timestamp Scrolling" toggle in the status bar, so that scrolling one log file automatically aligns the other open log tab to the closest timestamp.
 
 ### Session Persistence & Lifecycle
-38. As a developer closing `log_gpui` at the end of the day, I want the active project, open working set tabs, active filters, search queries, and window split state to be automatically persisted to disk, so that tomorrow morning I resume exactly where I left off.
-39. As a developer reopening the app after a crash or OS reboot, I want my active investigations and bookmarked lines to be fully intact, so that forensic progress is never lost.
-40. As a developer opening `log_gpui` with CLI arguments (e.g. `log_gpui ./logs/`), I want the app to automatically mount that directory as an ephemeral or named project, so that CLI-driven workflows remain fast and seamless.
+39. As a developer closing `log_gpui` at the end of the day, I want the active project, open working set tabs, active filters, search queries, and window split state to be automatically persisted to disk, so that tomorrow morning I resume exactly where I left off.
+40. As a developer reopening the app after a crash or OS reboot, I want my active investigations and bookmarked lines to be fully intact, so that forensic progress is never lost.
+41. As a developer opening `log_gpui` with CLI arguments (e.g. `log_gpui ./logs/`), I want the app to automatically mount that directory as an ephemeral or named project, so that CLI-driven workflows remain fast and seamless.
 
 ## Implementation Decisions
 
@@ -107,18 +108,11 @@ The codebase decouples project workspace orchestration from raw canvas rendering
 3. **Tier 3: `LogCanvas` (The Existing View Surface)**:
    - `LogCanvas` remains a pure rendering projection. When the active tab or project changes, `LogCanvas` is fed the entries and session state of the currently selected tab. All existing Sticky Column, Dynamic Monospace Sizing, and Gutter rules from ADR 0001–0003 continue to govern the canvas without modification.
 
-### Navigation Architecture: Switcher + Activity Rail
-- **Project Switcher**: Placed in the top window chrome replacing the static title. Emits a modal palette with recent projects, quick-creation affordance, and keyboard navigation.
-- **Activity Rail**: 40px vertical icon bar on the leftmost edge. Tabs:
-  - `Files` (`IconName::Folder`): Project file tree and log mounting.
-  - `Investigations` (`IconName::Layers` / `IconName::BookOpen`): Incident case files, active investigation boards, and evidence anchors.
-  - `SavedViews` (`IconName::Sliders` / `IconName::ListFilter`): Presets for filter pipelines and column arrangements.
-  - `Markers` (`IconName::Bookmark`): Global list of bookmarked/flagged lines in the project.
-  - `Settings` (`IconName::Settings`): Parser schemas, color rules, and project metadata.
-- **Drawer State Engine**:
-  - `SidebarState::Hidden` (fully collapsed)
-  - `SidebarState::Compact` (40px rail only, drawer hidden)
-  - `SidebarState::Expanded` (40px rail + 240px contextual drawer)
+### Navigation Architecture: Header + Left Sidebar + Right Context Sidebar
+- **Window header (36px)**: transparent macOS titlebar; layout `[traffic lights][toggle left sidebar][project switcher][file pill] … [palette][open][toggle right sidebar]`. Doubles as the drag area. Left inset ~80px, 12px in full screen. The right toggle only shows for a focused log file tab.
+- **Project Switcher**: Modal palette with recent projects, quick-creation affordance, and keyboard navigation (`⌘P`).
+- **Left sidebar (`LeftSidebarState`)**: `visible`, `width` (240 default, 180–500), `settings_open`. Project tree + Settings pinned at the bottom. No rail, no compact state.
+- **Right context sidebar (`ContextSidebarState`)**: `visible`, `active_tab: ContextTab { Files, Investigations, SavedViews, Markers }`; rendered only when `visible` and a log file tab is focused. Independent from the Inspector.
 
 ### High-Performance Ingestion & Memory Management
 - Inactive tabs maintain their parsed entry index structures in memory (Arc-backed) or unload raw line payloads lazily if memory thresholds are reached, ensuring tab switching is instant ($< 16\text{ms}$).
@@ -148,4 +142,4 @@ The primary test seam is established at the highest possible headless domain bou
 ## Further Notes
 
 - Maintains full backwards compatibility with CLI single-file invocations: running `log_gpui /path/to/server.log` automatically creates an ad-hoc project and immediately opens `server.log` in the active working set.
-- All keyboard shortcut contracts align with Zed/VS Code conventions (`⌘P` project switcher, `⌘W` close tab, `⌘B` toggle sidebar, `⌘1`-`⌘9` select tab).
+- All keyboard shortcut contracts align with Zed/VS Code conventions (`⌘P` project switcher, `⌘W` close tab, `⌘B` toggle left sidebar, `⌘⌥B` toggle right sidebar, `⌘1`-`⌘9` select tab).

@@ -1,14 +1,19 @@
-use log_gpui::query::language_service::{CompletionItem, CompletionKind, QueryLanguageService, HoverResult};
+use log_gpui::query::language_service::{CompletionItem, CompletionKind, QueryLanguageService};
 use log_gpui::query::schema::{FieldType, LogSchema, QueryField};
 
 fn schema() -> LogSchema {
     LogSchema {
         fields: vec![
             QueryField::new("level", FieldType::Enum).with_enum_values(vec![
-                "ERROR".into(), "WARN".into(), "INFO".into(), "DEBUG".into(),
+                "ERROR".into(),
+                "WARN".into(),
+                "INFO".into(),
+                "DEBUG".into(),
             ]),
             QueryField::new("module", FieldType::Enum).with_enum_values(vec![
-                "API".into(), "Payment".into(), "Auth".into(),
+                "API".into(),
+                "Payment".into(),
+                "Auth".into(),
             ]),
             QueryField::new("message", FieldType::String),
         ],
@@ -20,7 +25,10 @@ fn completions(text: &str, offset: usize) -> Vec<CompletionItem> {
 }
 
 fn labels(text: &str, offset: usize) -> Vec<String> {
-    completions(text, offset).into_iter().map(|c| c.label).collect()
+    completions(text, offset)
+        .into_iter()
+        .map(|c| c.label)
+        .collect()
 }
 
 #[test]
@@ -101,7 +109,10 @@ fn test_string_field_no_enum_value_completions() {
     assert!(ops.contains(&"contains".to_string()));
     // No enum values for string fields
     let vals = completions("message contains ", 17);
-    assert!(vals.iter().all(|c| c.kind != CompletionKind::Value && c.kind != CompletionKind::Field));
+    assert!(
+        vals.iter()
+            .all(|c| c.kind != CompletionKind::Value && c.kind != CompletionKind::Field)
+    );
 }
 
 #[test]

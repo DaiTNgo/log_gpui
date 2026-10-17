@@ -1,7 +1,7 @@
 //! UI: marker panel content.
 
 use super::AppView;
-use crate::theme::ZED;
+
 use gpui::{
     div, Context, ElementId, InteractiveElement, IntoElement,
     ParentElement, StatefulInteractiveElement, Styled,
@@ -18,7 +18,6 @@ impl AppView {
             div()
                 .text_xs()
                 .font_weight(gpui::FontWeight::SEMIBOLD)
-                .text_color(ZED.text_muted)
                 .mb_2()
                 .child("BOOKMARKS & MARKERS"),
         );
@@ -29,7 +28,6 @@ impl AppView {
                 if let Some(marker) = entry.effective_marker() {
                     marker_count += 1;
                     let marker_sym = marker.symbol();
-                    let marker_col = marker.color();
                     let target_pos = vis_pos;
 
                     let item = div()
@@ -42,24 +40,20 @@ impl AppView {
                         .px_2()
                         .py_1()
                         .rounded_md()
-                        .hover(|s| s.bg(ZED.ghost_hover))
                         .child(
                             div()
                                 .font_weight(gpui::FontWeight::BOLD)
-                                .text_color(marker_col)
                                 .child(marker_sym),
                         )
                         .child(
                             div()
                                 .text_xs()
-                                .text_color(ZED.text_muted)
                                 .child(format!("#{}", entry.index)),
                         )
                         .child(
                             div()
                                 .flex_1()
                                 .text_xs()
-                                .text_color(ZED.text)
                                 .truncate()
                                 .child(entry.payload.clone()),
                         )
@@ -77,7 +71,6 @@ impl AppView {
                 div()
                     .py_3()
                     .text_xs()
-                    .text_color(ZED.text_muted)
                     .child("No bookmarks or markers yet. Press B to bookmark the selected line.")
                     .into_any_element(),
             );

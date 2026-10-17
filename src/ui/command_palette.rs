@@ -1,4 +1,4 @@
-use crate::theme::ZED;
+
 use gpui::{
     div, px, ElementId, InteractiveElement, IntoElement, ParentElement, StatefulInteractiveElement,
     Styled,
@@ -147,19 +147,16 @@ impl CommandPalette {
                 .px_3()
                 .py_2()
                 .rounded_md()
-                .hover(|s| s.bg(ZED.ghost_hover).text_color(ZED.text))
                 .child(
                     div()
                         .text_xs()
                         .font_weight(gpui::FontWeight::MEDIUM)
-                        .text_color(ZED.text)
                         .child(cmd.name),
                 )
                 .child(
                     div()
                         .text_xs()
                         .font_family(".AppleSystemUIFontMonospaced")
-                        .text_color(ZED.text_muted)
                         .child(cmd.shortcut),
                 )
                 .on_click(cx.listener(move |this, _, _window, cx| {
@@ -180,9 +177,7 @@ impl CommandPalette {
             .child(
                 div()
                     .w(px(520.0))
-                    .bg(ZED.elevated_surface)
                     .border_1()
-                    .border_color(ZED.border)
                     .rounded_lg()
                     .shadow_2xl()
                     .p_3()
@@ -196,13 +191,11 @@ impl CommandPalette {
                             .items_center()
                             .justify_between()
                             .border_b_1()
-                            .border_color(ZED.border_variant)
                             .pb_2()
                             .child(
                                 div()
                                     .text_xs()
                                     .font_weight(gpui::FontWeight::SEMIBOLD)
-                                    .text_color(ZED.text_muted)
                                     .child("COMMAND PALETTE"),
                             )
                             .child(
@@ -210,8 +203,6 @@ impl CommandPalette {
                                     .id("close_pal")
                                     .cursor_pointer()
                                     .text_xs()
-                                    .text_color(ZED.text_muted)
-                                    .hover(|s| s.text_color(ZED.text))
                                     .child("Esc to Close")
                                     .on_click(cx.listener(|this, _, _window, cx| {
                                         this.is_palette_open = false;

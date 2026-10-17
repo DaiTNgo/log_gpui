@@ -1,10 +1,12 @@
 //! UI: view panel content (density, columns, module focus).
 
 use super::AppView;
+use gpui_component::Icon;
+use gpui_kit::assets::IconName;
 use crate::column::PinnableColumn;
-use crate::theme::{Density, ZED};
+use crate::density::Density;
 use gpui::{
-    div, px, Context, ElementId, InteractiveElement, IntoElement,
+    div, Context, ElementId, InteractiveElement, IntoElement,
     ParentElement, StatefulInteractiveElement, Styled,
 };
 
@@ -15,7 +17,6 @@ impl AppView {
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
         let density_btn = |label: &'static str, target: Density| {
-            let active = self.density == target;
             div()
                 .id(ElementId::from(format!("view_density_{}", label.to_lowercase())))
                 .cursor_pointer()
@@ -26,23 +27,7 @@ impl AppView {
                 .text_center()
                 .text_xs()
                 .font_weight(gpui::FontWeight::SEMIBOLD)
-                .bg(if active {
-                    ZED.element_selected
-                } else {
-                    ZED.element_background
-                })
                 .border_1()
-                .border_color(if active {
-                    ZED.border_focused
-                } else {
-                    ZED.border_variant
-                })
-                .text_color(if active {
-                    ZED.text_accent
-                } else {
-                    ZED.text_muted
-                })
-                .hover(|s| s.bg(ZED.ghost_hover))
                 .child(label)
                 .on_click(cx.listener(move |this, _, _window, cx| {
                     this.column_layout.update_density(target);
@@ -65,36 +50,13 @@ impl AppView {
                 .px_2()
                 .py_1()
                 .rounded_md()
-                .hover(|s| s.bg(ZED.ghost_hover))
                 .child(
                     div()
                         .text_xs()
                         .font_weight(gpui::FontWeight::MEDIUM)
-                        .text_color(ZED.text)
                         .child(col_label),
                 )
-                .child(
-                    div()
-                        .text_color(if pinned {
-                            ZED.icon_accent
-                        } else {
-                            ZED.icon_muted
-                        })
-                        .child(
-                            gpui::svg()
-                                .size(px(13.0))
-                                .text_color(if pinned {
-                                    ZED.icon_accent
-                                } else {
-                                    ZED.icon_muted
-                                })
-                                .data(if pinned {
-                                    crate::column::PUSH_PIN_SIMPLE_SVG
-                                } else {
-                                    crate::column::PUSH_PIN_SIMPLE_SLASH_SVG
-                                }),
-                        ),
-                )
+                .child(Icon::new(if pinned { IconName::Pin } else { IconName::PinOff }).size_3())
                 .on_click(cx.listener(move |this, _, _window, cx| {
                     this.column_layout.toggle_pin(col);
                     cx.notify();
@@ -106,7 +68,6 @@ impl AppView {
         let mod_list = ["API", "DB", "AUTH", "PAYMENT", "CACHE", "WORKER", "GATEWAY"];
         for mod_name in mod_list {
             let m_str = mod_name.to_string();
-            let is_focused = self.focused_tag.as_deref() == Some(mod_name);
             let item = div()
                 .id(ElementId::from(format!("view_mod_{}", mod_name)))
                 .cursor_pointer()
@@ -117,21 +78,10 @@ impl AppView {
                 .px_2()
                 .py_1()
                 .rounded_md()
-                .bg(if is_focused {
-                    ZED.element_selected
-                } else {
-                    ZED.transparent
-                })
-                .hover(|s| s.bg(ZED.ghost_hover))
                 .child(
                     div()
                         .text_xs()
                         .font_weight(gpui::FontWeight::MEDIUM)
-                        .text_color(if is_focused {
-                            ZED.text_accent
-                        } else {
-                            ZED.text
-                        })
                         .child(mod_name),
                 )
                 .on_click(cx.listener(move |this, _, _window, cx| {
@@ -153,7 +103,6 @@ impl AppView {
                 div()
                     .text_xs()
                     .font_weight(gpui::FontWeight::SEMIBOLD)
-                    .text_color(ZED.text_muted)
                     .child("DENSITY"),
             )
             .child(
@@ -176,7 +125,6 @@ impl AppView {
                         div()
                             .text_xs()
                             .font_weight(gpui::FontWeight::SEMIBOLD)
-                            .text_color(ZED.text_muted)
                             .child("COLUMNS"),
                     )
                     .child(
@@ -187,8 +135,6 @@ impl AppView {
                             .py_0p5()
                             .rounded_xs()
                             .text_xs()
-                            .text_color(ZED.text_muted)
-                            .hover(|s| s.bg(ZED.ghost_hover).text_color(ZED.text))
                             .child("Unpin All")
                             .on_click(cx.listener(|this, _, _window, cx| {
                                 this.column_layout.unpin_all();
@@ -201,7 +147,6 @@ impl AppView {
                 div()
                     .text_xs()
                     .font_weight(gpui::FontWeight::SEMIBOLD)
-                    .text_color(ZED.text_muted)
                     .child("MODULE FOCUS"),
             )
             .child(modules)

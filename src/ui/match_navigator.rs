@@ -1,10 +1,11 @@
 use crate::search::SearchState;
-use crate::theme::ZED;
+
 use gpui::{
     div, px, InteractiveElement, IntoElement, ParentElement, StatefulInteractiveElement,
     Styled,
 };
-use gpui_component::{Icon, IconName};
+use gpui_component::{Icon};
+use gpui_kit::assets::IconName;
 
 pub struct MatchNavigator;
 
@@ -30,7 +31,6 @@ impl MatchNavigator {
             format!("{} / {}", curr_idx, total)
         };
 
-        let has_matches = total > 0;
         let view_prev = view.clone();
         let view_next = view.clone();
 
@@ -46,19 +46,12 @@ impl MatchNavigator {
             .px_2p5()
             .py_1()
             .rounded_md()
-            .bg(ZED.surface_background)
             .border_1()
-            .border_color(ZED.border_variant)
             .shadow_sm()
             .child(
                 div()
                     .text_xs()
                     .font_family(".AppleSystemUIFontMonospaced")
-                    .text_color(if has_matches {
-                        ZED.text
-                    } else {
-                        ZED.text_muted
-                    })
                     .child(navigator_text),
             )
             .child(
@@ -67,12 +60,6 @@ impl MatchNavigator {
                     .cursor_pointer()
                     .p_0p5()
                     .rounded_sm()
-                    .hover(|s| s.bg(ZED.ghost_hover).text_color(ZED.icon_hover))
-                    .text_color(if has_matches {
-                        ZED.icon_muted
-                    } else {
-                        ZED.text_muted
-                    })
                     .child(Icon::new(IconName::ChevronUp).size(px(12.0)))
                     .on_click(move |_, _window, cx| {
                         view_prev.update(cx, |this, cx| {
@@ -86,12 +73,6 @@ impl MatchNavigator {
                     .cursor_pointer()
                     .p_0p5()
                     .rounded_sm()
-                    .hover(|s| s.bg(ZED.ghost_hover).text_color(ZED.icon_hover))
-                    .text_color(if has_matches {
-                        ZED.icon_muted
-                    } else {
-                        ZED.text_muted
-                    })
                     .child(Icon::new(IconName::ChevronDown).size(px(12.0)))
                     .on_click(move |_, _window, cx| {
                         view_next.update(cx, |this, cx| {

@@ -1,6 +1,7 @@
 use crate::model::LogEntry;
-use crate::theme::Density;
+use crate::density::Density;
 use gpui::{px, Pixels};
+use gpui_kit::assets::IconName;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeSet, HashMap};
 
@@ -57,26 +58,6 @@ impl PinnableColumn {
     }
 }
 
-pub const PUSH_PIN_SIMPLE_SVG: &[u8] = br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" fill="currentColor"><path d="M216,168h-9.29L185.54,48H192a8,8,0,0,0,0-16H64a8,8,0,0,0,0,16h6.46L49.29,168H40a8,8,0,0,0,0,16h80v56a8,8,0,0,0,16,0V184h80a8,8,0,0,0,0-16ZM86.71,48h82.58l21.17,120H65.54Z"/></svg>"#;
-
-pub const PUSH_PIN_SIMPLE_SLASH_SVG: &[u8] = br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" fill="currentColor"><path d="M83.25,40a8,8,0,0,1,8-8H192a8,8,0,0,1,0,16h-6.46l18.75,106.3a8,8,0,0,1-6.48,9.26,7.52,7.52,0,0,1-1.4.13,8,8,0,0,1-7.87-6.61L169.29,48h-78A8,8,0,0,1,83.25,40ZM213.38,221.92a8,8,0,0,1-11.3-.54L168.1,184H136v56a8,8,0,0,1-16,0V184H40a8,8,0,0,1,0-16h9.29L66.24,72,42.08,45.38A8,8,0,1,1,53.92,34.62l160,176A8,8,0,0,1,213.38,221.92ZM153.55,168,79.84,86.92,65.54,168Z"/></svg>"#;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum IconName {
-    PushPinSimple,
-    PushPinSimpleSlash,
-}
-
-impl IconName {
-    #[inline]
-    pub fn svg_data(self) -> &'static [u8] {
-        match self {
-            IconName::PushPinSimple => PUSH_PIN_SIMPLE_SVG,
-            IconName::PushPinSimpleSlash => PUSH_PIN_SIMPLE_SLASH_SVG,
-        }
-    }
-}
-
 /// Pin Toggle interaction states defined in CONTEXT.md and Issue 03.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PinToggleState {
@@ -86,7 +67,7 @@ pub enum PinToggleState {
     UnpinnedHover,
     /// Persistently visible with accent emphasis (`text_accent`).
     PinnedActive,
-    /// Displays an unpin release affordance (`PushPinSimpleSlash`).
+    /// Displays an unpin release affordance (`IconName::PinOff`).
     PinnedHover,
 }
 
@@ -95,9 +76,9 @@ impl PinToggleState {
     pub fn icon(self) -> Option<IconName> {
         match self {
             PinToggleState::UnpinnedIdle => None,
-            PinToggleState::UnpinnedHover => Some(IconName::PushPinSimple),
-            PinToggleState::PinnedActive => Some(IconName::PushPinSimple),
-            PinToggleState::PinnedHover => Some(IconName::PushPinSimpleSlash),
+            PinToggleState::UnpinnedHover => Some(IconName::Pin),
+            PinToggleState::PinnedActive => Some(IconName::Pin),
+            PinToggleState::PinnedHover => Some(IconName::PinOff),
         }
     }
 

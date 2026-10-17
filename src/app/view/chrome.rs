@@ -1,154 +1,51 @@
-//! UI: top window chrome.
+//! UI: window title bar built from gpui-kit components.
 
 use super::AppView;
-use crate::theme::ZED;
-use gpui::{
-    div, px, Context, InteractiveElement, IntoElement,
-    ParentElement, StatefulInteractiveElement, Styled,
-};
-use gpui_component::{Icon, IconName};
+use gpui::prelude::FluentBuilder as _;
+use gpui::{div, Context, IntoElement, ParentElement, Styled, Window};
+use gpui_component::button::{Button, ButtonVariants as _};
+use gpui_component::{Selectable as _, Sizable as _, TitleBar};
+use gpui_kit::assets::IconName;
 
 impl AppView {
-    /// Top window chrome: project switcher trigger, file badge, palette/open buttons.
-    pub(super) fn render_window_chrome(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
-        div()
-            .h(px(36.0))
-            .flex()
-            .flex_row()
-            .items_center()
-            .justify_between()
-            .px_3()
-            .bg(ZED.surface_background)
-            .border_b_1()
-            .border_color(ZED.border_variant)
-            .child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .gap_2p5()
-                    .child(
-                        // Project switcher trigger: color badge + active project name.
-                        div()
-                            .id("btn_project_switcher")
-                            .cursor_pointer()
-                            .flex()
-                            .flex_row()
-                            .items_center()
-                            .gap_1p5()
-                            .px_2()
-                            .py_0p5()
-                            .rounded_md()
-                            .hover(|s| s.bg(ZED.ghost_hover))
-                            .child(self.active_project_swatch())
-                            .child(
-                                div()
-                                    .text_xs()
-                                    .font_weight(gpui::FontWeight::SEMIBOLD)
-                                    .text_color(ZED.text)
-                                    .child(
-                                        self.active_project()
-                                            .map(|p| p.name.clone())
-                                            .unwrap_or_else(|| "No Project".to_string()),
-                                    ),
-                            )
-                            .child(
-                                div()
-                                    .text_color(ZED.text_muted)
-                                    .child(Icon::new(IconName::ChevronDown).size(px(12.0))),
-                            )
-                            .on_click(cx.listener(|this, _, _window, cx| {
-                                this.toggle_project_switcher(cx);
-                            })),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .flex_row()
-                            .items_center()
-                            .gap_1p5()
-                            .px_2()
-                            .py_0p5()
-                            .rounded_md()
-                            .bg(ZED.element_background)
-                            .border_1()
-                            .border_color(ZED.border_variant)
-                            .text_xs()
-                            .text_color(ZED.text_muted)
-                            .child(Icon::new(IconName::FileText).size(px(12.0)))
-                            .child(self.file_name.clone()),
-                    ),
-            )
-            .child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .gap_1p5()
-                    .child(
-                        div()
-                            .id("btn_cmd_pal")
-                            .cursor_pointer()
-                            .flex()
-                            .flex_row()
-                            .items_center()
-                            .gap_1p5()
-                            .px_2()
-                            .py_1()
-                            .rounded_md()
-                            .hover(|s| s.bg(ZED.ghost_hover))
-                            .text_xs()
-                            .text_color(ZED.text_muted)
-                            .child(
-                                div()
-                                    .px_1()
-                                    .py_0p5()
-                                    .rounded_xs()
-                                    .bg(ZED.element_background)
-                                    .text_color(ZED.text_muted)
-                                    .child("⌘K"),
-                            )
-                            .child("Palette")
-                            .on_click(cx.listener(|this, _, _window, cx| {
-                                this.is_palette_open = !this.is_palette_open;
-                                cx.notify();
-                            })),
-                    )
-                    .child(
-                        div()
-                            .id("btn_open_file")
-                            .cursor_pointer()
-                            .flex()
-                            .flex_row()
-                            .items_center()
-                            .gap_1p5()
-                            .px_2()
-                            .py_1()
-                            .rounded_md()
-                            .hover(|s| s.bg(ZED.ghost_hover))
-                            .text_xs()
-                            .text_color(ZED.text_muted)
-                            .child(Icon::new(IconName::FolderOpen).size(px(12.0)))
-                            .child("Open...")
-                            .on_click(cx.listener(|this, _, _window, cx| {
-                                this.open_file_dialog(cx);
-                            })),
-                    ),
-            )
-            .into_any_element()
-    }
+    /// Title bar: only the two sidebar toggles. The left toggle sits next to the macOS
+    /// traffic lights (TitleBar reserves the inset and handles drag / double-click zoom);
+    /// the right toggle shows only while a log file tab is focused.
+    pub(super) fn render_window_chrome(
+        &self,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> gpui::AnyElement {
+        let show_context_toggle = self.active_tab_is_log_file();
+        let context_visible = self.context_sidebar.is_shown(show_context_toggle);
 
-    /// Color badge shown in the window chrome next to the active project name.
-    pub(super) fn active_project_swatch(&self) -> impl IntoElement {
-        let hex = self
-            .active_project()
-            .map(|p| p.color.hex())
-            .unwrap_or("#6B7280");
-        let rgb = u32::from_str_radix(hex.trim_start_matches('#'), 16).unwrap_or(0x6B7280);
-        div()
-            .w(px(10.0))
-            .h(px(10.0))
-            .rounded_full()
-            .bg(gpui::rgb(rgb))
+        // TitleBar reserves 80px on macOS for the traffic lights. They disappear in full screen,
+        // so drop that inset (the bar's own pl_3 then keeps the toggle 12px from the edge).
+        let mut bar = TitleBar::new();
+        if window.is_fullscreen() {
+            bar = bar.pl_0();
+        }
+
+        bar.child(
+                Button::new("toggle-left-sidebar")
+                    .ghost()
+                    .small()
+                    .icon(IconName::PanelLeft)
+                    .selected(self.sidebar_state.visible)
+                    .on_click(cx.listener(|this, _, _window, cx| this.toggle_sidebar(cx))),
+            )
+            .child(div().flex().items_center().pr_2().when(show_context_toggle, |this| {
+                this.child(
+                    Button::new("toggle-context-sidebar")
+                        .ghost()
+                        .small()
+                        .icon(IconName::PanelRight)
+                        .selected(context_visible)
+                        .on_click(cx.listener(|this, _, _window, cx| {
+                            this.toggle_context_sidebar(cx)
+                        })),
+                )
+            }))
+            .into_any_element()
     }
 }

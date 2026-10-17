@@ -1,11 +1,15 @@
 pub mod canvas;
 pub mod command_palette;
+pub mod context_sidebar;
 pub mod context_view;
+pub mod file_menu;
 pub mod filter_popover;
 pub mod floating_panel;
-pub mod icons;
 pub mod inspector;
 pub mod match_navigator;
+pub mod menu_list;
+pub mod project_node;
 pub mod project_switcher;
+pub mod settings;
 pub mod sidebar;
-pub mod workspace_tree;
+pub mod sidebar_group;

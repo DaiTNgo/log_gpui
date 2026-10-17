@@ -1,7 +1,7 @@
 use log_gpui::column::PinnableColumn;
 use log_gpui::filter::{ConditionField, ConditionOp};
 use log_gpui::workspace::project::{LogFileDescriptor, ProjectColorAccent, slug_project_id};
-use log_gpui::workspace::state::{ActivityRailTab, SidebarState, SidebarStateMachine, WorkspaceState};
+use log_gpui::workspace::state::{ContextSidebarState, ContextTab, LeftSidebarState, WorkspaceState};
 use log_gpui::workspace::working_set::{TabSessionState, WorkingSet};
 
 fn session_with_filter(level: &str) -> TabSessionState {
@@ -187,123 +187,69 @@ fn test_project_open_file_opens_or_focuses_tab() {
     assert_eq!(p.working_set.tab_count(), 1);
 }
 
-// ─── Sidebar State Machine (Issue 03) ────────────────────────────────────────
+// ─── Sidebar State (Left: Projects, Right: Context) ──────────────────────────
 
 #[test]
-fn test_sidebar_rail_defaults_to_compact_files() {
-    let sm = SidebarStateMachine::new();
-    assert_eq!(sm.state, SidebarState::Compact);
-    assert_eq!(sm.active_tab, ActivityRailTab::Files);
-    assert!(sm.rail_visible());
-    assert!(!sm.drawer_visible());
+fn test_left_sidebar_defaults_visible() {
+    let sb = LeftSidebarState::new();
+    assert!(sb.visible);
+    assert_eq!(sb.width, 240.0);
 }
 
 #[test]
-fn test_activate_inactive_tab_expands_drawer() {
-    let mut sm = SidebarStateMachine::new();
-    sm.activate_tab(ActivityRailTab::Investigations);
-
-    assert_eq!(sm.state, SidebarState::Expanded);
-    assert_eq!(sm.active_tab, ActivityRailTab::Investigations);
-    assert!(sm.drawer_visible());
+fn test_left_sidebar_toggle_is_hidden_expanded() {
+    let mut sb = LeftSidebarState::new();
+    sb.toggle();
+    assert!(!sb.visible);
+    sb.toggle();
+    assert!(sb.visible);
 }
 
 #[test]
-fn test_activate_active_tab_collapses_to_compact() {
-    let mut sm = SidebarStateMachine::new();
-    sm.activate_tab(ActivityRailTab::Files);
-    assert_eq!(sm.state, SidebarState::Expanded);
-
-    sm.activate_tab(ActivityRailTab::Files);
-    assert_eq!(sm.state, SidebarState::Compact);
-    assert!(!sm.drawer_visible());
+fn test_left_sidebar_width_defaults_and_resizing() {
+    let mut sb = LeftSidebarState::new();
+    sb.set_width(320.0);
+    assert_eq!(sb.width, 320.0);
+    sb.set_width(120.0);
+    assert_eq!(sb.width, 180.0);
+    sb.set_width(800.0);
+    assert_eq!(sb.width, 500.0);
+    sb.reset_width();
+    assert_eq!(sb.width, 240.0);
 }
 
 #[test]
-fn test_cmd_b_toggles_drawer() {
-    let mut sm = SidebarStateMachine::new();
-
-    sm.toggle_drawer(); // Compact -> Expanded
-    assert!(sm.drawer_visible());
-
-    sm.toggle_drawer(); // Expanded -> Compact
-    assert!(!sm.drawer_visible());
-
-    sm.state = SidebarState::Hidden;
-    sm.toggle_drawer(); // Hidden -> Expanded
-    assert!(sm.drawer_visible());
-    assert!(sm.rail_visible());
+fn test_context_sidebar_defaults_hidden_on_files() {
+    let cs = ContextSidebarState::new();
+    assert!(!cs.visible);
+    assert_eq!(cs.active_tab, ContextTab::Files);
+    assert!(!cs.is_shown(true));
 }
 
 #[test]
-fn test_sidebar_cycle_through_all_states() {
-    let mut sm = SidebarStateMachine::new();
-    sm.cycle(); // Compact -> Hidden
-    assert_eq!(sm.state, SidebarState::Hidden);
-    assert!(!sm.rail_visible());
-
-    sm.cycle(); // Hidden -> Expanded
-    assert_eq!(sm.state, SidebarState::Expanded);
-
-    sm.cycle(); // Expanded -> Compact
-    assert_eq!(sm.state, SidebarState::Compact);
+fn test_context_sidebar_toggle_keeps_active_tab() {
+    let mut cs = ContextSidebarState::new();
+    cs.show_tab(ContextTab::Markers);
+    assert!(cs.visible);
+    cs.toggle();
+    assert!(!cs.visible);
+    cs.toggle();
+    assert!(cs.visible);
+    assert_eq!(cs.active_tab, ContextTab::Markers);
 }
 
 #[test]
-fn test_expand_tab_shortcut() {
-    let mut sm = SidebarStateMachine::new();
-    sm.state = SidebarState::Compact;
-
-    sm.expand_tab(ActivityRailTab::Files);
-    assert_eq!(sm.state, SidebarState::Expanded);
-    assert_eq!(sm.active_tab, ActivityRailTab::Files);
-
-    sm.expand_tab(ActivityRailTab::Investigations);
-    assert_eq!(sm.active_tab, ActivityRailTab::Investigations);
-    assert_eq!(sm.state, SidebarState::Expanded);
-
-    sm.expand_tab(ActivityRailTab::SavedViews);
-    assert_eq!(sm.active_tab, ActivityRailTab::SavedViews);
-    assert_eq!(sm.state, SidebarState::Expanded);
-
-    sm.expand_tab(ActivityRailTab::Markers);
-    assert_eq!(sm.active_tab, ActivityRailTab::Markers);
-    assert_eq!(sm.state, SidebarState::Expanded);
-
-    sm.expand_tab(ActivityRailTab::Settings);
-    assert_eq!(sm.active_tab, ActivityRailTab::Settings);
-    assert_eq!(sm.state, SidebarState::Expanded);
+fn test_context_sidebar_requires_a_log_file_tab() {
+    let mut cs = ContextSidebarState::new();
+    cs.show_tab(ContextTab::Investigations);
+    assert!(cs.is_shown(true));
+    assert!(!cs.is_shown(false));
 }
 
 #[test]
-fn test_activity_rail_tab_labels() {
-    assert_eq!(ActivityRailTab::Files.as_str(), "Files");
-    assert_eq!(ActivityRailTab::Investigations.as_str(), "Investigations");
-    assert_eq!(ActivityRailTab::SavedViews.as_str(), "Saved Views");
-    assert_eq!(ActivityRailTab::Markers.as_str(), "Markers");
-    assert_eq!(ActivityRailTab::Settings.as_str(), "Settings");
-}
-
-#[test]
-fn test_sidebar_drawer_width_defaults_and_resizing() {
-    let mut sm = SidebarStateMachine::new();
-    assert_eq!(sm.drawer_width, 240.0);
-
-    // Resizing within bounds
-    sm.set_drawer_width(320.0);
-    assert_eq!(sm.drawer_width, 320.0);
-
-    // Clamping min width floor
-    sm.set_drawer_width(120.0);
-    assert_eq!(sm.drawer_width, 180.0);
-
-    // Clamping max width ceiling
-    sm.set_drawer_width(800.0);
-    assert_eq!(sm.drawer_width, 500.0);
-
-    // Reset back to default 240px
-    sm.reset_drawer_width();
-    assert_eq!(sm.drawer_width, 240.0);
+fn test_context_tab_labels() {
+    let labels: Vec<_> = ContextTab::ALL.iter().map(|t| t.as_str()).collect();
+    assert_eq!(labels, ["Files", "Investigations", "Saved Views", "Markers"]);
 }
 
 #[test]
