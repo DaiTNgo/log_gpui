@@ -1,0 +1,476 @@
+//! The Focus Pane: the lines the open Focus Tab lists, under the view and both
+//! sidebars. A strip of tabs and the Focus Find field on top, then one row per
+//! stored line with its number, Level Marker, Source File name, Markers and
+//! the paint of Search, Focus Find and (in the Parsed View) Highlight Rules.
+
+use crate::app::AppView;
+use crate::app::raw::RawSection;
+use crate::density::Density;
+use crate::focus::{FocusFind, FocusRow};
+use crate::highlight::RowPaint;
+use crate::marker::{TextMarker, level_marker};
+use crate::model::{LogEntry, LogLevel};
+use crate::palette::Weight;
+use crate::search_expr::Matcher;
+use crate::text_selection::TextSelection;
+use crate::ui::canvas::{CanvasColors, CellCtx, render_text_cell};
+use crate::ui::cells::TextCell;
+use gpui::prelude::FluentBuilder as _;
+use gpui::{
+    Bounds, ElementId, InteractiveElement, IntoElement, ListHorizontalSizingBehavior, MouseButton,
+    ParentElement, Pixels, StatefulInteractiveElement, Styled, UniformListScrollHandle, div, px,
+    uniform_list,
+};
+use gpui_component::button::{Button, ButtonVariants as _};
+use gpui_component::input::{Input, InputState};
+use gpui_component::scroll::ScrollableElement as _;
+use gpui_component::tag::Tag;
+use gpui_component::{ActiveTheme as _, Icon, Sizable as _, h_flex};
+use gpui_kit::assets::IconName;
+use std::collections::HashMap;
+use std::sync::Arc;
+
+/// Width of the line number, the Level Marker and the Source File name.
+const NUMBER_WIDTH: f32 = 64.0;
+const LEVEL_WIDTH: f32 = 24.0;
+const SOURCE_WIDTH: f32 = 120.0;
+/// Space before the text of a row.
+const TEXT_PADDING: f32 = 8.0;
+pub const TAB_STRIP_HEIGHT: f32 = 32.0;
+/// Height of the collapsed pane: its strip of tabs and the border above.
+pub const COLLAPSED_HEIGHT: f32 = TAB_STRIP_HEIGHT + 1.0;
+
+/// Where the pane reads the text of its rows from.
+pub enum PaneSource {
+    Parsed {
+        entries: Arc<Vec<LogEntry>>,
+        paints: Arc<Vec<Option<RowPaint>>>,
+    },
+    Raw {
+        sections: Arc<Vec<RawSection>>,
+        /// The Markers of each file by line (1-based), by `file_id`.
+        markers: Arc<HashMap<String, HashMap<usize, Vec<TextMarker>>>>,
+    },
+}
+
+/// One tab of the strip.
+pub struct PaneTab {
+    pub label: String,
+    pub active: bool,
+}
+
+pub struct PaneState<'a> {
+    pub view: gpui::Entity<AppView>,
+    pub height: f32,
+    /// Collapsed, the pane is just its strip of tabs.
+    pub expanded: bool,
+    pub tabs: Vec<PaneTab>,
+    pub can_close: bool,
+    pub find_input: &'a gpui::Entity<InputState>,
+    pub find: FocusFind,
+    pub search_matcher: Option<Matcher>,
+    pub rows: Arc<Vec<FocusRow>>,
+    pub source: PaneSource,
+    /// Index in `rows` of the current line, when the tab lists it.
+    pub selected: Option<usize>,
+    /// Source File names are shown (a Log Space of several files).
+    pub show_source: bool,
+    /// Text of the empty pane, when there is nothing to list.
+    pub hint: Option<&'static str>,
+    pub density: Density,
+    pub colors: CanvasColors,
+    pub scroll_handle: &'a UniformListScrollHandle,
+    pub selection: Option<TextSelection>,
+    pub bounds_sink: std::rc::Rc<std::cell::Cell<Bounds<Pixels>>>,
+}
+
+/// Width taken by the cells before the text of a row.
+pub fn text_offset(parsed: bool, show_source: bool) -> f32 {
+    NUMBER_WIDTH
+        + if parsed { LEVEL_WIDTH } else { 0.0 }
+        + if show_source { SOURCE_WIDTH } else { 0.0 }
+        + TEXT_PADDING
+}
+
+pub struct FocusPane;
+
+impl FocusPane {
+    pub fn render(state: PaneState, cx: &mut gpui::App) -> gpui::AnyElement {
+        let height = state.height;
+        let theme = cx.theme();
+        let (border, muted, bg, fg) = (theme.border, theme.muted_foreground, theme.background, theme.foreground);
+        let tab_active_bg = theme.list_active;
+
+        let mut strip = h_flex().gap_1().items_center().min_w(px(0.0));
+        let can_close = state.can_close;
+        for (i, tab) in state.tabs.iter().enumerate() {
+            let (v_open, v_close) = (state.view.clone(), state.view.clone());
+            strip = strip.child(
+                h_flex()
+                    .id(ElementId::from(("focus-tab", i)))
+                    .h(px(24.0))
+                    .px_2()
+                    .gap_1()
+                    .items_center()
+                    .rounded_md()
+                    .cursor_pointer()
+                    .text_xs()
+                    .when(tab.active, |this| this.bg(tab_active_bg).font_weight(gpui::FontWeight::SEMIBOLD))
+                    .when(!tab.active, |this| this.text_color(muted))
+                    .child(tab.label.clone())
+                    .when(can_close, |this| {
+                        this.child(
+                            div()
+                                .id(ElementId::from(("focus-tab-close", i)))
+                                .flex()
+                                .items_center()
+                                .rounded_sm()
+                                .child(Icon::new(IconName::Close).size_3())
+                                .on_click(move |_, _window, cx| {
+                                    cx.stop_propagation();
+                                    v_close.update(cx, |this, cx| this.close_focus_tab(i, cx));
+                                }),
+                        )
+                    })
+                    .on_click(move |_, _window, cx| {
+                        v_open.update(cx, |this, cx| this.switch_focus_tab(i, cx));
+                    }),
+            );
+        }
+        let v_add = state.view.clone();
+        strip = strip.child(
+            Button::new("focus-tab-add")
+                .ghost()
+                .xsmall()
+                .icon(IconName::Plus)
+                .on_click(move |_, window, cx| {
+                    v_add.update(cx, |this, cx| this.add_focus_tab(window, cx));
+                }),
+        );
+
+        let (find_cur, find_total) = state.find.display();
+        let find_error = state.find.parse_error.is_some();
+        let (v_prev, v_next, v_hide) = (state.view.clone(), state.view.clone(), state.view.clone());
+        let find_box = h_flex()
+            .gap_1()
+            .items_center()
+            .flex_shrink_0()
+            .child(
+                h_flex()
+                    .w(px(240.0))
+                    .h(px(24.0))
+                    .px_2()
+                    .gap_1()
+                    .items_center()
+                    .rounded_md()
+                    .border_1()
+                    .border_color(if find_error { cx.theme().danger } else { border })
+                    .bg(bg)
+                    .child(Icon::new(IconName::Search).size_3().text_color(muted))
+                    .child(
+                        div().flex_1().min_w(px(0.0)).child(
+                            Input::new(state.find_input)
+                                .appearance(false)
+                                .bordered(false)
+                                .focus_bordered(false)
+                                .h(px(22.0)),
+                        ),
+                    )
+                    .when(find_error, |this| this.child(Tag::danger().child("!"))),
+            )
+            .child(
+                Button::new("focus-find-prev")
+                    .ghost()
+                    .xsmall()
+                    .icon(IconName::ChevronUp)
+                    .on_click(move |_, _w, cx| v_prev.update(cx, |this, cx| this.focus_find_prev(cx))),
+            )
+            .child(
+                Button::new("focus-find-next")
+                    .ghost()
+                    .xsmall()
+                    .icon(IconName::ChevronDown)
+                    .on_click(move |_, _w, cx| v_next.update(cx, |this, cx| this.focus_find_next(cx))),
+            )
+            .child(div().min_w(px(40.0)).text_xs().text_color(muted).child(format!("{find_cur}/{find_total}")))
+            .child(
+                Button::new("focus-pane-collapse")
+                    .ghost()
+                    .xsmall()
+                    .icon(if state.expanded { IconName::ChevronDown } else { IconName::ChevronUp })
+                    .on_click(move |_, _w, cx| v_hide.update(cx, |this, cx| this.toggle_focus_pane(cx))),
+            );
+
+        let header = h_flex()
+            .w_full()
+            .h(px(TAB_STRIP_HEIGHT))
+            .px_2()
+            .gap_2()
+            .items_center()
+            .flex_shrink_0()
+            .border_b_1()
+            .border_color(border)
+            .child(div().flex_1().min_w(px(0.0)).overflow_hidden().child(strip))
+            .child(find_box);
+
+        let expanded = state.expanded;
+        let body = if !expanded {
+            div().into_any_element()
+        } else if state.rows.is_empty() {
+            match state.hint {
+                Some(hint) => div()
+                    .flex_1()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .text_sm()
+                    .text_color(muted)
+                    .child(hint)
+                    .into_any_element(),
+                None => div().flex_1().into_any_element(),
+            }
+        } else {
+            Self::render_rows(state, cx)
+        };
+
+        div()
+            .id("focus-pane")
+            .w_full()
+            .h(px(if expanded { height } else { COLLAPSED_HEIGHT }))
+            .flex_shrink_0()
+            .flex()
+            .flex_col()
+            .bg(bg)
+            .text_color(fg)
+            .border_t_1()
+            .border_color(border)
+            .child(header)
+            .child(body)
+            .into_any_element()
+    }
+
+    fn render_rows(state: PaneState, _cx: &mut gpui::App) -> gpui::AnyElement {
+        // The widest row sets the width the list scrolls to.
+        let longest = state
+            .rows
+            .iter()
+            .enumerate()
+            .max_by_key(|(_, row)| row_len(&state.source, **row))
+            .map(|(i, _)| i)
+            .unwrap_or(0);
+        let count = state.rows.len();
+        let scroll_handle = state.scroll_handle.clone();
+        let bounds_sink = state.bounds_sink.clone();
+        let view = state.view.clone();
+        let (v_down, v_move, v_up, v_up_out) = (view.clone(), view.clone(), view.clone(), view);
+        let env = PaneRows {
+            rows: state.rows,
+            source: state.source,
+            selected: state.selected,
+            find: state.find,
+            search_matcher: state.search_matcher,
+            show_source: state.show_source,
+            colors: state.colors,
+            selection: state.selection,
+            row_height: state.density.row_height(),
+            font_size: state.density.font_size(),
+        };
+        let list = uniform_list("focus_pane_list", count, move |range, _window, _cx| {
+            range.filter_map(|i| env.row(i)).collect::<Vec<_>>()
+        })
+        .size_full()
+        .with_width_from_item(Some(longest))
+        .with_horizontal_sizing_behavior(ListHorizontalSizingBehavior::Unconstrained)
+        .track_scroll(state.scroll_handle);
+
+        div()
+            .id("focus_pane_container")
+            .flex_1()
+            .min_h(px(0.0))
+            .overflow_hidden()
+            .relative()
+            .horizontal_scrollbar(&scroll_handle)
+            .on_mouse_down(MouseButton::Left, move |event, _w, cx| {
+                v_down.update(cx, |this, cx| this.start_pane_selection(event.position, cx));
+            })
+            .on_mouse_move(move |event, _w, cx| {
+                if event.pressed_button == Some(MouseButton::Left) {
+                    v_move.update(cx, |this, cx| this.drag_pane_selection(event.position, cx));
+                }
+            })
+            .on_mouse_up(MouseButton::Left, move |event, _w, cx| {
+                v_up.update(cx, |this, cx| this.finish_pane_selection(event.position, cx));
+            })
+            .on_mouse_up_out(MouseButton::Left, move |event, _w, cx| {
+                v_up_out.update(cx, |this, cx| this.finish_pane_selection(event.position, cx));
+            })
+            .child(
+                gpui::canvas(|bounds, _, _| bounds, move |bounds, _, _, _| bounds_sink.set(bounds))
+                    .absolute()
+                    .size_full(),
+            )
+            .child(list)
+            .into_any_element()
+    }
+}
+
+fn row_len(source: &PaneSource, row: FocusRow) -> usize {
+    match (source, row) {
+        (PaneSource::Parsed { entries, .. }, FocusRow::Entry(ix)) => {
+            entries.get(ix).map_or(0, |e| e.raw_line.len())
+        }
+        (PaneSource::Raw { sections, .. }, FocusRow::Raw { section, line }) => sections
+            .get(section)
+            .and_then(|s| s.lines.get(line))
+            .map_or(0, String::len),
+        _ => 0,
+    }
+}
+
+/// What the virtualized list needs to build the rows on its own.
+struct PaneRows {
+    rows: Arc<Vec<FocusRow>>,
+    source: PaneSource,
+    selected: Option<usize>,
+    find: FocusFind,
+    search_matcher: Option<Matcher>,
+    show_source: bool,
+    colors: CanvasColors,
+    selection: Option<TextSelection>,
+    row_height: f32,
+    font_size: f32,
+}
+
+impl PaneRows {
+    fn row(&self, index: usize) -> Option<gpui::Stateful<gpui::Div>> {
+        let row = *self.rows.get(index)?;
+        let colors = self.colors;
+        // Each row is read as a `LogEntry`: the Parsed View has them, a Raw
+        // line gets a plain one that carries its Markers.
+        let raw_entry;
+        let (entry, paint, number, source_name): (&LogEntry, Option<&RowPaint>, usize, Option<String>) =
+            match (&self.source, row) {
+                (PaneSource::Parsed { entries, paints }, FocusRow::Entry(ix)) => {
+                    let e = entries.get(ix)?;
+                    (e, paints.get(ix).and_then(|p| p.as_ref()), e.index, e.source.as_deref().map(str::to_string))
+                }
+                (PaneSource::Raw { sections, markers }, FocusRow::Raw { section, line }) => {
+                    let s = sections.get(section)?;
+                    let text = s.lines.get(line)?;
+                    let mut e = LogEntry::new(
+                        line + 1,
+                        0.0,
+                        String::new(),
+                        String::new(),
+                        LogLevel::Unknown,
+                        text.clone(),
+                        text.clone(),
+                    );
+                    e.markers = markers
+                        .get(&s.file_id)
+                        .and_then(|m| m.get(&(line + 1)))
+                        .cloned()
+                        .unwrap_or_default();
+                    raw_entry = e;
+                    (&raw_entry, None, line + 1, Some(s.display_name.clone()))
+                }
+                _ => return None,
+            };
+        let parsed = matches!(self.source, PaneSource::Parsed { .. });
+        let tone = colors.tone();
+        let base_bg = match paint {
+            Some(p) => colors
+                .background
+                .blend(gpui::rgb(p.color.with_weight(Weight::Row, tone)).into()),
+            None => colors.background,
+        };
+        let is_selected = self.selected == Some(index);
+        let is_find_current = self.find.current_row() == Some(index);
+        let search_ranges = match &self.search_matcher {
+            Some(m) if m.is_match(&entry.raw_line) => m.find_ranges(&entry.raw_line),
+            _ => Vec::new(),
+        };
+        let find_ranges = self.find.find_ranges(&entry.raw_line);
+        let selected_in_line = self.selection.and_then(|s| s.range_in_row(index, entry.raw_line.len()));
+        let ctx = CellCtx {
+            colors: &colors,
+            entry,
+            paint,
+            search_ranges: &search_ranges,
+            find_ranges: &find_ranges,
+            selected: selected_in_line.as_ref(),
+            tone,
+            rule_cell: None,
+        };
+        let level_symbol = level_marker(entry.level).map_or(" ", |m| m.symbol());
+        let outline = if is_selected {
+            Some(colors.header_fg)
+        } else if is_find_current {
+            Some(colors.find)
+        } else {
+            None
+        };
+        Some(
+            div()
+                .id(ElementId::from(("focus-row", index)))
+                .h(px(self.row_height))
+                .min_w_full()
+                .relative()
+                .flex()
+                .flex_row()
+                .items_center()
+                // Monospace, like the Log Canvas rows: hit-testing a pointer
+                // assumes every character is the same width.
+                .font_family(".AppleSystemUIFontMonospaced")
+                .text_size(px(self.font_size))
+                .bg(if is_selected { base_bg.blend(colors.selected.opacity(0.5)) } else { base_bg })
+                .child(
+                    div()
+                        .flex_shrink_0()
+                        .w(px(NUMBER_WIDTH))
+                        .px_2()
+                        .text_right()
+                        .text_color(colors.muted)
+                        .child(number.to_string()),
+                )
+                .when(parsed, |this| {
+                    this.child(
+                        div()
+                            .flex_shrink_0()
+                            .w(px(LEVEL_WIDTH))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .text_xs()
+                            .font_weight(gpui::FontWeight::BOLD)
+                            .text_color(colors.level(entry.level))
+                            .child(level_symbol),
+                    )
+                })
+                .when(self.show_source, |this| {
+                    this.child(
+                        div()
+                            .flex_shrink_0()
+                            .w(px(SOURCE_WIDTH))
+                            .px_2()
+                            .text_color(colors.muted)
+                            .truncate()
+                            .child(source_name.unwrap_or_default()),
+                    )
+                })
+                .child(
+                    div()
+                        .flex_1()
+                        .px_2()
+                        .whitespace_nowrap()
+                        .pr_16()
+                        .child(render_text_cell(&ctx, TextCell::Raw)),
+                )
+                .when_some(outline, |row, color| {
+                    row.child(
+                        div().absolute().top_0().left_0().right_0().bottom_0().border_1().border_color(color),
+                    )
+                }),
+        )
+    }
+}

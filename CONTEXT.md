@@ -11,7 +11,7 @@ The top-level investigation unit the user switches between. It holds Log Spaces 
 _Avoid_: Workspace.
 
 **Log Space**:
-A named group of log files inside a Project, opened as one canvas whose rows from all its files are interleaved by timestamp. It is either an Imported Log Space or a Scratch Log Space, never both, and files can be added or removed after it is created.
+A named group of log files inside a Project, opened as one canvas whose rows from all its files are interleaved by timestamp. It is exactly one of an Imported Log Space, a Scratch Log Space or a Remote Log Space, and files can be added or removed after it is created.
 _Avoid_: Log File Space, file space.
 
 **Source File**:
@@ -38,6 +38,44 @@ _Avoid_: Read-only space.
 A Log Space created with only a name. Its files (`untitled.log`, `untitled-2.log`, …) start empty in the app's own data folder, and the user types or pastes log text into them.
 _Avoid_: Empty space, manual space.
 
+**Remote Log Space**:
+A Log Space whose files live on servers reached over SSH. Its files are read-only, can come from several servers, and keep receiving new lines while the Log Space is open.
+_Avoid_: SSH space, server space, remote tab.
+
+**Remote File**:
+A file of a Remote Log Space, named by its server and its path on that server.
+_Avoid_: SSH file, server log.
+
+**Live Window**:
+The newest lines a Remote Log Space holds, up to a set number of lines. Lines older than the window are no longer shown.
+_Avoid_: Buffer, cache, history limit.
+
+**Server**:
+The saved details for reaching one machine over SSH: address, port, user, how to sign in, and optionally a Jump Server. Servers are shared by every Project.
+_Avoid_: Host, connection, remote, SSH profile.
+
+**Jump Server**:
+A Server that the app connects through to reach another Server that is not directly reachable.
+_Avoid_: Bastion, proxy, jump host.
+
+### Live
+
+**Follow**:
+A view switch that keeps the newest line in sight: while it is on, the view scrolls to each new line as it arrives. Turning it off leaves the view where it is while new lines keep arriving.
+_Avoid_: Tail, auto-scroll, stick to bottom.
+
+**Pause**:
+A switch that stops a Log Space from taking in new lines from its files. While paused, the view, Filter and Focus Pane do not change.
+_Avoid_: Freeze, stop, tail off.
+
+**Break**:
+A labelled divider drawn between two rows where a file's lines stop being continuous, such as when the file was rotated or truncated, or the connection to its Server was lost and regained. It is not a row: it has no line number, is never a Match, never passes or fails Filter, and is never copied.
+_Avoid_: Gap row, separator line, marker.
+
+**Generation**:
+The stretch of a live file's lines between two rotation or truncation Breaks. Line numbers start again at 1 in each Generation, matching the file on disk or on its Server, and a line is known by its Generation and line number.
+_Avoid_: Segment, epoch, rotation.
+
 ### Views
 
 **Raw View**:
@@ -49,7 +87,7 @@ One file's block in the Raw View, headed by the file name and folder, that can b
 _Avoid_: Excerpt, file panel.
 
 **Parsed View**:
-The Unified Canvas: the file split into detected columns, with Filter, Search and Markers.
+The Unified Canvas: the file split into detected columns, with Search, Markers and Highlight Rules. It always shows every line; Filter narrows only the Focus Pane below it.
 _Avoid_: Table view, grid view.
 
 ### Marking
@@ -125,8 +163,8 @@ The automatic calculation of a column's width to match its longest ingested cont
 _Avoid_: Best fit, auto size.
 
 **Search**:
-Finding and jumping between log lines that match a Search Expression. Search never changes which lines or File Sections are shown; it only marks matches and moves the selection between them.
-_Avoid_: Find, query.
+Finding and jumping between log lines that match a Search Expression. Search never changes which lines or File Sections the view shows; it marks Matches, moves the selection between them, and narrows the Focus Pane.
+_Avoid_: Query.
 
 **Search Expression**:
 What the user types into Search: Search Terms combined with `&&`, `||` and parentheses.
@@ -145,8 +183,24 @@ A log line whose raw line satisfies the Search Expression, with every Phrase occ
 _Avoid_: Hit, result.
 
 **Filter**:
-Narrowing the shown lines by the values of the file's columns. Columns and their values are detected when the file is loaded, and the user picks values to show or hide. The only place where the user asks about a specific column.
+Narrowing the lines of the Focus Pane by the values of the file's columns, in the Parsed View only. Columns and their values are detected when the file is loaded, and the user picks values to show or hide. The only place where the user asks about a specific column.
 _Avoid_: Query, view.
+
+**Focus Pane**:
+The full-width pane under the view and both sidebars, holding one or more Focus Tabs. The open Focus Tab lists only the lines passing both Filter and its Search Expression, each as its raw line with its line number and, when the Log Space has several files, its Source File. An empty Search Expression or an empty Filter sets no limit; when both are empty the pane is empty. In the Raw View only the Search Expression applies. Its current line and the view's selection always follow each other. It shows Markers and Level Markers, and keeps up with tailed lines and scratch edits.
+_Avoid_: Match Pane, Filter Log, result pane, search results.
+
+**Focus Tab**:
+One numbered tab (1, 2, 3, …) of the Focus Pane with its own Search Expression and its own Focus Find. The Search field in the toolbar always edits the open Focus Tab's Search Expression, and only the open tab's Matches are marked in the view. Numbers are never reused while the tab is open, and a new tab takes the next number after the highest. The last remaining Focus Tab cannot be closed.
+_Avoid_: Search tab, result tab.
+
+**Focus Find**:
+Finding and jumping between the lines a Focus Tab already lists, written like a Search Expression. It never narrows the Focus Tab, and its finds are marked only in the Focus Pane.
+_Avoid_: Pane search, sub-search.
+
+**Inspector**:
+The right sidebar section that shows the stored text of the selected line, with its Continuation Lines, in both the Raw and the Parsed View.
+_Avoid_: Details, fields panel.
 
 **Filterable Column**:
 A detected column the user may filter on: it has at most 500 distinct values, and it is not `timestamp` or `message`/payload. A column with more than 500 distinct values is shown as unavailable with its distinct count and the reason.
@@ -174,6 +228,26 @@ _Avoid_: Date filter, time slider.
 
 ## Rules & Constraints
 
+**Live**
+
+L1. **Pause Is Per Log Space**: Pause stops every file of the Log Space at once; there is no per-file pause. Resuming takes in every line written while paused, so nothing is skipped.
+L2. **Follow Tracks The Scroll**: Scrolling away from the newest line turns Follow off; scrolling back to it turns Follow on.
+L3. **Live Starts Fresh**: A Remote or Imported Log Space always opens following and not paused; Follow and Pause are not remembered. A Scratch Log Space has neither.
+L4. **Remote Opens At The End**: A Remote File first shows its last lines at once, then fills its Live Window with older lines in the background while it stays readable and live. There is no loading of lines beyond the Live Window. Line numbers are always the line's real number in its Generation on its Server.
+L5. **Rotation Keeps History**: When a file is rotated, truncated or deleted, the lines already read stay, a Break is drawn, and reading continues in the new file as a new Generation, waiting for it to appear if needed. A Marker belongs to one line of one Generation.
+L6. **Reconnect Without Loss**: A lost connection is retried by itself and reading resumes where it stopped, with a Break marking the outage. After a long outage the app stops retrying and waits for the user.
+L7. **Live Status In The Status Bar**: The connection state of a Remote Log Space, and the Follow and Pause switches, are shown in the status bar only.
+L8. **Remote Clocks Are Not Adjusted**: Rule 19 holds across Servers: times from different Servers are compared as written, with no timezone or clock-skew correction.
+L9. **Readable Without Elevation**: A Remote File is read with the Server's own user. A file that user cannot read shows a permission error; the app never asks for elevated rights.
+L10. **Live Is A Window, Not An Archive**: A Remote Log Space may stay connected for as long as the user likes, but holds only its Live Window; the oldest lines leave as new ones arrive. Nothing received is kept after the Log Space is closed. To read a Remote File in full, the user downloads it and opens it as an Imported Log Space.
+L11. **Paths May Not Exist Yet**: A Remote File may be added before the file exists; it waits and starts reading when the file appears. A Server that cannot be reached or a folder that does not exist is refused when adding.
+L12. **Leaving The Window**: A line that leaves the Live Window loses its Marker, stops counting toward Filter Values, and a Break at the top of the view says older lines have left. A Filter Value with no lines left disappears unless it is ticked. A Focus Tab whose current line left moves to the oldest line still held.
+L13. **Window Per Remote File**: The Live Window size is one app-wide setting applied to each Remote File separately, so a busy file never pushes a quiet file's lines out. Imported Log Spaces have no Live Window, even while their files grow.
+L14. **Download For Full Reading**: A Remote File, or every file of a Remote Log Space at once, can be downloaded to a chosen folder and then opened as a new Imported Log Space. Only the current file is downloaded, not its rotated predecessors.
+L15. **Servers In Use Stay**: A Server cannot be deleted while a Remote Log Space or another Server's Jump Server uses it; the app lists what uses it instead.
+
+**Canvas, Search and Filter**
+
 1. **Default Pin State**: Only the Gutter is anchored by default. All data columns (`TIMESTAMP`, `LEVEL`, `MODULE`, `MESSAGE`) start in their unpinned state.
 2. **Pinnability**: Only metadata columns (`TIMESTAMP`, `LEVEL`, `MODULE`) are pinnable. `Gutter` is permanently anchored; `MESSAGE` is permanently unpinnable.
 3. **Order Preservation**: When multiple columns are pinned, they always maintain their original schema ordering (`TIMESTAMP` -> `LEVEL` -> `MODULE`) at the anchor boundary, regardless of the sequence in which they were toggled.
@@ -186,20 +260,21 @@ _Avoid_: Date filter, time slider.
 9. **Search Has No Regex Or Negation**: Only `&&`, `||` and parentheses combine Search Terms. `&&` binds tighter than `||`.
 10. **Phrase Whitespace**: Any run of whitespace in the raw line satisfies a space between words of a Phrase.
 11. **Bare Adjacency Is A Phrase**: Words next to each other without an operator form one Phrase. A Phrase directly followed by a parenthesised group, or the reverse, is a syntax error.
+11a. **Switching Focus Tab Moves The View**: Each Focus Tab remembers its current line, which is its current Focus Find when there is one. Opening a Focus Tab jumps the view to that line.
 12. **Invalid Expression Keeps Last Matches**: While the typed Search Expression is incomplete or invalid, the Matches from the last valid expression stay shown and an error indicator appears beside the field.
 13. **Filter Combination**: Within one column, Filter Values and Custom Values combine with OR; across columns, and with the Time Range, they combine with AND.
 14. **Filter Has No Regex**: Filter matches by equality (Filter Value) or contains (Custom Value) only.
-15. **Filter Counts Ignore Other Filters**: A column's Filter Values and their row counts never change because other filters are applied. They are computed when the file is loaded; while the file is being tailed, new values are appended unticked and counts grow with new rows. A column that grows past 500 distinct values keeps the conditions already set but accepts no new ones.
-16. **Search Ignores Hidden Lines**: Search matches only lines that Filter currently shows; matches on lines hidden by Filter are not counted.
+15. **Filter Counts Ignore Other Filters**: A column's Filter Values and their row counts never change because other filters are applied. They count the lines the view holds: computed when the file is loaded, new values appended unticked and counts grown as lines arrive, and counts shrunk as lines leave a Live Window. A column that grows past 500 distinct values keeps the conditions already set but accepts no new ones.
+16. **Search Counts Only Filtered Lines**: In the Parsed View, only lines that pass Filter count as Matches. The Match count, next/previous, the overview ruler, the highlights in the view and the Focus Pane all use this one set. In the Raw View, Filter is ignored.
 17. **Quick Settings Only**: There is no View panel. Column pinning stays on the Column Header and column width stays adjustable by drag and Auto-fit. Quick Settings holds only display switches (Source Column, density).
 18. **Missing Value Never Matches**: A row with no value in a column never matches any Filter Value or Custom Value of that column. It is hidden when the column shows only the chosen values, and stays visible in Hide Mode. There is no "(empty)" value.
-19. **Continuation Lines Inherit**: A Continuation Line takes the timestamp, level, module and every other value of its Parent Line, so Filter, Time Range and Highlight Rules treat it like its Parent Line; it is shown when its Parent Line is shown. Its own text stays its message. Filter counts and Level Markers count only the Parent Line. Lines before the first timestamp have no Parent Line and are always shown. Times are compared in the file's own clock, with no timezone conversion.
-20. **Filter Per View, Marker Per Line**: A Log Space's Filter is shared by all its files, and each File View has its own separate Filter; both are remembered automatically and restored when reopened. A Marker belongs to one line of one file and shows wherever that line is shown; removing the file from the Log Space removes its Markers. The Search Expression is not remembered. There are no project-level saved presets.
+19. **Continuation Lines Inherit**: A Continuation Line takes the timestamp, level, module and every other value of its Parent Line, so Filter, Time Range and Highlight Rules treat it like its Parent Line; it passes Filter when its Parent Line does. Its own text stays its message. Filter counts and Level Markers count only the Parent Line. Lines before the first timestamp have no Parent Line and are always shown. Times are compared in the file's own clock, with no timezone conversion.
+20. **Filter Per View, Marker Per Line**: A Log Space's Filter is shared by all its files, and each File View has its own separate Filter; both are remembered automatically and restored when reopened. A Marker belongs to one line of one file and shows wherever that line is shown; removing the file from the Log Space removes its Markers. Focus Tabs, with their Search Expressions, Focus Finds and current lines, are remembered per view in the same way. There are no project-level saved presets.
 21. **No Quick Filter Menu**: There is no quick menu for filtering by a cell value; filtering is done from the Filter section only. A cell's context menu may offer "Highlight rows where…", which creates an ordinary Highlight Rule managed with all the others.
 22. **Interleave By Timestamp**: A Log Space's rows are ordered by timestamp across files. Equal timestamps keep the order of files in the Log Space, then line order. Continuation lines stay with their parent row. Lines before a file's first timestamp take that first timestamp. A file with no timestamps goes after all other rows and is flagged.
 23. **Columns Are United By Name**: A Log Space's columns are the union of columns detected in its files, matched by name.
-24. **Imported And Scratch Never Mix**: An Imported Log Space only gains files by import; a Scratch Log Space only gains new empty scratch files.
-25. **Imported Files Are Read-Only**: The app never changes an imported file. Removing it from a Log Space leaves it untouched on disk.
+24. **Space Kinds Never Mix**: An Imported Log Space only gains files by import; a Scratch Log Space only gains new empty scratch files; a Remote Log Space only gains Remote Files.
+25. **Imported And Remote Files Are Read-Only**: The app never changes an imported file or a Remote File. Removing it from a Log Space leaves it untouched on disk or on its server.
 26. **Scratch Edits Happen In Raw View**: The Parsed View of a scratch file is read-only and is re-parsed when switching from Raw View. Editing a line drops that line's Marker; the Filter keeps its conditions while its values are re-detected.
 27. **Save As Copies**: Save As on a scratch file writes a copy to the chosen place; the scratch file stays in the app's data folder.
 28. **Log Space Names Are Unique Per Project**: A Log Space needs a non-blank name not used by another Log Space in the same Project.
@@ -207,6 +282,6 @@ _Avoid_: Date filter, time slider.
 30. **Parsed Text Is Stored Text**: Every cell in the Parsed View that comes from the line (all but the Gutter, the Source Column and the `_` of a Continuation Line) shows exactly the characters of that line as stored. The app may read meaning from a value (a level, a time) to sort, filter or place Level Markers, but never rewrites the text it shows.
 31. **No Marker Panel**: There is no list or panel of Markers. Markers are found by reading or through the overview ruler, and are changed or removed from the marked text itself.
 32. **Marker Over Highlight**: A Marker's color always shows above any Highlight Rule color. Between Highlight Rules, the rule higher in the list wins.
-33. **Highlight Rules Belong To The Project**: Highlight Rules are shared by every Log Space in a Project, remembered automatically, and each can be switched off without being deleted. They apply only in the Parsed View.
+33. **Highlight Rules Belong To The Project**: Highlight Rules are shared by every Log Space in a Project, remembered automatically, and each can be switched off without being deleted. They apply only in the Parsed View, and in the Focus Pane while the view above is the Parsed View.
 34. **One Row Per Stored Line**: Every stored line is its own row in the Parsed View, continuation lines included, so line numbers match the Raw View. A continuation line fills only the `message` column.
-35. **Selection Is Stored Text**: A selection in the Parsed View may run across cells and rows, and copying it gives the stored text of the selected range, leaving out rows hidden by Filter.
+35. **Selection Is Stored Text**: A selection in the Parsed View may run across cells and rows, and copying it gives the stored text of the selected range. Copying from the Focus Pane gives only the lines it lists.
