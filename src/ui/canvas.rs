@@ -1,20 +1,24 @@
-use crate::marker::RulerMark;
-use crate::model::{LogEntry, LogLevel};
-use crate::search::SearchState;
 use crate::density::Density;
+use crate::highlight::RowPaint;
+use crate::marker::{RulerMark, level_marker};
+use crate::model::{LogEntry, LogLevel};
+use crate::palette::{HighlightColor, Tone, Weight, text_rgb};
+use crate::search::SearchState;
+use crate::text_selection::{TextSelection, clip_to_span};
+use crate::ui::cells::{Layer, TextCell, cell_text, compose, shows_placeholder};
+use gpui::StyledText;
 use gpui::{
-    div, prelude::FluentBuilder as _, px, uniform_list, AppContext as _, DefiniteLength,
-    ElementId, InteractiveElement, IntoElement, ListHorizontalSizingBehavior, MouseButton,
-    ParentElement, Pixels, Render, StatefulInteractiveElement, Styled, UniformListScrollHandle,
-    Window,
+    AppContext as _, DefiniteLength, ElementId, InteractiveElement, IntoElement,
+    ListHorizontalSizingBehavior, MouseButton, ParentElement, Pixels, Render,
+    StatefulInteractiveElement, Styled, UniformListScrollHandle, Window, div,
+    prelude::FluentBuilder as _, px, uniform_list,
 };
-use gpui_component::scroll::ScrollableElement as _;
 use gpui_component::Icon;
-use gpui::{HighlightStyle, StyledText};
+use gpui_component::menu::ContextMenuExt as _;
+use gpui_component::scroll::ScrollableElement as _;
 use std::sync::Arc;
 
 use crate::column::{ColumnLayoutState, PinToggleState, PinnableColumn};
-
 
 #[derive(Clone)]
 pub struct ResizeColumn {
@@ -41,14 +45,24 @@ pub struct CanvasColors {
     pub border: gpui::Hsla,
     pub selected: gpui::Hsla,
     pub search: gpui::Hsla,
+    /// Paint of the Focus Find matches in the Focus Pane.
+    pub find: gpui::Hsla,
     pub muted: gpui::Hsla,
     pub danger: gpui::Hsla,
     pub warning: gpui::Hsla,
     pub info: gpui::Hsla,
+    /// Paint of the selected text.
+    pub text_selection: gpui::Hsla,
+    /// Whether the dark theme is active (picks the palette's dark values).
+    pub dark: bool,
 }
 
 impl CanvasColors {
-    fn level(&self, level: LogLevel) -> gpui::Hsla {
+    pub fn tone(&self) -> Tone {
+        if self.dark { Tone::Dark } else { Tone::Light }
+    }
+
+    pub(crate) fn level(&self, level: LogLevel) -> gpui::Hsla {
         match level {
             LogLevel::Fatal | LogLevel::Error => self.danger,
             LogLevel::Warn => self.warning,
@@ -63,6 +77,11 @@ pub struct CanvasViewState<'a> {
     pub entries: Arc<Vec<LogEntry>>,
     pub visible_indices: Arc<Vec<usize>>,
     pub selected_row_pos: Option<usize>,
+    /// The Highlight Rule paint of each entry (by entry position).
+    pub paints: Arc<Vec<Option<RowPaint>>>,
+    pub selection: Option<TextSelection>,
+    /// Receives where the rows are on screen while painting.
+    pub bounds_sink: std::rc::Rc<std::cell::Cell<gpui::Bounds<Pixels>>>,
     pub density: Density,
     pub column_layout: &'a crate::column::ColumnLayoutState,
     pub search_state: &'a SearchState,
@@ -99,7 +118,8 @@ impl LogCanvas {
             .flex()
             .flex_row()
             .items_center()
-            .bg(state.colors.header_bg)
+            .bg(state.colors.background)
+            .child(div().absolute().inset_0().bg(state.colors.header_bg))
             .border_b_1()
             .border_color(state.colors.border)
             .map(|d| apply_partition_divider_style(d, is_divider_active))
@@ -112,26 +132,14 @@ impl LogCanvas {
                     .flex()
                     .flex_row()
                     .items_center()
-                    .child(
-                        div()
-                            .w(px(64.0))
-                            .px_2()
-                            .text_right()
-                            .child("#"),
-                    )
-                    .child(
-                        div()
-                            .w(px(24.0))
-                            .text_center()
-                            .child("•"),
-                    ),
+                    .child(div().w(px(64.0)).px_2().text_right().child("#"))
+                    .child(div().w(px(24.0)).text_center().child("•")),
             );
 
         for pinned in pinned_columns {
             let w = state.column_layout.width(*pinned);
-            anchored_header = anchored_header.child(
-                render_pinnable_column_header(*pinned, w, true, &state),
-            );
+            anchored_header =
+                anchored_header.child(render_pinnable_column_header(*pinned, w, true, &state));
         }
 
         let mut scrolling_header_cols = div()
@@ -144,17 +152,11 @@ impl LogCanvas {
 
         for col in &unpinned_columns {
             let w = state.column_layout.width(*col);
-            scrolling_header_cols = scrolling_header_cols.child(
-                render_pinnable_column_header(*col, w, false, &state),
-            );
+            scrolling_header_cols =
+                scrolling_header_cols.child(render_pinnable_column_header(*col, w, false, &state));
         }
 
-        scrolling_header_cols = scrolling_header_cols.child(
-            div()
-                .flex_1()
-                .px_2()
-                .child("MESSAGE"),
-        );
+        scrolling_header_cols = scrolling_header_cols.child(div().flex_1().px_2().child("MESSAGE"));
 
         let header = div()
             .h(px(26.0))
@@ -190,236 +192,41 @@ impl LogCanvas {
         // 2. Virtualized List using uniform_list
         let entries_clone = state.entries.clone();
         let visible_clone = state.visible_indices.clone();
-        let view = state.view.clone();
-        let colors = state.colors;
-        let selected_pos = state.selected_row_pos;
-        let search_matcher = state.search_state.matcher.clone();
-        let matched_positions = state.search_state.matched_shared.clone();
-        let current_match_pos = state.search_state.current_match_pos();
-        let scroll_handle_for_rows = state.scroll_handle.clone();
-        let column_layout_for_rows = state.column_layout.clone();
         let longest_vis_pos = visible_clone
             .iter()
             .enumerate()
             .max_by_key(|(_, entry_ix)| {
-                entries_clone.get(**entry_ix).map(|e| e.payload.len()).unwrap_or(0)
+                entries_clone
+                    .get(**entry_ix)
+                    .map(|e| e.payload.len())
+                    .unwrap_or(0)
             })
             .map(|(vis_pos, _)| vis_pos)
             .unwrap_or(0);
+        let env = RowEnv {
+            entries: state.entries.clone(),
+            visible: state.visible_indices.clone(),
+            view: state.view.clone(),
+            colors: state.colors,
+            selected_pos: state.selected_row_pos,
+            search_matcher: state.search_state.matcher.clone(),
+            matched_positions: state.search_state.matched_shared.clone(),
+            current_match_pos: state.search_state.current_match_pos(),
+            scroll_handle: state.scroll_handle.clone(),
+            layout: state.column_layout.clone(),
+            paints: state.paints.clone(),
+            selection: state.selection,
+            row_height,
+            font_size,
+        };
 
         let list = uniform_list(
             "log_canvas_list",
             total_visible,
             move |range, _window, _cx| {
-                // Opaque row backgrounds: the anchored columns overlay the scrolling ones.
-                let normal_bg = colors.background;
-                let selected_bg = colors.background.blend(colors.selected);
-                let match_bg = colors.background.blend(colors.search.opacity(0.12));
-                let current_bg = colors.background.blend(colors.search.opacity(0.28));
-                let highlight_bg = colors.search.opacity(0.55);
-                let scroll_x = horizontal_scroll_x(&scroll_handle_for_rows);
-                let anchored_width = column_layout_for_rows.sticky_partition_width();
-                let unpinned_columns_for_rows = column_layout_for_rows.unpinned_columns();
-                let mut rows = Vec::with_capacity(range.len());
-                for vis_pos in range {
-                    let Some(&entry_ix) = visible_clone.get(vis_pos) else {
-                        continue;
-                    };
-                    let Some(entry) = entries_clone.get(entry_ix) else {
-                        continue;
-                    };
-
-                    let effective_marker = entry.effective_marker();
-                    let marker_symbol = match effective_marker {
-                        Some(m) => m.symbol(),
-                        None => " ",
-                    };
-
-
-                    let is_expanded = entry.is_expanded;
-                    let sub_count = entry.sub_lines.len();
-
-                    let view_for_row = view.clone();
-                    let view_for_gutter = view.clone();
-
-                    // Search feedback: tint matched lines, highlight the phrases in the message.
-                    let is_match = matched_positions.binary_search(&vis_pos).is_ok();
-                    let is_current_match = is_match && current_match_pos == Some(vis_pos);
-                    let is_selected = selected_pos == Some(vis_pos);
-                    let row_bg = if is_current_match {
-                        current_bg
-                    } else if is_selected {
-                        selected_bg
-                    } else if is_match {
-                        match_bg
-                    } else {
-                        normal_bg
-                    };
-                    let message_ranges = match (&search_matcher, is_match) {
-                        (Some(m), true) => m.find_ranges(&entry.payload),
-                        _ => Vec::new(),
-                    };
-
-                    let row_element = div()
-                        .id(ElementId::from(vis_pos))
-                        .cursor_pointer()
-                        .h(px(row_height))
-                        .min_w_full()
-                        .relative()
-                        .flex()
-                        .flex_row()
-                        .items_center()
-                        .font_family(".AppleSystemUIFontMonospaced")
-                        .text_size(px(font_size))
-                        .bg(row_bg)
-                        .on_click(move |_event, _window, cx| {
-                            view_for_row.update(cx, |this, cx| {
-                                this.selected_row_pos = Some(vis_pos);
-                                cx.notify();
-                            });
-                        })
-                        // 1. Horizontally Scrolling Data Columns
-                        // Shifted by gutter_width so columns start adjacent to Gutter at scroll_x = 0
-                        .child({
-                            let mut scrolling_cols = div()
-                                .flex()
-                                .flex_row()
-                                .items_center()
-                                .ml(anchored_width);
-
-                            for col in &unpinned_columns_for_rows {
-                                scrolling_cols = scrolling_cols.child(render_column_cell(
-                                    *col,
-                                    &column_layout_for_rows,
-                                    entry,
-                                    &colors,
-                                ));
-                            }
-
-                            scrolling_cols
-                                // Column: Message Payload (Unconstrained single-line layout)
-                                .child(
-                                    div()
-                                        .flex_1()
-                                        .px_2()
-                                        .whitespace_nowrap()
-                                        .child(if message_ranges.is_empty() {
-                                            entry.payload.clone().into_any_element()
-                                        } else {
-                                            StyledText::new(entry.payload.clone())
-                                                .with_highlights(message_ranges.iter().map(|&(s, e)| {
-                                                    (
-                                                        s..e,
-                                                        HighlightStyle {
-                                                            background_color: Some(highlight_bg),
-                                                            ..Default::default()
-                                                        },
-                                                    )
-                                                }))
-                                                .into_any_element()
-                                        }),
-                                )
-                                // Breathing space at the right end of unconstrained rows
-                                .pr_16()
-                                // Multi-line stack trace toggle indicator if present
-                                .child(if sub_count > 0 {
-                                    let view_for_fold = view.clone();
-                                    div()
-                                        .flex_shrink_0()
-                                        .id(ElementId::from(("fold", vis_pos)))
-                                        .cursor_pointer()
-                                        .px_2()
-                                        .text_xs()
-                                        .child(if is_expanded {
-                                            format!("[{} lines] ∨", sub_count)
-                                        } else {
-                                            format!("[{} lines] ›", sub_count)
-                                        })
-                                        .on_click(move |_event, _window, cx| {
-                                            view_for_fold.update(cx, |this, cx| {
-                                                this.toggle_row_expansion(entry_ix, cx);
-                                            });
-                                        })
-                                        .into_any_element()
-                                } else {
-                                    div().into_any_element()
-                                })
-                        })
-                        // 2. Anchored Partition (Stationary at x = 0 with Gutter + Sticky Columns + Partition Divider)
-                        // Absolute positioning with left = scroll_x counteracts the row's horizontal offset.
-                        // Opaque row_bg ensures scrolling columns pass cleanly underneath.
-                        .child({
-                            let is_divider_active = ColumnLayoutState::is_partition_divider_active(scroll_x);
-                            let pinned_columns = column_layout_for_rows.pinned_columns();
-                            let total_cover_width = scroll_x + anchored_width;
-
-                            div()
-                                .id(ElementId::from(("anchored_partition", vis_pos)))
-                                .cursor_pointer()
-                                .bg(row_bg)
-                                .absolute()
-                                .top_0()
-                                .bottom_0()
-                                .left_0()
-                                .w(total_cover_width)
-                                .flex()
-                                .flex_row()
-                                .items_center()
-                                .on_click(move |_event, _window, cx| {
-                                    view_for_gutter.update(cx, |this, cx| {
-                                        this.selected_row_pos = Some(vis_pos);
-                                        cx.notify();
-                                    });
-                                })
-                                .child({
-                                    let mut inner = div()
-                                        .flex()
-                                        .flex_row()
-                                        .items_center()
-                                        .h_full()
-                                        .ml(scroll_x)
-                                        .w(anchored_width)
-                                        .border_l_2()
-                                        .map(|d| apply_partition_divider_style(d, is_divider_active))
-                                        // Gutter: Line Number
-                                        .child(
-                                            div()
-                                                .flex_shrink_0()
-                                                .w(px(64.0))
-                                                .px_2()
-                                                .text_right()
-                                                .child(format!("{}", entry.index)),
-                                        )
-                                        // Gutter: Marker Icon
-                                        .child(
-                                            div()
-                                                .flex_shrink_0()
-                                                .w(px(24.0))
-                                                .flex()
-                                                .items_center()
-                                                .justify_center()
-                                                .text_xs()
-                                                .font_weight(gpui::FontWeight::BOLD)
-                                                .child(marker_symbol),
-                                        );
-
-                                    for pinned in pinned_columns {
-                                        inner = inner.child(render_column_cell(
-                                            *pinned,
-                                            &column_layout_for_rows,
-                                            entry,
-                                            &colors,
-                                        ));
-                                    }
-
-                                    inner
-                                })
-                        });
-
-                    rows.push(row_element);
-                }
-
-                rows
+                range
+                    .filter_map(|vis_pos| env.row(vis_pos))
+                    .collect::<Vec<_>>()
             },
         )
         .size_full()
@@ -428,17 +235,16 @@ impl LogCanvas {
         .track_scroll(state.scroll_handle);
 
         // 3. Overview Ruler (Minimap at right edge - 16px)
-        let ruler_marks = compute_ruler_marks(&state.entries, &state.visible_indices, state.search_state);
+        let ruler_marks =
+            compute_ruler_marks(&state.entries, &state.visible_indices, state.search_state);
 
-        let mut ruler_elements = div()
-            .w(px(16.0))
-            .h_full()
-            .border_l_1()
-            .relative();
+        let mut ruler_elements = div().w(px(16.0)).h_full().border_l_1().relative();
 
         for mark in &ruler_marks {
             let color = if mark.is_search {
                 state.colors.search
+            } else if let Some(c) = &mark.color {
+                gpui::rgb(c.rgb(state.colors.tone())).into()
             } else {
                 state.colors.muted
             };
@@ -461,7 +267,13 @@ impl LogCanvas {
                     .w(px(10.0))
                     .h(px(3.0))
                     .rounded_xs()
-                    .bg(color.opacity(if mark.is_search { 0.7 } else { 0.5 }))
+                    .bg(color.opacity(if mark.is_search {
+                        0.7
+                    } else if mark.color.is_some() {
+                        1.0
+                    } else {
+                        0.5
+                    }))
             };
 
             ruler_elements = ruler_elements.child(mark_el);
@@ -474,6 +286,12 @@ impl LogCanvas {
             .iter()
             .filter(|m| m.is_search)
             .map(|m| (m.position, m.entry_index))
+            .collect();
+        // A Marker on the ruler: a click near it scrolls to its line.
+        let marker_marks: Vec<(f32, usize)> = ruler_marks
+            .iter()
+            .filter(|m| m.color.is_some())
+            .map(|m| (m.position, m.row_pos))
             .collect();
         let ruler_interactive = div()
             .id("overview_ruler")
@@ -492,6 +310,21 @@ impl LogCanvas {
                 } else {
                     0.0
                 };
+
+                let near_marker = marker_marks
+                    .iter()
+                    .min_by(|a, b| {
+                        (a.0 - ratio)
+                            .abs()
+                            .partial_cmp(&(b.0 - ratio).abs())
+                            .unwrap()
+                    })
+                    .copied()
+                    .filter(|(pos, _)| (pos - ratio).abs() <= 0.02);
+                if let Some((_, row_pos)) = near_marker {
+                    view_for_ruler.update(cx, |this, cx| this.jump_to_row(row_pos, cx));
+                    return;
+                }
 
                 if !search_marks.is_empty() {
                     let nearest = search_marks
@@ -534,15 +367,63 @@ impl LogCanvas {
                     .flex()
                     .flex_row()
                     .relative()
-                    .child(
+                    .child({
+                        let bounds_sink = state.bounds_sink.clone();
+                        let (v_down, v_right, v_move, v_up, v_up_out) = (
+                            state.view.clone(),
+                            state.view.clone(),
+                            state.view.clone(),
+                            state.view.clone(),
+                            state.view.clone(),
+                        );
+                        let view_menu = state.view.clone();
                         div()
                             .id("canvas_list_container")
                             .flex_1()
                             .h_full()
                             .overflow_hidden()
+                            .relative()
                             .horizontal_scrollbar(state.scroll_handle)
-                            .child(list),
-                    )
+                            .on_mouse_down(MouseButton::Left, move |event, _window, cx| {
+                                v_down.update(cx, |this, cx| {
+                                    this.start_text_selection(event.position, cx)
+                                });
+                            })
+                            .on_mouse_down(MouseButton::Right, move |event, _window, cx| {
+                                v_right.update(cx, |this, cx| {
+                                    this.on_cell_right_click(event.position, cx)
+                                });
+                            })
+                            .on_mouse_move(move |event, _window, cx| {
+                                if event.pressed_button == Some(MouseButton::Left) {
+                                    v_move.update(cx, |this, cx| {
+                                        this.drag_text_selection(event.position, cx)
+                                    });
+                                }
+                            })
+                            .on_mouse_up(MouseButton::Left, move |event, _window, cx| {
+                                v_up.update(cx, |this, cx| {
+                                    this.finish_text_selection(event.position, cx)
+                                });
+                            })
+                            .on_mouse_up_out(MouseButton::Left, move |event, _window, cx| {
+                                v_up_out.update(cx, |this, cx| {
+                                    this.finish_text_selection(event.position, cx)
+                                });
+                            })
+                            .child(
+                                gpui::canvas(
+                                    |bounds, _, _| bounds,
+                                    move |bounds, _, _, _| bounds_sink.set(bounds),
+                                )
+                                .absolute()
+                                .size_full(),
+                            )
+                            .child(list)
+                            .context_menu(move |menu, _window, cx| {
+                                crate::ui::cell_menu::cell_menu(menu, &view_menu, cx)
+                            })
+                    })
                     .child(ruler_interactive),
             )
             .into_any_element()
@@ -562,12 +443,18 @@ fn render_pinnable_column_header(
 
     // In UnpinnedIdle state, render a non-interactive spacer so it never intercepts clicks
     let toggle_element = match toggle_state {
-        PinToggleState::UnpinnedIdle => div().w(px(16.0)).h(px(16.0)).into_any_element(),
+        PinToggleState::UnpinnedIdle => div().into_any_element(),
         state_variant => {
             if let Some(icon) = state_variant.icon() {
-                
                 let btn = div()
-                    .id(ElementId::from((if is_sticky { "sticky_pin_toggle" } else { "pin_toggle" }, col as usize)))
+                    .id(ElementId::from((
+                        if is_sticky {
+                            "sticky_pin_toggle"
+                        } else {
+                            "pin_toggle"
+                        },
+                        col as usize,
+                    )))
                     .cursor_pointer()
                     .flex()
                     .items_center()
@@ -587,10 +474,7 @@ fn render_pinnable_column_header(
                         });
                     });
 
-                btn.child(
-                    Icon::new(icon).size_3(),
-                )
-                .into_any_element()
+                btn.child(Icon::new(icon).size_3()).into_any_element()
             } else {
                 div().w(px(16.0)).h(px(16.0)).into_any_element()
             }
@@ -598,7 +482,14 @@ fn render_pinnable_column_header(
     };
 
     let mut header_div = div()
-        .id(ElementId::from((if is_sticky { "sticky_header_col" } else { "header_col" }, col as usize)))
+        .id(ElementId::from((
+            if is_sticky {
+                "sticky_header_col"
+            } else {
+                "header_col"
+            },
+            col as usize,
+        )))
         .flex_shrink_0()
         .w(width)
         .h_full()
@@ -606,7 +497,7 @@ fn render_pinnable_column_header(
         .flex()
         .flex_row()
         .items_center()
-        .justify_between()
+        .overflow_hidden()
         .on_hover(move |is_hovered, _window, cx| {
             view_header.update(cx, |this, cx| {
                 this.set_column_header_hovered(col, *is_hovered, cx);
@@ -670,77 +561,357 @@ fn render_pinnable_column_header(
         });
 
     header_div
+        .child(div().flex_1().min_w_0().truncate().child(col.label()))
         .child(
+            // Overlaid on the right edge so the label keeps the full width
+            // while the toggle is hidden.
             div()
-                .truncate()
-                .child(col.label()),
-        )
-        .child(
-            div()
+                .absolute()
+                .top_0()
+                .bottom_0()
+                .right_1()
                 .flex()
-                .flex_row()
                 .items_center()
-                .mr_1()
                 .child(toggle_element),
         )
         .child(resize_handle)
 }
 
-fn render_timestamp_cell(time_str: &str, width: Pixels, colors: &CanvasColors) -> impl IntoElement {
+/// Everything one row needs to draw itself, cloned out of the view state so
+/// the virtualized list can build rows on its own.
+struct RowEnv {
+    entries: Arc<Vec<LogEntry>>,
+    visible: Arc<Vec<usize>>,
+    view: gpui::Entity<crate::app::AppView>,
+    colors: CanvasColors,
+    selected_pos: Option<usize>,
+    search_matcher: Option<crate::search_expr::Matcher>,
+    matched_positions: Arc<Vec<usize>>,
+    current_match_pos: Option<usize>,
+    scroll_handle: UniformListScrollHandle,
+    layout: ColumnLayoutState,
+    paints: Arc<Vec<Option<RowPaint>>>,
+    selection: Option<TextSelection>,
+    row_height: f32,
+    font_size: f32,
+}
+
+impl RowEnv {
+    /// Color to paint a rule color with, as an opaque color over `base`.
+    fn rule_color(&self, color: &HighlightColor, weight: Weight) -> gpui::Hsla {
+        let rgb = color.with_weight(weight, self.colors.tone());
+        gpui::rgb(rgb).into()
+    }
+
+    fn row(&self, vis_pos: usize) -> Option<gpui::Stateful<gpui::Div>> {
+        let colors = self.colors;
+        let &entry_ix = self.visible.get(vis_pos)?;
+        let entry = self.entries.get(entry_ix)?;
+        let paint = self.paints.get(entry_ix).and_then(|p| p.as_ref());
+
+        let level_symbol = if entry.is_continuation() {
+            " "
+        } else {
+            level_marker(entry.level).map_or(" ", |m| m.symbol())
+        };
+
+        // Row paint, bottom to top: page → Highlight Rule → selected row →
+        // Match of Search. Markers and the text selection paint on the text.
+        let base_bg = match paint {
+            Some(p) => colors
+                .background
+                .blend(self.rule_color(&p.color, Weight::Row)),
+            None => colors.background,
+        };
+        let is_match = self.matched_positions.binary_search(&vis_pos).is_ok();
+        let is_current_match = is_match && self.current_match_pos == Some(vis_pos);
+        let is_selected = self.selected_pos == Some(vis_pos);
+        // The selected row and the current Match are marked by an outline
+        // drawn over the row (no layout shift), not by a background.
+        let row_bg = if is_match && !is_current_match {
+            base_bg.blend(colors.search.opacity(0.12))
+        } else {
+            base_bg
+        };
+        let outline = if is_current_match {
+            Some(colors.search)
+        } else if is_selected {
+            Some(colors.header_fg)
+        } else {
+            None
+        };
+        let search_ranges = match (&self.search_matcher, is_match) {
+            (Some(m), true) => m.find_ranges(&entry.payload),
+            _ => Vec::new(),
+        };
+        let selected_in_line = self
+            .selection
+            .and_then(|s| s.range_in_row(vis_pos, entry.raw_line.len()));
+
+        let anchored_width = self.layout.sticky_partition_width();
+        let scroll_x = horizontal_scroll_x(&self.scroll_handle);
+        let cell_ctx = CellCtx {
+            colors: &colors,
+            entry,
+            paint,
+            search_ranges: &search_ranges,
+            find_ranges: &[],
+            selected: selected_in_line.as_ref(),
+            tone: colors.tone(),
+            rule_cell: paint.map(|p| self.rule_color(&p.color, Weight::Cell)),
+        };
+
+        let view_for_row = self.view.clone();
+        let view_for_gutter = self.view.clone();
+        let row_element = div()
+            .id(ElementId::from(vis_pos))
+            .cursor_pointer()
+            .h(px(self.row_height))
+            .min_w_full()
+            .relative()
+            .flex()
+            .flex_row()
+            .items_center()
+            .font_family(".AppleSystemUIFontMonospaced")
+            .text_size(px(self.font_size))
+            .bg(row_bg)
+            .on_click(move |_event, _window, cx| {
+                view_for_row.update(cx, |this, cx| this.select_view_row(vis_pos, cx));
+            })
+            // 1. Horizontally scrolling data columns, shifted by the anchored
+            // width so they start next to the Gutter at scroll_x = 0.
+            .child({
+                let mut scrolling_cols = div().flex().flex_row().items_center().ml(anchored_width);
+                for col in &self.layout.unpinned_columns() {
+                    scrolling_cols =
+                        scrolling_cols.child(render_column_cell(*col, &self.layout, &cell_ctx));
+                }
+                scrolling_cols
+                    .child(
+                        div()
+                            .flex_1()
+                            .px_2()
+                            .whitespace_nowrap()
+                            .child(render_text_cell(&cell_ctx, TextCell::Message)),
+                    )
+                    // Breathing space at the right end of unconstrained rows
+                    .pr_16()
+            })
+            // 2. Anchored partition (Gutter + pinned columns), stationary at
+            // x = 0. Its opaque background lets the scrolling columns pass
+            // underneath.
+            .child({
+                let is_divider_active = ColumnLayoutState::is_partition_divider_active(scroll_x);
+                let total_cover_width = scroll_x + anchored_width;
+                div()
+                    .id(ElementId::from(("anchored_partition", vis_pos)))
+                    .cursor_pointer()
+                    .bg(row_bg)
+                    .absolute()
+                    .top_0()
+                    .bottom_0()
+                    .left_0()
+                    .w(total_cover_width)
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .on_click(move |_event, _window, cx| {
+                        view_for_gutter.update(cx, |this, cx| this.select_view_row(vis_pos, cx));
+                    })
+                    .child({
+                        let mut inner = div()
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .h_full()
+                            .ml(scroll_x)
+                            .w(anchored_width)
+                            .border_l_2()
+                            .map(|d| apply_partition_divider_style(d, is_divider_active))
+                            // Gutter: Line Number
+                            .child(
+                                div()
+                                    .flex_shrink_0()
+                                    .w(px(64.0))
+                                    .px_2()
+                                    .text_right()
+                                    .child(format!("{}", entry.index)),
+                            )
+                            // Gutter: Level Marker
+                            .child(
+                                div()
+                                    .flex_shrink_0()
+                                    .w(px(24.0))
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .text_xs()
+                                    .font_weight(gpui::FontWeight::BOLD)
+                                    .text_color(colors.level(entry.level))
+                                    .child(level_symbol),
+                            );
+                        for pinned in self.layout.pinned_columns() {
+                            inner =
+                                inner.child(render_column_cell(*pinned, &self.layout, &cell_ctx));
+                        }
+                        inner
+                    })
+            });
+        Some(row_element.when_some(outline, |row, color| {
+            row.child(
+                div()
+                    .absolute()
+                    .top_0()
+                    .left_0()
+                    .right_0()
+                    .bottom_0()
+                    .border_1()
+                    .border_color(color),
+            )
+        }))
+    }
+}
+
+/// What a cell needs to know about its row.
+pub(crate) struct CellCtx<'a> {
+    pub colors: &'a CanvasColors,
+    pub entry: &'a LogEntry,
+    pub paint: Option<&'a RowPaint>,
+    /// Matches of Search in the message text.
+    pub search_ranges: &'a [(usize, usize)],
+    /// Matches of Focus Find (painted in the Focus Pane only), in bytes of
+    /// the stored line.
+    pub find_ranges: &'a [(usize, usize)],
+    /// The selected part of the line, in bytes of the stored line.
+    pub selected: Option<&'a std::ops::Range<usize>>,
+    pub tone: Tone,
+    /// Paint of the cell that meets the winning Highlight Rule's condition.
+    pub rule_cell: Option<gpui::Hsla>,
+}
+
+fn hsla_of(rgb: u32) -> gpui::Hsla {
+    gpui::rgb(rgb).into()
+}
+
+/// The text of one cell, with Markers, Search Matches and the text selection
+/// painted on it. A Continuation Line's other cells show a dim `_`.
+pub(crate) fn render_text_cell(ctx: &CellCtx, cell: TextCell) -> gpui::AnyElement {
+    if shows_placeholder(ctx.entry, cell) {
+        return div()
+            .text_color(ctx.colors.muted.opacity(0.5))
+            .child("_")
+            .into_any_element();
+    }
+    let Some((text, span)) = cell_text(ctx.entry, cell) else {
+        return div().into_any_element();
+    };
+    let mut layers: Vec<Layer> = Vec::new();
+    if matches!(cell, TextCell::Message | TextCell::Raw) {
+        for &(s, e) in ctx.search_ranges {
+            layers.push(Layer {
+                range: s..e,
+                background: Some(ctx.colors.search.opacity(0.55)),
+                color: None,
+            });
+        }
+    }
+    if cell == TextCell::Raw {
+        for &(s, e) in ctx.find_ranges {
+            layers.push(Layer {
+                range: s..e,
+                background: Some(ctx.colors.find.opacity(0.6)),
+                color: None,
+            });
+        }
+    }
+    if let Some(span) = &span {
+        for marker in &ctx.entry.markers {
+            if let Some(part) = clip_to_span(&marker.range, span) {
+                let rgb = marker.color.rgb(ctx.tone);
+                layers.push(Layer {
+                    range: part.start - span.start..part.end - span.start,
+                    background: Some(hsla_of(rgb)),
+                    color: Some(hsla_of(text_rgb(marker.color.text_tone(ctx.tone)))),
+                });
+            }
+        }
+        if let Some(sel) = ctx.selected {
+            if let Some(part) = clip_to_span(sel, span) {
+                layers.push(Layer {
+                    range: part.start - span.start..part.end - span.start,
+                    background: Some(ctx.colors.text_selection),
+                    color: None,
+                });
+            }
+        }
+    }
+    let highlights = compose(text, &layers);
+    let rule_cell = ctx
+        .paint
+        .filter(|p| p.column == cell.column_key())
+        .and(ctx.rule_cell);
+    let mut el = div();
+    if let Some(bg) = rule_cell {
+        el = el.bg(bg);
+    }
+    if highlights.is_empty() {
+        el.child(text.to_string()).into_any_element()
+    } else {
+        el.child(StyledText::new(text.to_string()).with_highlights(highlights))
+            .into_any_element()
+    }
+}
+
+fn render_timestamp_cell(ctx: &CellCtx, width: Pixels) -> impl IntoElement {
     div()
         .flex_shrink_0()
         .w(width)
         .px_2()
-        .text_color(colors.muted)
+        .text_color(ctx.colors.muted)
         .truncate()
-        .child(time_str.to_string())
+        .child(render_text_cell(ctx, TextCell::Timestamp))
 }
 
-fn render_level_cell(level_val: LogLevel, width: Pixels, colors: &CanvasColors) -> impl IntoElement {
+fn render_level_cell(ctx: &CellCtx, width: Pixels) -> impl IntoElement {
     div()
         .flex_shrink_0()
         .w(width)
         .px_1()
-        .child(render_level_badge(level_val).text_color(colors.level(level_val)))
+        .text_color(ctx.colors.level(ctx.entry.level))
+        .font_weight(gpui::FontWeight::SEMIBOLD)
+        .truncate()
+        .child(render_text_cell(ctx, TextCell::Level))
 }
 
-fn render_module_cell(tag_val: &str, width: Pixels) -> impl IntoElement {
+fn render_module_cell(ctx: &CellCtx, width: Pixels) -> impl IntoElement {
     div()
         .w(width)
         .flex_shrink_0()
         .px_2()
         .font_weight(gpui::FontWeight::SEMIBOLD)
         .truncate()
-        .child(tag_val.to_string())
+        .child(render_text_cell(ctx, TextCell::Module))
 }
 
-fn render_source_cell(source: &str, width: Pixels, colors: &CanvasColors) -> impl IntoElement {
-    div()
+fn render_source_cell(ctx: &CellCtx, width: Pixels) -> impl IntoElement {
+    let source = ctx.entry.source.as_deref().unwrap_or("");
+    let mut cell = div()
         .flex_shrink_0()
         .w(width)
         .px_2()
-        .text_color(colors.muted)
-        .truncate()
-        .child(source.to_string())
-}
-
-fn render_level_badge(level: LogLevel) -> gpui::Div {
-
-    div()
-        .px_1p5()
-        .py_0p5()
-        .rounded_xs()
-        .border_1()
-        .text_xs()
-        .font_weight(gpui::FontWeight::SEMIBOLD)
-        .child(level.short_code())
+        .text_color(ctx.colors.muted)
+        .truncate();
+    if let (Some(p), Some(bg)) = (ctx.paint, ctx.rule_cell) {
+        if p.column == "source" {
+            cell = cell.bg(bg);
+        }
+    }
+    cell.child(source.to_string())
 }
 
 fn apply_partition_divider_style<T: gpui::Styled>(element: T, is_active: bool) -> T {
     if is_active {
-        element
-            .border_r_1()
-            .shadow_sm()
+        element.border_r_1().shadow_sm()
     } else {
         element.shadow_none()
     }
@@ -749,20 +920,14 @@ fn apply_partition_divider_style<T: gpui::Styled>(element: T, is_active: bool) -
 fn render_column_cell(
     col: PinnableColumn,
     layout: &ColumnLayoutState,
-    entry: &LogEntry,
-    colors: &CanvasColors,
+    ctx: &CellCtx,
 ) -> impl IntoElement {
     let width = layout.width(col);
     match col {
-        PinnableColumn::Timestamp => render_timestamp_cell(&entry.time_str, width, colors).into_any_element(),
-        PinnableColumn::Level => render_level_cell(entry.level, width, colors).into_any_element(),
-        PinnableColumn::Module => render_module_cell(&entry.tag, width).into_any_element(),
-        PinnableColumn::Source => render_source_cell(
-            entry.source.as_deref().unwrap_or(""),
-            width,
-            colors,
-        )
-        .into_any_element(),
+        PinnableColumn::Timestamp => render_timestamp_cell(ctx, width).into_any_element(),
+        PinnableColumn::Level => render_level_cell(ctx, width).into_any_element(),
+        PinnableColumn::Module => render_module_cell(ctx, width).into_any_element(),
+        PinnableColumn::Source => render_source_cell(ctx, width).into_any_element(),
     }
 }
 
@@ -781,16 +946,20 @@ fn compute_ruler_marks(
         if let Some(entry) = entries.get(entry_ix) {
             let pos = (entry_ix as f32 / total as f32).clamp(0.0, 1.0);
 
-            if let Some(marker) = entry.effective_marker() {
+            if let Some(marker) = entry.markers.first() {
                 marks.push(RulerMark {
                     position: pos,
                     entry_index: entry_ix,
-                    marker_type: Some(marker),
+                    row_pos: vis_pos,
+                    color: Some(marker.color.clone()),
                     is_search: false,
                     is_current_match: false,
                 });
             } else if !search_state.query.trim().is_empty()
-                && search_state.matched_visible_indices.binary_search(&vis_pos).is_ok()
+                && search_state
+                    .matched_visible_indices
+                    .binary_search(&vis_pos)
+                    .is_ok()
             {
                 let is_current = search_state
                     .matched_visible_indices
@@ -799,7 +968,8 @@ fn compute_ruler_marks(
                 marks.push(RulerMark {
                     position: pos,
                     entry_index: entry_ix,
-                    marker_type: None,
+                    row_pos: vis_pos,
+                    color: None,
                     is_search: true,
                     is_current_match: is_current,
                 });

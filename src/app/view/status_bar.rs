@@ -10,24 +10,13 @@ impl AppView {
     /// Status bar: line number, event counts, filter ratio, focus tag and tail toggle.
     pub(super) fn render_status_bar(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
         let total_count = self.all_entries.len();
-        let visible_count = self.visible_indices.len();
-        let filter_pct = if total_count > 0 {
-            100.0 - (visible_count as f64 / total_count as f64) * 100.0
-        } else {
-            0.0
-        };
-        let current_line_num = self.selected_entry().map(|e| e.index).unwrap_or(0);
-
-        let filter_label = if filter_pct > 0.0 {
-            format!("Filtered {:.1}%", filter_pct)
-        } else {
-            "All Visible".to_string()
-        };
-
+        let current_line_num = self.current_line().map(|l| l.line).unwrap_or(0);
+        // How many lines the open Focus Tab lists, out of every line.
+        let focus_label = format!("Focus {} of {}", self.focus_rows.len(), total_count);
         let bar = StatusBar::new()
             .left(format!("Ln {}", current_line_num))
             .left(format!("{},{:03} events", total_count / 1000, total_count % 1000))
-            .left(filter_label)
+            .left(focus_label)
             .left("UTF-8");
 
         bar.right(

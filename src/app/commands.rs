@@ -3,7 +3,6 @@
 use super::AppView;
 use crate::density::Density;
 use crate::ui::command_palette::PaletteAction;
-use crate::ui::floating_panel::PanelKind;
 use gpui::{
     Context,
 };
@@ -13,9 +12,9 @@ impl AppView {
         self.is_palette_open = false;
         match action {
             PaletteAction::ToggleSearch => self.toggle_search(cx),
+            PaletteAction::ShowHighlights => self.toggle_or_reveal_context_section(crate::workspace::state::ContextSection::Highlights, cx),
+            PaletteAction::ToggleFocusPane => self.toggle_focus_pane(cx),
             PaletteAction::ToggleFilter => self.toggle_filter_builder(cx),
-            PaletteAction::ToggleMarkerPanel => self.toggle_panel(PanelKind::Marker, cx),
-            PaletteAction::ToggleBookmark => self.toggle_bookmark_current_line(cx),
             PaletteAction::ShowContext => {
                 self.is_context_open = true;
                 cx.notify();

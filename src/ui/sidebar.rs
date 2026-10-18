@@ -1,11 +1,10 @@
 //! Left sidebar: project tree (projects -> Log Spaces -> files) built from gpui-kit `Sidebar`
-//! components. Settings opens a gpui-kit `Dialog` from the sidebar footer.
+//! components.
 
 use crate::app::rename::{RenameState, RenameTarget};
 use crate::ui::space_menu::{FileRef, SpaceRef, push_file, push_space, rename_field};
 use crate::ui::menu_list::MenuList;
 use crate::ui::project_node::ProjectNode;
-use crate::ui::settings::open_settings_dialog;
 use crate::ui::sidebar_group::ActionGroup;
 use crate::workspace::state::{LeftSidebarState, WorkspaceState};
 use crate::workspace::working_set::TabTarget;
@@ -16,7 +15,7 @@ use gpui::{
 };
 use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::menu::{DropdownMenu as _, PopupMenuItem};
-use gpui_component::sidebar::{Sidebar, SidebarFooter};
+use gpui_component::sidebar::Sidebar;
 use gpui_component::{Side, Sizable as _};
 use gpui_kit::assets::IconName;
 
@@ -226,20 +225,10 @@ impl SidebarView {
         }
 
         let new_project_view = view.clone();
-        let footer = SidebarFooter::new().child(
-            Button::new("open-settings")
-                .ghost()
-                .small()
-                .icon(IconName::Settings)
-                .label("Settings")
-                .on_click(move |_, window, cx| open_settings_dialog(view.clone(), window, cx)),
-        );
-
         let sidebar_el = Sidebar::<ActionGroup<ProjectNode>>::new("projects-sidebar")
             .side(Side::Left)
             .collapsible(false)
             .w(px(sidebar.width))
-            .footer(footer)
             .child(
                 ActionGroup::new("Projects")
                     .action(move |_, _| {

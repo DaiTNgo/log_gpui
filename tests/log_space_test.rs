@@ -1,6 +1,6 @@
 use log_gpui::workspace::log_space::{
     FileOrder, LogFile, LogSpace, LogSpaceKind, RemoveFileError, SpaceNameError, WrongKind,
-    line_hash, validate_space_name,
+    validate_space_name,
 };
 use log_gpui::workspace::project::{Project, ProjectColorAccent};
 use log_gpui::workspace::working_set::TabSessionState;
@@ -221,18 +221,16 @@ fn removing_a_file_closes_its_file_view() {
 
 // ─── Markers keep the hash of their line ─────────────────────────────────────
 
+fn red() -> log_gpui::palette::HighlightColor {
+    log_gpui::palette::HighlightColor::palette(log_gpui::palette::Hue::Red, log_gpui::palette::Shade::Medium)
+}
+
 #[test]
 fn editing_a_line_drops_its_marker_but_keeps_the_others() {
-    use log_gpui::marker::MarkerType;
-    use log_gpui::workspace::log_space::StoredMarker;
     let mut file = LogFile::new("f".into(), "f.log".into());
-    let marker = |line: usize, text: &str| StoredMarker {
-        line,
-        marker: Some(MarkerType::Bookmark),
-        note: None,
-        content_hash: Some(line_hash(text)),
-    };
-    file.markers = vec![marker(1, "alpha"), marker(2, "beta"), marker(3, "gamma")];
+    for (line, text) in [(1, "alpha"), (2, "beta"), (3, "gamma")] {
+        assert!(file.paint_marker(line, text, 0..2, red()));
+    }
 
     // Line 2 was edited and a line was appended.
     let dropped = file.prune_markers(&["alpha", "beta edited", "gamma", "delta"]);
@@ -244,15 +242,8 @@ fn editing_a_line_drops_its_marker_but_keeps_the_others() {
 
 #[test]
 fn inserting_a_line_above_drops_the_markers_below() {
-    use log_gpui::marker::MarkerType;
-    use log_gpui::workspace::log_space::StoredMarker;
     let mut file = LogFile::new("f".into(), "f.log".into());
-    file.markers = vec![StoredMarker {
-        line: 2,
-        marker: Some(MarkerType::Bookmark),
-        note: None,
-        content_hash: Some(line_hash("beta")),
-    }];
+    file.paint_marker(2, "beta", 0..2, red());
     let dropped = file.prune_markers(&["alpha", "new", "beta"]);
     assert_eq!(dropped, 1);
     assert!(file.markers.is_empty());
@@ -260,14 +251,16 @@ fn inserting_a_line_above_drops_the_markers_below() {
 
 #[test]
 fn a_marker_past_the_end_of_the_file_is_dropped() {
-    use log_gpui::marker::MarkerType;
-    use log_gpui::workspace::log_space::StoredMarker;
     let mut file = LogFile::new("f".into(), "f.log".into());
-    file.markers = vec![StoredMarker {
-        line: 5,
-        marker: Some(MarkerType::Bookmark),
-        note: None,
-        content_hash: Some(line_hash("x")),
-    }];
+    file.paint_marker(5, "x", 0..1, red());
     assert_eq!(file.prune_markers(&["a"]), 1);
+}
+
+#[test]
+fn a_line_with_several_markers_loses_them_all_when_edited() {
+    let mut file = LogFile::new("f".into(), "f.log".into());
+    file.paint_marker(1, "alpha beta", 0..5, red());
+    file.paint_marker(1, "alpha beta", 6..10, red());
+    assert_eq!(file.markers.len(), 2);
+    assert_eq!(file.prune_markers(&["alpha beta!"]), 2);
 }

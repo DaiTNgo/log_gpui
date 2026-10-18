@@ -1,7 +1,12 @@
-use crate::marker::MarkerType;
 use crate::model::{LogEntry, LogLevel};
 
+/// The sample entries, without their stack trace lines.
 pub fn generate_sample_logs() -> Vec<LogEntry> {
+    generate_samples().into_iter().map(|(entry, _)| entry).collect()
+}
+
+/// Each sample entry with the stack trace lines that follow it in the file.
+fn generate_samples() -> Vec<(LogEntry, Vec<String>)> {
     let mut entries = Vec::new();
     let base_ts = 1757048400.0; // Simulated timestamp
 
@@ -34,7 +39,7 @@ pub fn generate_sample_logs() -> Vec<LogEntry> {
             let trace_id = format!("trace-{:06x}", round * 10 + i);
 
             // Create specific scenarios
-            let (level, payload, sub_lines, custom_marker, note) = if round % 18 == 0 && i == 0 {
+            let (level, payload, sub_lines) = if round % 18 == 0 && i == 0 {
                 // Connection timeout in API
                 (
                     LogLevel::Error,
@@ -45,8 +50,6 @@ pub fn generate_sample_logs() -> Vec<LogEntry> {
                         "    at com.cloud.api.Router.handleRequest(Router.java:88)".to_string(),
                         "    at io.netty.channel.AbstractChannelHandlerContext.fireChannelRead(Context.java:379)".to_string(),
                     ],
-                    Some(MarkerType::Error),
-                    Some("Likely caused by backend DB restart during deployment".to_string()),
                 )
             } else if round % 12 == 0 && i == 1 {
                 // Database lock timeout
@@ -57,8 +60,6 @@ pub fn generate_sample_logs() -> Vec<LogEntry> {
                         "org.postgresql.util.PSQLException: ERROR: deadlock detected".to_string(),
                         "    Detail: Process 1428 waits for ShareLock on transaction 88192".to_string(),
                     ],
-                    Some(MarkerType::Error),
-                    None,
                 )
             } else if round % 7 == 0 && i == 2 {
                 // Warning
@@ -66,8 +67,6 @@ pub fn generate_sample_logs() -> Vec<LogEntry> {
                     LogLevel::Warn,
                     "Token expired: refresh requested from client IP 192.168.1.104".to_string(),
                     Vec::new(),
-                    Some(MarkerType::Warning),
-                    None,
                 )
             } else if round % 9 == 0 && i == 4 {
                 // Cache warning
@@ -75,8 +74,6 @@ pub fn generate_sample_logs() -> Vec<LogEntry> {
                     LogLevel::Warn,
                     "Slow response from Redis master: latency 428ms exceeds p99 threshold (50ms)".to_string(),
                     Vec::new(),
-                    Some(MarkerType::Warning),
-                    None,
                 )
             } else if round % 25 == 0 && i == 3 {
                 // Important bookmark
@@ -84,32 +81,24 @@ pub fn generate_sample_logs() -> Vec<LogEntry> {
                     LogLevel::Info,
                     "Payment confirmed: charge_id='ch_9921a8' settled with gateway".to_string(),
                     Vec::new(),
-                    Some(MarkerType::Bookmark),
-                    Some("Reference transaction for QA audit".to_string()),
                 )
             } else if round % 14 == 0 && i == 5 {
                 (
                     LogLevel::Debug,
                     "Worker queue status: pending=48, active=6, processed_per_sec=142".to_string(),
                     Vec::new(),
-                    None,
-                    None,
                 )
             } else if round % 11 == 0 {
                 (
                     LogLevel::Debug,
                     format!("Query cache stats: hit_rate=98.4%, tag={}", tag),
                     Vec::new(),
-                    None,
-                    None,
                 )
             } else {
                 (
                     LogLevel::Info,
                     default_msg.to_string(),
                     Vec::new(),
-                    None,
-                    None,
                 )
             };
 
@@ -132,13 +121,8 @@ pub fn generate_sample_logs() -> Vec<LogEntry> {
                 raw_line,
             );
 
-            if let Some(m) = custom_marker {
-                entry.marker = Some(m);
-            }
-            entry.note = note;
             entry.request_id = Some(req_id.clone());
             entry.trace_id = Some(trace_id);
-            entry.sub_lines = sub_lines;
             entry.json_fields = vec![
                 ("service".to_string(), tag.to_string()),
                 ("level".to_string(), level.as_str().to_lowercase()),
@@ -147,7 +131,7 @@ pub fn generate_sample_logs() -> Vec<LogEntry> {
                 ("thread".to_string(), format!("tokio-worker-{}", i)),
             ];
 
-            entries.push(entry);
+            entries.push((entry, sub_lines));
         }
     }
 
@@ -159,7 +143,7 @@ pub fn generate_sample_logs() -> Vec<LogEntry> {
 pub fn generate_sample_text() -> String {
     use chrono::DateTime;
     let mut out = String::new();
-    for entry in generate_sample_logs() {
+    for (entry, sub_lines) in generate_samples() {
         let secs = entry.timestamp.floor() as i64;
         let nanos = (entry.timestamp.fract() * 1_000_000_000.0) as u32;
         let stamp = DateTime::from_timestamp(secs, nanos)
@@ -172,7 +156,7 @@ pub fn generate_sample_text() -> String {
             entry.tag,
             entry.payload
         ));
-        for line in &entry.sub_lines {
+        for line in &sub_lines {
             out.push_str(line);
             out.push('\n');
         }

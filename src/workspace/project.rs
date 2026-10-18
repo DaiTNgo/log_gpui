@@ -1,7 +1,9 @@
+use crate::highlight::HighlightRule;
+use crate::palette::RecentColors;
 use crate::workspace::investigation::InvestigationCase;
 pub use crate::workspace::log_space::{
     ImportOutcome, LogFile, LogSpace, LogSpaceKind, RemoveFileError, SpaceNameError, StoredMarker,
-    WrongKind, collect_markers, validate_space_name,
+    WrongKind, validate_space_name,
 };
 use crate::workspace::working_set::{TabSessionState, TabTarget, WorkingSet};
 use serde::{Deserialize, Serialize};
@@ -69,6 +71,13 @@ pub struct Project {
     pub working_set: WorkingSet,
     /// Investigation cases (incidents) gathered within this project.
     pub investigation_cases: Vec<InvestigationCase>,
+    /// Highlight Rules shared by every Log Space of the project, in priority
+    /// order (the first rule that matches a row paints it).
+    #[serde(default)]
+    pub highlight_rules: Vec<HighlightRule>,
+    /// The colors used most recently for Markers and Highlight Rules.
+    #[serde(default)]
+    pub recent_colors: RecentColors,
 }
 
 impl Project {
@@ -80,6 +89,8 @@ impl Project {
             log_spaces: Vec::new(),
             working_set: WorkingSet::new(),
             investigation_cases: Vec::new(),
+            highlight_rules: Vec::new(),
+            recent_colors: RecentColors::new(),
         }
     }
 

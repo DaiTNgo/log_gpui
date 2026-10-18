@@ -68,14 +68,24 @@ impl FilterUi {
 }
 
 impl AppView {
-    /// Re-evaluate the Filter on the whole file, then refresh Search.
+    /// Re-evaluate the Filter on the whole file, then refresh Search and the
+    /// Focus Pane. The view keeps every line: Filter only narrows the pane.
     pub fn apply_filters_and_refresh(&mut self, cx: &mut Context<Self>) {
-        let visible = self
+        let pass = self
             .filter_state
             .evaluate(&self.filter_index, &mut self.all_entries);
-        self.visible_indices = std::sync::Arc::new(visible);
-        self.search_state
-            .update_matches(&self.all_entries, &self.visible_indices);
+        self.filter_pass = std::sync::Arc::new(pass);
+        if self.visible_indices.len() != self.all_entries.len() {
+            self.visible_indices = std::sync::Arc::new((0..self.all_entries.len()).collect());
+        }
+        // Rows may be new: a selection of them no longer means the same.
+        self.text_selection = None;
+        self.selecting = false;
+        self.recompute_highlight_paints();
+        self.focus
+            .search_mut()
+            .update_matches(&self.all_entries, &self.filter_pass);
+        self.refresh_focus();
 
         if let Some(pos) = self.selected_row_pos {
             if pos >= self.visible_indices.len() {

@@ -3,18 +3,16 @@
 
 use super::AppView;
 use crate::app::ConfirmAction;
-use crate::density::Density;
 use crate::workspace::new_space::PendingStatus;
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
-    ExternalPaths, InteractiveElement, IntoElement, ParentElement, SharedString,
+    ExternalPaths, InteractiveElement, IntoElement, ParentElement,
     StatefulInteractiveElement, Styled, div, px,
 };
-use gpui_component::button::{Button, ButtonGroup, ButtonVariants as _};
+use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::input::Input;
-use gpui_component::switch::Switch;
 use gpui_component::{
-    ActiveTheme as _, Disableable as _, Icon, Selectable as _, Sizable as _, h_flex, v_flex,
+    ActiveTheme as _, Disableable as _, Icon, Sizable as _, h_flex, v_flex,
 };
 use gpui_kit::assets::IconName;
 
@@ -253,75 +251,6 @@ impl AppView {
                     .icon(IconName::Close)
                     .on_click(cx.listener(|this, _, _, cx| this.dismiss_notice(cx))),
             )
-            .into_any_element()
-    }
-
-    /// Quick Settings: display switches only (Source Column, density).
-    pub(super) fn render_quick_settings(&mut self, cx: &mut gpui::Context<Self>) -> gpui::AnyElement {
-        if !self.quick_settings_open {
-            return div().into_any_element();
-        }
-        let theme = cx.theme();
-        let (bg, border) = (theme.popover, theme.border);
-        let in_space = matches!(
-            self.active_target(),
-            Some(crate::workspace::working_set::TabTarget::LogSpace { .. })
-        );
-        let shown = self.source_column_shown();
-        let density = self.density;
-        let densities = [
-            (Density::Comfortable, "Comfortable"),
-            (Density::Compact, "Compact"),
-            (Density::UltraCompact, "Ultra"),
-        ];
-        let panel = v_flex()
-            .id("quick-settings-panel")
-            .absolute()
-            .top(px(96.0))
-            .right(px(12.0))
-            .w(px(260.0))
-            .gap_3()
-            .p_3()
-            .bg(bg)
-            .border_1()
-            .border_color(border)
-            .rounded_lg()
-            .shadow_lg()
-            .occlude()
-            .child(
-                Switch::new("show-source")
-                    .label("Show source file")
-                    .checked(shown)
-                    .disabled(!in_space)
-                    .on_click(cx.listener(move |this, checked: &bool, _, cx| {
-                        this.set_show_source(*checked, cx)
-                    })),
-            )
-            .child(
-                v_flex().gap_2().child("Row density").child(
-                    ButtonGroup::new("quick-density")
-                        .small()
-                        .children(densities.map(|(d, label)| {
-                            Button::new(SharedString::from(format!("qd-{label}")))
-                                .label(label)
-                                .selected(density == d)
-                        }))
-                        .on_click(cx.listener(move |this, ix: &Vec<usize>, _, cx| {
-                            if let Some(&i) = ix.first() {
-                                this.set_density(densities[i].0, cx);
-                            }
-                        })),
-                ),
-            );
-        div()
-            .absolute()
-            .inset_0()
-            .id("quick-settings-backdrop")
-            .on_click(cx.listener(|this, _, _, cx| {
-                this.quick_settings_open = false;
-                cx.notify();
-            }))
-            .child(panel)
             .into_any_element()
     }
 }

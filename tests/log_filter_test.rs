@@ -1,6 +1,6 @@
 use log_gpui::filter::{FilterState, parse_time_bound};
 use log_gpui::filter_index::{FilterIndex, MAX_DISTINCT};
-use log_gpui::marker::MarkerType;
+use log_gpui::palette::{HighlightColor, Hue, Shade};
 use log_gpui::model::{LogEntry, LogLevel};
 use log_gpui::workspace::log_space::{LogFile, LogSpace, LogSpaceKind};
 
@@ -317,13 +317,16 @@ fn overflowed_column_conditions_still_apply() {
 }
 
 #[test]
-fn evaluate_refreshes_delta_time_of_visible_rows() {
+fn evaluate_refreshes_delta_time_of_every_row() {
     let mut entries = sample();
     let mut f = FilterState::new();
     f.toggle_value("module", "API");
     let _ = visible(&f, &mut entries);
+    let ts: Vec<f64> = entries.iter().map(|e| e.timestamp).collect();
     assert_eq!(entries[0].delta_time_ms, Some(0.0));
-    assert_eq!(entries[2].delta_time_ms, Some(2000.0));
+    // The view shows every row, so a row's delta is from the row above it
+    // even when that row does not pass the Filter.
+    assert_eq!(entries[2].delta_time_ms, Some((ts[2] - ts[1]) * 1000.0));
 }
 
 // ─── Tail ────────────────────────────────────────────────────────────────────
@@ -480,22 +483,19 @@ fn time_hint_shows_the_first_and_last_time() {
 
 #[test]
 fn markers_round_trip_through_the_file_descriptor() {
+    let red = HighlightColor::palette(Hue::Red, Shade::Medium);
     let mut entries = sample();
-    entries[1].marker = Some(MarkerType::Bookmark);
-    entries[3].note = Some("investigate".into());
-    entries[3].marker = Some(MarkerType::Note);
-
     let mut file = LogFile::new("app.log".into(), "app.log".into());
-    file.capture_markers(&entries);
-    assert_eq!(file.markers.len(), 2, "passive error/warn markers are not stored");
+    file.paint_marker(2, &entries[1].raw_line, 0..3, red.clone());
+    file.paint_marker(4, &entries[3].raw_line, 1..4, red.clone());
+    assert_eq!(file.markers.len(), 2);
 
-    let mut fresh = sample();
-    file.apply_markers(&mut fresh);
-    assert_eq!(fresh[1].marker, Some(MarkerType::Bookmark));
-    assert_eq!(fresh[3].note.as_deref(), Some("investigate"));
-    assert_eq!(fresh[3].marker, Some(MarkerType::Note));
-    // Untouched rows keep their passive markers.
-    assert_eq!(fresh[2].marker, Some(MarkerType::Error));
+    file.apply_markers(&mut entries);
+    assert_eq!(entries[1].markers.len(), 1);
+    assert_eq!(entries[1].markers[0].range, 0..3);
+    assert_eq!(entries[3].markers[0].color, red);
+    // Rows nobody painted have no marker, whatever their level.
+    assert!(entries[2].markers.is_empty());
 }
 
 #[test]

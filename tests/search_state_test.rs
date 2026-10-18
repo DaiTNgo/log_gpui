@@ -37,14 +37,21 @@ fn boolean_expression() {
 }
 
 #[test]
-fn searches_only_visible_lines() {
-    let e = entries();
+fn lines_failing_filter_are_not_matches() {
+    // 5 DEBUG lines and 12 other lines contain `timeout`; Filter hides DEBUG.
+    let mut e = Vec::new();
+    for i in 0..17 {
+        let level = if i < 5 { "DEBUG" } else { "INFO" };
+        e.push(entry(i, &format!("{level} db timeout {i}")));
+    }
+    let pass: Vec<usize> = (5..17).collect();
     let mut s = SearchState::new();
     s.query = "timeout".into();
-    // Filter hides the DEBUG line (entry 2).
-    s.update_matches(&e, &[0, 1, 3]);
-    assert_eq!(s.total_matches(), 1);
-    assert_eq!(s.matched_visible_indices, vec![1]);
+    s.update_matches(&e, &pass);
+    assert_eq!(s.total_matches(), 12);
+    // The view still has every line; a Match is the entry's own position.
+    assert_eq!(s.matched_visible_indices.first(), Some(&5));
+    assert!(!s.matched_visible_indices.contains(&2));
 }
 
 #[test]
@@ -114,12 +121,4 @@ fn highlight_ranges_follow_the_last_valid_expression() {
     s.query = "timeout &&".into();
     s.reparse();
     assert_eq!(s.find_ranges("x timeout").len(), 1);
-}
-
-#[test]
-fn search_text_is_not_serialized() {
-    let mut s = SearchState::new();
-    s.query = "timeout".into();
-    let json = serde_json::to_string(&s).unwrap();
-    assert!(!json.contains("timeout"));
 }

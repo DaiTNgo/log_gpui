@@ -16,7 +16,8 @@ impl AppView {
         window: &Window,
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
-        let show_context_toggle = self.active_tab_is_log_file();
+        let show_context_toggle = self.active_tab_is_log_file()
+            && self.view_mode == crate::workspace::working_set::ViewMode::Parsed;
         let context_visible = self.context_sidebar.is_shown(show_context_toggle);
 
         // TitleBar reserves 80px on macOS for the traffic lights. They disappear in full screen,
@@ -39,19 +40,36 @@ impl AppView {
                         this.toggle_sidebar(cx)
                     })),
             )
-            .child(div().flex().items_center().pr_2().when(show_context_toggle, |this| {
-                this.child(
-                    Button::new("toggle-context-sidebar")
-                        .ghost()
-                        .small()
-                        .icon(IconName::PanelRight)
-                        .selected(context_visible)
-                        .on_click(cx.listener(|this, _, _window, cx| {
-                            cx.stop_propagation();
-                            this.toggle_context_sidebar(cx)
-                        })),
-                )
-            }))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_1()
+                    .pr_2()
+                    .child(
+                            Button::new("open-settings")
+                                .ghost()
+                                .small()
+                                .icon(IconName::Settings2)
+                                .on_click(cx.listener(|_this, _, window, cx| {
+                                    cx.stop_propagation();
+                                    crate::ui::settings::open_settings_dialog(cx.entity(), window, cx);
+                                })),
+                    )
+                    .when(show_context_toggle, |this| {
+                        this.child(
+                            Button::new("toggle-context-sidebar")
+                                .ghost()
+                                .small()
+                                .icon(IconName::PanelRight)
+                                .selected(context_visible)
+                                .on_click(cx.listener(|this, _, _window, cx| {
+                                    cx.stop_propagation();
+                                    this.toggle_context_sidebar(cx)
+                                })),
+                        )
+                    }),
+            )
             .into_any_element()
     }
 }

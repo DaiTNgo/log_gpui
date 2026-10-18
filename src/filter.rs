@@ -5,7 +5,7 @@
 //! Range combine with AND. Hide Mode flips a column from "show only these" to
 //! "hide these". A row with no value in a column never matches it.
 
-use crate::filter_index::{ColumnIndex, FilterIndex, MISSING, column_value};
+use crate::filter_index::{ColumnIndex, FilterIndex, MISSING, value_of};
 use crate::model::LogEntry;
 use crate::unicode_text::{self, Needle};
 use serde::{Deserialize, Serialize};
@@ -76,20 +76,18 @@ pub struct InvalidTime;
 /// no timezone conversion. Empty text is `Ok(None)`.
 pub fn parse_time_bound(text: &str, anchor_day: f64) -> Result<Option<f64>, InvalidTime> {
     use chrono::{NaiveDateTime, NaiveTime, Timelike};
-    let t = text.trim().trim_end_matches('Z');
+    let t = text.trim();
     if t.is_empty() {
         return Ok(None);
     }
     if let Ok(n) = t.parse::<f64>() {
         return if n.is_finite() { Ok(Some(n)) } else { Err(InvalidTime) };
     }
-    for fmt in [
-        "%Y-%m-%d %H:%M:%S%.f",
-        "%Y-%m-%dT%H:%M:%S%.f",
-        "%Y/%m/%d %H:%M:%S%.f",
-        "%Y-%m-%d %H:%M",
-        "%Y-%m-%dT%H:%M",
-    ] {
+    if let Some(secs) = crate::parser::text::read_timestamp(t) {
+        return Ok(Some(secs));
+    }
+    let t = t.trim_end_matches('Z');
+    for fmt in ["%Y-%m-%d %H:%M", "%Y-%m-%dT%H:%M"] {
         if let Ok(dt) = NaiveDateTime::parse_from_str(t, fmt) {
             let utc = dt.and_utc();
             return Ok(Some(utc.timestamp() as f64 + f64::from(utc.timestamp_subsec_millis()) / 1000.0));
@@ -201,8 +199,9 @@ impl FilterState {
         *self = Self::default();
     }
 
-    /// Evaluate the Filter and return the visible row indices. Also refreshes
-    /// each visible row's delta time from the previous visible row.
+    /// Evaluate the Filter and return the indices of the rows that pass it.
+    /// Also refreshes every row's delta time from the row above it: Filter
+    /// narrows the Focus Pane, not the view.
     pub fn evaluate(&self, index: &FilterIndex, entries: &mut [LogEntry]) -> Vec<usize> {
         let mut visible = Vec::with_capacity(entries.len());
         let mut prev_ts: Option<f64> = None;
@@ -217,9 +216,9 @@ impl FilterState {
         let (from, to) = self.time_range.bounds(index.anchor_day());
         let time_active = (from.is_some() || to.is_some()) && !stale;
 
-        for (row, entry) in entries.iter_mut().enumerate() {
+        for row in 0..entries.len() {
             let columns_ok = active.iter().all(|(cf, compiled)| {
-                let matched = compiled.matches(row, entry, &cf.column);
+                let matched = compiled.matches(row, entries, &cf.column);
                 matched != cf.hide
             });
             let time_ok = !time_active
@@ -228,9 +227,12 @@ impl FilterState {
                     Some(ts) => from.is_none_or(|f| ts >= f) && to.is_none_or(|t| ts <= t),
                 };
             if columns_ok && time_ok {
-                update_entry_delta_time(entry, &mut prev_ts);
                 visible.push(row);
             }
+        }
+        // The view shows every row, so each delta is from the row above it.
+        for entry in entries.iter_mut() {
+            update_entry_delta_time(entry, &mut prev_ts);
         }
         visible
     }
@@ -269,19 +271,19 @@ impl<'a> CompiledColumn<'a> {
         Self { ids, table, values, custom }
     }
 
-    fn matches(&self, row: usize, entry: &LogEntry, key: &str) -> bool {
+    fn matches(&self, row: usize, entries: &[LogEntry], key: &str) -> bool {
         if let Some(col) = self.ids {
             return match col.id_of_row(row) {
                 Some(MISSING) => false,
                 Some(id) => self.table.get(id as usize).copied().unwrap_or(false),
-                None => self.matches_text(entry, key),
+                None => self.matches_text(entries, row, key),
             };
         }
-        self.matches_text(entry, key)
+        self.matches_text(entries, row, key)
     }
 
-    fn matches_text(&self, entry: &LogEntry, key: &str) -> bool {
-        match column_value(entry, key) {
+    fn matches_text(&self, entries: &[LogEntry], row: usize, key: &str) -> bool {
+        match value_of(entries, row, key) {
             None => false,
             Some(v) => self.values.iter().any(|n| n.equals(v)) || self.custom.iter().any(|n| n.is_in(v)),
         }
@@ -289,6 +291,11 @@ impl<'a> CompiledColumn<'a> {
 }
 
 fn update_entry_delta_time(entry: &mut LogEntry, prev_ts: &mut Option<f64>) {
+    if entry.parent.is_some() {
+        // A Continuation Line has no time of its own.
+        entry.delta_time_ms = None;
+        return;
+    }
     if let Some(prev) = *prev_ts {
         entry.delta_time_ms = Some((entry.timestamp - prev) * 1000.0);
     } else {

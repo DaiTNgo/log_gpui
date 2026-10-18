@@ -16,7 +16,6 @@ pub struct PaletteCommand {
 pub enum PaletteAction {
     ToggleSearch,
     ToggleFilter,
-    ToggleBookmark,
     ShowContext,
     GoNextError,
     GoPrevError,
@@ -31,7 +30,8 @@ pub enum PaletteAction {
     SaveScratch,
     UnpinAllColumns,
     ToggleProjectSwitcher,
-    ToggleMarkerPanel,
+    ShowHighlights,
+    ToggleFocusPane,
 }
 
 impl CommandPalette {
@@ -48,14 +48,14 @@ impl CommandPalette {
                 action: PaletteAction::ToggleFilter,
             },
             PaletteCommand {
-                name: "Marker: Open Marker Panel",
-                shortcut: "⌘⇧M",
-                action: PaletteAction::ToggleMarkerPanel,
+                name: "Focus Pane: Show or Hide",
+                shortcut: "⌘J",
+                action: PaletteAction::ToggleFocusPane,
             },
             PaletteCommand {
-                name: "Bookmark: Toggle Bookmark on Selected Line",
-                shortcut: "B",
-                action: PaletteAction::ToggleBookmark,
+                name: "Highlights: Open Highlight Rules",
+                shortcut: "⌘⇧M",
+                action: PaletteAction::ShowHighlights,
             },
             PaletteCommand {
                 name: "Investigation: Show Surrounding Context",

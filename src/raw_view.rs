@@ -72,3 +72,53 @@ pub fn index_of_line(sections: &[(usize, bool)], section: usize, line: usize) ->
     }
     None
 }
+
+/// The pieces of a text range of an editor holding `lines` joined by `\n`:
+/// each line the range touches, with its 1-based number and the selected
+/// bytes of that line. Line breaks themselves are not part of any piece.
+pub fn pieces_from_range<S: AsRef<str>>(
+    lines: &[S],
+    range: std::ops::Range<usize>,
+) -> Vec<(usize, std::ops::Range<usize>)> {
+    let mut pieces = Vec::new();
+    let mut offset = 0usize;
+    for (i, line) in lines.iter().enumerate() {
+        let len = line.as_ref().len();
+        let start = range.start.max(offset);
+        let end = range.end.min(offset + len);
+        if start < end {
+            pieces.push((i + 1, start - offset..end - offset));
+        }
+        offset += len + 1;
+        if offset > range.end {
+            break;
+        }
+    }
+    pieces
+}
+
+/// The line (1-based) and the byte of it that an editor offset is at.
+pub fn line_and_byte<S: AsRef<str>>(lines: &[S], cursor: usize) -> Option<(usize, usize)> {
+    let mut offset = 0usize;
+    for (i, line) in lines.iter().enumerate() {
+        let len = line.as_ref().len();
+        if cursor <= offset + len {
+            return Some((i + 1, cursor - offset));
+        }
+        offset += len + 1;
+    }
+    None
+}
+
+/// Byte offset in the editor text of the start of each line.
+pub fn line_starts<S: AsRef<str>>(lines: &[S]) -> Vec<usize> {
+    let mut offset = 0usize;
+    lines
+        .iter()
+        .map(|l| {
+            let start = offset;
+            offset += l.as_ref().len() + 1;
+            start
+        })
+        .collect()
+}

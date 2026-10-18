@@ -3,12 +3,12 @@
 
 use crate::column::FieldMaxChars;
 use crate::filter_index::FilterIndex;
-use crate::marker::MarkerType;
 use crate::model::LogEntry;
 use crate::parser::text::parse_text_bytes_with_max_chars;
 use crate::timeline;
-use crate::workspace::log_space::{LogFile, LogSpace, StoredMarker, line_hash};
-use std::collections::{HashMap, HashSet};
+use crate::marker::TextMarker;
+use crate::workspace::log_space::{LogFile, LogSpace};
+use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -100,6 +100,11 @@ pub fn build_space_view(space: &LogSpace, parsed: &HashMap<String, ParsedFile>) 
 /// The rows of a single file (a File View): no Source Column.
 pub fn build_file_view(file: &LogFile, parsed: &ParsedFile) -> BuiltView {
     let mut entries = parsed.entries.clone();
+    // Lines are told apart by file and number, in a File View too.
+    let file_id: Arc<str> = Arc::from(file.file_id.as_str());
+    for entry in &mut entries {
+        entry.file_id = Some(file_id.clone());
+    }
     file.apply_markers(&mut entries);
     let index = FilterIndex::build(&entries);
     BuiltView {
@@ -112,47 +117,28 @@ pub fn build_file_view(file: &LogFile, parsed: &ParsedFile) -> BuiltView {
 
 /// Restore each file's stored Markers onto the merged rows.
 pub fn apply_markers_merged(space: &LogSpace, entries: &mut [LogEntry]) {
-    let stored: HashMap<&str, HashMap<usize, &StoredMarker>> = space
+    let stored: HashMap<&str, (&LogFile, HashMap<(usize, u32), Vec<TextMarker>>)> = space
         .files
         .iter()
         .filter(|f| !f.markers.is_empty())
-        .map(|f| (f.file_id.as_str(), f.markers.iter().map(|m| (m.line, m)).collect()))
+        .map(|f| {
+            let mut by_line: HashMap<(usize, u32), Vec<TextMarker>> = HashMap::new();
+            for m in &f.markers {
+                by_line
+                    .entry((m.line, m.generations_ago))
+                    .or_default()
+                    .push(TextMarker { range: m.range.clone(), color: m.color.clone() });
+            }
+            (f.file_id.as_str(), (f, by_line))
+        })
         .collect();
-    if stored.is_empty() {
-        return;
-    }
     for entry in entries {
-        let Some(file_id) = entry.file_id.as_deref() else { continue };
-        if let Some(marker) = stored.get(file_id).and_then(|m| m.get(&entry.index)) {
-            entry.marker = marker.marker;
-            entry.note = marker.note.clone();
-        }
-    }
-}
-
-/// Remember the Markers set on the merged rows, file by file. Only files in
-/// `loaded` are touched, so a file that failed to load keeps its Markers.
-pub fn capture_markers_merged(
-    space: &mut LogSpace,
-    entries: &[LogEntry],
-    loaded: &HashSet<String>,
-) {
-    let mut by_file: HashMap<String, Vec<StoredMarker>> = HashMap::new();
-    for entry in entries {
-        let Some(file_id) = entry.file_id.as_deref() else { continue };
-        if entry.note.is_none() && entry.marker == MarkerType::from_log_level(entry.level) {
-            continue;
-        }
-        by_file.entry(file_id.to_string()).or_default().push(StoredMarker {
-            line: entry.index,
-            marker: entry.marker,
-            note: entry.note.clone(),
-            content_hash: Some(line_hash(&entry.raw_line)),
-        });
-    }
-    for file in &mut space.files {
-        if loaded.contains(&file.file_id) {
-            file.markers = by_file.remove(&file.file_id).unwrap_or_default();
-        }
+        entry.markers = entry
+            .file_id
+            .as_deref()
+            .and_then(|file_id| stored.get(file_id))
+            .and_then(|(file, by_line)| by_line.get(&(entry.index, file.generations_ago(entry.generation))))
+            .cloned()
+            .unwrap_or_default();
     }
 }

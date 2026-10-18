@@ -14,7 +14,7 @@ impl AppView {
         panel.open = !panel.open;
         self.panel_gesture = None;
         if panel.open && kind == PanelKind::Filter {
-            self.search_state.is_open = false;
+            self.focus.search_mut().is_open = false;
         }
         cx.notify();
     }

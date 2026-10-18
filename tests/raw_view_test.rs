@@ -10,11 +10,11 @@ fn matcher(query: &str) -> Matcher {
 fn raw_view_shows_every_line_as_stored() {
     let text = "first\n\n   indented\nlast";
     let parsed = ParsedFile::from_text(text);
-    // Empty lines are kept in the Raw View, unlike the parsed rows.
+    // Every line is a row in the Parsed View too, empty ones included.
     assert_eq!(parsed.lines.len(), 4);
     assert_eq!(parsed.lines[1], "");
     assert_eq!(parsed.lines[2], "   indented");
-    assert_eq!(parsed.entries.len(), 3);
+    assert_eq!(parsed.entries.len(), 4);
 }
 
 #[test]
@@ -79,4 +79,17 @@ fn reparsing_after_an_edit_reads_the_new_text() {
     );
     assert_eq!(after.entries.len(), 2);
     assert_eq!(after.entries[1].tag, "api");
+}
+
+#[test]
+fn an_editor_selection_splits_into_pieces_per_line() {
+    use log_gpui::raw_view::{line_and_byte, pieces_from_range};
+    let lines = ["alpha", "beta", "gamma"];
+    // Editor text is `alpha\nbeta\ngamma`: line 2 starts at 6, line 3 at 11.
+    assert_eq!(pieces_from_range(&lines, 3..14), vec![(1, 3..5), (2, 0..4), (3, 0..3)]);
+    assert_eq!(pieces_from_range(&lines, 7..9), vec![(2, 1..3)]);
+    assert!(pieces_from_range(&lines, 5..6).is_empty(), "a line break alone paints nothing");
+    assert_eq!(line_and_byte(&lines, 0), Some((1, 0)));
+    assert_eq!(line_and_byte(&lines, 8), Some((2, 2)));
+    assert_eq!(line_and_byte(&lines, 16), Some((3, 5)));
 }

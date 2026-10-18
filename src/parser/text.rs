@@ -5,13 +5,20 @@ use chrono::{DateTime, NaiveDateTime};
 use regex::Regex;
 use serde_json::Value;
 use std::collections::{BTreeSet, HashMap};
+use std::ops::Range;
 use std::sync::LazyLock;
 
 static RE_STANDARD: LazyLock<Regex> = LazyLock::new(|| {
     // Matches: 2026-09-05 12:34:56.789 [INFO] [auth] Message
     // Matches: [2026-09-05T12:34:56.789Z] [WARN] [api] Message
     // Matches: 2026-09-05 12:34:56 ERROR: Something went wrong
-    Regex::new(r#"^(?:\[?(\d{4}[-/]\d{2}[-/]\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?)\]?\s+)?(?:\[?([A-Za-z]{3,7})\]?:?\s+)?(?:\[([a-zA-Z0-9_\-.]+)\]:?\s+)?(.*)$"#)
+    Regex::new(r#"^(?:\[?(\d{4}[-/]\d{2}[-/]\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?)\]?\s+)?(?:\[?([A-Za-z]{1,7})\]?:?\s+)?(?:\[([a-zA-Z0-9_\-.]+)\]:?\s+)?(.*)$"#)
+        .unwrap()
+});
+
+static RE_STANDARD_NO_LEVEL: LazyLock<Regex> = LazyLock::new(|| {
+    // The same line when the word after the timestamp is not a level.
+    Regex::new(r#"^(?:\[?(\d{4}[-/]\d{2}[-/]\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?)\]?\s+)?(?:\[([a-zA-Z0-9_\-.]+)\]:?\s+)?(.*)$"#)
         .unwrap()
 });
 
@@ -54,17 +61,10 @@ pub fn parse_text_bytes_with_max_chars(bytes: &[u8]) -> anyhow::Result<ParseResu
     let mut entries = Vec::new();
     let mut max_chars = crate::column::FieldMaxChars::new();
 
-    for (i, line) in content.lines().enumerate() {
-        let index = i + 1;
-        let line_trimmed = line.trim();
-        if line_trimmed.is_empty() {
-            continue;
-        }
-        if let Some(event) = parse_line(index, line_trimmed, line) {
-            let entry = LogEntry::from_event(&event);
-            max_chars.record_entry(&entry);
-            entries.push(entry);
-        }
+    for event in parse_events(&content) {
+        let entry = LogEntry::from_event(&event);
+        max_chars.record_entry(&entry);
+        entries.push(entry);
     }
 
     Ok(ParseResult { entries, max_chars })
@@ -78,18 +78,11 @@ pub fn parse_text_bytes_with_schema(bytes: &[u8]) -> anyhow::Result<SchemaParseR
     let mut max_chars = crate::column::FieldMaxChars::new();
     let mut schema_builder = SchemaBuilder::new();
 
-    for (i, line) in content.lines().enumerate() {
-        let index = i + 1;
-        let line_trimmed = line.trim();
-        if line_trimmed.is_empty() {
-            continue;
-        }
-        if let Some(event) = parse_line(index, line_trimmed, line) {
-            schema_builder.record_event(&event);
-            let entry = LogEntry::from_event(&event);
-            max_chars.record_entry(&entry);
-            events.push(event);
-        }
+    for event in parse_events(&content) {
+        schema_builder.record_event(&event);
+        let entry = LogEntry::from_event(&event);
+        max_chars.record_entry(&entry);
+        events.push(event);
     }
 
     Ok(SchemaParseResult {
@@ -99,13 +92,50 @@ pub fn parse_text_bytes_with_schema(bytes: &[u8]) -> anyhow::Result<SchemaParseR
     })
 }
 
+/// Parse every stored line (empty ones included) into one event, then mark
+/// the Continuation Lines: a line without a time of its own that follows a
+/// line with one. Its Parent Line is the nearest line above with a time.
+/// Lines before the first timestamp have no Parent Line.
+pub fn parse_events(content: &str) -> Vec<LogEvent> {
+    let mut events = Vec::new();
+    let mut parent: Option<usize> = None;
+    for (i, line) in content.lines().enumerate() {
+        let index = i + 1;
+        let mut event = parse_line(index, line);
+        if event.has_time {
+            parent = Some(index);
+        } else if let Some(p) = parent {
+            event = event.into_continuation(p);
+        }
+        events.push(event);
+    }
+    events
+}
+
+/// Byte range of a regex group, shifted by the leading whitespace that was
+/// trimmed off the line before matching.
+fn group_range(caps: &regex::Captures, i: usize, lead: usize) -> Option<Range<usize>> {
+    caps.get(i).map(|m| m.start() + lead..m.end() + lead)
+}
+
 /// Detect the format of a single line and produce a structured `LogEvent`.
-fn parse_line(index: usize, line_trimmed: &str, raw_line: &str) -> Option<LogEvent> {
+/// What a cell shows is always a span of `raw_line`; nothing is made up.
+fn parse_line(index: usize, raw_line: &str) -> LogEvent {
+    let line_trimmed = raw_line.trim();
+    let lead = raw_line.len() - raw_line.trim_start().len();
+    let whole = 0..raw_line.len();
+
+    if line_trimmed.is_empty() {
+        return LogEvent::new(index, infer_incrementing_timestamp(index), String::new(), String::new(), raw_line.to_string())
+            .without_time()
+            .with_span("message", Some(whole));
+    }
+
     // Try parsing JSON log line first
     if line_trimmed.starts_with('{') && line_trimmed.ends_with('}') {
         if let Ok(json_val) = serde_json::from_str::<Value>(line_trimmed) {
             if let Some(event) = parse_json_log_event(index, &json_val, raw_line) {
-                return Some(event);
+                return event;
             }
         }
     }
@@ -113,19 +143,9 @@ fn parse_line(index: usize, line_trimmed: &str, raw_line: &str) -> Option<LogEve
     // Try Logcat format
     if let Some(caps) = RE_LOGCAT.captures(line_trimmed) {
         let time_str = caps.get(1).map_or("", |m| m.as_str()).to_string();
-        let level_code = caps.get(2).map_or("I", |m| m.as_str());
-        let tag = caps.get(3).map_or("app", |m| m.as_str()).to_string();
+        let level_text = caps.get(2).map_or("", |m| m.as_str());
+        let tag = caps.get(3).map_or("", |m| m.as_str());
         let payload = caps.get(4).map_or("", |m| m.as_str()).to_string();
-
-        let level = match level_code {
-            "F" => LogLevel::Fatal,
-            "E" => LogLevel::Error,
-            "W" => LogLevel::Warn,
-            "I" => LogLevel::Info,
-            "D" => LogLevel::Debug,
-            "V" => LogLevel::Verbose,
-            _ => LogLevel::Unknown,
-        };
 
         // The format has no year: read it in a fixed one so files compare.
         let parsed = NaiveDateTime::parse_from_str(&format!("{PLACEHOLDER_YEAR}-{time_str}"), "%Y-%m-%d %H:%M:%S%.f")
@@ -133,73 +153,228 @@ fn parse_line(index: usize, line_trimmed: &str, raw_line: &str) -> Option<LogEve
             .map(|ndt| ndt.and_utc().timestamp() as f64 + (ndt.and_utc().timestamp_subsec_micros() as f64 / 1_000_000.0));
         let timestamp = parsed.unwrap_or_else(|| infer_incrementing_timestamp(index));
         let event = LogEvent::new(index, timestamp, time_str, payload, raw_line.to_string())
-            .with_metadata(level, &tag);
-        return Some(if parsed.is_some() { event } else { event.without_time() });
+            .with_metadata(Some(level_text), Some(tag))
+            .with_span("timestamp", group_range(&caps, 1, lead))
+            .with_span("level", group_range(&caps, 2, lead))
+            .with_span("module", group_range(&caps, 3, lead))
+            .with_span("message", group_range(&caps, 4, lead));
+        return if parsed.is_some() { event } else { event.without_time() };
     }
 
     // Try Syslog format
     if let Some(caps) = RE_SYSLOG.captures(line_trimmed) {
         let time_str = caps.get(1).map_or("", |m| m.as_str()).to_string();
-        let tag = caps.get(3).map_or("sys", |m| m.as_str()).to_string();
+        let tag = caps.get(3).map_or("", |m| m.as_str());
         let payload = caps.get(4).map_or("", |m| m.as_str()).to_string();
-        let level = LogLevel::from_str(&payload);
 
         let parsed = NaiveDateTime::parse_from_str(&format!("{PLACEHOLDER_YEAR} {time_str}"), "%Y %b %e %H:%M:%S")
             .ok()
             .map(|ndt| ndt.and_utc().timestamp() as f64);
         let timestamp = parsed.unwrap_or_else(|| infer_incrementing_timestamp(index));
         let event = LogEvent::new(index, timestamp, time_str, payload, raw_line.to_string())
-            .with_metadata(level, &tag);
-        return Some(if parsed.is_some() { event } else { event.without_time() });
+            .with_metadata(None, Some(tag))
+            .with_span("timestamp", group_range(&caps, 1, lead))
+            .with_span("module", group_range(&caps, 3, lead))
+            .with_span("message", group_range(&caps, 4, lead));
+        return if parsed.is_some() { event } else { event.without_time() };
     }
 
-    // Try Standard timestamped / tagged format
+    // Standard timestamped / tagged format. The level is only a level when
+    // the word is one; otherwise the word belongs to the message.
+    let with_level = RE_STANDARD.captures(line_trimmed).filter(|caps| {
+        // A lone letter (`E`) is only a level after a timestamp: "I think"
+        // at the start of a line is a sentence.
+        caps.get(2).is_none_or(|m| {
+            LogLevel::from_token(m.as_str()) != LogLevel::Unknown
+                && (m.as_str().len() > 1 || caps.get(1).is_some())
+        })
+    });
+    let (caps, level_group, tag_group, msg_group) = match with_level {
+        Some(caps) => (caps, Some(2), 3, 4),
+        None => (
+            RE_STANDARD_NO_LEVEL
+                .captures(line_trimmed)
+                .expect("RE_STANDARD_NO_LEVEL matches every line"),
+            None,
+            2,
+            3,
+        ),
+    };
+    let ts_group = 1;
+
     let mut timestamp = infer_incrementing_timestamp(index);
     let mut has_time = false;
-    let mut time_str = format!("{:.3}", timestamp);
-    let mut tag = "app".to_string();
-    let mut payload = raw_line.to_string();
-
-    if let Some(caps) = RE_STANDARD.captures(line_trimmed) {
-        if let Some(ts_match) = caps.get(1) {
-            let s = ts_match.as_str();
-            time_str = s.to_string();
-            if let Ok(dt) = DateTime::parse_from_rfc3339(s) {
-                timestamp = dt.timestamp() as f64 + (dt.timestamp_subsec_micros() as f64 / 1_000_000.0);
-                has_time = true;
-            } else if let Ok(ndt) = NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S%.f") {
-                timestamp = ndt.and_utc().timestamp() as f64 + (ndt.and_utc().timestamp_subsec_micros() as f64 / 1_000_000.0);
-                has_time = true;
-            } else if let Ok(ndt) = NaiveDateTime::parse_from_str(s, "%Y/%m/%d %H:%M:%S") {
-                timestamp = ndt.and_utc().timestamp() as f64;
-                has_time = true;
-            }
-        }
-
-        if let Some(tag_match) = caps.get(3) {
-            tag = tag_match.as_str().to_string();
-        }
-
-        if let Some(p_match) = caps.get(4) {
-            let p = p_match.as_str().trim();
-            if !p.is_empty() {
-                payload = p.to_string();
-            }
+    let mut time_str = String::new();
+    if let Some(ts_match) = caps.get(ts_group) {
+        let s = ts_match.as_str();
+        time_str = s.to_string();
+        if let Some(t) = read_timestamp(s) {
+            timestamp = t;
+            has_time = true;
         }
     }
 
-    let level = LogLevel::from_str(line_trimmed);
+    let level_range = level_group.and_then(|g| group_range(&caps, g, lead));
+    let tag_range = group_range(&caps, tag_group, lead);
+    let mut msg_range = group_range(&caps, msg_group, lead).filter(|r| !r.is_empty());
+    // A line with nothing recognised in it is all message, as written.
+    if caps.get(ts_group).is_none() && level_range.is_none() && tag_range.is_none() {
+        msg_range = Some(0..raw_line.len());
+    }
+    let msg_range = msg_range.unwrap_or(0..raw_line.len());
+    let level_text = level_range.as_ref().map(|r| &raw_line[r.clone()]);
+    let tag = tag_range.as_ref().map(|r| &raw_line[r.clone()]);
+    let payload = raw_line[msg_range.clone()].to_string();
+
     let event = LogEvent::new(index, timestamp, time_str, payload, raw_line.to_string())
-        .with_metadata(level, &tag);
-    Some(if has_time { event } else { event.without_time() })
+        .with_metadata(level_text, tag)
+        .with_span("timestamp", group_range(&caps, ts_group, lead))
+        .with_span("level", level_range)
+        .with_span("module", tag_range)
+        .with_span("message", Some(msg_range));
+    if has_time { event } else { event.without_time() }
 }
 
 /// Year assumed for formats that carry no year (logcat, syslog).
 const PLACEHOLDER_YEAR: i32 = 1972;
 
+static RE_TZ_SUFFIX: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?:Z|[+-]\d{2}:?\d{2})$").unwrap());
+
+fn clock_seconds(ndt: NaiveDateTime) -> f64 {
+    let utc = ndt.and_utc();
+    utc.timestamp() as f64 + f64::from(utc.timestamp_subsec_micros()) / 1_000_000.0
+}
+
+/// Read a time as written in a log line, on the file's own clock: a zone
+/// suffix is dropped, never converted, so files compare as written. Knows
+/// every layout the parser reads (ISO-like, logcat, syslog).
+pub fn read_timestamp(text: &str) -> Option<f64> {
+    let t = text.trim();
+    if let Ok(dt) = DateTime::parse_from_rfc3339(t) {
+        return Some(clock_seconds(dt.naive_local()));
+    }
+    let bare = RE_TZ_SUFFIX.replace(t, "");
+    let bare = bare.trim_end();
+    for fmt in [
+        "%Y-%m-%d %H:%M:%S%.f",
+        "%Y-%m-%dT%H:%M:%S%.f",
+        "%Y/%m/%d %H:%M:%S%.f",
+        "%Y/%m/%dT%H:%M:%S%.f",
+    ] {
+        if let Ok(ndt) = NaiveDateTime::parse_from_str(bare, fmt) {
+            return Some(clock_seconds(ndt));
+        }
+    }
+    if let Ok(ndt) = NaiveDateTime::parse_from_str(&format!("{PLACEHOLDER_YEAR}-{t}"), "%Y-%m-%d %H:%M:%S%.f") {
+        return Some(clock_seconds(ndt));
+    }
+    if let Ok(ndt) = NaiveDateTime::parse_from_str(&format!("{PLACEHOLDER_YEAR} {t}"), "%Y %b %e %H:%M:%S") {
+        return Some(clock_seconds(ndt));
+    }
+    None
+}
+
 /// Deterministic pseudo-timestamp for formats without a parseable timestamp.
 fn infer_incrementing_timestamp(index: usize) -> f64 {
     index as f64 * 0.001
+}
+
+fn skip_ws(b: &[u8], mut i: usize) -> usize {
+    while i < b.len() && b[i].is_ascii_whitespace() {
+        i += 1;
+    }
+    i
+}
+
+/// Index just after the closing quote of the string starting at `i`.
+fn string_end(b: &[u8], i: usize) -> usize {
+    let mut j = i + 1;
+    while j < b.len() {
+        match b[j] {
+            b'\\' => j += 2,
+            b'"' => return j + 1,
+            _ => j += 1,
+        }
+    }
+    b.len()
+}
+
+/// Index just after the object or array starting at `i`.
+fn container_end(b: &[u8], i: usize) -> usize {
+    let mut depth = 0usize;
+    let mut j = i;
+    while j < b.len() {
+        match b[j] {
+            b'"' => {
+                j = string_end(b, j);
+                continue;
+            }
+            b'{' | b'[' => depth += 1,
+            b'}' | b']' => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    return j + 1;
+                }
+            }
+            _ => {}
+        }
+        j += 1;
+    }
+    b.len()
+}
+
+/// Byte range of each top-level value of a JSON object line. A string value
+/// is the text between its quotes, escapes kept as written; every other
+/// value is its whole token.
+pub fn json_value_spans(line: &str) -> HashMap<String, Range<usize>> {
+    let b = line.as_bytes();
+    let mut spans = HashMap::new();
+    let mut i = skip_ws(b, 0);
+    if b.get(i) != Some(&b'{') {
+        return spans;
+    }
+    i += 1;
+    loop {
+        i = skip_ws(b, i);
+        match b.get(i) {
+            Some(b',') => {
+                i += 1;
+                continue;
+            }
+            Some(b'"') => {}
+            _ => return spans,
+        }
+        let key_end = string_end(b, i);
+        let Some(key) = line.get(i..key_end).and_then(|k| serde_json::from_str::<String>(k).ok()) else {
+            return spans;
+        };
+        i = skip_ws(b, key_end);
+        if b.get(i) != Some(&b':') {
+            return spans;
+        }
+        i = skip_ws(b, i + 1);
+        let Some(&first) = b.get(i) else { return spans };
+        let (range, end) = match first {
+            b'"' => {
+                let end = string_end(b, i);
+                (i + 1..end.saturating_sub(1).max(i + 1), end)
+            }
+            b'{' | b'[' => {
+                let end = container_end(b, i);
+                (i..end, end)
+            }
+            _ => {
+                let mut end = i;
+                while end < b.len() && !matches!(b[end], b',' | b'}') && !b[end].is_ascii_whitespace() {
+                    end += 1;
+                }
+                (i..end, end)
+            }
+        };
+        spans.insert(key, range);
+        i = end;
+    }
 }
 
 fn parse_json_log_event(
@@ -207,49 +382,51 @@ fn parse_json_log_event(
     json: &Value,
     raw_line: &str,
 ) -> Option<LogEvent> {
+    let key_spans = json_value_spans(raw_line);
+    let text_of = |key: &str| key_spans.get(key).map(|r| raw_line[r.clone()].to_string());
+
     let mut timestamp = infer_incrementing_timestamp(index);
     let mut has_time = false;
-    let mut time_str = format!("{:.3}", timestamp);
-
+    let mut time_str = String::new();
+    let mut time_key: Option<&str> = None;
     for key in &["timestamp", "time", "@timestamp", "datetime", "date"] {
         if let Some(val) = json.get(*key).and_then(|v| v.as_str()) {
-            time_str = val.to_string();
-            if let Ok(dt) = DateTime::parse_from_rfc3339(val) {
-                timestamp = dt.timestamp() as f64 + (dt.timestamp_subsec_micros() as f64 / 1_000_000.0);
+            time_str = text_of(key).unwrap_or_else(|| val.to_string());
+            time_key = Some(key);
+            if let Some(t) = read_timestamp(val) {
+                timestamp = t;
                 has_time = true;
             }
             break;
         }
     }
 
-    let mut level = LogLevel::Info;
+    let mut level_key: Option<&str> = None;
     for key in &["level", "severity", "loglevel", "log_level"] {
-        if let Some(val) = json.get(*key).and_then(|v| v.as_str()) {
-            level = LogLevel::from_str(val);
+        if json.get(*key).and_then(|v| v.as_str()).is_some() {
+            level_key = Some(key);
             break;
         }
     }
 
-    let mut tag = "app".to_string();
     let mut tag_key: Option<&str> = None;
     for key in &["service", "tag", "logger", "module", "component", "caller"] {
-        if let Some(val) = json.get(*key).and_then(|v| v.as_str()) {
-            tag = val.to_string();
+        if json.get(*key).and_then(|v| v.as_str()).is_some() {
             tag_key = Some(key);
             break;
         }
     }
 
-    let mut payload = raw_line.to_string();
+    let mut msg_key: Option<&str> = None;
     for key in &["message", "msg", "log", "payload", "text"] {
-        if let Some(val) = json.get(*key).and_then(|v| v.as_str()) {
-            payload = val.to_string();
+        if json.get(*key).and_then(|v| v.as_str()).is_some() {
+            msg_key = Some(key);
             break;
         }
     }
+    let payload = msg_key.and_then(text_of).unwrap_or_else(|| raw_line.to_string());
 
-    let mut event = LogEvent::new(index, timestamp, time_str, payload.clone(), raw_line.to_string())
-        .with_metadata(level, &tag);
+    let mut event = LogEvent::new(index, timestamp, time_str, payload, raw_line.to_string());
     if !has_time {
         event = event.without_time();
     }
@@ -260,17 +437,24 @@ fn parse_json_log_event(
             event.set_field(key, json_to_log_value(value));
         }
     }
+    event.spans = key_spans.clone();
 
-    // Ensure canonical `module`/`message` fields exist even when the source
-    // JSON used a different key name.
-    if tag_key.is_some() && !json.get("module").is_some() {
-        event.set_field("module", LogValue::Str(tag.clone()));
+    // Canonical fields, in the text the line has for them.
+    let canonical = [("timestamp", time_key), ("level", level_key), ("module", tag_key), ("message", msg_key)];
+    for (name, key) in canonical {
+        if let Some(range) = key.and_then(|k| key_spans.get(k)) {
+            event.spans.insert(name.to_string(), range.clone());
+            if name != "timestamp" {
+                event.set_field(name, LogValue::Str(raw_line[range.clone()].to_string()));
+            }
+        }
     }
-    if !json.get("message").is_some() && !json.get("msg").is_some() {
-        event.set_field("message", LogValue::Str(payload.clone()));
+    if msg_key.is_none() {
+        event.spans.insert("message".to_string(), 0..raw_line.len());
     }
-    event.set_field("level", LogValue::Str(level.as_str().to_string()));
-    event.set_field("time", LogValue::Str(event.time_str.clone()));
+    if !event.time_str.is_empty() {
+        event.set_field("time", LogValue::Str(event.time_str.clone()));
+    }
 
     Some(event)
 }

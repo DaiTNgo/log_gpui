@@ -11,62 +11,11 @@ use gpui_component::{h_flex, ActiveTheme as _, Icon, Selectable as _, Sizable as
 use gpui_kit::assets::IconName;
 
 impl AppView {
-    /// Editor toolbar: search field, and active filter chips.
+    /// Editor toolbar: search field and the view switch.
     pub(super) fn render_editor_toolbar(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
         let raw_mode = self.view_mode == ViewMode::Raw;
         let is_log = self.active_tab_is_log_file();
-        let mut filter_chips = h_flex().gap_1();
-        for (ix, cf) in self.filter_state.columns.iter().enumerate() {
-            if raw_mode || !cf.is_active() {
-                continue;
-            }
-            let label = self
-                .filter_index
-                .column(&cf.column)
-                .map_or_else(|| cf.column.clone(), |c| c.label.clone());
-            let mut parts: Vec<String> = Vec::new();
-            for folded in &cf.values {
-                let shown = self
-                    .filter_index
-                    .column(&cf.column)
-                    .and_then(|c| c.values.iter().find(|v| &v.folded == folded))
-                    .map_or_else(|| folded.clone(), |v| v.display.clone());
-                parts.push(shown);
-            }
-            for text in &cf.custom {
-                parts.push(format!("“{}”", text));
-            }
-            let chip = format!("{} {} {}", label, if cf.hide { "≠" } else { ":" }, parts.join(", "));
-            let key = cf.column.clone();
-            filter_chips = filter_chips.child(
-                Button::new(("filter-chip", ix))
-                    .outline()
-                    .xsmall()
-                    .label(chip)
-                    .icon(IconName::Close)
-                    .on_click(cx.listener(move |this, _, _window, cx| {
-                        this.filter_clear_column(&key, cx);
-                    })),
-            );
-        }
-        if !raw_mode && self.filter_state.time_range.is_active() {
-            let tr = &self.filter_state.time_range;
-            let chip = format!("Time {} – {}", tr.from, tr.to);
-            filter_chips = filter_chips.child(
-                Button::new("filter-chip-time")
-                    .outline()
-                    .xsmall()
-                    .label(chip)
-                    .icon(IconName::Close)
-                    .on_click(cx.listener(|this, _, _window, cx| {
-                        this.filter_state.set_time_range("", "");
-                        this.filter_ui.inputs_dirty = true;
-                        this.apply_filters_and_refresh(cx);
-                    })),
-            );
-        }
-
-        let parse_error = self.search_state.parse_error.as_ref().map(|e| {
+        let parse_error = self.focus.search().parse_error.as_ref().map(|e| {
             let msg = e.message();
             if msg.chars().count() > 48 {
                 format!("! {}", msg.chars().take(48).collect::<String>())
@@ -78,7 +27,7 @@ impl AppView {
         let (match_cur, match_total) = if raw_mode {
             self.raw.match_display()
         } else {
-            self.search_state.current_match_display()
+            self.focus.search().current_match_display()
         };
 
         h_flex()
@@ -124,7 +73,7 @@ impl AppView {
                                     ),
                             )
                             .when(
-                                self.search_state.is_open && !self.search_state.query.is_empty(),
+                                self.focus.search().is_open && !self.focus.search().query.is_empty(),
                                 |this| {
                                     this.child(
                                         Button::new("search-clear")
@@ -135,6 +84,9 @@ impl AppView {
                                                 this.search_input.update(cx, |state, cx| {
                                                     state.set_value(SharedString::from(""), window, cx);
                                                 });
+                                                // set_value does not emit a Change event, so
+                                                // the query is cleared here.
+                                                this.focus.search_mut().query.clear();
                                                 this.run_search(cx);
                                                 this.search_input
                                                     .update(cx, |state, cx| state.focus(window, cx));
@@ -176,7 +128,6 @@ impl AppView {
                             ),
                     ),
             )
-            .child(filter_chips)
             .when(is_log, |this| {
                 this.child(
                     ButtonGroup::new("view-mode")
@@ -198,17 +149,6 @@ impl AppView {
                                     cx,
                                 );
                             }
-                        })),
-                )
-                .child(
-                    Button::new("quick-settings")
-                        .ghost()
-                        .small()
-                        .icon(IconName::Settings2)
-                        .selected(self.quick_settings_open)
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.quick_settings_open = !this.quick_settings_open;
-                            cx.notify();
                         })),
                 )
             })

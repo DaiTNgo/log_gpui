@@ -11,16 +11,34 @@
 use super::AppView;
 use crate::column::FieldMaxChars;
 use crate::filter::FilterState;
-use crate::search::SearchState;
-use crate::space_view::{
-    BuiltView, ParsedFile, build_file_view, build_space_view, capture_markers_merged,
-};
-use crate::workspace::log_space::{LogSpace, LogSpaceKind, collect_markers};
+use crate::focus::FocusTabs;
+use crate::space_view::{BuiltView, ParsedFile, build_file_view, build_space_view};
+use crate::workspace::log_space::{LogSpace, LogSpaceKind};
 use crate::workspace::project::Project;
 use crate::workspace::working_set::{TabSessionState, TabTarget, ViewMode, WorkingSet};
 use gpui::{Context, ScrollStrategy};
-use std::collections::HashSet;
 use std::path::Path;
+
+/// What a tab's view opens with.
+struct OpenView {
+    built: BuiltView,
+    filter: FilterState,
+    focus: FocusTabs,
+    source_visible: bool,
+    name: String,
+}
+
+impl OpenView {
+    fn empty() -> Self {
+        Self {
+            built: BuiltView::default(),
+            filter: FilterState::new(),
+            focus: FocusTabs::default(),
+            source_visible: false,
+            name: String::new(),
+        }
+    }
+}
 
 impl AppView {
     /// Whether the focused tab shows log lines (gates the context sidebar).
@@ -54,27 +72,20 @@ impl AppView {
     /// Persist the live editor state into the active tab's session so no
     /// context is lost when switching or closing tabs.
     ///
-    /// The Filter belongs to the view (the Log Space, or the File View) and the
-    /// Markers to the files: they are written to the Log Space so they survive
-    /// closing the tab.
+    /// The Filter belongs to the view (the Log Space, or the File View). Markers
+    /// are edited on the files of the Log Space directly.
     pub(crate) fn persist_active_session(&mut self) {
         self.flush_scratch_saves();
-        let (search, layout, selected_row, mode) = (
-            self.search_state.clone(),
+        let (layout, selected_row, mode) = (
             self.column_layout.clone(),
             self.selected_row_pos,
             self.view_mode,
         );
         let filter = self.filter_state.clone();
-        // In the Raw View the Markers are edited on the files directly, and the
-        // parsed rows are stale; they must not overwrite them.
-        let markers_live = self.view_mode == ViewMode::Parsed;
-        let entries = if markers_live { std::mem::take(&mut self.all_entries) } else { Vec::new() };
-        let loaded: HashSet<String> = self.parsed_files.keys().cloned().collect();
+        let focus = self.focus.clone();
         let mut target = None;
         if let Some(proj) = self.workspace_state.active_project_mut() {
             if let Some(tab) = proj.working_set.active_tab_mut() {
-                tab.session.search = search;
                 tab.session.column_layout = layout;
                 tab.session.selected_row = selected_row;
                 tab.session.mode = mode;
@@ -84,28 +95,19 @@ impl AppView {
                 Some(TabTarget::LogSpace { space_id }) => {
                     if let Some(space) = proj.log_space_mut(&space_id) {
                         space.filter = filter;
+                        space.focus = focus;
                         space.last_mode = mode;
-                        if markers_live {
-                            capture_markers_merged(space, &entries, &loaded);
-                        }
                     }
                 }
                 Some(TabTarget::FileView { space_id, file_id }) => {
                     if let Some(space) = proj.log_space_mut(&space_id) {
                         space.set_file_filter(&file_id, filter);
+                        space.set_file_focus(&file_id, focus);
                         space.last_mode = mode;
-                        if markers_live && loaded.contains(&file_id) {
-                            if let Some(file) = space.file_mut(&file_id) {
-                                file.markers = collect_markers(&entries);
-                            }
-                        }
                     }
                 }
                 _ => {}
             }
-        }
-        if markers_live {
-            self.all_entries = entries;
         }
     }
 
@@ -142,20 +144,32 @@ impl AppView {
         self.reparse_edited_scratch_files();
     }
 
-    /// Build the rows of a tab's view.
-    fn build_view_for(&mut self, target: &TabTarget) -> Option<(BuiltView, FilterState, bool, String)> {
+    /// Build the rows of a tab's view, with the Filter and Focus Tabs it keeps.
+    fn build_view_for(&mut self, target: &TabTarget) -> Option<OpenView> {
         let space = self.active_project()?.log_space(target.space_id()?)?.clone();
         self.ensure_space_loaded(&space);
         match target {
             TabTarget::LogSpace { .. } => {
                 let built = build_space_view(&space, &self.parsed_files);
-                Some((built, space.filter.clone(), space.source_column_shown(), space.name.clone()))
+                Some(OpenView {
+                    built,
+                    filter: space.filter.clone(),
+                    focus: space.focus.clone(),
+                    source_visible: space.source_column_shown(),
+                    name: space.name.clone(),
+                })
             }
             TabTarget::FileView { file_id, .. } => {
                 let file = space.file(file_id)?;
                 let parsed = self.parsed_files.get(file_id)?;
                 let built = build_file_view(file, parsed);
-                Some((built, space.file_filter(file_id), false, file.display_name.clone()))
+                Some(OpenView {
+                    built,
+                    filter: space.file_filter(file_id),
+                    focus: space.file_focus(file_id),
+                    source_visible: false,
+                    name: file.display_name.clone(),
+                })
             }
             TabTarget::InvestigationBoard { .. } => None,
         }
@@ -173,22 +187,24 @@ impl AppView {
 
         match restored {
             Some((session, target)) => {
-                self.search_state = session.search;
+                self.search_input_dirty = true;
+                self.focus_find_dirty = true;
                 self.column_layout = session.column_layout;
                 self.selected_row_pos = session.selected_row;
                 self.view_mode = session.mode;
                 self.raw.clear_search();
 
-                if let Some((built, filter, source_visible, name)) = self.build_view_for(&target) {
-                    self.install_view(built, filter, source_visible, name);
+                if let Some(open) = self.build_view_for(&target) {
+                    self.install_view(open);
                 } else if target.is_log_view() {
                     // The Log Space or file is gone: show nothing.
-                    self.install_view(BuiltView::default(), FilterState::new(), false, String::new());
+                    self.install_view(OpenView::empty());
                 }
             }
             None => {
-                self.install_view(BuiltView::default(), FilterState::new(), false, String::new());
-                self.search_state = SearchState::new();
+                self.install_view(OpenView::empty());
+                self.search_input_dirty = true;
+                self.focus_find_dirty = true;
                 self.column_layout = crate::column::ColumnLayoutState::new();
                 self.selected_row_pos = None;
                 self.view_mode = ViewMode::Parsed;
@@ -197,23 +213,30 @@ impl AppView {
 
         self.apply_filters_and_refresh(cx);
         if self.view_mode == ViewMode::Raw {
-            self.run_raw_search(cx);
+            self.run_raw_search_keep_position(cx);
+            self.raw.current = 0;
         }
-        if let Some(pos) = self.selected_row_pos {
-            if pos < self.visible_indices.len() {
-                self.scroll_handle.scroll_to_item(pos, ScrollStrategy::Center);
+        match self.focus.active_tab().current {
+            // The tab's own current line wins when it lists it.
+            Some(_) => self.apply_current_line(cx),
+            None => {
+                if let Some(pos) = self.selected_row_pos {
+                    if pos < self.visible_indices.len() {
+                        self.scroll_handle.scroll_to_item(pos, ScrollStrategy::Center);
+                    }
+                }
+                self.adopt_view_selection();
             }
         }
     }
 
     /// Put a built view into the live fields.
-    fn install_view(
-        &mut self,
-        built: BuiltView,
-        filter: FilterState,
-        source_visible: bool,
-        name: String,
-    ) {
+    fn install_view(&mut self, open: OpenView) {
+        let OpenView { built, filter, focus, source_visible, name } = open;
+        self.focus = focus;
+        // Search of the open tab shows its Matches as soon as it has a query.
+        let has_query = !self.focus.search().query.trim().is_empty();
+        self.focus.search_mut().is_open = has_query;
         let fresh = self.column_layout.max_chars == FieldMaxChars::new();
         self.no_timestamp_files = built.no_timestamp_files.iter().cloned().collect();
         self.all_entries = built.entries;

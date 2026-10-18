@@ -1,5 +1,7 @@
-use crate::marker::MarkerType;
+use crate::marker::TextMarker;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::ops::Range;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub enum LogLevel {
@@ -34,6 +36,20 @@ impl LogLevel {
             LogLevel::Error => "E",
             LogLevel::Fatal => "F",
             LogLevel::Unknown => "?",
+        }
+    }
+
+    /// The level a word stands for when the whole word is a level name or
+    /// abbreviation (`E`, `err`, `WARNING`), else `Unknown`.
+    pub fn from_token(token: &str) -> Self {
+        match token.trim().to_ascii_lowercase().as_str() {
+            "f" | "fatal" | "crit" | "critical" => LogLevel::Fatal,
+            "e" | "err" | "error" => LogLevel::Error,
+            "w" | "wrn" | "warn" | "warning" => LogLevel::Warn,
+            "i" | "inf" | "info" => LogLevel::Info,
+            "d" | "dbg" | "debug" => LogLevel::Debug,
+            "v" | "verb" | "verbose" | "trace" => LogLevel::Verbose,
+            _ => LogLevel::Unknown,
         }
     }
 
@@ -77,28 +93,35 @@ pub struct LogEntry {
     pub delta_time_ms: Option<f64>,
     /// Tag / Service / Logger module name (e.g. "auth", "api", "database")
     pub tag: String,
-    /// Log severity level
+    /// Log severity level, as understood from `level_text`
     pub level: LogLevel,
+    /// The level exactly as written in the line (`err`, `E`, `ERROR`); empty
+    /// when the line has none.
+    #[serde(default)]
+    pub level_text: String,
+    /// Byte range in `raw_line` of each field read from the line.
+    #[serde(default)]
+    pub spans: HashMap<String, Range<usize>>,
+    /// Line number of the Parent Line when this is a Continuation Line.
+    #[serde(default)]
+    pub parent: Option<usize>,
     /// Parsed message payload
     pub payload: String,
     /// Raw unparsed line content
     pub raw_line: String,
-    /// Custom Marker Type set by user or parser
-    pub marker: Option<MarkerType>,
-    /// Optional note written by user
-    pub note: Option<String>,
+    /// Colors the user painted on stretches of this line's text.
+    #[serde(default)]
+    pub markers: Vec<TextMarker>,
     /// Request ID for distributed tracing investigation
     pub request_id: Option<String>,
     /// Trace ID
     pub trace_id: Option<String>,
     /// Key-value fields from structured JSON log
     pub json_fields: Vec<(String, String)>,
-    /// Additional lines if this is a multi-line exception or stack trace
-    pub sub_lines: Vec<String>,
-    /// Whether multi-line content is expanded in editor
-    pub is_expanded: bool,
-    /// Highlight marker color if matched by a Marker filter (legacy support)
-    pub marker_color: Option<String>,
+    /// Generation of the file the line was read in; line numbers start again
+    /// from 1 in each Generation.
+    #[serde(default)]
+    pub generation: u32,
     /// `file_id` of the Source File when the entry belongs to a Log Space.
     #[serde(skip)]
     pub file_id: Option<std::sync::Arc<str>>,
@@ -118,9 +141,6 @@ impl LogEntry {
         payload: String,
         raw_line: String,
     ) -> Self {
-        // Auto-assign passive error/warn marker if applicable
-        let auto_marker = MarkerType::from_log_level(level);
-
         Self {
             index,
             timestamp,
@@ -129,35 +149,18 @@ impl LogEntry {
             delta_time_ms: None,
             tag,
             level,
+            level_text: if level == LogLevel::Unknown { String::new() } else { level.as_str().to_string() },
+            spans: HashMap::new(),
+            parent: None,
             payload,
             raw_line,
-            marker: auto_marker,
-            note: None,
+            markers: Vec::new(),
             request_id: None,
             trace_id: None,
             json_fields: Vec::new(),
-            sub_lines: Vec::new(),
-            is_expanded: false,
-            marker_color: None,
+            generation: 0,
             file_id: None,
             source: None,
-        }
-    }
-
-    /// Effective marker: user-assigned marker or passive error/warn marker
-    pub fn effective_marker(&self) -> Option<MarkerType> {
-        self.marker.or_else(|| MarkerType::from_log_level(self.level))
-    }
-
-    pub fn is_bookmarked(&self) -> bool {
-        matches!(self.marker, Some(MarkerType::Bookmark))
-    }
-
-    pub fn toggle_bookmark(&mut self) {
-        if self.is_bookmarked() {
-            self.marker = MarkerType::from_log_level(self.level);
-        } else {
-            self.marker = Some(MarkerType::Bookmark);
         }
     }
 }
@@ -169,18 +172,33 @@ impl From<&crate::parser::event::LogEvent> for LogEntry {
 }
 
 impl LogEntry {
-    /// Convert a schema-typed `LogEvent` back into the rendering model.
+    /// Whether this line continues the line above it (a stack trace line).
+    pub fn is_continuation(&self) -> bool {
+        self.parent.is_some()
+    }
+
+    /// The text of the field `name` exactly as stored in the line.
+    pub fn span_text(&self, name: &str) -> Option<&str> {
+        self.spans.get(name).and_then(|r| self.raw_line.get(r.clone()))
+    }
+
+    /// Convert a schema-typed `LogEvent` back into the rendering model. Every
+    /// text the entry shows is read from the line itself.
     pub fn from_event(event: &crate::parser::event::LogEvent) -> Self {
-        let level = event
-            .get_field("level")
-            .and_then(|v| v.as_str())
-            .map(LogLevel::from_str)
-            .unwrap_or(LogLevel::Unknown);
+        let level_text = event
+            .span_text("level")
+            .map(str::to_string)
+            .or_else(|| event.get_field("level").and_then(|v| v.as_str()).map(str::to_string))
+            .unwrap_or_default();
+        let level = match LogLevel::from_token(&level_text) {
+            LogLevel::Unknown if !level_text.is_empty() => LogLevel::from_str(&level_text),
+            known => known,
+        };
         let tag = event
-            .get_field("module")
-            .and_then(|v| v.as_str())
-            .unwrap_or("app")
-            .to_string();
+            .span_text("module")
+            .map(str::to_string)
+            .or_else(|| event.get_field("module").and_then(|v| v.as_str()).map(str::to_string))
+            .unwrap_or_default();
         let request_id = event.get_field("requestId").and_then(|v| v.as_str()).map(|s| s.to_string());
 
         let mut json_fields: Vec<(String, String)> = Vec::new();
@@ -188,7 +206,14 @@ impl LogEntry {
             if matches!(name.as_str(), "level" | "module" | "time" | "message" | "requestId") {
                 continue;
             }
-            json_fields.push((name.clone(), value.to_string_value()));
+            let text = match value {
+                crate::parser::event::LogValue::Null => String::new(),
+                other => event
+                    .span_text(name)
+                    .map(str::to_string)
+                    .unwrap_or_else(|| other.to_string_value()),
+            };
+            json_fields.push((name.clone(), text));
         }
         json_fields.sort();
 
@@ -201,6 +226,9 @@ impl LogEntry {
             event.message.clone(),
             event.raw_line.clone(),
         );
+        entry.level_text = level_text;
+        entry.spans = event.spans.clone();
+        entry.parent = event.parent;
         entry.has_time = event.has_time;
         entry.request_id = request_id;
         entry.json_fields = json_fields;

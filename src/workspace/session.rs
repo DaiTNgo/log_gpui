@@ -12,6 +12,12 @@ pub struct SessionManifest {
     pub active_project_id: Option<String>,
     /// All registered projects and their full state.
     pub projects: Vec<ProjectSnapshot>,
+    /// Focus Pane visibility and height.
+    #[serde(default)]
+    pub focus_pane: crate::workspace::state::FocusPaneState,
+    /// Colors of the Search and Focus Find matches.
+    #[serde(default)]
+    pub match_colors: crate::palette::MatchColors,
 }
 
 /// Project-level snapshot inside a session manifest.
@@ -23,10 +29,23 @@ pub struct ProjectSnapshot {
     pub log_spaces: Vec<crate::workspace::log_space::LogSpace>,
     pub working_set: crate::workspace::working_set::WorkingSet,
     pub investigation_cases: Vec<crate::workspace::investigation::InvestigationCase>,
+    #[serde(default)]
+    pub highlight_rules: Vec<crate::highlight::HighlightRule>,
+    #[serde(default)]
+    pub recent_colors: crate::palette::RecentColors,
 }
 
 impl SessionManifest {
-    pub const CURRENT_VERSION: u32 = 3;
+    pub const CURRENT_VERSION: u32 = 4;
+    /// The last format still opened. Version 3 Markers (a whole line with a
+    /// type and a note) are dropped when it is read.
+    const OLDEST_READABLE_VERSION: u32 = 3;
+
+    fn is_readable_version(version: Option<u64>) -> bool {
+        version.is_some_and(|v| {
+            (u64::from(Self::OLDEST_READABLE_VERSION)..=u64::from(Self::CURRENT_VERSION)).contains(&v)
+        })
+    }
 
     /// Capture the current workspace state into a serializable manifest.
     pub fn from_workspace(ws: &WorkspaceState) -> Self {
@@ -40,6 +59,8 @@ impl SessionManifest {
                 log_spaces: p.log_spaces.clone(),
                 working_set: p.working_set.clone(),
                 investigation_cases: p.investigation_cases.clone(),
+                highlight_rules: p.highlight_rules.clone(),
+                recent_colors: p.recent_colors.clone(),
             })
             .collect();
 
@@ -47,6 +68,8 @@ impl SessionManifest {
             version: Self::CURRENT_VERSION,
             active_project_id: ws.active_project_id.clone(),
             projects,
+            focus_pane: ws.focus_pane.clone(),
+            match_colors: ws.match_colors,
         }
     }
 
@@ -61,9 +84,13 @@ impl SessionManifest {
                 log_spaces: p.log_spaces,
                 working_set: p.working_set,
                 investigation_cases: p.investigation_cases,
+                highlight_rules: p.highlight_rules,
+                recent_colors: p.recent_colors,
             });
         }
         ws.active_project_id = self.active_project_id;
+        ws.focus_pane = self.focus_pane;
+        ws.match_colors = self.match_colors;
         ws
     }
 
@@ -76,7 +103,7 @@ impl SessionManifest {
     /// sessions are not converted. Returns `None` for an old or unreadable file.
     pub fn from_json_current(json: &str) -> Option<Self> {
         let value: serde_json::Value = serde_json::from_str(json).ok()?;
-        if value.get("version")?.as_u64()? != u64::from(Self::CURRENT_VERSION) {
+        if !Self::is_readable_version(value.get("version")?.as_u64()) {
             return None;
         }
         serde_json::from_value(value).ok()
@@ -144,9 +171,7 @@ impl SessionPersistence {
                 // Unreadable JSON is an error; a session of an older format is skipped.
                 let value: serde_json::Value = serde_json::from_str(&content)
                     .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
-                if value.get("version").and_then(|v| v.as_u64())
-                    != Some(u64::from(SessionManifest::CURRENT_VERSION))
-                {
+                if !SessionManifest::is_readable_version(value.get("version").and_then(|v| v.as_u64())) {
                     return Ok(None);
                 }
                 serde_json::from_value(value)

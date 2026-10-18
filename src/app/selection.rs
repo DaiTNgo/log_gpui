@@ -1,7 +1,6 @@
 //! Logic: selected entry, markers and error navigation.
 
 use super::AppView;
-use crate::marker::MarkerType;
 use crate::model::{LogEntry, LogLevel};
 use gpui::Context;
 
@@ -21,47 +20,52 @@ impl AppView {
         None
     }
 
-    pub fn cycle_selected_marker(&mut self, cx: &mut Context<Self>) {
-        if let Some(entry) = self.selected_entry_mut() {
-            let next_m = MarkerType::cycle(entry.marker);
-            entry.marker = next_m;
-            self.schedule_session_save(cx);
-            cx.notify();
-        }
-    }
-
-    pub fn set_selected_marker(&mut self, marker: Option<MarkerType>, cx: &mut Context<Self>) {
-        if let Some(entry) = self.selected_entry_mut() {
-            entry.marker = marker;
-            self.schedule_session_save(cx);
-            cx.notify();
-        }
-    }
-
-    pub fn set_selected_note(&mut self, note: Option<String>, cx: &mut Context<Self>) {
-        if let Some(entry) = self.selected_entry_mut() {
-            if note.is_some() && entry.marker.is_none() {
-                entry.marker = Some(MarkerType::Note);
+    /// The text the Inspector shows: the current line as stored, followed by
+    /// its Continuation Lines when it is a Parent Line. Works in both views.
+    pub fn inspector_lines(&self) -> Option<Vec<String>> {
+        use crate::workspace::working_set::ViewMode;
+        let current = self.current_line()?;
+        match self.view_mode {
+            ViewMode::Parsed => {
+                let ix = self.entry_of_line_ref(&current)?;
+                let first = self.all_entries.get(ix)?;
+                let mut lines = vec![first.raw_line.clone()];
+                if !first.is_continuation() {
+                    lines.extend(
+                        self.all_entries[ix + 1..]
+                            .iter()
+                            .take_while(|e| e.is_continuation() && e.file_id == first.file_id)
+                            .map(|e| e.raw_line.clone()),
+                    );
+                }
+                Some(lines)
             }
-            entry.note = note;
-            self.schedule_session_save(cx);
-            cx.notify();
-        }
-    }
-
-    pub fn toggle_row_expansion(&mut self, entry_ix: usize, cx: &mut Context<Self>) {
-        if let Some(entry) = self.all_entries.get_mut(entry_ix) {
-            entry.is_expanded = !entry.is_expanded;
-            self.schedule_session_save(cx);
-            cx.notify();
-        }
-    }
-
-    pub fn toggle_bookmark_current_line(&mut self, cx: &mut Context<Self>) {
-        if let Some(entry) = self.selected_entry_mut() {
-            entry.toggle_bookmark();
-            self.schedule_session_save(cx);
-            cx.notify();
+            ViewMode::Raw => {
+                let section = self.raw_sections().into_iter().find(|s| *s.file_id == *current.file_id)?;
+                let at = current.line.checked_sub(1)?;
+                let text = section.lines.get(at)?.clone();
+                let mut lines = vec![text];
+                // A file edited since it was parsed has no reliable entries.
+                let parsed = self
+                    .parsed_files
+                    .get(&section.file_id)
+                    .filter(|_| !self.raw.edited.contains(&section.file_id));
+                if let Some(parsed) = parsed {
+                    let entries = &parsed.entries;
+                    let start = entries.partition_point(|e| e.index < current.line);
+                    let is_parent = entries
+                        .get(start)
+                        .is_some_and(|e| e.index == current.line && !e.is_continuation());
+                    if is_parent {
+                        for e in entries[start + 1..].iter().take_while(|e| e.is_continuation()) {
+                            if let Some(t) = section.lines.get(e.index - 1) {
+                                lines.push(t.clone());
+                            }
+                        }
+                    }
+                }
+                Some(lines)
+            }
         }
     }
 

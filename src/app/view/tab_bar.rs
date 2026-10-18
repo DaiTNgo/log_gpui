@@ -2,7 +2,7 @@
 
 use super::AppView;
 use crate::workspace::working_set::TabTarget;
-use gpui::{Context, IntoElement};
+use gpui::{Context, IntoElement, Styled};
 use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::tab::{Tab, TabBar};
 use gpui_component::{Sizable as _};
@@ -52,6 +52,7 @@ impl AppView {
         });
 
         TabBar::new("working-set")
+            .bg(crate::ui::main_view::background(cx))
             .selected_index(active_idx.unwrap_or(0))
             .on_click(cx.listener(|this, ix: &usize, _window, cx| this.switch_to_tab(*ix, cx)))
             .children(tabs)

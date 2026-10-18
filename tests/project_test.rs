@@ -220,7 +220,7 @@ fn test_context_sidebar_defaults_hidden_with_filter_and_inspector_open() {
     let cs = ContextSidebarState::new();
     assert!(!cs.visible);
     assert!(!cs.is_collapsed(ContextSection::Filter));
-    assert!(cs.is_collapsed(ContextSection::Marker));
+    assert!(cs.is_collapsed(ContextSection::Highlights));
     assert!(!cs.is_collapsed(ContextSection::Inspector));
     assert!(!cs.is_shown(true));
 }
@@ -228,13 +228,13 @@ fn test_context_sidebar_defaults_hidden_with_filter_and_inspector_open() {
 #[test]
 fn test_context_sidebar_toggle_keeps_section_state() {
     let mut cs = ContextSidebarState::new();
-    cs.reveal(ContextSection::Marker);
+    cs.reveal(ContextSection::Highlights);
     assert!(cs.visible);
     cs.toggle_section(ContextSection::Filter);
     cs.toggle();
     cs.toggle();
     assert!(cs.visible);
-    assert!(!cs.is_collapsed(ContextSection::Marker));
+    assert!(!cs.is_collapsed(ContextSection::Highlights));
     assert!(cs.is_collapsed(ContextSection::Filter));
 }
 
@@ -249,7 +249,7 @@ fn test_context_sidebar_requires_a_log_file_tab() {
 #[test]
 fn test_context_section_labels() {
     let labels: Vec<_> = ContextSection::ALL.iter().map(|t| t.as_str()).collect();
-    assert_eq!(labels, ["Filter", "Marker", "Inspector"]);
+    assert_eq!(labels, ["Filter", "Highlights", "Inspector"]);
 }
 
 #[test]

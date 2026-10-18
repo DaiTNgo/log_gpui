@@ -1,6 +1,5 @@
 use log_gpui::model::LogLevel;
 use log_gpui::parser::text::parse_text_bytes;
-use log_gpui::ui::inspector::format_hex_dump;
 
 #[test]
 fn test_parse_text_logs() {
@@ -16,15 +15,6 @@ fn test_parse_text_logs() {
     assert_eq!(entries[1].index, 2);
     assert_eq!(entries[1].level, LogLevel::Error);
     assert_eq!(entries[1].tag, "BODY");
-}
-
-#[test]
-fn test_hex_dump_formatting() {
-    let data = b"DLT\x01Hello World!";
-    let dump = format_hex_dump(data);
-
-    assert!(dump.contains("44 4c 54 01"));
-    assert!(dump.contains("|DLT.Hello World!|"));
 }
 
 #[test]

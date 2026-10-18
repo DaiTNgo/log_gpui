@@ -1,9 +1,11 @@
 //! UI: root render for `AppView`, composed from the sibling view modules.
 
 mod chrome;
+mod color_bar;
 mod dialogs;
 mod filter_panel;
-mod marker_panel;
+mod focus_pane;
+mod highlights_panel;
 mod raw_view;
 mod status_bar;
 mod tab_bar;
@@ -15,22 +17,26 @@ use gpui_component::ActiveTheme as _;
 
 use crate::ui::canvas::{CanvasColors, CanvasViewState, LogCanvas};
 use crate::ui::command_palette::CommandPalette;
+use crate::ui::context_sidebar::{ContextSections, ContextSidebar};
 use crate::ui::context_view::ContextModal;
 use crate::ui::inspector::InspectorView;
 use crate::ui::project_switcher::ProjectSwitcher;
-use crate::ui::context_sidebar::{ContextSections, ContextSidebar};
 use crate::ui::sidebar::SidebarView;
-use gpui::{px, 
-    div, Context, InteractiveElement, IntoElement, KeyDownEvent,
-    ParentElement, Render, Styled,
-    Window,
+use gpui::{
+    Context, InteractiveElement, IntoElement, KeyDownEvent, ParentElement, Render, Styled, Window,
+    div, px,
 };
 use std::sync::Arc;
 
 impl Render for AppView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        sync_editor_colors(cx);
+        self.sync_focus_pane_visibility(cx);
         self.sync_filter_inputs(window, cx);
+        self.sync_search_input(window, cx);
+        self.sync_focus_find_input(window, cx);
         self.sync_raw_editors(window, cx);
+        self.sync_raw_color_bar(window, cx);
         self.sync_new_space_dialog(window, cx);
 
         let window_chrome = self.render_window_chrome(window, cx);
@@ -39,34 +45,56 @@ impl Render for AppView {
 
         // 5. Center: Raw View, Parsed View (the Log Canvas) or an empty state.
         let has_files = self.active_space().is_some_and(|s| !s.files.is_empty());
+        let colors = CanvasColors {
+            background: cx.theme().accent,
+            header_bg: cx.theme().table_head,
+            header_fg: cx.theme().table_head_foreground,
+            border: cx.theme().border,
+            selected: cx.theme().list_active,
+            search: self.workspace_state.match_colors.search.map_or(
+                gpui::hsla(0.55, 0.85, 0.55, 1.0),
+                hue_color,
+            ),
+            find: self.workspace_state.match_colors.find.map_or(cx.theme().warning, hue_color),
+            muted: cx.theme().muted_foreground,
+            danger: cx.theme().danger,
+            warning: cx.theme().warning,
+            info: cx.theme().info,
+            text_selection: cx.theme().selection,
+            dark: cx.theme().is_dark(),
+        };
+        let parsed_entries =
+            (self.active_tab_is_log_file() && has_files && self.view_mode == ViewMode::Parsed)
+                .then(|| Arc::new(self.all_entries.clone()));
         let log_canvas = if !self.active_tab_is_log_file() || !has_files {
             self.render_empty_state(cx)
         } else if self.view_mode == ViewMode::Raw {
             self.render_raw_view(cx)
         } else {
-            let entries_arc = Arc::new(self.all_entries.clone());
             LogCanvas::render(CanvasViewState {
                 view: cx.entity().clone(),
-                entries: entries_arc,
+                entries: parsed_entries.clone().unwrap_or_default(),
                 visible_indices: self.visible_indices.clone(),
                 selected_row_pos: self.selected_row_pos,
                 density: self.density,
                 column_layout: &self.column_layout,
-                search_state: &self.search_state,
-                colors: CanvasColors {
-                    background: cx.theme().background,
-                    header_bg: cx.theme().table_head,
-                    header_fg: cx.theme().table_head_foreground,
-                    border: cx.theme().border,
-                    selected: cx.theme().list_active,
-                    search: cx.theme().warning,
-                    muted: cx.theme().muted_foreground,
-                    danger: cx.theme().danger,
-                    warning: cx.theme().warning,
-                    info: cx.theme().info,
-                },
+                search_state: self.focus.search(),
+                bounds_sink: self.canvas_bounds.clone(),
+                paints: self.highlight_paints.clone(),
+                selection: self.text_selection,
+                colors,
                 scroll_handle: &self.scroll_handle,
             })
+        };
+
+        let viewport_height = f32::from(window.viewport_size().height);
+        let focus_pane =
+            self.render_focus_pane(parsed_entries.clone(), colors, viewport_height, cx);
+        // The sidebars end where the pane begins.
+        let pane_taken = if focus_pane.is_some() {
+            self.focus_pane_height(viewport_height)
+        } else {
+            0.0
         };
 
         let status_bar = self.render_status_bar(cx);
@@ -82,8 +110,8 @@ impl Render for AppView {
         let command_palette = CommandPalette::render(self.is_palette_open, cx);
         let new_space_dialog = self.render_new_space_dialog(cx);
         let confirm = self.render_confirm(cx);
+        let color_bar = self.render_color_bar(cx);
         let notice = self.render_notice(cx);
-        let quick_settings = self.render_quick_settings(cx);
 
         let project_switcher = ProjectSwitcher::render(
             self.project_switcher_open,
@@ -107,29 +135,28 @@ impl Render for AppView {
 
         let viewport_height = f32::from(window.viewport_size().height);
 
-        // Right context sidebar (View / Filter / Marker / Inspector): only for a
+        // Right context sidebar (Filter / Highlights / Inspector): only for a
         // focused log file tab, built from that file's own state.
         let context_sidebar = self
             .context_sidebar
+            // The Raw View keeps the Inspector alone; Filter and Highlights are for parsed rows.
             .is_shown(self.active_tab_is_log_file())
             .then(|| {
                 let sections = ContextSections {
                     filter: self.render_filter_panel_content(cx),
-                    marker: self.render_marker_panel_content(cx),
-                    inspector: InspectorView::render_body(
-                        self.selected_entry(),
-                        self.inspector_tab,
-                        cx,
-                    ),
+                    highlights: self.render_highlights_panel_content(cx),
+                    inspector: InspectorView::render_body(self.inspector_lines()),
                     active_filters: self.filter_state.active_count(),
-                    marker_count: self
-                        .visible_indices
-                        .iter()
-                        .filter_map(|&ix| self.all_entries.get(ix))
-                        .filter(|e| e.effective_marker().is_some())
-                        .count(),
+                    rule_count: self.highlight_rules().len(),
+                    parsed: self.view_mode == ViewMode::Parsed,
                 };
-                ContextSidebar::render(&self.context_sidebar, window, viewport_height, sections, cx)
+                ContextSidebar::render(
+                    &self.context_sidebar,
+                    window,
+                    viewport_height - pane_taken,
+                    sections,
+                    cx,
+                )
             });
 
         // Main Layout Container (Base Window Canvas)
@@ -161,6 +188,7 @@ impl Render for AppView {
                             .h_full()
                             .flex()
                             .flex_col()
+                            .bg(crate::ui::main_view::background(cx))
                             .child(tab_bar)
                             .child(editor_toolbar)
                             .child(log_canvas)
@@ -168,12 +196,33 @@ impl Render for AppView {
                     )
                     .children(context_sidebar),
             )
+            .children(focus_pane)
             .child(status_bar)
             .child(context_modal)
             .child(command_palette)
             .child(project_switcher)
-            .child(quick_settings)
             .child(new_space_dialog)
             .child(confirm)
+            .children(color_bar)
     }
+}
+
+/// Raw View editors paint their own background and line-number gutter from the
+/// highlight theme; keep both on the main view's background.
+fn sync_editor_colors(cx: &mut gpui::App) {
+    let main_bg = crate::ui::main_view::background(cx);
+    let style = &cx.theme().highlight_theme.style;
+    if style.editor_background == Some(main_bg) && style.editor_gutter_background == Some(main_bg) {
+        return;
+    }
+    let theme = gpui_component::Theme::global_mut(cx);
+    let highlight = Arc::make_mut(&mut theme.highlight_theme);
+    highlight.style.editor_background = Some(main_bg);
+    highlight.style.editor_gutter_background = Some(main_bg);
+}
+
+/// The bright paint a hue gives to text matches.
+fn hue_color(hue: crate::palette::Hue) -> gpui::Hsla {
+    let (h, s, l) = hue.vivid_hsl();
+    gpui::hsla(h, s, l, 1.0)
 }

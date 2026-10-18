@@ -1,5 +1,5 @@
 //! Right context sidebar for the focused log file: four stacked, collapsible
-//! sections (Filter / Marker / Inspector). Every section reflects the
+//! sections (Filter / Highlights / Inspector). Every section reflects the
 //! state of the focused file only; the Inspector takes the remaining height.
 
 use crate::app::AppView;
@@ -27,10 +27,13 @@ const INSPECTOR_MIN_HEIGHT: f32 = 240.0;
 /// Pre-rendered section bodies plus the badge counts shown in the headers.
 pub struct ContextSections {
     pub filter: gpui::AnyElement,
-    pub marker: gpui::AnyElement,
+    pub highlights: gpui::AnyElement,
     pub inspector: gpui::AnyElement,
     pub active_filters: usize,
-    pub marker_count: usize,
+    pub rule_count: usize,
+    /// Filter and Highlights only mean something for parsed rows; the Raw
+    /// View shows the Inspector alone.
+    pub parsed: bool,
 }
 
 pub struct ContextSidebar;
@@ -39,20 +42,22 @@ impl ContextSidebar {
     pub fn render(
         state: &ContextSidebarState,
         window: &mut gpui::Window,
+        // Window height left beside the sidebar: the Focus Pane is under it.
         viewport_height: f32,
         sections: ContextSections,
         cx: &mut gpui::Context<AppView>,
     ) -> gpui::AnyElement {
         let ContextSections {
             filter,
-            marker,
+            highlights,
             inspector,
             active_filters,
-            marker_count,
+            rule_count,
+            parsed,
         } = sections;
 
         // Split the height left over by the Inspector between the open tool sections.
-        let tools = [ContextSection::Filter, ContextSection::Marker];
+        let tools = [ContextSection::Filter, ContextSection::Highlights];
         let open_tools = tools.iter().filter(|t| !state.is_collapsed(**t)).count();
         let inspector_room = if state.is_collapsed(ContextSection::Inspector) {
             0.0
@@ -173,8 +178,10 @@ impl ContextSidebar {
             .border_l_1()
             .border_color(cx.theme().border)
             .bg(cx.theme().background)
-            .child(section(ContextSection::Filter, Some(active_filters), filter, window, cx))
-            .child(section(ContextSection::Marker, Some(marker_count), marker, window, cx))
+            .when(parsed, |this| {
+                this.child(section(ContextSection::Filter, Some(active_filters), filter, window, cx))
+                    .child(section(ContextSection::Highlights, Some(rule_count), highlights, window, cx))
+            })
             .child(section(ContextSection::Inspector, None, inspector, window, cx))
             .into_any_element()
     }

@@ -19,6 +19,8 @@ pub const MISSING: u16 = u16::MAX;
 enum Source {
     /// The Source File of a row in a Log Space (the Source Column).
     SourceFile,
+    /// The message text; read by Highlight Rules, never a Filter column.
+    Message,
     Level,
     Module,
     RequestId,
@@ -30,6 +32,7 @@ impl Source {
     fn key(&self) -> String {
         match self {
             Source::SourceFile => "source".to_string(),
+            Source::Message => "message".to_string(),
             Source::Level => "level".to_string(),
             Source::Module => "module".to_string(),
             Source::RequestId => "request_id".to_string(),
@@ -41,6 +44,7 @@ impl Source {
     fn label(&self) -> String {
         match self {
             Source::SourceFile => "Source".to_string(),
+            Source::Message => "Message".to_string(),
             Source::Level => "Level".to_string(),
             Source::Module => "Module".to_string(),
             Source::RequestId => "Request ID".to_string(),
@@ -52,12 +56,8 @@ impl Source {
     fn value<'a>(&self, entry: &'a LogEntry) -> Option<&'a str> {
         let v = match self {
             Source::SourceFile => entry.source.as_deref().unwrap_or(""),
-            Source::Level => {
-                if entry.level == crate::model::LogLevel::Unknown {
-                    return None;
-                }
-                entry.level.as_str()
-            }
+            Source::Message => entry.payload.as_str(),
+            Source::Level => entry.level_text.as_str(),
             Source::Module => entry.tag.as_str(),
             Source::RequestId => entry.request_id.as_deref().unwrap_or(""),
             Source::TraceId => entry.trace_id.as_deref().unwrap_or(""),
@@ -72,10 +72,22 @@ impl Source {
     }
 }
 
+/// The value of the row `row` in the column `key`. A Continuation Line has
+/// no value of its own: it reads its Parent Line's, found by walking up to the
+/// nearest row that is not a continuation.
+pub fn value_of<'a>(entries: &'a [LogEntry], row: usize, key: &str) -> Option<&'a str> {
+    let mut r = row;
+    while r > 0 && entries.get(r).is_some_and(|e| e.parent.is_some()) {
+        r -= 1;
+    }
+    entries.get(r).and_then(|e| column_value(e, key))
+}
+
 /// The value a row holds in the column `key`, or `None` when it has none.
 pub fn column_value<'a>(entry: &'a LogEntry, key: &str) -> Option<&'a str> {
     let source = match key {
         "source" => Source::SourceFile,
+        "message" => Source::Message,
         "level" => Source::Level,
         "module" => Source::Module,
         "request_id" => Source::RequestId,
@@ -154,9 +166,15 @@ impl ColumnIndex {
         !self.overflow && self.row_ids.len() == self.rows
     }
 
-    fn push_row(&mut self, entry: &LogEntry) {
+    fn push_row(&mut self, entry: &LogEntry, parent_row: usize) {
         self.rows += 1;
         if self.overflow {
+            return;
+        }
+        if entry.parent.is_some() {
+            // A Continuation Line holds its Parent Line's value, uncounted.
+            let id = self.row_ids.get(parent_row).copied().unwrap_or(MISSING);
+            self.row_ids.push(id);
             return;
         }
         let Some(raw) = self.source.value(entry) else {
@@ -234,6 +252,8 @@ pub struct FilterIndex {
     first_ts: Option<f64>,
     min_entry: Option<(f64, String)>,
     max_entry: Option<(f64, String)>,
+    /// Row of the latest line that is not a Continuation Line.
+    parent_row: usize,
 }
 
 /// A row has its own timestamp when it is a finite, positive number.
@@ -307,13 +327,17 @@ impl FilterIndex {
         if self.columns.is_empty() && row == 0 {
             self.init_fixed_columns();
         }
+        if entry.parent.is_none() {
+            self.parent_row = row;
+        }
+        let parent_row = self.parent_row;
         for (name, _) in &entry.json_fields {
             if !self.columns.iter().any(|c| c.source == Source::Json(name.clone())) {
                 self.columns.push(ColumnIndex::new(Source::Json(name.clone()), row));
             }
         }
         for col in &mut self.columns {
-            col.push_row(entry);
+            col.push_row(entry, parent_row);
         }
 
         let prev = self.effective_ts.last().copied().unwrap_or(f64::NAN);

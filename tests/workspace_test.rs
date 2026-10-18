@@ -1,12 +1,8 @@
 use log_gpui::column::{ColumnLayoutState, PinnableColumn};
-use log_gpui::search::SearchState;
 use log_gpui::workspace::{ProjectColorAccent, TabSessionState, TabTarget, WorkingSet, WorkspaceState};
 
-fn make_session(_filter_level: &str, search_query: &str, scroll_x: f32) -> TabSessionState {
-    let mut search = SearchState::new();
-    search.query = search_query.to_string();
+fn make_session(_filter_level: &str, _search_query: &str, scroll_x: f32) -> TabSessionState {
     TabSessionState {
-        search,
         column_layout: ColumnLayoutState::new(),
         scroll_x,
         scroll_top: 0.0,

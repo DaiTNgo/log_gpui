@@ -11,28 +11,24 @@ use gpui_kit::assets::IconName;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PanelKind {
     Filter,
-    Marker,
 }
 
 impl PanelKind {
     pub fn id(self) -> &'static str {
         match self {
             PanelKind::Filter => "panel_filter",
-            PanelKind::Marker => "panel_marker",
         }
     }
 
     pub fn title(self) -> &'static str {
         match self {
             PanelKind::Filter => "Filter",
-            PanelKind::Marker => "Marker",
         }
     }
 
     pub fn icon(self) -> IconName {
         match self {
             PanelKind::Filter => IconName::FileText,
-            PanelKind::Marker => IconName::BookOpen,
         }
     }
 }
@@ -57,13 +53,6 @@ impl FloatingPanelState {
                 y: 88.0,
                 w: 380.0,
                 h: 428.0,
-            },
-            PanelKind::Marker => Self {
-                open: false,
-                x: 672.0,
-                y: 120.0,
-                w: 320.0,
-                h: 360.0,
             },
         }
     }

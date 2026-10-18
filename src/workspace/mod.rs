@@ -18,5 +18,5 @@ pub use log_space::{FileOrder, LogFile, LogSpace, LogSpaceKind};
 pub use project::{Project, ProjectColorAccent};
 pub use correlation::{CorrelationHit, CorrelationResult, nearest_timestamp_index, search_across_files};
 pub use session::{SessionManifest, SessionPersistence};
-pub use state::{ContextSidebarState, ContextSection, LeftSidebarState, WorkspaceState};
+pub use state::{ContextSidebarState, ContextSection, FocusPaneState, LeftSidebarState, WorkspaceState};
 pub use working_set::{TabSessionState, TabTarget, ViewMode, WorkingSet, WorkspaceTab};

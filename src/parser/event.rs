@@ -1,5 +1,5 @@
-use crate::model::LogLevel;
 use std::collections::HashMap;
+use std::ops::Range;
 
 /// A typed value extracted from a structured log field.
 #[derive(Debug, Clone, PartialEq)]
@@ -66,6 +66,12 @@ pub struct LogEvent {
     /// Whether `timestamp` was read from the line. Lines without a time of
     /// their own get a pseudo timestamp from their line number.
     pub has_time: bool,
+    /// Byte range in `raw_line` of each field read from the line
+    /// (`timestamp`, `level`, `module`, `message` and JSON keys). The text a
+    /// cell shows is always `raw_line[span]`.
+    pub spans: HashMap<String, Range<usize>>,
+    /// Line number of the Parent Line when this is a Continuation Line.
+    pub parent: Option<usize>,
 }
 
 impl LogEvent {
@@ -84,7 +90,14 @@ impl LogEvent {
             message,
             raw_line,
             has_time: timestamp.is_finite() && timestamp > 0.0,
+            spans: HashMap::new(),
+            parent: None,
         }
+    }
+
+    /// The text of the field `name` as stored in the line.
+    pub fn span_text(&self, name: &str) -> Option<&str> {
+        self.spans.get(name).and_then(|r| self.raw_line.get(r.clone()))
     }
 
     /// Mark the timestamp as a pseudo value, not read from the line.
@@ -93,19 +106,39 @@ impl LogEvent {
         self
     }
 
-    /// Fill the field map with the canonical log metadata (level, module, ...)
-    /// from the parsed log line.
-    pub fn with_metadata(mut self, level: LogLevel, tag: &str) -> Self {
-        self.fields.insert(
-            "level".to_string(),
-            LogValue::Str(level.as_str().to_string()),
-        );
-        self.fields.insert(
-            "module".to_string(),
-            LogValue::Str(tag.to_string()),
-        );
-        self.fields
-            .insert("time".to_string(), LogValue::Str(self.time_str.clone()));
+    /// Fill the field map with the level and module exactly as written in
+    /// the line. A value the line does not have is left out.
+    pub fn with_metadata(mut self, level: Option<&str>, tag: Option<&str>) -> Self {
+        if let Some(level) = level {
+            self.fields.insert("level".to_string(), LogValue::Str(level.to_string()));
+        }
+        if let Some(tag) = tag {
+            self.fields.insert("module".to_string(), LogValue::Str(tag.to_string()));
+        }
+        if !self.time_str.is_empty() {
+            self.fields
+                .insert("time".to_string(), LogValue::Str(self.time_str.clone()));
+        }
+        self
+    }
+
+    /// Record the byte range of a field in `raw_line`.
+    pub fn with_span(mut self, name: &str, range: Option<Range<usize>>) -> Self {
+        if let Some(range) = range {
+            self.spans.insert(name.to_string(), range);
+        }
+        self
+    }
+
+    /// Turn this event into a Continuation Line of `parent`: only the message
+    /// is its own, covering the whole line.
+    pub fn into_continuation(mut self, parent: usize) -> Self {
+        self.parent = Some(parent);
+        self.time_str = String::new();
+        self.fields.clear();
+        self.message = self.raw_line.clone();
+        self.spans.clear();
+        self.spans.insert("message".to_string(), 0..self.raw_line.len());
         self
     }
 

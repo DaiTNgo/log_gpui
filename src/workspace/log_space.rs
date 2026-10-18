@@ -6,23 +6,43 @@
 //! never mix" is enforced by the operations below rather than by convention.
 
 use crate::filter::FilterState;
-use crate::marker::MarkerType;
+use crate::marker::{TextMarker, add_marker, recolor_marker_at, remove_marker_at};
 use crate::model::LogEntry;
+use crate::palette::HighlightColor;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::ops::Range;
 use std::path::{Path, PathBuf};
 
-/// The markers and notes the user set on one line of a file.
+/// A color the user painted on a stretch of one line of a file.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StoredMarker {
     /// 1-based line index of the entry (`LogEntry::index`).
     pub line: usize,
-    pub marker: Option<MarkerType>,
-    pub note: Option<String>,
+    /// Bytes of the line's stored text.
+    pub range: Range<usize>,
+    pub color: HighlightColor,
     /// Hash of the line's content when the marker was set. A marker whose
     /// hash no longer matches the saved line is dropped (Raw View edits).
     #[serde(default)]
-    pub content_hash: Option<u64>,
+    pub line_hash: Option<u64>,
+    /// How many Generations before the file's current one the line was read
+    /// in: 0 is the current file, 1 the file before its last rotation.
+    #[serde(default)]
+    pub generations_ago: u32,
+}
+
+/// Read stored markers, skipping any in an older format (a Marker of a whole
+/// line with a type and a note): those are not converted.
+fn read_markers<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Vec<StoredMarker>, D::Error> {
+    let values: Vec<serde_json::Value> = Vec::deserialize(d)?;
+    // Only the Markers of the current file come back: after a restart the
+    // file is a new Generation and the lines of the older ones are gone.
+    Ok(values
+        .into_iter()
+        .filter_map(|v| serde_json::from_value::<StoredMarker>(v).ok())
+        .filter(|m| m.generations_ago == 0)
+        .collect())
 }
 
 /// Stable hash of a line's content.
@@ -34,21 +54,6 @@ pub fn line_hash(text: &str) -> u64 {
         hash = hash.wrapping_mul(0x100000001b3);
     }
     hash
-}
-
-/// The markers and notes the user set on `entries`, leaving out the passive
-/// error/warning markers derived from each entry's level.
-pub fn collect_markers(entries: &[LogEntry]) -> Vec<StoredMarker> {
-    entries
-        .iter()
-        .filter(|e| e.note.is_some() || e.marker != MarkerType::from_log_level(e.level))
-        .map(|e| StoredMarker {
-            line: e.index,
-            marker: e.marker,
-            note: e.note.clone(),
-            content_hash: Some(line_hash(&e.raw_line)),
-        })
-        .collect()
 }
 
 /// A log file belonging to a Log Space. For an Imported space the file on
@@ -65,9 +70,13 @@ pub struct LogFile {
     /// Sequence number at which the file was added to its Log Space.
     #[serde(default)]
     pub added_seq: u64,
-    /// The user-set markers and notes, remembered automatically.
-    #[serde(default)]
+    /// The colors painted on text, remembered automatically.
+    #[serde(default, deserialize_with = "read_markers")]
     pub markers: Vec<StoredMarker>,
+    /// The file's current Generation, counted from 0 each time it is opened
+    /// and raised on every rotation, truncation or deletion.
+    #[serde(skip)]
+    pub generation: u32,
 }
 
 impl LogFile {
@@ -78,6 +87,7 @@ impl LogFile {
             path: None,
             added_seq: 0,
             markers: Vec::new(),
+            generation: 0,
         }
     }
 
@@ -93,6 +103,7 @@ impl LogFile {
             path: Some(path.to_string()),
             added_seq: 0,
             markers: Vec::new(),
+            generation: 0,
         }
     }
 
@@ -106,18 +117,135 @@ impl LogFile {
             .filter(|p| !p.is_empty() && p != ".")
     }
 
-    /// Remember the markers and notes the user set on `entries`. The passive
-    /// error/warning markers derived from the level are not stored.
-    pub fn capture_markers(&mut self, entries: &[LogEntry]) {
-        self.markers = collect_markers(entries);
+    /// The file was rotated, truncated or deleted: what is read next is a new
+    /// Generation, and every stored Marker is one Generation further back.
+    pub fn begin_generation(&mut self) {
+        self.generation += 1;
+        for m in &mut self.markers {
+            m.generations_ago += 1;
+        }
     }
 
-    /// Restore the remembered markers and notes onto freshly loaded `entries`.
+    /// How many Generations back a line read in `generation` is.
+    pub fn generations_ago(&self, generation: u32) -> u32 {
+        self.generation.saturating_sub(generation)
+    }
+
+    /// The Markers painted on one line of the current Generation.
+    pub fn markers_on_line(&self, line: usize) -> Vec<TextMarker> {
+        self.markers_on_line_in(line, 0)
+    }
+
+    /// The Markers painted on one line, `ago` Generations back.
+    pub fn markers_on_line_in(&self, line: usize, ago: u32) -> Vec<TextMarker> {
+        self.markers
+            .iter()
+            .filter(|m| m.line == line && m.generations_ago == ago)
+            .map(|m| TextMarker { range: m.range.clone(), color: m.color.clone() })
+            .collect()
+    }
+
+    fn set_line_markers(&mut self, line: usize, ago: u32, line_text: &str, markers: Vec<TextMarker>) {
+        let hash = line_hash(line_text);
+        self.markers.retain(|m| !(m.line == line && m.generations_ago == ago));
+        self.markers.extend(markers.into_iter().map(|m| StoredMarker {
+            line,
+            range: m.range,
+            color: m.color,
+            line_hash: Some(hash),
+            generations_ago: ago,
+        }));
+        self.markers.sort_by_key(|m| (m.generations_ago, m.line, m.range.start));
+    }
+
+    /// Forget the Markers of lines that left the Live Window: those of
+    /// `generation` with a number below `first_kept`, and every older
+    /// Generation.
+    pub fn drop_markers_before(&mut self, generation: u32, first_kept: usize) {
+        let ago = self.generations_ago(generation);
+        self.markers.retain(|m| {
+            m.generations_ago < ago || (m.generations_ago == ago && m.line >= first_kept)
+        });
+    }
+
+    /// Paint `color` on `range` of a line; a Marker under it is cut. Returns
+    /// whether anything was painted.
+    pub fn paint_marker(&mut self, line: usize, line_text: &str, range: Range<usize>, color: HighlightColor) -> bool {
+        self.paint_marker_in(0, line, line_text, range, color)
+    }
+
+    /// `paint_marker` for a line read `ago` Generations back.
+    pub fn paint_marker_in(
+        &mut self,
+        ago: u32,
+        line: usize,
+        line_text: &str,
+        range: Range<usize>,
+        color: HighlightColor,
+    ) -> bool {
+        let mut on_line = self.markers_on_line_in(line, ago);
+        if !add_marker(&mut on_line, range, color) {
+            return false;
+        }
+        self.set_line_markers(line, ago, line_text, on_line);
+        true
+    }
+
+    /// Remove the whole Marker containing `byte` of a line.
+    pub fn remove_marker_at(&mut self, line: usize, line_text: &str, byte: usize) -> bool {
+        self.remove_marker_in(0, line, line_text, byte)
+    }
+
+    /// `remove_marker_at` for a line read `ago` Generations back.
+    pub fn remove_marker_in(&mut self, ago: u32, line: usize, line_text: &str, byte: usize) -> bool {
+        let mut on_line = self.markers_on_line_in(line, ago);
+        if !remove_marker_at(&mut on_line, byte) {
+            return false;
+        }
+        self.set_line_markers(line, ago, line_text, on_line);
+        true
+    }
+
+    /// Give the Marker containing `byte` of a line another color.
+    pub fn recolor_marker_at(&mut self, line: usize, line_text: &str, byte: usize, color: HighlightColor) -> bool {
+        self.recolor_marker_in(0, line, line_text, byte, color)
+    }
+
+    /// `recolor_marker_at` for a line read `ago` Generations back.
+    pub fn recolor_marker_in(
+        &mut self,
+        ago: u32,
+        line: usize,
+        line_text: &str,
+        byte: usize,
+        color: HighlightColor,
+    ) -> bool {
+        let mut on_line = self.markers_on_line_in(line, ago);
+        if !recolor_marker_at(&mut on_line, byte, color) {
+            return false;
+        }
+        self.set_line_markers(line, ago, line_text, on_line);
+        true
+    }
+
+    /// Restore the remembered Markers onto freshly loaded `entries`.
     pub fn apply_markers(&self, entries: &mut [LogEntry]) {
-        for stored in &self.markers {
-            if let Some(entry) = entries.iter_mut().find(|e| e.index == stored.line) {
-                entry.marker = stored.marker;
-                entry.note = stored.note.clone();
+        for entry in entries.iter_mut() {
+            entry.markers.clear();
+        }
+        if self.markers.is_empty() {
+            return;
+        }
+        let mut by_line: HashMap<(usize, u32), Vec<TextMarker>> = HashMap::new();
+        for m in &self.markers {
+            by_line
+                .entry((m.line, m.generations_ago))
+                .or_default()
+                .push(TextMarker { range: m.range.clone(), color: m.color.clone() });
+        }
+        for entry in entries.iter_mut() {
+            if let Some(markers) = by_line.get(&(entry.index, self.generations_ago(entry.generation))) {
+                entry.markers = markers.clone();
             }
         }
     }
@@ -127,7 +255,9 @@ impl LogFile {
     /// markers were dropped.
     pub fn prune_markers(&mut self, lines: &[&str]) -> usize {
         let before = self.markers.len();
-        self.markers.retain(|m| match (m.content_hash, lines.get(m.line.wrapping_sub(1))) {
+        self.markers.retain(|m| match (m.line_hash, lines.get(m.line.wrapping_sub(1))) {
+            // Raw View edits only reach the current file.
+            _ if m.generations_ago > 0 => true,
             (Some(hash), Some(line)) => hash == line_hash(line),
             (Some(_), None) => false,
             // Markers stored without a hash are kept.
@@ -202,6 +332,12 @@ pub struct LogSpace {
     /// The separate Filter of each File View.
     #[serde(default)]
     pub file_filters: HashMap<String, FilterState>,
+    /// The Focus Tabs shared by every file in the Log Space's views.
+    #[serde(default)]
+    pub focus: crate::focus::FocusTabs,
+    /// The separate Focus Tabs of each File View.
+    #[serde(default)]
+    pub file_focus: HashMap<String, crate::focus::FocusTabs>,
     /// Whether the Source Column is shown; `None` means the default (shown
     /// when the space has two or more files).
     #[serde(default)]
@@ -224,6 +360,8 @@ impl LogSpace {
             files: Vec::new(),
             filter: FilterState::default(),
             file_filters: HashMap::new(),
+            focus: Default::default(),
+            file_focus: HashMap::new(),
             show_source: None,
             last_mode: Default::default(),
             next_seq: 1,
@@ -330,6 +468,7 @@ impl LogSpace {
             return Err(RemoveFileError::LastScratchFile);
         }
         self.file_filters.remove(file_id);
+        self.file_focus.remove(file_id);
         Ok(self.files.remove(pos))
     }
 
@@ -358,6 +497,15 @@ impl LogSpace {
 
     pub fn set_file_filter(&mut self, file_id: &str, filter: FilterState) {
         self.file_filters.insert(file_id.to_string(), filter);
+    }
+
+    /// The Focus Tabs of a File View, one empty tab until some are stored.
+    pub fn file_focus(&self, file_id: &str) -> crate::focus::FocusTabs {
+        self.file_focus.get(file_id).cloned().unwrap_or_default()
+    }
+
+    pub fn set_file_focus(&mut self, file_id: &str, focus: crate::focus::FocusTabs) {
+        self.file_focus.insert(file_id.to_string(), focus);
     }
 
     /// Directory holding this space's scratch files.

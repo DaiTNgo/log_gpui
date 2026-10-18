@@ -1,5 +1,4 @@
 use crate::column::ColumnLayoutState;
-use crate::search::SearchState;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
@@ -43,8 +42,6 @@ pub enum ViewMode {
 /// editor context so switching tabs never resets the user's place.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TabSessionState {
-    /// Active search query and match state.
-    pub search: SearchState,
     /// Column widths, pin state, and resize state.
     pub column_layout: ColumnLayoutState,
     /// Horizontal scroll offset in pixels.
@@ -64,7 +61,6 @@ pub struct TabSessionState {
 impl TabSessionState {
     pub fn new() -> Self {
         Self {
-            search: SearchState::new(),
             column_layout: ColumnLayoutState::new(),
             scroll_x: 0.0,
             scroll_top: 0.0,

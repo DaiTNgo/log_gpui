@@ -171,3 +171,30 @@ impl AppView {
         cx.notify();
     }
 }
+
+/// Which kind of match a color setting paints.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum MatchKind {
+    Search,
+    Find,
+}
+
+impl AppView {
+    /// Whether the focused tab is a Log Space (the Source Column applies).
+    pub fn active_is_log_space(&self) -> bool {
+        matches!(
+            self.active_target(),
+            Some(crate::workspace::working_set::TabTarget::LogSpace { .. })
+        )
+    }
+
+    /// Set the hue of a kind of match; `None` goes back to the theme's color.
+    pub fn set_match_color(&mut self, kind: MatchKind, hue: Option<crate::palette::Hue>, cx: &mut Context<Self>) {
+        match kind {
+            MatchKind::Search => self.workspace_state.match_colors.search = hue,
+            MatchKind::Find => self.workspace_state.match_colors.find = hue,
+        }
+        self.schedule_session_save(cx);
+        cx.notify();
+    }
+}

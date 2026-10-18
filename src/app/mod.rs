@@ -3,39 +3,47 @@
 //! Logic lives in sibling modules (`tabs`, `projects`, `panels`, `search`, `selection`,
 //! `view_settings`, `commands`, `keyboard`, `workspace_items`); rendering lives in `view/`.
 
+pub mod color;
 mod commands;
 mod filter;
+mod focus;
+mod highlights;
 mod keyboard;
+mod marking;
 mod persist;
-mod raw;
+pub mod raw;
 mod panels;
 mod projects;
 pub mod rename;
 mod search;
 mod selection;
 mod spaces;
+pub mod text_select;
 mod tabs;
 mod view;
 mod view_settings;
+pub use view_settings::MatchKind;
 mod workspace_items;
 
 use crate::column::ColumnLayoutState;
 use crate::filter::FilterState;
 use crate::filter_index::FilterIndex;
 use crate::model::LogEntry;
-use crate::search::SearchState;
+use crate::focus::{FocusRow, FocusTabs};
 use crate::space_view::ParsedFile;
 use crate::density::Density;
 use crate::ui::floating_panel::{
     FloatingPanelState, PanelGesture, PanelKind,
 };
-use crate::ui::inspector::InspectorTab;
 use crate::workspace::state::{ContextSidebarState, LeftSidebarState, WorkspaceState};
 use crate::workspace::working_set::ViewMode;
 use gpui::{
-    App, AppContext, Context, Entity, FocusHandle, Focusable, UniformListScrollHandle,
-    Window,
+    App, AppContext, Bounds, Context, Entity, FocusHandle, Focusable, Pixels, Point,
+    UniformListScrollHandle, Window, point,
 };
+use gpui_component::color_picker::{ColorPickerEvent, ColorPickerState};
+use std::cell::Cell;
+use std::rc::Rc;
 use std::collections::{HashMap, HashSet};
 use gpui_component::input::{InputEvent, InputState};
 use std::sync::Arc;
@@ -53,12 +61,57 @@ pub struct AppView {
     pub filter_state: FilterState,
     pub filter_index: FilterIndex,
     pub filter_ui: filter::FilterUi,
-    pub search_state: SearchState,
+    /// The Filter result: the entries that pass it, ascending. The view shows
+    /// every entry; Filter only narrows the Focus Pane.
+    pub filter_pass: Arc<Vec<usize>>,
+    /// The Focus Tabs of the open view; the open tab holds the Search.
+    pub focus: FocusTabs,
+    /// The lines the open Focus Tab lists.
+    pub focus_rows: Arc<Vec<FocusRow>>,
+    pub focus_scroll: UniformListScrollHandle,
+    pub focus_find_input: Entity<InputState>,
+    /// Focus Find's field must be rewritten from the open tab.
+    pub focus_find_dirty: bool,
+    /// Text selected with the mouse in the Focus Pane (rows are pane rows).
+    pub pane_selection: Option<crate::text_selection::TextSelection>,
+    pub pane_selecting: bool,
+    /// Whether a Filter or Search Expression was in effect at the last render.
+    pub pane_has_content: bool,
+    /// Where the pane's rows are on screen, written while painting.
+    pub pane_bounds: Rc<Cell<Bounds<Pixels>>>,
     pub search_input: Entity<InputState>,
+    /// The page of the Settings dialog that is open, and its search field.
+    pub settings_section: crate::ui::settings::SettingsSection,
+    pub settings_search: Entity<InputState>,
+    /// The search field must be rewritten from the tab's query (set when a
+    /// tab's session is restored); done at render time, where a window exists.
+    pub search_input_dirty: bool,
     pub scroll_handle: UniformListScrollHandle,
 
     pub selected_row_pos: Option<usize>,
-    pub inspector_tab: InspectorTab,
+    /// Text selected with the mouse in the Parsed View.
+    pub text_selection: Option<crate::text_selection::TextSelection>,
+    /// The mouse button is down and the selection follows the pointer.
+    pub selecting: bool,
+    /// Which way a drag past an edge scrolls: (horizontal, vertical).
+    pub autoscroll_dir: (i32, i32),
+    pub autoscroll_pointer: Point<Pixels>,
+    pub autoscroll_running: bool,
+    /// Where the rows are on screen, written while painting and read to turn
+    /// a pointer position into a row and a character.
+    pub canvas_bounds: Rc<Cell<Bounds<Pixels>>>,
+    /// The Highlight Rule paint of each entry of the open view.
+    pub highlight_paints: Arc<Vec<Option<crate::highlight::RowPaint>>>,
+    /// How many shown rows each Highlight Rule matches, by rule id.
+    pub rule_counts: HashMap<u64, usize>,
+    /// The floating bar of colors (or the palette of a rule).
+    pub color_bar: Option<color::ColorBar>,
+    pub color_picker: Entity<ColorPickerState>,
+    /// What the last right-click landed on, for the context menu.
+    pub cell_target: Option<text_select::CellTarget>,
+    /// The "+ Add rule" form of the Highlights section.
+    pub rule_form: Option<highlights::RuleForm>,
+    pub rule_input: Entity<InputState>,
     pub is_context_open: bool,
     pub is_palette_open: bool,
 
@@ -96,7 +149,6 @@ pub struct AppView {
     /// Raw View or Parsed View of the focused tab.
     pub view_mode: ViewMode,
     pub raw: raw::RawViewState,
-    pub quick_settings_open: bool,
     pub new_space: Option<spaces::NewSpaceDialog>,
     pub confirm: Option<ConfirmAction>,
     /// A light message shown above the status bar until dismissed.
@@ -167,14 +219,53 @@ impl AppView {
             .cloned()
             .collect();
 
+        let settings_search = cx.new(|cx| InputState::new(window, cx).placeholder("Search settings…"));
+        cx.subscribe_in(
+            &settings_search,
+            window,
+            |_this: &mut Self, _input, event: &InputEvent, window, cx| {
+                if matches!(event, InputEvent::Change) {
+                    // The open dialog reads the field when it draws.
+                    window.refresh();
+                    cx.notify();
+                }
+            },
+        )
+        .detach();
+
+        let focus_find_input = cx.new(|cx| {
+            InputState::new(window, cx).placeholder("Find in this tab…")
+        });
+        cx.subscribe_in(
+            &focus_find_input,
+            window,
+            |this: &mut Self, input, event: &InputEvent, _window, cx| match event {
+                InputEvent::Change => {
+                    let text = input.read(cx).value().to_string();
+                    this.on_focus_find_changed(&text, cx);
+                }
+                InputEvent::PressEnter { shift, .. } => {
+                    if *shift {
+                        this.focus_find_prev(cx);
+                    } else {
+                        this.focus_find_next(cx);
+                    }
+                }
+                _ => {}
+            },
+        )
+        .detach();
+
         cx.subscribe_in(
             &search_input,
             window,
             |this: &mut Self, input, event: &InputEvent, _window, cx| match event {
                 InputEvent::Change => {
-                    this.search_state.query = input.read(cx).value().to_string();
-                    if !this.search_state.query.trim().is_empty() {
-                        this.search_state.is_open = true;
+                    let text = input.read(cx).value().to_string();
+                    let search = this.active_search_mut();
+                    search.query = text;
+                    if !search.query.trim().is_empty() {
+                        search.is_open = true;
                     }
                     this.run_search(cx);
                 }
@@ -190,24 +281,75 @@ impl AppView {
         )
         .detach();
 
+        let color_picker = cx.new(|cx| ColorPickerState::new(window, cx));
+        cx.subscribe_in(
+            &color_picker,
+            window,
+            |this: &mut Self, _, event: &ColorPickerEvent, _window, cx| {
+                if let ColorPickerEvent::Change(Some(color)) = event {
+                    this.apply_bar_color(color::color_from_hsla(*color), cx);
+                }
+            },
+        )
+        .detach();
+        let rule_input = cx.new(|cx| InputState::new(window, cx).placeholder("Add value…  (contains)"));
+        cx.subscribe_in(
+            &rule_input,
+            window,
+            |this: &mut Self, input, event: &InputEvent, window, cx| {
+                if let InputEvent::PressEnter { .. } = event {
+                    let text = input.read(cx).value().to_string();
+                    if this.rule_form_add_custom(&text, cx) {
+                        input.update(cx, |state, cx| {
+                            state.set_value(gpui::SharedString::from(""), window, cx)
+                        });
+                    }
+                }
+            },
+        )
+        .detach();
+
         let mut this = Self {
             all_entries,
             visible_indices: Arc::new(Vec::new()),
             filter_state,
             filter_index,
             filter_ui,
-            search_state: SearchState::new(),
+            filter_pass: Arc::new(Vec::new()),
+            focus: FocusTabs::new(),
+            focus_rows: Arc::new(Vec::new()),
+            focus_scroll: UniformListScrollHandle::new(),
+            focus_find_input,
+            focus_find_dirty: true,
+            pane_selection: None,
+            pane_selecting: false,
+            pane_has_content: false,
+            pane_bounds: Rc::new(Cell::new(Bounds::default())),
             search_input,
+            settings_section: Default::default(),
+            settings_search,
+            search_input_dirty: true,
             scroll_handle,
             selected_row_pos: None,
-            inspector_tab: InspectorTab::Fields,
+            text_selection: None,
+            selecting: false,
+            autoscroll_dir: (0, 0),
+            autoscroll_pointer: point(gpui::px(0.0), gpui::px(0.0)),
+            autoscroll_running: false,
+            canvas_bounds: Rc::new(Cell::new(Bounds::default())),
+            highlight_paints: Arc::new(Vec::new()),
+            rule_counts: HashMap::new(),
+            color_bar: None,
+            color_picker,
+            cell_target: None,
+            rule_form: None,
+            rule_input,
             is_context_open: false,
             is_palette_open: false,
             file_name: String::new(),
             file_format: "Text Log".to_string(),
             floating_panels: HashMap::from([
                 (PanelKind::Filter, FloatingPanelState::default_for(PanelKind::Filter)),
-                (PanelKind::Marker, FloatingPanelState::default_for(PanelKind::Marker)),
             ]),
             panel_gesture: None,
             density: Density::Compact,
@@ -227,7 +369,6 @@ impl AppView {
             renaming: None,
             view_mode: ViewMode::Parsed,
             raw: raw::RawViewState::new(),
-            quick_settings_open: false,
             new_space: None,
             confirm: None,
             notice: None,

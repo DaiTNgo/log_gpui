@@ -3,8 +3,9 @@ use crate::search_expr::{Matcher, SearchError};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-/// State of the Search box: the typed Search Expression and the Matches found
-/// on the lines Filter currently shows. Search is never persisted to disk.
+/// Search of a Focus Tab: the typed Search Expression and the Matches found
+/// on the lines that pass Filter. Only the typed text is stored (with the
+/// tab); the matcher and the Matches are computed again.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct SearchState {
     #[serde(skip)]
@@ -91,10 +92,12 @@ impl SearchState {
         }
     }
 
-    /// Update matching rows among `visible_indices`, searching only the lines
-    /// Filter currently shows. While the typed text is invalid the Matches of
-    /// the last valid expression are kept (and the selected match with them).
-    pub fn update_matches(&mut self, entries: &[LogEntry], visible_indices: &[usize]) {
+    /// Update the Matches among `filter_pass`, the entries that pass Filter.
+    /// A Match is stored as the entry's position, which is also its row in
+    /// the view (the view shows every entry). While the typed text is invalid
+    /// the Matches of the last valid expression are kept (and the selected
+    /// match with them).
+    pub fn update_matches(&mut self, entries: &[LogEntry], filter_pass: &[usize]) {
         let replaced = self.reparse();
         self.matched_visible_indices.clear();
         if replaced {
@@ -106,11 +109,11 @@ impl SearchState {
             return;
         };
 
-        for (vis_pos, &entry_ix) in visible_indices.iter().enumerate() {
+        for &entry_ix in filter_pass {
             if let Some(entry) = entries.get(entry_ix)
                 && matcher.is_match(&entry.raw_line)
             {
-                self.matched_visible_indices.push(vis_pos);
+                self.matched_visible_indices.push(entry_ix);
             }
         }
         if self.current_match_idx >= self.matched_visible_indices.len() {

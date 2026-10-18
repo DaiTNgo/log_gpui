@@ -28,11 +28,6 @@ impl AppView {
             }
             return;
         }
-        if self.quick_settings_open && key == "Escape" {
-            self.quick_settings_open = false;
-            cx.notify();
-            return;
-        }
 
         // Project switcher modal captures keys while open.
         if self.project_switcher_open {
@@ -111,8 +106,7 @@ impl AppView {
         // Raw View: only Search and Markers apply, and plain keys belong to the editors.
         if self.view_mode == crate::workspace::working_set::ViewMode::Raw && !cmd {
             if key == "Escape" {
-                self.search_state.is_open = false;
-                self.quick_settings_open = false;
+                self.focus.search_mut().is_open = false;
                 self.is_palette_open = false;
                 cx.notify();
             }
@@ -120,8 +114,17 @@ impl AppView {
         }
 
         match (cmd, shift, alt, key) {
+            (true, false, false, "c") if self.pane_selection.is_some() => {
+                self.copy_pane_selection(cx);
+            }
+            (true, false, false, "j") => {
+                self.toggle_focus_pane(cx);
+            }
             (true, false, false, "c") if self.view_mode == crate::workspace::working_set::ViewMode::Raw => {
                 self.copy_selected_raw_line(cx);
+            }
+            (true, false, false, "c") if self.text_selection.is_some() => {
+                self.copy_text_selection(cx);
             }
             (true, false, false, "s") => {
                 self.save_now(cx);
@@ -132,12 +135,9 @@ impl AppView {
             (true, true, false, "R") | (true, true, false, "r") => {
                 self.toggle_view_mode(cx);
             }
-            (true, false, false, "d") => {
-                self.toggle_marker_at_cursor(window, cx);
-            }
             (true, false, false, "f") => {
                 self.toggle_search(cx);
-                if self.search_state.is_open {
+                if self.focus.search().is_open {
                     self.search_input.update(cx, |state, cx| state.focus(window, cx));
                 }
             }
@@ -145,7 +145,7 @@ impl AppView {
                 self.toggle_or_reveal_context_section(crate::workspace::state::ContextSection::Filter, cx);
             }
             (true, true, false, "M") => {
-                self.toggle_or_reveal_context_section(crate::workspace::state::ContextSection::Marker, cx);
+                self.toggle_or_reveal_context_section(crate::workspace::state::ContextSection::Highlights, cx);
             }
             (true, false, false, "k") => {
                 self.is_palette_open = !self.is_palette_open;
@@ -178,19 +178,13 @@ impl AppView {
             (true, false, true, "b") => {
                 self.toggle_context_sidebar(cx);
             }
-            (false, false, false, "b") => {
-                self.toggle_bookmark_current_line(cx);
-            }
-            (false, false, false, "m") | (false, false, false, "M") => {
-                self.cycle_selected_marker(cx);
-            }
             (false, false, false, " ") => {
                 self.is_context_open = !self.is_context_open;
                 cx.notify();
             }
             (false, false, false, "Enter") | (false, false, false, "enter") => {
-                if self.search_state.is_open
-                    && !self.search_state.matched_visible_indices.is_empty()
+                if self.focus.search().is_open
+                    && !self.focus.search().matched_visible_indices.is_empty()
                 {
                     self.jump_next_match(cx);
                 } else {
@@ -199,12 +193,13 @@ impl AppView {
                 }
             }
             (false, true, false, "Enter") | (false, true, false, "enter") => {
-                if self.search_state.is_open {
+                if self.focus.search().is_open {
                     self.jump_prev_match(cx);
                 }
             }
             (false, false, false, "Escape") => {
-                self.search_state.is_open = false;
+                self.clear_text_selection(cx);
+                self.focus.search_mut().is_open = false;
                 self.close_all_panels();
                 self.is_context_open = false;
                 self.is_palette_open = false;

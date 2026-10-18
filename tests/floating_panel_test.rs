@@ -1,22 +1,11 @@
 use log_gpui::ui::floating_panel::{FloatingPanelState, PanelEdge, PanelKind};
 
 #[test]
-fn default_panels_start_closed_with_staggered_geometry() {
-    let parse = |kind| {
-        let st = FloatingPanelState::default_for(kind);
-        (st.open, st.w, st.h)
-    };
-
-    let (f_open, f_w, f_h) = parse(PanelKind::Filter);
-    let (m_open, m_w, m_h) = parse(PanelKind::Marker);
-
-    assert!(!f_open && !m_open);
-    assert!(f_w >= 240.0 && m_w >= 240.0);
-    assert!(f_h >= 160.0 && m_h >= 160.0);
-
-    // Panels are placed so they don't fully overlap: X origins are distinct.
-    let x = |kind| FloatingPanelState::default_for(kind).x;
-    assert_ne!(x(PanelKind::Filter), x(PanelKind::Marker));
+fn the_filter_panel_starts_closed_with_a_usable_size() {
+    let st = FloatingPanelState::default_for(PanelKind::Filter);
+    assert!(!st.open);
+    assert!(st.w >= 240.0);
+    assert!(st.h >= 160.0);
 }
 
 #[test]

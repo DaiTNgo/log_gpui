@@ -71,6 +71,8 @@ pub fn effective_timestamps(entries: &[LogEntry]) -> Option<Vec<f64>> {
 pub fn merge(files: &[&[LogEntry]]) -> MergedTimeline {
     struct Lane {
         ts: Vec<f64>,
+        /// Whether each line continues the line above it.
+        cont: Vec<bool>,
         next: usize,
     }
 
@@ -79,10 +81,14 @@ pub fn merge(files: &[&[LogEntry]]) -> MergedTimeline {
     let mut tail: Vec<usize> = Vec::new();
     for (i, entries) in files.iter().enumerate() {
         match effective_timestamps(entries) {
-            Some(ts) => lanes.push(Lane { ts, next: 0 }),
+            Some(ts) => lanes.push(Lane {
+                ts,
+                cont: entries.iter().map(|e| e.parent.is_some()).collect(),
+                next: 0,
+            }),
             None => {
                 // Keeps the lane index aligned with the file index.
-                lanes.push(Lane { ts: Vec::new(), next: 0 });
+                lanes.push(Lane { ts: Vec::new(), cont: Vec::new(), next: 0 });
                 if !entries.is_empty() {
                     timeline.no_timestamp_files.push(i);
                     tail.push(i);
@@ -107,6 +113,13 @@ pub fn merge(files: &[&[LogEntry]]) -> MergedTimeline {
         timeline.effective_ts.push(f64::from_bits(bits));
         let lane = &mut lanes[file];
         lane.next = line + 1;
+        // Continuation Lines stay right below their Parent Line, whatever
+        // other file has a row at the same time.
+        while lane.cont.get(lane.next).copied().unwrap_or(false) {
+            timeline.rows.push(RowRef { file: file as u32, line: lane.next as u32 });
+            timeline.effective_ts.push(f64::from_bits(bits));
+            lane.next += 1;
+        }
         if let Some(&ts) = lane.ts.get(lane.next) {
             heap.push(key(ts, file, lane.next));
         }

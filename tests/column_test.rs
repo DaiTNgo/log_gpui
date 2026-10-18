@@ -93,7 +93,7 @@ fn test_field_max_chars_scan() {
             0.0,
             "12:34:56.789".to_string(), // 12 chars
             "auth".to_string(),          // 4 chars
-            LogLevel::Info,             // "I" -> 1 char
+            LogLevel::Info,             // "INFO" -> 4 chars
             "short msg".to_string(),
             "".to_string(),
         ),
@@ -102,7 +102,7 @@ fn test_field_max_chars_scan() {
             1.0,
             "2026-09-08 12:34:56.789123".to_string(), // 26 chars
             "com.cloud.gateway.proxy.SessionManager".to_string(), // 38 chars
-            LogLevel::Error, // "E" -> 1 char
+            LogLevel::Error, // "ERROR" -> 5 chars
             "another payload".to_string(),
             "".to_string(),
         ),
@@ -111,7 +111,7 @@ fn test_field_max_chars_scan() {
     let max_chars = FieldMaxChars::scan_entries(&entries);
     assert_eq!(max_chars.timestamp, 26);
     assert_eq!(max_chars.module, 38);
-    assert_eq!(max_chars.level, 1);
+    assert_eq!(max_chars.level, 5);
 }
 
 #[test]
@@ -248,7 +248,7 @@ fn test_parser_tracks_field_max_chars_during_ingestion() {
     assert_eq!(res.entries.len(), 1);
     assert_eq!(res.max_chars.timestamp, 26);
     assert_eq!(res.max_chars.module, 24);
-    assert_eq!(res.max_chars.level, 1);
+    assert_eq!(res.max_chars.level, 4);
 }
 
 #[test]

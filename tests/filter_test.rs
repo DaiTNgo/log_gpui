@@ -1,4 +1,3 @@
-use log_gpui::marker::MarkerType;
 use log_gpui::model::{LogEntry, LogLevel};
 use log_gpui::search::SearchState;
 
@@ -28,47 +27,4 @@ fn test_search_find_modes() {
     let next_match_wrapped = search.next_match();
     assert_eq!(next_match_wrapped, Some(0));
     assert_eq!(search.current_match_idx, 0);
-}
-
-#[test]
-fn test_markers_and_bookmarks() {
-    let mut entry = LogEntry::new(
-        10234,
-        100.0,
-        "10:32:02.441".into(),
-        "API".into(),
-        LogLevel::Error,
-        "Connection timeout".into(),
-        "raw line".into(),
-    );
-
-    // Passive marker auto-detected from level ERROR
-    assert_eq!(entry.effective_marker(), Some(MarkerType::Error));
-    assert_eq!(entry.effective_marker().unwrap().symbol(), "●");
-
-    // Toggle bookmark
-    assert!(!entry.is_bookmarked());
-    entry.toggle_bookmark();
-    assert!(entry.is_bookmarked());
-    assert_eq!(entry.effective_marker(), Some(MarkerType::Bookmark));
-    assert_eq!(entry.effective_marker().unwrap().symbol(), "◆");
-
-    // Toggle bookmark off restores passive marker
-    entry.toggle_bookmark();
-    assert!(!entry.is_bookmarked());
-    assert_eq!(entry.effective_marker(), Some(MarkerType::Error));
-}
-
-#[test]
-fn test_marker_cycling() {
-    // 1. Test MarkerType::cycle
-    let mut marker = None;
-    marker = MarkerType::cycle(marker);
-    assert_eq!(marker, Some(MarkerType::Bookmark));
-    marker = MarkerType::cycle(marker);
-    assert_eq!(marker, Some(MarkerType::Important));
-    marker = MarkerType::cycle(marker);
-    assert_eq!(marker, Some(MarkerType::Note));
-    marker = MarkerType::cycle(marker);
-    assert_eq!(marker, None);
 }

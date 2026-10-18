@@ -1,9 +1,13 @@
 pub mod canvas;
+pub mod cell_menu;
+pub mod cells;
 pub mod command_palette;
 pub mod context_sidebar;
 pub mod context_view;
 pub mod floating_panel;
+pub mod focus_pane;
 pub mod inspector;
+pub mod main_view;
 pub mod match_navigator;
 pub mod menu_list;
 pub mod project_node;

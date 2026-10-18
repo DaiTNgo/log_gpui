@@ -28,7 +28,6 @@ impl AppView {
             _subscription: None,
         });
         self.is_palette_open = false;
-        self.quick_settings_open = false;
         cx.notify();
     }
 

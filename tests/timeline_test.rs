@@ -1,11 +1,11 @@
 use log_gpui::filter::FilterState;
 use log_gpui::model::LogEntry;
 use log_gpui::space_view::{
-    ParsedFile, apply_markers_merged, build_file_view, build_space_view, capture_markers_merged,
+    ParsedFile, apply_markers_merged, build_file_view, build_space_view,
 };
 use log_gpui::timeline::{effective_timestamps, materialize, merge, union_field_names};
 use log_gpui::workspace::log_space::{LogSpace, LogSpaceKind};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 fn entries(text: &str) -> Vec<LogEntry> {
     ParsedFile::from_text(text).entries
@@ -205,45 +205,35 @@ fn a_file_without_timestamps_is_flagged_in_the_view() {
 // ─── Markers belong to the line of a file ────────────────────────────────────
 
 #[test]
-fn markers_set_in_the_merged_view_are_stored_on_their_files_and_shared() {
+fn markers_painted_on_a_file_show_in_the_merged_view_a_file_view_and_a_rebuild() {
     let (mut space, parsed) = space_with(&[
         ("/a.log", "2026-09-05 10:00:01 [INFO] [API] a\n2026-09-05 10:00:03 [INFO] [API] c\n"),
         ("/b.log", "2026-09-05 10:00:02 [INFO] [JOB] b\n"),
     ]);
-    let mut view = build_space_view(&space, &parsed);
-    // The row of b.log is the second one in the merged view.
-    view.entries[1].toggle_bookmark();
-    let loaded: HashSet<String> = parsed.keys().cloned().collect();
-    capture_markers_merged(&mut space, &view.entries, &loaded);
+    let line = parsed["/b.log"].entries[0].raw_line.clone();
+    let color = log_gpui::palette::HighlightColor::palette(
+        log_gpui::palette::Hue::Blue,
+        log_gpui::palette::Shade::Medium,
+    );
+    // Paint `INFO` on the only line of b.log.
+    let at = line.find("INFO").unwrap();
+    assert!(space.file_mut("/b.log").unwrap().paint_marker(1, &line, at..at + 4, color.clone()));
 
-    assert!(space.file("/a.log").unwrap().markers.is_empty());
-    assert_eq!(space.file("/b.log").unwrap().markers.len(), 1);
-    assert_eq!(space.file("/b.log").unwrap().markers[0].line, 1);
+    // The merged view: the row of b.log is the second one.
+    let view = build_space_view(&space, &parsed);
+    assert!(view.entries[0].markers.is_empty());
+    assert_eq!(view.entries[1].markers.len(), 1);
+    assert_eq!(view.entries[1].markers[0].range, at..at + 4);
 
     // A File View of b.log shows the same marker.
     let file_view = build_file_view(space.file("/b.log").unwrap(), &parsed["/b.log"]);
-    assert!(file_view.entries[0].is_bookmarked());
+    assert_eq!(file_view.entries[0].markers[0].color, color);
 
-    // And so does a rebuilt Log Space.
+    // Taking the marker off clears it from a rebuilt view.
+    assert!(space.file_mut("/b.log").unwrap().remove_marker_at(1, &line, at));
     let mut rebuilt = build_space_view(&space, &parsed);
     apply_markers_merged(&space, &mut rebuilt.entries);
-    assert!(rebuilt.entries[1].is_bookmarked());
-    assert!(!rebuilt.entries[0].is_bookmarked());
-}
-
-#[test]
-fn a_file_that_failed_to_load_keeps_its_markers() {
-    let (mut space, parsed) = space_with(&[("/a.log", "2026-09-05 10:00:01 [INFO] [API] a\n")]);
-    space.file_mut("/a.log").unwrap().markers.push(log_gpui::workspace::log_space::StoredMarker {
-        line: 1,
-        marker: Some(log_gpui::marker::MarkerType::Bookmark),
-        note: None,
-        content_hash: None,
-    });
-    let view = build_space_view(&space, &parsed);
-    // Nothing is loaded, so nothing is captured over the stored markers.
-    capture_markers_merged(&mut space, &view.entries, &HashSet::new());
-    assert_eq!(space.file("/a.log").unwrap().markers.len(), 1);
+    assert!(rebuilt.entries[1].markers.is_empty());
 }
 
 #[test]

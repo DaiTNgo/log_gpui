@@ -15,6 +15,13 @@ pub struct WorkspaceState {
     pub projects: Vec<Project>,
     /// Id of the currently active project, if any.
     pub active_project_id: Option<String>,
+    /// The Focus Pane's visibility and height: remembered by the app, not by
+    /// a tab.
+    #[serde(default)]
+    pub focus_pane: FocusPaneState,
+    /// Colors of the Search and Focus Find matches: an app setting.
+    #[serde(default)]
+    pub match_colors: crate::palette::MatchColors,
 }
 
 impl Default for WorkspaceState {
@@ -22,6 +29,8 @@ impl Default for WorkspaceState {
         Self {
             projects: Vec::new(),
             active_project_id: None,
+            focus_pane: FocusPaneState::default(),
+            match_colors: Default::default(),
         }
     }
 }
@@ -57,6 +66,8 @@ impl WorkspaceState {
             log_spaces: Vec::new(),
             working_set,
             investigation_cases: Vec::new(),
+            highlight_rules: Vec::new(),
+            recent_colors: Default::default(),
         };
         self.projects.push(project);
         let idx = self.projects.len() - 1;
@@ -158,6 +169,53 @@ pub const MIN_DRAWER_WIDTH: f32 = 180.0;
 pub const MAX_DRAWER_WIDTH: f32 = 500.0;
 pub const CONTEXT_SIDEBAR_WIDTH: f32 = 320.0;
 
+pub const DEFAULT_FOCUS_PANE_HEIGHT: f32 = 240.0;
+pub const MIN_FOCUS_PANE_HEIGHT: f32 = 80.0;
+/// The view above the Focus Pane never gets shorter than this.
+pub const MIN_VIEW_HEIGHT: f32 = 120.0;
+
+fn default_focus_pane_height() -> f32 {
+    DEFAULT_FOCUS_PANE_HEIGHT
+}
+
+/// Headless state of the Focus Pane, the full-width pane under the view and
+/// both sidebars.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FocusPaneState {
+    /// Expanded. Collapsed, the pane shows only its strip of tabs; it expands
+    /// by itself when a Filter or Search Expression appears.
+    #[serde(default)]
+    pub visible: bool,
+    #[serde(default = "default_focus_pane_height")]
+    pub height: f32,
+    #[serde(skip)]
+    pub is_resizing: bool,
+}
+
+impl Default for FocusPaneState {
+    fn default() -> Self {
+        Self { visible: false, height: DEFAULT_FOCUS_PANE_HEIGHT, is_resizing: false }
+    }
+}
+
+impl FocusPaneState {
+    pub fn toggle(&mut self) {
+        self.visible = !self.visible;
+    }
+
+    /// Set the height, keeping at least `MIN_FOCUS_PANE_HEIGHT` for the pane
+    /// and `MIN_VIEW_HEIGHT` for what is above it within `available` pixels
+    /// (the height between the window chrome and the status bar).
+    pub fn set_height(&mut self, height: f32, available: f32) {
+        self.height = Self::clamp_height(height, available);
+    }
+
+    pub fn clamp_height(height: f32, available: f32) -> f32 {
+        let max = (available - MIN_VIEW_HEIGHT).max(MIN_FOCUS_PANE_HEIGHT);
+        height.clamp(MIN_FOCUS_PANE_HEIGHT, max)
+    }
+}
+
 fn default_drawer_width() -> f32 {
     DEFAULT_DRAWER_WIDTH
 }
@@ -215,21 +273,21 @@ impl LeftSidebarState {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ContextSection {
     Filter,
-    Marker,
+    Highlights,
     Inspector,
 }
 
 impl ContextSection {
     pub const ALL: [ContextSection; 3] = [
         ContextSection::Filter,
-        ContextSection::Marker,
+        ContextSection::Highlights,
         ContextSection::Inspector,
     ];
 
     pub fn as_str(&self) -> &'static str {
         match self {
             ContextSection::Filter => "Filter",
-            ContextSection::Marker => "Marker",
+            ContextSection::Highlights => "Highlights",
             ContextSection::Inspector => "Inspector",
         }
     }
@@ -240,7 +298,7 @@ impl ContextSection {
 }
 
 /// Headless state of the right context sidebar: visibility plus which of the
-/// Filter / Marker / Inspector sections are collapsed. It is only
+/// Filter / Highlights / Inspector sections are collapsed. It is only
 /// meaningful while a log file tab is focused.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ContextSidebarState {
@@ -252,7 +310,7 @@ impl Default for ContextSidebarState {
     fn default() -> Self {
         Self {
             visible: false,
-            // Marker starts collapsed so Filter and Inspector get the room.
+            // Highlights starts collapsed so Filter and Inspector get the room.
             collapsed: [false, true, false],
         }
     }
