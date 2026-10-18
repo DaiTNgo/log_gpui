@@ -13,14 +13,45 @@ impl AppView {
         cx.notify();
     }
 
-    /// Right context sidebar (Files / Investigations / Saved Views / Markers).
+    /// Right context sidebar (View / Filter / Marker / Inspector).
     pub fn toggle_context_sidebar(&mut self, cx: &mut Context<Self>) {
         self.context_sidebar.toggle();
         cx.notify();
     }
 
-    pub fn show_context_tab(&mut self, tab: crate::workspace::state::ContextTab, cx: &mut Context<Self>) {
-        self.context_sidebar.show_tab(tab);
+    pub fn toggle_context_section(
+        &mut self,
+        section: crate::workspace::state::ContextSection,
+        cx: &mut Context<Self>,
+    ) {
+        self.context_sidebar.toggle_section(section);
+        cx.notify();
+    }
+
+    /// Shortcut behaviour: collapse `section` when it is showing, otherwise
+    /// open the sidebar with it expanded.
+    pub fn toggle_or_reveal_context_section(
+        &mut self,
+        section: crate::workspace::state::ContextSection,
+        cx: &mut Context<Self>,
+    ) {
+        let showing = self.context_sidebar.is_shown(self.active_tab_is_log_file())
+            && !self.context_sidebar.is_collapsed(section);
+        if showing {
+            self.context_sidebar.toggle_section(section);
+        } else {
+            self.context_sidebar.reveal(section);
+        }
+        cx.notify();
+    }
+
+    /// Toolbar shortcut: open the sidebar with `section` expanded.
+    pub fn reveal_context_section(
+        &mut self,
+        section: crate::workspace::state::ContextSection,
+        cx: &mut Context<Self>,
+    ) {
+        self.context_sidebar.reveal(section);
         cx.notify();
     }
 

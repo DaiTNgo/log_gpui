@@ -24,14 +24,11 @@ impl AppView {
             "All Visible".to_string()
         };
 
-        let mut bar = StatusBar::new()
+        let bar = StatusBar::new()
             .left(format!("Ln {}", current_line_num))
             .left(format!("{},{:03} events", total_count / 1000, total_count % 1000))
             .left(filter_label)
             .left("UTF-8");
-        if let Some(tag) = &self.focused_tag {
-            bar = bar.left(format!("Focus: [{}]", tag));
-        }
 
         bar.right(
             Button::new("status-tail")

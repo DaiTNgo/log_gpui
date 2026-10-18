@@ -17,14 +17,19 @@ impl AppView {
                     .tabs()
                     .iter()
                     .map(|tab| match &tab.target {
-                        TabTarget::LogFile { file_id } => proj
-                            .file(file_id)
-                            .map(|f| f.display_name.clone())
-                            .unwrap_or_else(|| file_id.clone()),
-                        TabTarget::InvestigationBoard { case_id } => format!("⚑ {}", case_id),
-                        TabTarget::ChronicleStream { file_ids } => {
-                            format!("⇄ {} files", file_ids.len())
+                        TabTarget::LogSpace { space_id } => proj
+                            .log_space(space_id)
+                            .map(|s| s.name.clone())
+                            .unwrap_or_else(|| space_id.clone()),
+                        TabTarget::FileView { space_id, file_id } => {
+                            let space = proj.log_space(space_id);
+                            let file = space.and_then(|s| s.file(file_id));
+                            match (file, space) {
+                                (Some(f), Some(s)) => format!("{} · {}", f.display_name, s.name),
+                                _ => file_id.clone(),
+                            }
                         }
+                        TabTarget::InvestigationBoard { case_id } => format!("⚑ {}", case_id),
                     })
                     .collect(),
                 proj.working_set.active_tab_index(),

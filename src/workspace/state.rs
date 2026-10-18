@@ -54,9 +54,8 @@ impl WorkspaceState {
             id: id.clone(),
             name,
             color,
-            files: Vec::new(),
+            log_spaces: Vec::new(),
             working_set,
-            saved_views: Vec::new(),
             investigation_cases: Vec::new(),
         };
         self.projects.push(project);
@@ -139,15 +138,15 @@ impl WorkspaceState {
     }
 
     /// Whether the switch from `from` to `to` would leak state.
-    /// Projects are strictly isolated: no two projects share files or tabs.
+    /// Projects are strictly isolated: no two projects share Log Spaces or tabs.
     pub fn projects_are_isolated(&self, a: &str, b: &str) -> bool {
         match (self.project(a), self.project(b)) {
             (Some(pa), Some(pb)) => {
-                let a_files: std::collections::HashSet<_> =
-                    pa.files.iter().map(|f| f.file_id.clone()).collect();
-                let b_files: std::collections::HashSet<_> =
-                    pb.files.iter().map(|f| f.file_id.clone()).collect();
-                a_files.is_disjoint(&b_files)
+                let a_spaces: std::collections::HashSet<_> =
+                    pa.log_spaces.iter().map(|s| s.id.clone()).collect();
+                let b_spaces: std::collections::HashSet<_> =
+                    pb.log_spaces.iter().map(|s| s.id.clone()).collect();
+                a_spaces.is_disjoint(&b_spaces)
             }
             _ => true,
         }
@@ -157,7 +156,7 @@ impl WorkspaceState {
 pub const DEFAULT_DRAWER_WIDTH: f32 = 240.0;
 pub const MIN_DRAWER_WIDTH: f32 = 180.0;
 pub const MAX_DRAWER_WIDTH: f32 = 500.0;
-pub const CONTEXT_SIDEBAR_WIDTH: f32 = 260.0;
+pub const CONTEXT_SIDEBAR_WIDTH: f32 = 320.0;
 
 fn default_drawer_width() -> f32 {
     DEFAULT_DRAWER_WIDTH
@@ -211,48 +210,50 @@ impl LeftSidebarState {
     }
 }
 
-/// Sections of the right context sidebar (scoped to the active project and
-/// the currently focused log file).
+/// Collapsible sections of the right context sidebar (scoped to the focused
+/// log file), stacked top to bottom in this order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum ContextTab {
-    Files,
-    Investigations,
-    SavedViews,
-    Markers,
+pub enum ContextSection {
+    Filter,
+    Marker,
+    Inspector,
 }
 
-impl ContextTab {
-    pub const ALL: [ContextTab; 4] = [
-        ContextTab::Files,
-        ContextTab::Investigations,
-        ContextTab::SavedViews,
-        ContextTab::Markers,
+impl ContextSection {
+    pub const ALL: [ContextSection; 3] = [
+        ContextSection::Filter,
+        ContextSection::Marker,
+        ContextSection::Inspector,
     ];
 
     pub fn as_str(&self) -> &'static str {
         match self {
-            ContextTab::Files => "Files",
-            ContextTab::Investigations => "Investigations",
-            ContextTab::SavedViews => "Saved Views",
-            ContextTab::Markers => "Markers",
+            ContextSection::Filter => "Filter",
+            ContextSection::Marker => "Marker",
+            ContextSection::Inspector => "Inspector",
         }
+    }
+
+    fn index(self) -> usize {
+        Self::ALL.iter().position(|s| *s == self).unwrap_or(0)
     }
 }
 
-/// Headless state of the right context sidebar (Files / Investigations /
-/// Saved Views / Markers). Independent from the Inspector panel. It is only
+/// Headless state of the right context sidebar: visibility plus which of the
+/// Filter / Marker / Inspector sections are collapsed. It is only
 /// meaningful while a log file tab is focused.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ContextSidebarState {
     pub visible: bool,
-    pub active_tab: ContextTab,
+    collapsed: [bool; 3],
 }
 
 impl Default for ContextSidebarState {
     fn default() -> Self {
         Self {
             visible: false,
-            active_tab: ContextTab::Files,
+            // Marker starts collapsed so Filter and Inspector get the room.
+            collapsed: [false, true, false],
         }
     }
 }
@@ -262,14 +263,23 @@ impl ContextSidebarState {
         Self::default()
     }
 
-    /// Header toggle: show/hide the sidebar, keeping the current section.
+    /// Header toggle: show/hide the sidebar, keeping the section states.
     pub fn toggle(&mut self) {
         self.visible = !self.visible;
     }
 
-    /// Show the sidebar on a specific section.
-    pub fn show_tab(&mut self, tab: ContextTab) {
-        self.active_tab = tab;
+    pub fn is_collapsed(&self, section: ContextSection) -> bool {
+        self.collapsed[section.index()]
+    }
+
+    pub fn toggle_section(&mut self, section: ContextSection) {
+        let c = &mut self.collapsed[section.index()];
+        *c = !*c;
+    }
+
+    /// Show the sidebar with a specific section expanded.
+    pub fn reveal(&mut self, section: ContextSection) {
+        self.collapsed[section.index()] = false;
         self.visible = true;
     }
 

@@ -1,9 +1,6 @@
-//! Logic: palette command dispatch and file opening.
+//! Logic: palette command dispatch.
 
 use super::AppView;
-use crate::column::FieldMaxChars;
-use crate::parser::parse_file;
-use crate::sample::generate_sample_logs;
 use crate::density::Density;
 use crate::ui::command_palette::PaletteAction;
 use crate::ui::floating_panel::PanelKind;
@@ -17,7 +14,6 @@ impl AppView {
         match action {
             PaletteAction::ToggleSearch => self.toggle_search(cx),
             PaletteAction::ToggleFilter => self.toggle_filter_builder(cx),
-            PaletteAction::ToggleViewPanel => self.toggle_panel(PanelKind::View, cx),
             PaletteAction::ToggleMarkerPanel => self.toggle_panel(PanelKind::Marker, cx),
             PaletteAction::ToggleBookmark => self.toggle_bookmark_current_line(cx),
             PaletteAction::ShowContext => {
@@ -46,23 +42,19 @@ impl AppView {
                 cx.notify();
             }
             PaletteAction::ToggleInspector => {
-                self.is_inspector_open = !self.is_inspector_open;
-                cx.notify();
+                self.toggle_or_reveal_context_section(crate::workspace::state::ContextSection::Inspector, cx);
             }
             PaletteAction::LoadDemo => {
-                let demo = generate_sample_logs();
-                let max_chars = FieldMaxChars::scan_entries(&demo);
-                self.open_log_file_in_tab(
-                    "app.log".to_string(),
-                    "app.log".to_string(),
-                    demo,
-                    max_chars,
-                    cx,
-                );
-                self.file_format = "Standard Server Log".to_string();
+                self.load_demo(cx);
             }
-            PaletteAction::OpenFile => {
-                self.open_file_dialog(cx);
+            PaletteAction::NewLogSpace => {
+                self.open_new_space_dialog(cx);
+            }
+            PaletteAction::ToggleRawParsed => {
+                self.toggle_view_mode(cx);
+            }
+            PaletteAction::SaveScratch => {
+                self.save_now(cx);
             }
             PaletteAction::UnpinAllColumns => {
                 self.unpin_all_columns(cx);
@@ -71,43 +63,5 @@ impl AppView {
                 self.toggle_project_switcher(cx);
             }
         }
-    }
-
-    /// Pick and open a log file. The native dialog is awaited off the event handler: running a
-    /// blocking modal inside a click handler re-enters the app while it is still borrowed.
-    pub fn open_file_dialog(&mut self, cx: &mut Context<Self>) {
-        cx.spawn(async move |this, cx| {
-            // No extension filter: any file can be imported (the parser reads raw bytes).
-            let Some(handle) = rfd::AsyncFileDialog::new().pick_file().await else {
-                return;
-            };
-            let file_path = handle.path().to_path_buf();
-            let name = file_path
-                .file_name()
-                .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or_else(|| "Unknown File".to_string());
-
-            match parse_file(&file_path) {
-                Ok(result) => {
-                    let file_id = file_path.to_string_lossy().to_string();
-                    this.update(cx, |this, cx| {
-                        this.column_layout.max_chars = result.max_chars;
-                        this.open_log_file_in_tab(
-                            file_id,
-                            name,
-                            result.entries,
-                            result.max_chars,
-                            cx,
-                        );
-                        this.file_format = "Text Log".to_string();
-                    })
-                    .ok();
-                }
-                Err(e) => {
-                    eprintln!("Failed to parse file: {:?}", e);
-                }
-            }
-        })
-        .detach();
     }
 }

@@ -10,7 +10,6 @@ use gpui_kit::assets::IconName;
 /// Which floating tool panel a given overlay represents.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PanelKind {
-    View,
     Filter,
     Marker,
 }
@@ -18,7 +17,6 @@ pub enum PanelKind {
 impl PanelKind {
     pub fn id(self) -> &'static str {
         match self {
-            PanelKind::View => "panel_view",
             PanelKind::Filter => "panel_filter",
             PanelKind::Marker => "panel_marker",
         }
@@ -26,7 +24,6 @@ impl PanelKind {
 
     pub fn title(self) -> &'static str {
         match self {
-            PanelKind::View => "View",
             PanelKind::Filter => "Filter",
             PanelKind::Marker => "Marker",
         }
@@ -34,7 +31,6 @@ impl PanelKind {
 
     pub fn icon(self) -> IconName {
         match self {
-            PanelKind::View => IconName::SquareTerminal,
             PanelKind::Filter => IconName::FileText,
             PanelKind::Marker => IconName::BookOpen,
         }
@@ -55,13 +51,6 @@ impl FloatingPanelState {
     pub fn default_for(kind: PanelKind) -> Self {
         match kind {
             // Staggered defaults so opened panels don't fully overlap.
-            PanelKind::View => Self {
-                open: false,
-                x: 24.0,
-                y: 88.0,
-                w: 300.0,
-                h: 380.0,
-            },
             PanelKind::Filter => Self {
                 open: false,
                 x: 348.0,

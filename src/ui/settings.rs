@@ -1,14 +1,15 @@
-//! Settings dialog (gpui-kit `Dialog`): row density, auto-tail and shortcuts.
+//! Settings dialog (gpui-kit `Dialog`): auto-tail and shortcuts. Display
+//! switches such as density live in Quick Settings on the toolbar.
 
 use crate::app::AppView;
-use crate::density::Density;
 use gpui::{App, Entity, Keystroke, ParentElement, Styled, Window};
-use gpui_component::button::{Button, ButtonGroup};
 use gpui_component::kbd::Kbd;
 use gpui_component::switch::Switch;
-use gpui_component::{h_flex, v_flex, Selectable as _, Sizable as _, WindowExt as _};
+use gpui_component::{h_flex, v_flex, WindowExt as _};
 
-const SHORTCUTS: [(&str, &str); 9] = [
+const SHORTCUTS: [(&str, &str); 11] = [
+    ("cmd-o", "New Log Space"),
+    ("cmd-s", "Save scratch files"),
     ("cmd-b", "Projects sidebar"),
     ("cmd-alt-b", "Context sidebar"),
     ("cmd-shift-b", "Context: Files"),
@@ -22,15 +23,8 @@ const SHORTCUTS: [(&str, &str); 9] = [
 
 pub fn open_settings_dialog(view: Entity<AppView>, window: &mut Window, cx: &mut App) {
     window.open_dialog(cx, move |dialog, _window, cx| {
-        let density = view.read(cx).density;
         let tail = view.read(cx).tail_enabled;
-        let densities = [
-            (Density::Comfortable, "Comfortable"),
-            (Density::Compact, "Compact"),
-            (Density::UltraCompact, "Ultra"),
-        ];
 
-        let density_view = view.clone();
         let tail_view = view.clone();
 
         let mut shortcuts = v_flex().gap_1();
@@ -45,21 +39,6 @@ pub fn open_settings_dialog(view: Entity<AppView>, window: &mut Window, cx: &mut
         dialog.title("Settings").w(gpui::px(420.0)).child(
             v_flex()
                 .gap_4()
-                .child(
-                    v_flex().gap_2().child("Row density").child(
-                        ButtonGroup::new("density")
-                            .small()
-                            .children(densities.map(|(d, label)| {
-                                Button::new(label).label(label).selected(density == d)
-                            }))
-                            .on_click(move |ix, _, app| {
-                                if let Some(&i) = ix.first() {
-                                    let d = densities[i].0;
-                                    density_view.update(app, |this, cx| this.set_density(d, cx));
-                                }
-                            }),
-                    ),
-                )
                 .child(
                     Switch::new("auto-tail")
                         .label("Auto-tail follow")

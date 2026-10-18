@@ -1,181 +1,181 @@
-//! Right context sidebar (Files / Investigations / Saved Views / Markers) for the
-//! active project and focused log file, built from gpui-kit components.
-//! Independent from the Inspector.
+//! Right context sidebar for the focused log file: four stacked, collapsible
+//! sections (Filter / Marker / Inspector). Every section reflects the
+//! state of the focused file only; the Inspector takes the remaining height.
 
 use crate::app::AppView;
-use crate::workspace::state::{ContextSidebarState, ContextTab, WorkspaceState, CONTEXT_SIDEBAR_WIDTH};
-use crate::workspace::working_set::TabTarget;
-use gpui::{px, Entity, IntoElement, ParentElement, Styled};
-use gpui_component::button::{Button, ButtonVariants as _};
-use crate::app::rename::RenameState;
-use crate::ui::file_menu::{push_file, FileRef};
-use crate::ui::menu_list::MenuList;
-use crate::ui::sidebar::file_rename_input;
-use crate::ui::sidebar_group::ActionGroup;
-use gpui_component::sidebar::{Sidebar, SidebarMenuItem};
-use gpui_component::tab::{Tab, TabBar};
+use crate::workspace::state::{ContextSection, ContextSidebarState, CONTEXT_SIDEBAR_WIDTH};
+use gpui::prelude::FluentBuilder as _;
+use gpui::{
+    div, px, ElementId, InteractiveElement, IntoElement, ParentElement, StatefulInteractiveElement,
+    ScrollHandle, Styled,
+};
+use gpui_component::scroll::{Scrollbar, ScrollbarAxis};
 use gpui_component::tag::Tag;
-use gpui_component::{Side, Sizable as _};
+use gpui_component::{h_flex, ActiveTheme as _, Icon};
 use gpui_kit::assets::IconName;
+
+/// Max height of a content-sized section before it scrolls internally.
+const SECTION_MAX_HEIGHT: f32 = 260.0;
+/// The Inspector never shrinks below this; the other sections give up room first.
+/// Window height taken by everything outside the sidebar (title bar, tabs, toolbar, status bar).
+const WINDOW_CHROME_HEIGHT: f32 = 170.0;
+/// Height of a collapsed section header.
+const SECTION_HEADER_HEIGHT: f32 = 40.0;
+const SECTION_MIN_HEIGHT: f32 = 80.0;
+const INSPECTOR_MIN_HEIGHT: f32 = 240.0;
+
+/// Pre-rendered section bodies plus the badge counts shown in the headers.
+pub struct ContextSections {
+    pub filter: gpui::AnyElement,
+    pub marker: gpui::AnyElement,
+    pub inspector: gpui::AnyElement,
+    pub active_filters: usize,
+    pub marker_count: usize,
+}
 
 pub struct ContextSidebar;
 
 impl ContextSidebar {
     pub fn render(
         state: &ContextSidebarState,
-        workspace: &WorkspaceState,
-        all_entries: &[crate::model::LogEntry],
-        visible_indices: &[usize],
-        renaming: Option<&RenameState>,
+        window: &mut gpui::Window,
+        viewport_height: f32,
+        sections: ContextSections,
         cx: &mut gpui::Context<AppView>,
     ) -> gpui::AnyElement {
-        let view = cx.entity();
-        let (title, menu) = match state.active_tab {
-            ContextTab::Files => ("Files", Self::files_menu(workspace, &view, renaming)),
-            ContextTab::Investigations => {
-                ("Investigations", Self::investigations_menu(workspace, &view))
-            }
-            ContextTab::SavedViews => ("Saved Views", Self::saved_views_menu(workspace, &view)),
-            ContextTab::Markers => ("Markers", Self::markers_menu(all_entries, visible_indices, &view)),
+        let ContextSections {
+            filter,
+            marker,
+            inspector,
+            active_filters,
+            marker_count,
+        } = sections;
+
+        // Split the height left over by the Inspector between the open tool sections.
+        let tools = [ContextSection::Filter, ContextSection::Marker];
+        let open_tools = tools.iter().filter(|t| !state.is_collapsed(**t)).count();
+        let inspector_room = if state.is_collapsed(ContextSection::Inspector) {
+            0.0
+        } else {
+            INSPECTOR_MIN_HEIGHT
+        };
+        let budget = viewport_height
+            - WINDOW_CHROME_HEIGHT
+            - SECTION_HEADER_HEIGHT * 3.0
+            - inspector_room;
+        let section_cap = if open_tools == 0 {
+            SECTION_MAX_HEIGHT
+        } else {
+            (budget / open_tools as f32).clamp(SECTION_MIN_HEIGHT, SECTION_MAX_HEIGHT)
         };
 
-        let tabs = TabBar::new("context-tabs")
-            .segmented()
-            .selected_index(ContextTab::ALL.iter().position(|t| *t == state.active_tab).unwrap_or(0))
-            .on_click(cx.listener(|this, ix: &usize, _window, cx| {
-                if let Some(tab) = ContextTab::ALL.get(*ix) {
-                    this.show_context_tab(*tab, cx);
-                }
-            }))
-            .children(ContextTab::ALL.iter().map(|t| Tab::new().label(t.as_str())));
+        let section = |kind: ContextSection,
+                       badge: Option<usize>,
+                       body: gpui::AnyElement,
+                       window: &mut gpui::Window,
+                       cx: &mut gpui::Context<AppView>| {
+            let collapsed = state.is_collapsed(kind);
+            let fills = kind == ContextSection::Inspector;
+            let header = h_flex()
+                .id(ElementId::from(format!("ctx-section-{}", kind.as_str())))
+                .w_full()
+                .px_3()
+                .py_2()
+                .gap_2()
+                .items_center()
+                .cursor_pointer()
+                .child(
+                    Icon::new(if collapsed {
+                        IconName::ChevronRight
+                    } else {
+                        IconName::ChevronDown
+                    })
+                    .size_3()
+                    .text_color(cx.theme().muted_foreground),
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .text_sm()
+                        .font_weight(gpui::FontWeight::SEMIBOLD)
+                        .child(kind.as_str()),
+                )
+                .when_some(badge.filter(|n| *n > 0), |this, n| {
+                    this.child(Tag::secondary().child(format!("{}", n)))
+                })
+                .on_click(cx.listener(move |this, _, _window, cx| {
+                    this.toggle_context_section(kind, cx);
+                }));
 
-        let mut group = ActionGroup::new(title);
-        let add_view = view.clone();
-        group = match state.active_tab {
-            ContextTab::Files => group.action(move |_, _| {
-                let v = add_view.clone();
-                Self::add_button("ctx-add-file", move |this, cx| this.open_file_dialog(cx), v)
-            }),
-            ContextTab::Investigations => group.action(move |_, _| {
-                let v = add_view.clone();
-                Self::add_button("ctx-new-case", move |this, cx| this.create_investigation_case(cx), v)
-            }),
-            ContextTab::SavedViews => group.action(move |_, _| {
-                let v = add_view.clone();
-                Self::add_button("ctx-save-view", move |this, cx| this.save_current_view(cx), v)
-            }),
-            ContextTab::Markers => group,
+            div()
+                .w_full()
+                .flex()
+                .flex_col()
+                .border_b_1()
+                .border_color(cx.theme().border)
+                .when(fills && !collapsed, |this| {
+                    this.flex_1().min_h(px(INSPECTOR_MIN_HEIGHT))
+                })
+                .child(header)
+                .when(!collapsed, |this| {
+                    if fills {
+                        this.child(body)
+                    } else {
+                        let handle = window
+                            .use_keyed_state(
+                                ElementId::from(format!("ctx-scroll-{}", kind.as_str())),
+                                cx,
+                                |_, _| ScrollHandle::default(),
+                            )
+                            .read(cx)
+                            .clone();
+                        // Plain `overflow_y_scroll` + an overlaid scrollbar: the scrollbar
+                        // wrapper sizes its area to 100% of an auto-height parent, which
+                        // defeats `max_h`.
+                        this.child(
+                            div()
+                                .relative()
+                                .w_full()
+                                .child(
+                                    div()
+                                        .id(ElementId::from(format!("ctx-body-{}", kind.as_str())))
+                                        .w_full()
+                                        .max_h(px(section_cap))
+                                        .overflow_y_scroll()
+                                        .track_scroll(&handle)
+                                        .px_3()
+                                        .pb_3()
+                                        .child(body),
+                                )
+                                .child(
+                                    div().absolute().inset_0().child(
+                                        Scrollbar::new(&handle)
+                                            .id(ElementId::from(format!(
+                                                "ctx-scrollbar-{}",
+                                                kind.as_str()
+                                            )))
+                                            .axis(ScrollbarAxis::Vertical)
+                                            .viewport_from_layout(),
+                                    ),
+                                ),
+                        )
+                    }
+                })
         };
 
-        Sidebar::<ActionGroup<MenuList>>::new("context-sidebar")
-            .side(Side::Right)
-            .collapsible(false)
+        div()
+            .id("context-sidebar")
             .w(px(CONTEXT_SIDEBAR_WIDTH))
-            .header(tabs)
-            .child(group.child(menu))
+            .h_full()
+            .flex_shrink_0()
+            .flex()
+            .flex_col()
+            .border_l_1()
+            .border_color(cx.theme().border)
+            .bg(cx.theme().background)
+            .child(section(ContextSection::Filter, Some(active_filters), filter, window, cx))
+            .child(section(ContextSection::Marker, Some(marker_count), marker, window, cx))
+            .child(section(ContextSection::Inspector, None, inspector, window, cx))
             .into_any_element()
-    }
-
-    fn add_button(
-        id: &'static str,
-        f: impl Fn(&mut AppView, &mut gpui::Context<AppView>) + 'static,
-        view: Entity<AppView>,
-    ) -> Button {
-        Button::new(id)
-            .ghost()
-            .xsmall()
-            .icon(IconName::Plus)
-            .on_click(move |_, _, app| view.update(app, |this, cx| f(this, cx)))
-    }
-
-    /// Files of the active project with open/active state and an "Add Log File..." entry.
-    fn files_menu(
-        workspace: &WorkspaceState,
-        view: &Entity<AppView>,
-        renaming: Option<&RenameState>,
-    ) -> MenuList {
-        let mut menu = MenuList::new();
-        if let Some(project) = workspace.active_project() {
-            let active_file_id = project.working_set.active_tab().and_then(|t| match &t.target {
-                TabTarget::LogFile { file_id } => Some(file_id.clone()),
-                _ => None,
-            });
-            for file in &project.files {
-                menu = push_file(
-                    menu,
-                    FileRef {
-                        view: view.clone(),
-                        project_id: project.id.clone(),
-                        file_id: file.file_id.clone(),
-                        display_name: file.display_name.clone(),
-                        rename_input: file_rename_input(renaming, &project.id, &file.file_id),
-                    },
-                    active_file_id.as_deref() == Some(file.file_id.as_str()),
-                    Some(IconName::FileText),
-                );
-            }
-        }
-        menu
-    }
-
-    fn investigations_menu(workspace: &WorkspaceState, view: &Entity<AppView>) -> MenuList {
-        let mut menu = MenuList::new();
-        if let Some(project) = workspace.active_project() {
-            for case in &project.investigation_cases {
-                let case_view = view.clone();
-                let case_id = case.id.clone();
-                let anchors = case.anchors.len();
-                menu = menu.child(
-                    SidebarMenuItem::new(format!("{} · {}", case.id, case.title))
-                        .icon(IconName::BookOpen)
-                        .on_click(move |_, _, app| {
-                            let id = case_id.clone();
-                            case_view.update(app, |this, cx| this.open_investigation_case(&id, cx));
-                        })
-                        .suffix(move |_, _| Tag::secondary().child(format!("{}", anchors))),
-                );
-            }
-        }
-        menu
-    }
-
-    fn saved_views_menu(workspace: &WorkspaceState, view: &Entity<AppView>) -> MenuList {
-        let mut menu = MenuList::new();
-        if let Some(project) = workspace.active_project() {
-            for saved in &project.saved_views {
-                let apply_view = view.clone();
-                let view_id = saved.id.clone();
-                let filters = saved.filter.conditions.len();
-                menu = menu.child(
-                    SidebarMenuItem::new(saved.name.clone())
-                        .on_click(move |_, _, app| {
-                            let id = view_id.clone();
-                            apply_view.update(app, |this, cx| this.apply_saved_view(&id, cx));
-                        })
-                        .suffix(move |_, _| Tag::secondary().child(format!("{}", filters))),
-                );
-            }
-        }
-        menu
-    }
-
-    fn markers_menu(
-        all_entries: &[crate::model::LogEntry],
-        visible_indices: &[usize],
-        view: &Entity<AppView>,
-    ) -> MenuList {
-        let mut menu = MenuList::new();
-        for (vis_pos, &entry_ix) in visible_indices.iter().enumerate() {
-            let Some(entry) = all_entries.get(entry_ix) else { continue };
-            let Some(marker) = entry.effective_marker() else { continue };
-            let jump_view = view.clone();
-            menu = menu.child(
-                SidebarMenuItem::new(format!("{} #{} {}", marker.symbol(), entry.index, entry.payload))
-                    .on_click(move |_, _, app| {
-                        jump_view.update(app, |this, cx| this.jump_to_row(vis_pos, cx));
-                    }),
-            );
-        }
-        menu
     }
 }

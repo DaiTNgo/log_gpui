@@ -1,6 +1,6 @@
 use crate::model::{LogEntry, LogLevel};
 use crate::parser::event::{json_to_log_value, LogEvent, LogValue};
-use crate::query::schema::{FieldType, LogSchema, QueryField};
+use crate::parser::schema::{FieldType, LogSchema, QueryField};
 use chrono::{DateTime, NaiveDateTime};
 use regex::Regex;
 use serde_json::Value;
@@ -127,11 +127,14 @@ fn parse_line(index: usize, line_trimmed: &str, raw_line: &str) -> Option<LogEve
             _ => LogLevel::Unknown,
         };
 
-        let timestamp = infer_incrementing_timestamp(index);
-        return Some(
-            LogEvent::new(index, timestamp, time_str, payload, raw_line.to_string())
-                .with_metadata(level, &tag),
-        );
+        // The format has no year: read it in a fixed one so files compare.
+        let parsed = NaiveDateTime::parse_from_str(&format!("{PLACEHOLDER_YEAR}-{time_str}"), "%Y-%m-%d %H:%M:%S%.f")
+            .ok()
+            .map(|ndt| ndt.and_utc().timestamp() as f64 + (ndt.and_utc().timestamp_subsec_micros() as f64 / 1_000_000.0));
+        let timestamp = parsed.unwrap_or_else(|| infer_incrementing_timestamp(index));
+        let event = LogEvent::new(index, timestamp, time_str, payload, raw_line.to_string())
+            .with_metadata(level, &tag);
+        return Some(if parsed.is_some() { event } else { event.without_time() });
     }
 
     // Try Syslog format
@@ -141,15 +144,18 @@ fn parse_line(index: usize, line_trimmed: &str, raw_line: &str) -> Option<LogEve
         let payload = caps.get(4).map_or("", |m| m.as_str()).to_string();
         let level = LogLevel::from_str(&payload);
 
-        let timestamp = infer_incrementing_timestamp(index);
-        return Some(
-            LogEvent::new(index, timestamp, time_str, payload, raw_line.to_string())
-                .with_metadata(level, &tag),
-        );
+        let parsed = NaiveDateTime::parse_from_str(&format!("{PLACEHOLDER_YEAR} {time_str}"), "%Y %b %e %H:%M:%S")
+            .ok()
+            .map(|ndt| ndt.and_utc().timestamp() as f64);
+        let timestamp = parsed.unwrap_or_else(|| infer_incrementing_timestamp(index));
+        let event = LogEvent::new(index, timestamp, time_str, payload, raw_line.to_string())
+            .with_metadata(level, &tag);
+        return Some(if parsed.is_some() { event } else { event.without_time() });
     }
 
     // Try Standard timestamped / tagged format
     let mut timestamp = infer_incrementing_timestamp(index);
+    let mut has_time = false;
     let mut time_str = format!("{:.3}", timestamp);
     let mut tag = "app".to_string();
     let mut payload = raw_line.to_string();
@@ -160,10 +166,13 @@ fn parse_line(index: usize, line_trimmed: &str, raw_line: &str) -> Option<LogEve
             time_str = s.to_string();
             if let Ok(dt) = DateTime::parse_from_rfc3339(s) {
                 timestamp = dt.timestamp() as f64 + (dt.timestamp_subsec_micros() as f64 / 1_000_000.0);
+                has_time = true;
             } else if let Ok(ndt) = NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S%.f") {
                 timestamp = ndt.and_utc().timestamp() as f64 + (ndt.and_utc().timestamp_subsec_micros() as f64 / 1_000_000.0);
+                has_time = true;
             } else if let Ok(ndt) = NaiveDateTime::parse_from_str(s, "%Y/%m/%d %H:%M:%S") {
                 timestamp = ndt.and_utc().timestamp() as f64;
+                has_time = true;
             }
         }
 
@@ -180,11 +189,13 @@ fn parse_line(index: usize, line_trimmed: &str, raw_line: &str) -> Option<LogEve
     }
 
     let level = LogLevel::from_str(line_trimmed);
-    Some(
-        LogEvent::new(index, timestamp, time_str, payload, raw_line.to_string())
-            .with_metadata(level, &tag),
-    )
+    let event = LogEvent::new(index, timestamp, time_str, payload, raw_line.to_string())
+        .with_metadata(level, &tag);
+    Some(if has_time { event } else { event.without_time() })
 }
+
+/// Year assumed for formats that carry no year (logcat, syslog).
+const PLACEHOLDER_YEAR: i32 = 1972;
 
 /// Deterministic pseudo-timestamp for formats without a parseable timestamp.
 fn infer_incrementing_timestamp(index: usize) -> f64 {
@@ -197,6 +208,7 @@ fn parse_json_log_event(
     raw_line: &str,
 ) -> Option<LogEvent> {
     let mut timestamp = infer_incrementing_timestamp(index);
+    let mut has_time = false;
     let mut time_str = format!("{:.3}", timestamp);
 
     for key in &["timestamp", "time", "@timestamp", "datetime", "date"] {
@@ -204,6 +216,7 @@ fn parse_json_log_event(
             time_str = val.to_string();
             if let Ok(dt) = DateTime::parse_from_rfc3339(val) {
                 timestamp = dt.timestamp() as f64 + (dt.timestamp_subsec_micros() as f64 / 1_000_000.0);
+                has_time = true;
             }
             break;
         }
@@ -237,6 +250,9 @@ fn parse_json_log_event(
 
     let mut event = LogEvent::new(index, timestamp, time_str, payload.clone(), raw_line.to_string())
         .with_metadata(level, &tag);
+    if !has_time {
+        event = event.without_time();
+    }
 
     // Insert every raw JSON key as a dynamic field.
     if let Value::Object(map) = json {

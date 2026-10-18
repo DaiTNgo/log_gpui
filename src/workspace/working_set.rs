@@ -1,25 +1,48 @@
 use crate::column::ColumnLayoutState;
-use crate::filter::FilterEngine;
 use crate::search::SearchState;
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 
 /// The target entity represented by a tab in the working set.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum TabTarget {
-    /// An individual log file open for viewing.
-    LogFile { file_id: String },
+    /// A Log Space: its files interleaved by timestamp.
+    LogSpace { space_id: String },
+    /// One file of a Log Space opened on its own.
+    FileView { space_id: String, file_id: String },
     /// An investigation case board showing chronological evidence trail.
     InvestigationBoard { case_id: String },
-    /// A merged chronological view across multiple log files.
-    ChronicleStream { file_ids: Vec<String> },
+}
+
+impl TabTarget {
+    /// The Log Space this tab views, if it is a Log Space or File View tab.
+    pub fn space_id(&self) -> Option<&str> {
+        match self {
+            TabTarget::LogSpace { space_id } | TabTarget::FileView { space_id, .. } => {
+                Some(space_id)
+            }
+            TabTarget::InvestigationBoard { .. } => None,
+        }
+    }
+
+    /// Whether this tab shows log lines (and so has Filter, Search, Markers).
+    pub fn is_log_view(&self) -> bool {
+        !matches!(self, TabTarget::InvestigationBoard { .. })
+    }
+}
+
+/// Whether a log tab shows the parsed columns or each file's raw text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum ViewMode {
+    Raw,
+    #[default]
+    Parsed,
 }
 
 /// Independent per-tab session state. Each tab preserves its own complete
 /// editor context so switching tabs never resets the user's place.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TabSessionState {
-    /// Active filter conditions for this tab.
-    pub filter: FilterEngine,
     /// Active search query and match state.
     pub search: SearchState,
     /// Column widths, pin state, and resize state.
@@ -30,17 +53,24 @@ pub struct TabSessionState {
     pub scroll_top: f32,
     /// Currently selected visible row index, if any.
     pub selected_row: Option<usize>,
+    /// Raw View or Parsed View.
+    #[serde(default)]
+    pub mode: ViewMode,
+    /// `file_id`s of the File Sections collapsed in the Raw View.
+    #[serde(default)]
+    pub collapsed_sections: HashSet<String>,
 }
 
 impl TabSessionState {
     pub fn new() -> Self {
         Self {
-            filter: FilterEngine::new(),
             search: SearchState::new(),
             column_layout: ColumnLayoutState::new(),
             scroll_x: 0.0,
             scroll_top: 0.0,
             selected_row: None,
+            mode: ViewMode::Parsed,
+            collapsed_sections: HashSet::new(),
         }
     }
 }
@@ -217,14 +247,36 @@ impl WorkingSet {
         self.active_index = Some(to);
     }
 
-    /// Check if a file is currently open in any tab.
+    /// Check if a file is currently open in a File View tab.
     pub fn is_file_open(&self, file_id: &str) -> bool {
         self.tabs.iter().any(|t| {
             matches!(
                 &t.target,
-                TabTarget::LogFile { file_id: fid } if fid == file_id
+                TabTarget::FileView { file_id: fid, .. } if fid == file_id
             )
         })
+    }
+
+    /// Close every tab that views the Log Space (its Log Space tab and all
+    /// its File Views).
+    pub fn close_tabs_for_space(&mut self, space_id: &str) {
+        while let Some(i) = self
+            .tabs
+            .iter()
+            .position(|t| t.target.space_id() == Some(space_id))
+        {
+            self.close_tab(i);
+        }
+    }
+
+    /// Close the File View showing the given file.
+    pub fn close_tabs_for_file(&mut self, space_id: &str, file_id: &str) {
+        if let Some(i) = self.find_tab(&TabTarget::FileView {
+            space_id: space_id.to_string(),
+            file_id: file_id.to_string(),
+        }) {
+            self.close_tab(i);
+        }
     }
 
     /// Find the index of a tab by its target.

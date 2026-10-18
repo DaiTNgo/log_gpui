@@ -153,3 +153,29 @@ pub fn generate_sample_logs() -> Vec<LogEntry> {
 
     entries
 }
+
+/// The sample logs as text lines, in the standard timestamped format, for the
+/// demo Log Space.
+pub fn generate_sample_text() -> String {
+    use chrono::DateTime;
+    let mut out = String::new();
+    for entry in generate_sample_logs() {
+        let secs = entry.timestamp.floor() as i64;
+        let nanos = (entry.timestamp.fract() * 1_000_000_000.0) as u32;
+        let stamp = DateTime::from_timestamp(secs, nanos)
+            .map(|dt| dt.format("%Y-%m-%d %H:%M:%S%.3f").to_string())
+            .unwrap_or_else(|| entry.time_str.clone());
+        out.push_str(&format!(
+            "{} [{}] [{}] {}\n",
+            stamp,
+            entry.level.as_str(),
+            entry.tag,
+            entry.payload
+        ));
+        for line in &entry.sub_lines {
+            out.push_str(line);
+            out.push('\n');
+        }
+    }
+    out
+}

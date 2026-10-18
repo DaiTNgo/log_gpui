@@ -1,7 +1,7 @@
 use log_gpui::model::LogLevel;
 use log_gpui::parser::event::{json_to_log_value, LogEvent, LogValue};
 use log_gpui::parser::{parse_file_with_schema, parse_text_bytes_with_max_chars};
-use log_gpui::query::schema::FieldType;
+use log_gpui::parser::schema::FieldType;
 use std::collections::HashMap;
 
 #[test]

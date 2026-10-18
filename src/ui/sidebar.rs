@@ -1,8 +1,8 @@
-//! Left sidebar: project tree (projects -> log files) built from gpui-kit `Sidebar`
+//! Left sidebar: project tree (projects -> Log Spaces -> files) built from gpui-kit `Sidebar`
 //! components. Settings opens a gpui-kit `Dialog` from the sidebar footer.
 
 use crate::app::rename::{RenameState, RenameTarget};
-use crate::ui::file_menu::{push_file, rename_field, FileRef};
+use crate::ui::space_menu::{FileRef, SpaceRef, push_file, push_space, rename_field};
 use crate::ui::menu_list::MenuList;
 use crate::ui::project_node::ProjectNode;
 use crate::ui::settings::open_settings_dialog;
@@ -33,10 +33,27 @@ impl Render for ResizeDrawer {
 pub(crate) fn file_rename_input(
     renaming: Option<&RenameState>,
     project_id: &str,
+    space_id: &str,
     file_id: &str,
 ) -> Option<gpui::Entity<gpui_component::input::InputState>> {
     renaming.and_then(|r| match &r.target {
-        RenameTarget::File { project_id: p, file_id: f } if p == project_id && f == file_id => {
+        RenameTarget::File { project_id: p, space_id: s, file_id: f }
+            if p == project_id && s == space_id && f == file_id =>
+        {
+            Some(r.input.clone())
+        }
+        _ => None,
+    })
+}
+
+/// The inline-rename input for this Log Space, if it is the one being renamed.
+pub(crate) fn space_rename_input(
+    renaming: Option<&RenameState>,
+    project_id: &str,
+    space_id: &str,
+) -> Option<gpui::Entity<gpui_component::input::InputState>> {
+    renaming.and_then(|r| match &r.target {
+        RenameTarget::LogSpace { project_id: p, space_id: s } if p == project_id && s == space_id => {
             Some(r.input.clone())
         }
         _ => None,
@@ -60,6 +77,8 @@ impl SidebarView {
         sidebar: &LeftSidebarState,
         workspace: &WorkspaceState,
         renaming: Option<&RenameState>,
+        expanded_spaces: &std::collections::HashSet<String>,
+        no_timestamp_files: &std::collections::HashSet<String>,
         cx: &mut gpui::Context<crate::app::AppView>,
     ) -> gpui::AnyElement {
         if !sidebar.visible {
@@ -71,32 +90,64 @@ impl SidebarView {
         let mut nodes: Vec<ProjectNode> = Vec::new();
         for project in &workspace.projects {
             let is_active = active_project_id == Some(project.id.as_str());
-            let active_file_id = if is_active {
-                project
-                    .working_set
-                    .active_tab()
-                    .and_then(|t| match &t.target {
-                        TabTarget::LogFile { file_id } => Some(file_id.as_str()),
-                        _ => None,
-                    })
+            let active_target = if is_active {
+                project.working_set.active_tab().map(|t| t.target.clone())
             } else {
                 None
             };
 
             let mut files = MenuList::new();
-            for file in &project.files {
-                files = push_file(
+            for space in &project.log_spaces {
+                let space_active = matches!(
+                    &active_target,
+                    Some(TabTarget::LogSpace { space_id }) if *space_id == space.id
+                );
+                let expanded = expanded_spaces.contains(&space.id);
+                files = push_space(
                     files,
-                    FileRef {
+                    SpaceRef {
                         view: view.clone(),
                         project_id: project.id.clone(),
-                        file_id: file.file_id.clone(),
-                        display_name: file.display_name.clone(),
-                        rename_input: file_rename_input(renaming, &project.id, &file.file_id),
+                        space_id: space.id.clone(),
+                        name: space.name.clone(),
+                        kind: space.kind,
+                        order: space.file_order,
+                        expanded,
+                        active: space_active,
+                        rename_input: space_rename_input(renaming, &project.id, &space.id),
                     },
-                    active_file_id == Some(file.file_id.as_str()),
-                    None,
                 );
+                if !expanded {
+                    continue;
+                }
+                for file in space.ordered_files() {
+                    let file_active = matches!(
+                        &active_target,
+                        Some(TabTarget::FileView { space_id, file_id })
+                            if *space_id == space.id && *file_id == file.file_id
+                    );
+                    files = push_file(
+                        files,
+                        FileRef {
+                            view: view.clone(),
+                            project_id: project.id.clone(),
+                            space_id: space.id.clone(),
+                            file_id: file.file_id.clone(),
+                            display_name: file.display_name.clone(),
+                            path: file.path.clone(),
+                            kind: space.kind,
+                            can_delete: space.files.len() > 1,
+                            no_timestamps: no_timestamp_files.contains(&file.file_id),
+                            rename_input: file_rename_input(
+                                renaming,
+                                &project.id,
+                                &space.id,
+                                &file.file_id,
+                            ),
+                        },
+                        file_active,
+                    );
+                }
             }
 
             let switch_view = view.clone();
@@ -117,7 +168,7 @@ impl SidebarView {
                         let id = switch_id.clone();
                         switch_view.update(app, |this, cx| this.switch_project_to(&id, cx));
                     })
-                    // "..." menu (rename / remove) and add log file, shown on hover.
+                    // "..." menu (rename / remove) and New Log Space, shown on hover.
                     .action(move |_, _| {
                         let (menu_view, menu_id, menu_name) =
                             (more_view.clone(), more_id.clone(), more_name.clone());
@@ -158,7 +209,7 @@ impl SidebarView {
                     })
                     .action(move |_, _| {
                         let (view, project_id) = (add_view.clone(), add_id.clone());
-                        Button::new(ElementId::from(format!("add-file-{}", project_id)))
+                        Button::new(ElementId::from(format!("add-space-{}", project_id)))
                             .ghost()
                             .xsmall()
                             .icon(IconName::Plus)
@@ -166,7 +217,7 @@ impl SidebarView {
                                 let project_id = project_id.clone();
                                 view.update(app, |this, cx| {
                                     this.switch_project_to(&project_id, cx);
-                                    this.open_file_dialog(cx);
+                                    this.open_new_space_dialog(cx);
                                 });
                             })
                     })

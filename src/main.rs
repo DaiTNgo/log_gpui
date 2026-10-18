@@ -1,18 +1,4 @@
-pub mod app;
-pub mod column;
-pub mod filter;
-pub mod infrastructure;
-pub mod marker;
-pub mod model;
-pub mod parser;
-pub mod query;
-pub mod sample;
-pub mod search;
-pub mod density;
-pub mod ui;
-pub mod workspace;
-
-use app::AppView;
+use log_gpui::app::AppView;
 use gpui::{px, size, AppContext, Bounds, WindowBounds, WindowOptions};
 use gpui_component::{theme::ThemeMode, Root, Theme, TitleBar};
 

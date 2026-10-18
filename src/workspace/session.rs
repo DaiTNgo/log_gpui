@@ -20,14 +20,13 @@ pub struct ProjectSnapshot {
     pub id: String,
     pub name: String,
     pub color: crate::workspace::project::ProjectColorAccent,
-    pub files: Vec<crate::workspace::project::LogFileDescriptor>,
+    pub log_spaces: Vec<crate::workspace::log_space::LogSpace>,
     pub working_set: crate::workspace::working_set::WorkingSet,
-    pub saved_views: Vec<crate::workspace::saved_view::SavedView>,
     pub investigation_cases: Vec<crate::workspace::investigation::InvestigationCase>,
 }
 
 impl SessionManifest {
-    pub const CURRENT_VERSION: u32 = 1;
+    pub const CURRENT_VERSION: u32 = 3;
 
     /// Capture the current workspace state into a serializable manifest.
     pub fn from_workspace(ws: &WorkspaceState) -> Self {
@@ -38,9 +37,8 @@ impl SessionManifest {
                 id: p.id.clone(),
                 name: p.name.clone(),
                 color: p.color,
-                files: p.files.clone(),
+                log_spaces: p.log_spaces.clone(),
                 working_set: p.working_set.clone(),
-                saved_views: p.saved_views.clone(),
                 investigation_cases: p.investigation_cases.clone(),
             })
             .collect();
@@ -60,9 +58,8 @@ impl SessionManifest {
                 id: p.id,
                 name: p.name,
                 color: p.color,
-                files: p.files,
+                log_spaces: p.log_spaces,
                 working_set: p.working_set,
-                saved_views: p.saved_views,
                 investigation_cases: p.investigation_cases,
             });
         }
@@ -75,15 +72,25 @@ impl SessionManifest {
         serde_json::to_string_pretty(self)
     }
 
+    /// Parse a session file, ignoring one written by an older format: those
+    /// sessions are not converted. Returns `None` for an old or unreadable file.
+    pub fn from_json_current(json: &str) -> Option<Self> {
+        let value: serde_json::Value = serde_json::from_str(json).ok()?;
+        if value.get("version")?.as_u64()? != u64::from(Self::CURRENT_VERSION) {
+            return None;
+        }
+        serde_json::from_value(value).ok()
+    }
+
     /// Deserialize from a JSON string.
     pub fn from_json(json: &str) -> Result<Self, serde_json::Error> {
         serde_json::from_str(json)
     }
 }
 
-/// Path (in the user config directory) where the session file is written.
-/// Uses `$XDG_CONFIG_HOME/log_gpui/session.json` or `~/.config/log_gpui/session.json`.
-pub fn default_session_path() -> std::path::PathBuf {
+/// Directory (in the user config directory) holding the app's own data:
+/// `$XDG_CONFIG_HOME/log_gpui` or `~/.config/log_gpui`.
+pub fn app_data_dir() -> std::path::PathBuf {
     let mut path = if let Some(xdg) = std::env::var_os("XDG_CONFIG_HOME") {
         std::path::PathBuf::from(xdg)
     } else if let Some(home) = std::env::var_os("HOME") {
@@ -92,8 +99,12 @@ pub fn default_session_path() -> std::path::PathBuf {
         std::path::PathBuf::from(".")
     };
     path.push("log_gpui");
-    path.push("session.json");
     path
+}
+
+/// Path where the session file is written: `<app data dir>/session.json`.
+pub fn default_session_path() -> std::path::PathBuf {
+    app_data_dir().join("session.json")
 }
 
 /// Non-blocking, debounced persistence wrapper. Writes are coalesced: a write
@@ -130,9 +141,17 @@ impl SessionPersistence {
     pub fn load(&self) -> Result<Option<SessionManifest>, std::io::Error> {
         match std::fs::read_to_string(&self.path) {
             Ok(content) => {
-                let manifest = SessionManifest::from_json(&content)
+                // Unreadable JSON is an error; a session of an older format is skipped.
+                let value: serde_json::Value = serde_json::from_str(&content)
                     .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
-                Ok(Some(manifest))
+                if value.get("version").and_then(|v| v.as_u64())
+                    != Some(u64::from(SessionManifest::CURRENT_VERSION))
+                {
+                    return Ok(None);
+                }
+                serde_json::from_value(value)
+                    .map(Some)
+                    .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
             }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
             Err(e) => Err(e),

@@ -1,4 +1,4 @@
-//! Logic: selected entry, markers, quick filters and error navigation.
+//! Logic: selected entry, markers and error navigation.
 
 use super::AppView;
 use crate::marker::MarkerType;
@@ -6,11 +6,6 @@ use crate::model::{LogEntry, LogLevel};
 use gpui::Context;
 
 impl AppView {
-    pub fn remove_filter_condition(&mut self, id: usize, cx: &mut Context<Self>) {
-        self.filter_engine.remove_condition(id);
-        self.apply_filters_and_refresh(cx);
-    }
-
     pub fn selected_entry(&self) -> Option<&LogEntry> {
         self.selected_row_pos
             .and_then(|pos| self.visible_indices.get(pos))
@@ -30,6 +25,7 @@ impl AppView {
         if let Some(entry) = self.selected_entry_mut() {
             let next_m = MarkerType::cycle(entry.marker);
             entry.marker = next_m;
+            self.schedule_session_save(cx);
             cx.notify();
         }
     }
@@ -37,6 +33,7 @@ impl AppView {
     pub fn set_selected_marker(&mut self, marker: Option<MarkerType>, cx: &mut Context<Self>) {
         if let Some(entry) = self.selected_entry_mut() {
             entry.marker = marker;
+            self.schedule_session_save(cx);
             cx.notify();
         }
     }
@@ -47,31 +44,15 @@ impl AppView {
                 entry.marker = Some(MarkerType::Note);
             }
             entry.note = note;
+            self.schedule_session_save(cx);
             cx.notify();
         }
-    }
-
-    pub fn add_quick_filter_level(&mut self, level: LogLevel, cx: &mut Context<Self>) {
-        self.filter_engine.add_condition(
-            crate::filter::ConditionField::Level,
-            crate::filter::ConditionOp::Is,
-            level.as_str().to_string(),
-        );
-        self.apply_filters_and_refresh(cx);
-    }
-
-    pub fn add_quick_filter_module(&mut self, module: &str, cx: &mut Context<Self>) {
-        self.filter_engine.add_condition(
-            crate::filter::ConditionField::Module,
-            crate::filter::ConditionOp::Is,
-            module.to_string(),
-        );
-        self.apply_filters_and_refresh(cx);
     }
 
     pub fn toggle_row_expansion(&mut self, entry_ix: usize, cx: &mut Context<Self>) {
         if let Some(entry) = self.all_entries.get_mut(entry_ix) {
             entry.is_expanded = !entry.is_expanded;
+            self.schedule_session_save(cx);
             cx.notify();
         }
     }
@@ -79,6 +60,7 @@ impl AppView {
     pub fn toggle_bookmark_current_line(&mut self, cx: &mut Context<Self>) {
         if let Some(entry) = self.selected_entry_mut() {
             entry.toggle_bookmark();
+            self.schedule_session_save(cx);
             cx.notify();
         }
     }

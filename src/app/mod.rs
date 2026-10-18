@@ -4,54 +4,63 @@
 //! `view_settings`, `commands`, `keyboard`, `workspace_items`); rendering lives in `view/`.
 
 mod commands;
+mod filter;
 mod keyboard;
+mod persist;
+mod raw;
 mod panels;
 mod projects;
 pub mod rename;
 mod search;
 mod selection;
+mod spaces;
 mod tabs;
 mod view;
 mod view_settings;
 mod workspace_items;
 
-use crate::column::{ColumnLayoutState, FieldMaxChars};
-use crate::filter::FilterEngine;
+use crate::column::ColumnLayoutState;
+use crate::filter::FilterState;
+use crate::filter_index::FilterIndex;
 use crate::model::LogEntry;
-use crate::sample::generate_sample_logs;
 use crate::search::SearchState;
+use crate::space_view::ParsedFile;
 use crate::density::Density;
-use crate::ui::filter_popover::QuickLogMenu;
 use crate::ui::floating_panel::{
     FloatingPanelState, PanelGesture, PanelKind,
 };
 use crate::ui::inspector::InspectorTab;
-use crate::workspace::project::{LogFileDescriptor, ProjectColorAccent};
 use crate::workspace::state::{ContextSidebarState, LeftSidebarState, WorkspaceState};
-use crate::workspace::working_set::TabSessionState;
+use crate::workspace::working_set::ViewMode;
 use gpui::{
     App, AppContext, Context, Entity, FocusHandle, Focusable, UniformListScrollHandle,
     Window,
 };
 use std::collections::{HashMap, HashSet};
-use gpui_component::input::{EditorState, InputEvent};
+use gpui_component::input::{InputEvent, InputState};
 use std::sync::Arc;
+
+/// A destructive action waiting for the user's confirmation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ConfirmAction {
+    DeleteLogSpace { space_id: String },
+    DeleteScratchFile { space_id: String, file_id: String },
+}
 
 pub struct AppView {
     pub all_entries: Vec<LogEntry>,
     pub visible_indices: Arc<Vec<usize>>,
-    pub filter_engine: FilterEngine,
+    pub filter_state: FilterState,
+    pub filter_index: FilterIndex,
+    pub filter_ui: filter::FilterUi,
     pub search_state: SearchState,
-    pub search_input: Entity<EditorState>,
+    pub search_input: Entity<InputState>,
     pub scroll_handle: UniformListScrollHandle,
 
     pub selected_row_pos: Option<usize>,
     pub inspector_tab: InspectorTab,
-    pub is_inspector_open: bool,
     pub is_context_open: bool,
     pub is_palette_open: bool,
-
-    pub active_quick_menu: Option<QuickLogMenu>,
 
     pub file_name: String,
     pub file_format: String,
@@ -60,14 +69,15 @@ pub struct AppView {
     pub density: Density,
     pub column_layout: ColumnLayoutState,
     pub tail_enabled: bool,
-    pub focused_tag: Option<String>,
 
-    // Issue 01 / 02: multi-tab working set inside an isolated project workspace.
+    // Multi-tab working set inside an isolated project workspace.
     pub workspace_state: WorkspaceState,
-    pub entries_cache: HashMap<String, Vec<LogEntry>>,
-    pub max_chars_by_file: HashMap<String, FieldMaxChars>,
+    /// Every opened file, parsed once and shared by Log Space and File View tabs.
+    pub parsed_files: HashMap<String, ParsedFile>,
+    /// Files with no timestamp at all in the open Log Space.
+    pub no_timestamp_files: HashSet<String>,
 
-    // Issue 02: project switcher modal + inline rename state.
+    // Project switcher modal + inline rename state.
     pub project_switcher_open: bool,
     pub project_switcher_index: usize,
     pub project_renaming: Option<String>,
@@ -77,9 +87,23 @@ pub struct AppView {
     pub sidebar_state: LeftSidebarState,
     pub context_sidebar: ContextSidebarState,
     pub expanded_projects: HashSet<String>,
+    /// Log Spaces whose file list is open in the sidebar.
+    pub expanded_spaces: HashSet<String>,
 
-    /// Inline rename of a sidebar row (project or log file), if any.
+    /// Inline rename of a sidebar row (project, Log Space or file), if any.
     pub renaming: Option<rename::RenameState>,
+
+    /// Raw View or Parsed View of the focused tab.
+    pub view_mode: ViewMode,
+    pub raw: raw::RawViewState,
+    pub quick_settings_open: bool,
+    pub new_space: Option<spaces::NewSpaceDialog>,
+    pub confirm: Option<ConfirmAction>,
+    /// A light message shown above the status bar until dismissed.
+    pub notice: Option<String>,
+    pub session_save_gen: u64,
+    /// Where the session is saved; `None` keeps the app from touching disk.
+    pub persistence: Option<crate::workspace::SessionPersistence>,
 
     pub focus_handle: FocusHandle,
 }
@@ -92,110 +116,96 @@ impl Focusable for AppView {
 
 impl AppView {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        Self::with_persistence(
+            Some(crate::workspace::SessionPersistence::new(
+                crate::workspace::session::default_session_path(),
+            )),
+            window,
+            cx,
+        )
+    }
+
+    pub fn with_persistence(
+        persistence: Option<crate::workspace::SessionPersistence>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let focus_handle = cx.focus_handle();
         let scroll_handle = UniformListScrollHandle::new();
-        let mut all_entries = generate_sample_logs();
-        let mut column_layout = crate::column::ColumnLayoutState::new();
-        column_layout.update_from_entries(&all_entries, Density::Compact);
+        let all_entries: Vec<LogEntry> = Vec::new();
+        let column_layout = ColumnLayoutState::new();
 
-        let filter_engine = FilterEngine::new();
-        let visible = filter_engine.evaluate(&mut all_entries);
-        let visible_indices = Arc::new(visible);
+        let filter_state = FilterState::new();
+        let filter_index = FilterIndex::build(&all_entries);
+        let filter_ui = filter::FilterUi::new(window, cx);
 
-let search_input = cx.new(|cx| {
-            EditorState::new(window, cx).placeholder("Search ...")
+        let search_input = cx.new(|cx| {
+            InputState::new(window, cx).placeholder("Search lines…  e.g. timeout && (db || cache)")
         });
-        {
-            let schema = crate::query::schema::LogSchema::for_log_fields();
-            search_input.update(cx, |state, _cx| {
-                state.lsp_mut().completion_provider = Some(std::rc::Rc::new(
-                    crate::query::completion_provider::QueryCompletionProvider::new(schema),
-                ));
-            });
+
+        // Restore the last session; a session from an older format is ignored.
+        let mut workspace_state = persistence
+            .as_ref()
+            .and_then(|p| p.load().ok().flatten())
+            .map(|manifest| manifest.into_workspace())
+            .unwrap_or_default();
+        if workspace_state.projects.is_empty() {
+            workspace_state = WorkspaceState::new();
+            workspace_state.create_project("Log Workspace", crate::workspace::ProjectColorAccent::Blue);
+        } else if workspace_state.active_project().is_none() {
+            let first = workspace_state.projects[0].id.clone();
+            workspace_state.active_project_id = Some(first);
         }
+        let expanded_spaces: HashSet<String> = workspace_state
+            .projects
+            .iter()
+            .flat_map(|p| p.log_spaces.iter().map(|s| s.id.clone()))
+            .collect();
+        let expanded_projects: HashSet<String> = workspace_state
+            .active_project_id
+            .iter()
+            .cloned()
+            .collect();
 
-        let mut search_state = SearchState::new();
-        search_state.update_matches(&all_entries, &visible_indices);
-
-        // Seed a default project + working set with the demo file open in a tab.
-        let mut workspace_state = WorkspaceState::new();
-        workspace_state.create_project("Log Workspace", ProjectColorAccent::Blue);
-        {
-            let proj = workspace_state.active_project_mut().expect("project created");
-            proj.register_file(LogFileDescriptor::new("app.log".into(), "app.log".into()));
-            let mut session = TabSessionState::new();
-            session.filter = filter_engine.clone();
-            session.search = search_state.clone();
-            session.column_layout = column_layout.clone();
-            session.selected_row = Some(0);
-            proj.open_file("app.log", session.clone());
-
-            // Seed demo incident investigation case
-            let mut demo_case = crate::workspace::investigation::InvestigationCase::new(
-                "INC-101".to_string(),
-                "API Gateway 502 Upstream Failure".to_string(),
-                "P1",
-            );
-            demo_case.anchor_line(
-                "anc-1".to_string(),
-                "app.log",
-                42,
-                1700000000.0,
-                crate::model::LogLevel::Error,
-                "HTTP 502 Bad Gateway from upstream payment service".to_string(),
-                Some("Root cause TCP reset observed".to_string()),
-            );
-            proj.investigation_cases.push(demo_case);
-
-            // Seed demo saved view
-            let mut err_filter = FilterEngine::new();
-            err_filter.add_condition(
-                crate::filter::ConditionField::Level,
-                crate::filter::ConditionOp::Is,
-                "ERROR".to_string(),
-            );
-            let mut err_session = session;
-            err_session.filter = err_filter;
-            let demo_view = crate::workspace::saved_view::SavedView::capture(
-                "view-err".to_string(),
-                "Critical Errors (5xx & Fatal)".to_string(),
-                &err_session,
-            );
-            proj.saved_views.push(demo_view);
-        }
-        let entries_cache = HashMap::from([("app.log".to_string(), all_entries.clone())]);
-        let max_chars_by_file = HashMap::from([("app.log".to_string(), column_layout.max_chars)]);
-
-        cx.subscribe(
+        cx.subscribe_in(
             &search_input,
-            |this: &mut Self, input, _event: &InputEvent, cx| {
-                let text = input.read(cx).text().to_string();
-                this.search_state.query = text;
-                if !this.search_state.query.trim().is_empty() {
-                    this.search_state.is_open = true;
+            window,
+            |this: &mut Self, input, event: &InputEvent, _window, cx| match event {
+                InputEvent::Change => {
+                    this.search_state.query = input.read(cx).value().to_string();
+                    if !this.search_state.query.trim().is_empty() {
+                        this.search_state.is_open = true;
+                    }
+                    this.run_search(cx);
                 }
-                this.run_search(cx);
+                InputEvent::PressEnter { shift, .. } => {
+                    if *shift {
+                        this.jump_prev_match(cx);
+                    } else {
+                        this.jump_next_match(cx);
+                    }
+                }
+                _ => {}
             },
         )
         .detach();
 
-        Self {
+        let mut this = Self {
             all_entries,
-            visible_indices,
-            filter_engine,
-            search_state,
+            visible_indices: Arc::new(Vec::new()),
+            filter_state,
+            filter_index,
+            filter_ui,
+            search_state: SearchState::new(),
             search_input,
             scroll_handle,
-            selected_row_pos: Some(0),
+            selected_row_pos: None,
             inspector_tab: InspectorTab::Fields,
-            is_inspector_open: false,
             is_context_open: false,
             is_palette_open: false,
-            active_quick_menu: None,
-            file_name: "app.log".to_string(),
-            file_format: "Standard Server Log".to_string(),
+            file_name: String::new(),
+            file_format: "Text Log".to_string(),
             floating_panels: HashMap::from([
-                (PanelKind::View, FloatingPanelState::default_for(PanelKind::View)),
                 (PanelKind::Filter, FloatingPanelState::default_for(PanelKind::Filter)),
                 (PanelKind::Marker, FloatingPanelState::default_for(PanelKind::Marker)),
             ]),
@@ -203,37 +213,29 @@ let search_input = cx.new(|cx| {
             density: Density::Compact,
             column_layout,
             tail_enabled: false,
-            focused_tag: None,
             workspace_state,
-            entries_cache,
-            max_chars_by_file,
+            parsed_files: HashMap::new(),
+            no_timestamp_files: HashSet::new(),
             project_switcher_open: false,
             project_switcher_index: 0,
             project_renaming: None,
             project_rename_buffer: String::new(),
             sidebar_state: LeftSidebarState::new(),
             context_sidebar: ContextSidebarState::new(),
-            expanded_projects: HashSet::new(),
+            expanded_projects,
+            expanded_spaces,
             renaming: None,
+            view_mode: ViewMode::Parsed,
+            raw: raw::RawViewState::new(),
+            quick_settings_open: false,
+            new_space: None,
+            confirm: None,
+            notice: None,
+            session_save_gen: 0,
+            persistence,
             focus_handle,
-        }
-    }
-
-    pub fn apply_filters_and_refresh(&mut self, cx: &mut Context<Self>) {
-        let visible = self.filter_engine.evaluate(&mut self.all_entries);
-        self.visible_indices = Arc::new(visible);
-        self.search_state
-            .update_matches(&self.all_entries, &self.visible_indices);
-
-        if let Some(pos) = self.selected_row_pos {
-            if pos >= self.visible_indices.len() {
-                self.selected_row_pos = if self.visible_indices.is_empty() {
-                    None
-                } else {
-                    Some(0)
-                };
-            }
-        }
-        cx.notify();
+        };
+        this.restore_active_session(cx);
+        this
     }
 }

@@ -7,17 +7,15 @@ fn default_panels_start_closed_with_staggered_geometry() {
         (st.open, st.w, st.h)
     };
 
-    let (v_open, v_w, v_h) = parse(PanelKind::View);
     let (f_open, f_w, f_h) = parse(PanelKind::Filter);
     let (m_open, m_w, m_h) = parse(PanelKind::Marker);
 
-    assert!(!v_open && !f_open && !m_open);
-    assert!(v_w >= 240.0 && f_w >= 240.0 && m_w >= 240.0);
-    assert!(v_h >= 160.0 && f_h >= 160.0 && m_h >= 160.0);
+    assert!(!f_open && !m_open);
+    assert!(f_w >= 240.0 && m_w >= 240.0);
+    assert!(f_h >= 160.0 && m_h >= 160.0);
 
     // Panels are placed so they don't fully overlap: X origins are distinct.
     let x = |kind| FloatingPanelState::default_for(kind).x;
-    assert_ne!(x(PanelKind::View), x(PanelKind::Filter));
     assert_ne!(x(PanelKind::Filter), x(PanelKind::Marker));
 }
 

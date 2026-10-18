@@ -1,5 +1,8 @@
 use crate::workspace::investigation::InvestigationCase;
-use crate::workspace::saved_view::SavedView;
+pub use crate::workspace::log_space::{
+    ImportOutcome, LogFile, LogSpace, LogSpaceKind, RemoveFileError, SpaceNameError, StoredMarker,
+    WrongKind, collect_markers, validate_space_name,
+};
 use crate::workspace::working_set::{TabSessionState, TabTarget, WorkingSet};
 use serde::{Deserialize, Serialize};
 
@@ -49,54 +52,9 @@ impl ProjectColorAccent {
     }
 }
 
-/// A registered log file belonging to a Project. Registration is purely a
-/// registry entry; the underlying file on disk is never modified or deleted.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct LogFileDescriptor {
-    /// Stable unique identifier (typically the path or file name).
-    pub file_id: String,
-    /// Display name shown in tabs and drawers.
-    pub display_name: String,
-    /// Absolute path on disk, if known.
-    pub path: Option<String>,
-    /// Optional subfolder/service grouping for organized drawers.
-    pub group: Option<String>,
-}
-
-impl LogFileDescriptor {
-    pub fn new(file_id: String, display_name: String) -> Self {
-        Self {
-            file_id,
-            display_name,
-            path: None,
-            group: None,
-        }
-    }
-
-    /// Build a descriptor from a filesystem path, deriving the file id and
-    /// display name from the path components.
-    pub fn from_path(path: &str) -> Self {
-        let path_obj = std::path::Path::new(path);
-        let display_name = path_obj
-            .file_name()
-            .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_else(|| path.to_string());
-        let group = path_obj
-            .parent()
-            .map(|p| p.to_string_lossy().to_string())
-            .filter(|p| !p.is_empty() && *p != ".");
-        Self {
-            file_id: path.to_string(),
-            display_name,
-            path: Some(path.to_string()),
-            group,
-        }
-    }
-}
-
 /// A Project is the root unit of persistence and isolation: an investigation
-/// space owning a registry of log files, a working set of open tabs, saved
-/// views, and investigation cases. Projects never share state with each other.
+/// space owning Log Spaces, a working set of open tabs, and investigation
+/// cases. Projects never share state with each other.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Project {
     /// Stable unique project identifier.
@@ -105,12 +63,10 @@ pub struct Project {
     pub name: String,
     /// Color accent badge for environment recognition.
     pub color: ProjectColorAccent,
-    /// Registered log files owned by this project.
-    pub files: Vec<LogFileDescriptor>,
+    /// Log Spaces owned by this project.
+    pub log_spaces: Vec<LogSpace>,
     /// Open working set (tabs) belonging to this project.
     pub working_set: WorkingSet,
-    /// Saved filter/view presets scoped to this project.
-    pub saved_views: Vec<SavedView>,
     /// Investigation cases (incidents) gathered within this project.
     pub investigation_cases: Vec<InvestigationCase>,
 }
@@ -121,40 +77,108 @@ impl Project {
             id,
             name,
             color,
-            files: Vec::new(),
+            log_spaces: Vec::new(),
             working_set: WorkingSet::new(),
-            saved_views: Vec::new(),
             investigation_cases: Vec::new(),
         }
     }
 
-    /// Register a log file into the project. Returns false (no-op) if a file
-    /// with the same file_id is already registered.
-    pub fn register_file(&mut self, file: LogFileDescriptor) -> bool {
-        if self.files.iter().any(|f| f.file_id == file.file_id) {
-            return false;
+    /// Whether a Log Space of this project already uses `name` (compared
+    /// after trimming).
+    pub fn has_space_named(&self, name: &str) -> bool {
+        let name = name.trim();
+        self.log_spaces.iter().any(|s| s.name == name)
+    }
+
+    pub fn log_space(&self, space_id: &str) -> Option<&LogSpace> {
+        self.log_spaces.iter().find(|s| s.id == space_id)
+    }
+
+    pub fn log_space_mut(&mut self, space_id: &str) -> Option<&mut LogSpace> {
+        self.log_spaces.iter_mut().find(|s| s.id == space_id)
+    }
+
+    /// Find a file of any Log Space of this project.
+    pub fn file(&self, space_id: &str, file_id: &str) -> Option<&LogFile> {
+        self.log_space(space_id).and_then(|s| s.file(file_id))
+    }
+
+    /// Create a Log Space. The name is trimmed; it must be non-blank and not
+    /// used by another Log Space of this project.
+    pub fn create_log_space(
+        &mut self,
+        name: &str,
+        kind: LogSpaceKind,
+    ) -> Result<&mut LogSpace, SpaceNameError> {
+        let name = validate_space_name(name, self.log_spaces.iter().map(|s| s.name.as_str()))?;
+        let base = format!("{}--{}", self.id, slug_project_id(&name));
+        let mut id = base.clone();
+        let mut n = 2;
+        while self.log_spaces.iter().any(|s| s.id == id) {
+            id = format!("{base}-{n}");
+            n += 1;
         }
-        self.files.push(file);
-        true
+        self.log_spaces.push(LogSpace::new(id, name, kind));
+        Ok(self.log_spaces.last_mut().expect("just pushed"))
     }
 
-    /// Remove a registered file from the project registry without touching
-    /// the underlying file on disk. Returns the removed descriptor, if any.
-    pub fn unregister_file(&mut self, file_id: &str) -> Option<LogFileDescriptor> {
-        let pos = self.files.iter().position(|f| f.file_id == file_id)?;
-        Some(self.files.remove(pos))
+    /// Rename a Log Space. Keeping its current name is allowed.
+    pub fn rename_log_space(&mut self, space_id: &str, name: &str) -> Result<(), SpaceNameError> {
+        let name = validate_space_name(
+            name,
+            self.log_spaces
+                .iter()
+                .filter(|s| s.id != space_id)
+                .map(|s| s.name.as_str()),
+        )?;
+        if let Some(space) = self.log_space_mut(space_id) {
+            space.name = name;
+        }
+        Ok(())
     }
 
-    /// Look up a registered file descriptor by id.
-    pub fn file(&self, file_id: &str) -> Option<&LogFileDescriptor> {
-        self.files.iter().find(|f| f.file_id == file_id)
+    /// Remove a Log Space and close every tab that views it. Imported files
+    /// on disk are untouched; the caller deletes a Scratch space's folder.
+    pub fn remove_log_space(&mut self, space_id: &str) -> Option<LogSpace> {
+        let pos = self.log_spaces.iter().position(|s| s.id == space_id)?;
+        self.working_set.close_tabs_for_space(space_id);
+        Some(self.log_spaces.remove(pos))
     }
 
-    /// Open a file in the working set. If it is already open, focuses the
-    /// existing tab instead of creating a duplicate.
-    pub fn open_file(&mut self, file_id: &str, session: TabSessionState) -> Option<usize> {
+    /// Remove a file from a Log Space and close the File View showing it.
+    pub fn remove_file(
+        &mut self,
+        space_id: &str,
+        file_id: &str,
+    ) -> Result<LogFile, RemoveFileError> {
+        let removed = self
+            .log_space_mut(space_id)
+            .ok_or(RemoveFileError::NotFound)?
+            .remove_file(file_id)?;
+        self.working_set.close_tabs_for_file(space_id, file_id);
+        Ok(removed)
+    }
+
+    /// Open a Log Space in the working set, or focus its existing tab.
+    pub fn open_log_space(&mut self, space_id: &str, session: TabSessionState) -> Option<usize> {
         self.working_set.open_tab(
-            TabTarget::LogFile {
+            TabTarget::LogSpace {
+                space_id: space_id.to_string(),
+            },
+            session,
+        )
+    }
+
+    /// Open one file of a Log Space on its own, or focus its existing tab.
+    pub fn open_file_view(
+        &mut self,
+        space_id: &str,
+        file_id: &str,
+        session: TabSessionState,
+    ) -> Option<usize> {
+        self.working_set.open_tab(
+            TabTarget::FileView {
+                space_id: space_id.to_string(),
                 file_id: file_id.to_string(),
             },
             session,

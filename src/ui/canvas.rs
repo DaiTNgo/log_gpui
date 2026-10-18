@@ -10,6 +10,7 @@ use gpui::{
 };
 use gpui_component::scroll::ScrollableElement as _;
 use gpui_component::Icon;
+use gpui::{HighlightStyle, StyledText};
 use std::sync::Arc;
 
 use crate::column::{ColumnLayoutState, PinToggleState, PinnableColumn};
@@ -31,6 +32,32 @@ pub fn horizontal_scroll_x(scroll_handle: &UniformListScrollHandle) -> Pixels {
     (-scroll_handle.0.borrow().base_handle.offset().x).max(px(0.0))
 }
 
+/// Theme colors the table needs, resolved by the caller.
+#[derive(Clone, Copy)]
+pub struct CanvasColors {
+    pub background: gpui::Hsla,
+    pub header_bg: gpui::Hsla,
+    pub header_fg: gpui::Hsla,
+    pub border: gpui::Hsla,
+    pub selected: gpui::Hsla,
+    pub search: gpui::Hsla,
+    pub muted: gpui::Hsla,
+    pub danger: gpui::Hsla,
+    pub warning: gpui::Hsla,
+    pub info: gpui::Hsla,
+}
+
+impl CanvasColors {
+    fn level(&self, level: LogLevel) -> gpui::Hsla {
+        match level {
+            LogLevel::Fatal | LogLevel::Error => self.danger,
+            LogLevel::Warn => self.warning,
+            LogLevel::Info => self.info,
+            LogLevel::Debug | LogLevel::Verbose | LogLevel::Unknown => self.muted,
+        }
+    }
+}
+
 pub struct CanvasViewState<'a> {
     pub view: gpui::Entity<crate::app::AppView>,
     pub entries: Arc<Vec<LogEntry>>,
@@ -38,8 +65,8 @@ pub struct CanvasViewState<'a> {
     pub selected_row_pos: Option<usize>,
     pub density: Density,
     pub column_layout: &'a crate::column::ColumnLayoutState,
-    pub focused_tag: Option<&'a str>,
     pub search_state: &'a SearchState,
+    pub colors: CanvasColors,
     pub scroll_handle: &'a UniformListScrollHandle,
 }
 
@@ -72,7 +99,9 @@ impl LogCanvas {
             .flex()
             .flex_row()
             .items_center()
+            .bg(state.colors.header_bg)
             .border_b_1()
+            .border_color(state.colors.border)
             .map(|d| apply_partition_divider_style(d, is_divider_active))
             .child(
                 // Stationary Gutter Header
@@ -135,7 +164,10 @@ impl LogCanvas {
             .flex()
             .flex_row()
             .items_center()
+            .bg(state.colors.header_bg)
+            .text_color(state.colors.header_fg)
             .border_b_1()
+            .border_color(state.colors.border)
             .text_xs()
             .font_weight(gpui::FontWeight::SEMIBOLD)
             .child(
@@ -158,8 +190,12 @@ impl LogCanvas {
         // 2. Virtualized List using uniform_list
         let entries_clone = state.entries.clone();
         let visible_clone = state.visible_indices.clone();
-        let focused_tag_str = state.focused_tag.map(|s| s.to_string());
         let view = state.view.clone();
+        let colors = state.colors;
+        let selected_pos = state.selected_row_pos;
+        let search_matcher = state.search_state.matcher.clone();
+        let matched_positions = state.search_state.matched_shared.clone();
+        let current_match_pos = state.search_state.current_match_pos();
         let scroll_handle_for_rows = state.scroll_handle.clone();
         let column_layout_for_rows = state.column_layout.clone();
         let longest_vis_pos = visible_clone
@@ -175,6 +211,12 @@ impl LogCanvas {
             "log_canvas_list",
             total_visible,
             move |range, _window, _cx| {
+                // Opaque row backgrounds: the anchored columns overlay the scrolling ones.
+                let normal_bg = colors.background;
+                let selected_bg = colors.background.blend(colors.selected);
+                let match_bg = colors.background.blend(colors.search.opacity(0.12));
+                let current_bg = colors.background.blend(colors.search.opacity(0.28));
+                let highlight_bg = colors.search.opacity(0.55);
                 let scroll_x = horizontal_scroll_x(&scroll_handle_for_rows);
                 let anchored_width = column_layout_for_rows.sticky_partition_width();
                 let unpinned_columns_for_rows = column_layout_for_rows.unpinned_columns();
@@ -185,12 +227,6 @@ impl LogCanvas {
                     };
                     let Some(entry) = entries_clone.get(entry_ix) else {
                         continue;
-                    };
-
-                    let is_dimmed = if let Some(ref tag) = focused_tag_str {
-                        !entry.tag.eq_ignore_ascii_case(tag)
-                    } else {
-                        false
                     };
 
                     let effective_marker = entry.effective_marker();
@@ -206,6 +242,24 @@ impl LogCanvas {
                     let view_for_row = view.clone();
                     let view_for_gutter = view.clone();
 
+                    // Search feedback: tint matched lines, highlight the phrases in the message.
+                    let is_match = matched_positions.binary_search(&vis_pos).is_ok();
+                    let is_current_match = is_match && current_match_pos == Some(vis_pos);
+                    let is_selected = selected_pos == Some(vis_pos);
+                    let row_bg = if is_current_match {
+                        current_bg
+                    } else if is_selected {
+                        selected_bg
+                    } else if is_match {
+                        match_bg
+                    } else {
+                        normal_bg
+                    };
+                    let message_ranges = match (&search_matcher, is_match) {
+                        (Some(m), true) => m.find_ranges(&entry.payload),
+                        _ => Vec::new(),
+                    };
+
                     let row_element = div()
                         .id(ElementId::from(vis_pos))
                         .cursor_pointer()
@@ -217,7 +271,7 @@ impl LogCanvas {
                         .items_center()
                         .font_family(".AppleSystemUIFontMonospaced")
                         .text_size(px(font_size))
-                        .opacity(if is_dimmed { 0.35 } else { 1.0 })
+                        .bg(row_bg)
                         .on_click(move |_event, _window, cx| {
                             view_for_row.update(cx, |this, cx| {
                                 this.selected_row_pos = Some(vis_pos);
@@ -238,9 +292,7 @@ impl LogCanvas {
                                     *col,
                                     &column_layout_for_rows,
                                     entry,
-                                    vis_pos,
-                                    view.clone(),
-                                    false,
+                                    &colors,
                                 ));
                             }
 
@@ -251,7 +303,21 @@ impl LogCanvas {
                                         .flex_1()
                                         .px_2()
                                         .whitespace_nowrap()
-                                        .child(entry.payload.clone()),
+                                        .child(if message_ranges.is_empty() {
+                                            entry.payload.clone().into_any_element()
+                                        } else {
+                                            StyledText::new(entry.payload.clone())
+                                                .with_highlights(message_ranges.iter().map(|&(s, e)| {
+                                                    (
+                                                        s..e,
+                                                        HighlightStyle {
+                                                            background_color: Some(highlight_bg),
+                                                            ..Default::default()
+                                                        },
+                                                    )
+                                                }))
+                                                .into_any_element()
+                                        }),
                                 )
                                 // Breathing space at the right end of unconstrained rows
                                 .pr_16()
@@ -290,6 +356,7 @@ impl LogCanvas {
                             div()
                                 .id(ElementId::from(("anchored_partition", vis_pos)))
                                 .cursor_pointer()
+                                .bg(row_bg)
                                 .absolute()
                                 .top_0()
                                 .bottom_0()
@@ -341,9 +408,7 @@ impl LogCanvas {
                                             *pinned,
                                             &column_layout_for_rows,
                                             entry,
-                                            vis_pos,
-                                            view.clone(),
-                                            true,
+                                            &colors,
                                         ));
                                     }
 
@@ -372,6 +437,11 @@ impl LogCanvas {
             .relative();
 
         for mark in &ruler_marks {
+            let color = if mark.is_search {
+                state.colors.search
+            } else {
+                state.colors.muted
+            };
             let mark_el = if mark.is_current_match {
                 div()
                     .absolute()
@@ -380,6 +450,7 @@ impl LogCanvas {
                     .w(px(12.0))
                     .h(px(5.0))
                     .rounded_xs()
+                    .bg(color)
                     .border_1()
                     .shadow_sm()
             } else {
@@ -390,6 +461,7 @@ impl LogCanvas {
                     .w(px(10.0))
                     .h(px(3.0))
                     .rounded_xs()
+                    .bg(color.opacity(if mark.is_search { 0.7 } else { 0.5 }))
             };
 
             ruler_elements = ruler_elements.child(mark_el);
@@ -614,63 +686,42 @@ fn render_pinnable_column_header(
         .child(resize_handle)
 }
 
-fn render_timestamp_cell(time_str: &str, width: Pixels) -> impl IntoElement {
+fn render_timestamp_cell(time_str: &str, width: Pixels, colors: &CanvasColors) -> impl IntoElement {
     div()
         .flex_shrink_0()
         .w(width)
         .px_2()
+        .text_color(colors.muted)
         .truncate()
         .child(time_str.to_string())
 }
 
-fn render_level_cell(
-    level_val: LogLevel,
-    width: Pixels,
-    id_prefix: &'static str,
-    vis_pos: usize,
-    view: gpui::Entity<crate::app::AppView>,
-) -> impl IntoElement {
+fn render_level_cell(level_val: LogLevel, width: Pixels, colors: &CanvasColors) -> impl IntoElement {
     div()
         .flex_shrink_0()
         .w(width)
         .px_1()
-        .child(
-            render_level_badge(level_val)
-                .id(ElementId::from((id_prefix, vis_pos)))
-                .cursor_pointer()
-                .hover(move |s| s.opacity(0.8))
-                .on_click(move |_event, _window, cx| {
-                    view.update(cx, |this, cx| {
-                        this.add_quick_filter_level(level_val, cx);
-                    });
-                }),
-        )
+        .child(render_level_badge(level_val).text_color(colors.level(level_val)))
 }
 
-fn render_module_cell(
-    tag_val: &str,
-    width: Pixels,
-    id_prefix: &'static str,
-    vis_pos: usize,
-    view: gpui::Entity<crate::app::AppView>,
-) -> impl IntoElement {
-    let tag = tag_val.to_string();
+fn render_module_cell(tag_val: &str, width: Pixels) -> impl IntoElement {
     div()
-        .id(ElementId::from((id_prefix, vis_pos)))
-        .cursor_pointer()
         .w(width)
         .flex_shrink_0()
         .px_2()
         .font_weight(gpui::FontWeight::SEMIBOLD)
         .truncate()
-        .hover(move |s| s.underline())
-        .child(tag.clone())
-        .on_click(move |_event, _window, cx| {
-            let t = tag.clone();
-            view.update(cx, |this, cx| {
-                this.add_quick_filter_module(&t, cx);
-            });
-        })
+        .child(tag_val.to_string())
+}
+
+fn render_source_cell(source: &str, width: Pixels, colors: &CanvasColors) -> impl IntoElement {
+    div()
+        .flex_shrink_0()
+        .w(width)
+        .px_2()
+        .text_color(colors.muted)
+        .truncate()
+        .child(source.to_string())
 }
 
 fn render_level_badge(level: LogLevel) -> gpui::Div {
@@ -699,32 +750,19 @@ fn render_column_cell(
     col: PinnableColumn,
     layout: &ColumnLayoutState,
     entry: &LogEntry,
-    vis_pos: usize,
-    view: gpui::Entity<crate::app::AppView>,
-    is_sticky: bool,
+    colors: &CanvasColors,
 ) -> impl IntoElement {
-    let id_prefix = if is_sticky {
-        match col {
-            PinnableColumn::Timestamp => "sticky_ts",
-            PinnableColumn::Level => "sticky_lvl",
-            PinnableColumn::Module => "sticky_mod",
-        }
-    } else {
-        match col {
-            PinnableColumn::Timestamp => "ts",
-            PinnableColumn::Level => "lvl",
-            PinnableColumn::Module => "mod",
-        }
-    };
     let width = layout.width(col);
     match col {
-        PinnableColumn::Timestamp => render_timestamp_cell(&entry.time_str, width).into_any_element(),
-        PinnableColumn::Level => {
-            render_level_cell(entry.level, width, id_prefix, vis_pos, view).into_any_element()
-        }
-        PinnableColumn::Module => {
-            render_module_cell(&entry.tag, width, id_prefix, vis_pos, view).into_any_element()
-        }
+        PinnableColumn::Timestamp => render_timestamp_cell(&entry.time_str, width, colors).into_any_element(),
+        PinnableColumn::Level => render_level_cell(entry.level, width, colors).into_any_element(),
+        PinnableColumn::Module => render_module_cell(&entry.tag, width).into_any_element(),
+        PinnableColumn::Source => render_source_cell(
+            entry.source.as_deref().unwrap_or(""),
+            width,
+            colors,
+        )
+        .into_any_element(),
     }
 }
 
@@ -752,7 +790,7 @@ fn compute_ruler_marks(
                     is_current_match: false,
                 });
             } else if !search_state.query.trim().is_empty()
-                && search_state.matched_visible_indices.contains(&vis_pos)
+                && search_state.matched_visible_indices.binary_search(&vis_pos).is_ok()
             {
                 let is_current = search_state
                     .matched_visible_indices

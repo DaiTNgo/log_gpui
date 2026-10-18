@@ -1,4 +1,4 @@
-//! Logic: inline rename of a project or a log file in the sidebars.
+//! Logic: inline rename of a project, a Log Space or a scratch file in the sidebar.
 //!
 //! Only one row is renamed at a time. Enter (or losing focus) commits, Escape cancels.
 
@@ -9,7 +9,9 @@ use gpui_component::input::{InputEvent, InputState};
 #[derive(Clone, PartialEq, Eq)]
 pub enum RenameTarget {
     Project { id: String },
-    File { project_id: String, file_id: String },
+    LogSpace { project_id: String, space_id: String },
+    /// A scratch file of a Log Space (Imported files are never renamed).
+    File { project_id: String, space_id: String, file_id: String },
 }
 
 pub struct RenameState {
@@ -66,8 +68,11 @@ impl AppView {
         let name = state.input.read(cx).value().to_string();
         match &state.target {
             RenameTarget::Project { id } => self.rename_project(id, &name, cx),
-            RenameTarget::File { project_id, file_id } => {
-                self.rename_file(project_id, file_id, &name, cx)
+            RenameTarget::LogSpace { project_id, space_id } => {
+                self.rename_log_space(project_id, space_id, &name, cx)
+            }
+            RenameTarget::File { project_id, space_id, file_id } => {
+                self.rename_scratch_file(project_id, space_id, file_id, &name, cx)
             }
         }
         cx.notify();

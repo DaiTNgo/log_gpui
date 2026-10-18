@@ -1,7 +1,6 @@
 //! Logic: keyboard shortcut handling.
 
 use super::AppView;
-use crate::ui::floating_panel::PanelKind;
 use gpui::{
     Context, KeyDownEvent,
     Window,
@@ -14,7 +13,28 @@ impl AppView {
         let shift = event.keystroke.modifiers.shift;
         let alt = event.keystroke.modifiers.alt;
 
-        // Issue 02: Project switcher modal captures keys while open.
+        // The New Log Space dialog and the delete confirmation capture keys while open.
+        if self.new_space.is_some() {
+            if key == "Escape" {
+                self.new_space_cancel(cx);
+            }
+            return;
+        }
+        if self.confirm.is_some() {
+            match key {
+                "Escape" => self.cancel_confirm(cx),
+                "Enter" | "enter" => self.accept_confirm(cx),
+                _ => {}
+            }
+            return;
+        }
+        if self.quick_settings_open && key == "Escape" {
+            self.quick_settings_open = false;
+            cx.notify();
+            return;
+        }
+
+        // Project switcher modal captures keys while open.
         if self.project_switcher_open {
             if !cmd && !alt {
                 match key {
@@ -88,7 +108,33 @@ impl AppView {
             }
         }
 
+        // Raw View: only Search and Markers apply, and plain keys belong to the editors.
+        if self.view_mode == crate::workspace::working_set::ViewMode::Raw && !cmd {
+            if key == "Escape" {
+                self.search_state.is_open = false;
+                self.quick_settings_open = false;
+                self.is_palette_open = false;
+                cx.notify();
+            }
+            return;
+        }
+
         match (cmd, shift, alt, key) {
+            (true, false, false, "c") if self.view_mode == crate::workspace::working_set::ViewMode::Raw => {
+                self.copy_selected_raw_line(cx);
+            }
+            (true, false, false, "s") => {
+                self.save_now(cx);
+            }
+            (true, false, false, "o") => {
+                self.open_new_space_dialog(cx);
+            }
+            (true, true, false, "R") | (true, true, false, "r") => {
+                self.toggle_view_mode(cx);
+            }
+            (true, false, false, "d") => {
+                self.toggle_marker_at_cursor(window, cx);
+            }
             (true, false, false, "f") => {
                 self.toggle_search(cx);
                 if self.search_state.is_open {
@@ -96,13 +142,10 @@ impl AppView {
                 }
             }
             (true, true, false, "F") => {
-                self.toggle_filter_builder(cx);
-            }
-            (true, true, false, "V") => {
-                self.toggle_panel(PanelKind::View, cx);
+                self.toggle_or_reveal_context_section(crate::workspace::state::ContextSection::Filter, cx);
             }
             (true, true, false, "M") => {
-                self.toggle_panel(PanelKind::Marker, cx);
+                self.toggle_or_reveal_context_section(crate::workspace::state::ContextSection::Marker, cx);
             }
             (true, false, false, "k") => {
                 self.is_palette_open = !self.is_palette_open;
@@ -115,8 +158,7 @@ impl AppView {
                 self.toggle_sidebar(cx);
             }
             (true, false, false, "i") => {
-                self.is_inspector_open = !self.is_inspector_open;
-                cx.notify();
+                self.toggle_or_reveal_context_section(crate::workspace::state::ContextSection::Inspector, cx);
             }
             (true, false, false, "g") => {
                 self.jump_next_match(cx);
@@ -136,32 +178,11 @@ impl AppView {
             (true, false, true, "b") => {
                 self.toggle_context_sidebar(cx);
             }
-            (true, true, false, "B") => {
-                self.show_context_tab(crate::workspace::state::ContextTab::Files, cx);
-            }
-            (true, true, false, "I") => {
-                self.show_context_tab(crate::workspace::state::ContextTab::Investigations, cx);
-            }
-            (true, true, false, "S") => {
-                self.show_context_tab(crate::workspace::state::ContextTab::SavedViews, cx);
-            }
             (false, false, false, "b") => {
                 self.toggle_bookmark_current_line(cx);
             }
             (false, false, false, "m") | (false, false, false, "M") => {
                 self.cycle_selected_marker(cx);
-            }
-            (false, false, false, "f") => {
-                // Focus mode on selected tag
-                if let Some(entry) = self.selected_entry() {
-                    let tag = entry.tag.clone();
-                    if self.focused_tag.as_deref() == Some(&tag) {
-                        self.focused_tag = None;
-                    } else {
-                        self.focused_tag = Some(tag);
-                    }
-                    cx.notify();
-                }
             }
             (false, false, false, " ") => {
                 self.is_context_open = !self.is_context_open;
@@ -187,7 +208,6 @@ impl AppView {
                 self.close_all_panels();
                 self.is_context_open = false;
                 self.is_palette_open = false;
-                self.active_quick_menu = None;
                 cx.notify();
             }
             (false, false, false, "ArrowDown") => {

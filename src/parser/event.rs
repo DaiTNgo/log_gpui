@@ -63,6 +63,9 @@ pub struct LogEvent {
     pub message: String,
     /// Raw unparsed line content
     pub raw_line: String,
+    /// Whether `timestamp` was read from the line. Lines without a time of
+    /// their own get a pseudo timestamp from their line number.
+    pub has_time: bool,
 }
 
 impl LogEvent {
@@ -80,7 +83,14 @@ impl LogEvent {
             fields: HashMap::new(),
             message,
             raw_line,
+            has_time: timestamp.is_finite() && timestamp > 0.0,
         }
+    }
+
+    /// Mark the timestamp as a pseudo value, not read from the line.
+    pub fn without_time(mut self) -> Self {
+        self.has_time = false;
+        self
     }
 
     /// Fill the field map with the canonical log metadata (level, module, ...)

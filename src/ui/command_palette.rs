@@ -26,10 +26,11 @@ pub enum PaletteAction {
     ToggleTail,
     ToggleInspector,
     LoadDemo,
-    OpenFile,
+    NewLogSpace,
+    ToggleRawParsed,
+    SaveScratch,
     UnpinAllColumns,
     ToggleProjectSwitcher,
-    ToggleViewPanel,
     ToggleMarkerPanel,
 }
 
@@ -45,11 +46,6 @@ impl CommandPalette {
                 name: "Filter: Open Filter Builder",
                 shortcut: "⌘⇧F",
                 action: PaletteAction::ToggleFilter,
-            },
-            PaletteCommand {
-                name: "View: Open View Panel",
-                shortcut: "⌘⇧V",
-                action: PaletteAction::ToggleViewPanel,
             },
             PaletteCommand {
                 name: "Marker: Open Marker Panel",
@@ -102,9 +98,19 @@ impl CommandPalette {
                 action: PaletteAction::ToggleInspector,
             },
             PaletteCommand {
-                name: "File: Open Log File...",
+                name: "Log Space: New Log Space...",
                 shortcut: "⌘O",
-                action: PaletteAction::OpenFile,
+                action: PaletteAction::NewLogSpace,
+            },
+            PaletteCommand {
+                name: "View: Toggle Raw / Parsed",
+                shortcut: "⌘⇧R",
+                action: PaletteAction::ToggleRawParsed,
+            },
+            PaletteCommand {
+                name: "Log Space: Save Scratch Files",
+                shortcut: "⌘S",
+                action: PaletteAction::SaveScratch,
             },
             PaletteCommand {
                 name: "Project: Switch Project",
@@ -112,7 +118,7 @@ impl CommandPalette {
                 action: PaletteAction::ToggleProjectSwitcher,
             },
             PaletteCommand {
-                name: "Data: Reload Sample Logs",
+                name: "Data: Load Demo Log Space",
                 shortcut: "",
                 action: PaletteAction::LoadDemo,
             },

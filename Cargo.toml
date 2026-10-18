@@ -14,4 +14,4 @@ serde_json = "*"
 
 gpui-component = "*"
 gpui = { package = "gpui-pre", version = "*" }
-lsp-types = "*"
+unicode-normalization = "0.1.26"

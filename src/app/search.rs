@@ -2,6 +2,7 @@
 
 use super::AppView;
 use crate::ui::floating_panel::PanelKind;
+use crate::workspace::working_set::ViewMode;
 use gpui::{
     Context, ScrollStrategy,
     Window,
@@ -19,7 +20,7 @@ impl AppView {
     /// Focus the search field and make sure the active query is surfaced
     /// (match navigator, ruler marks, highlight).
     pub fn activate_search(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let text = self.search_input.read(cx).text().to_string();
+        let text = self.search_input.read(cx).value().to_string();
         self.search_state.query = text;
         self.search_state.is_open = true;
         self.search_input.update(cx, |state, cx| state.focus(window, cx));
@@ -27,6 +28,11 @@ impl AppView {
     }
 
     pub fn run_search(&mut self, cx: &mut Context<Self>) {
+        if self.view_mode == ViewMode::Raw {
+            // Raw View ignores Filter: look at every line of every section.
+            self.run_raw_search(cx);
+            return;
+        }
         self.search_state
             .update_matches(&self.all_entries, &self.visible_indices);
         if let Some(target_vis_pos) = self
@@ -43,6 +49,10 @@ impl AppView {
     }
 
     pub fn jump_next_match(&mut self, cx: &mut Context<Self>) {
+        if self.view_mode == ViewMode::Raw {
+            self.raw_jump_next(cx);
+            return;
+        }
         if let Some(vis_pos) = self.search_state.next_match() {
             self.scroll_handle
                 .scroll_to_item(vis_pos, ScrollStrategy::Center);
@@ -52,6 +62,10 @@ impl AppView {
     }
 
     pub fn jump_prev_match(&mut self, cx: &mut Context<Self>) {
+        if self.view_mode == ViewMode::Raw {
+            self.raw_jump_prev(cx);
+            return;
+        }
         if let Some(vis_pos) = self.search_state.prev_match() {
             self.scroll_handle
                 .scroll_to_item(vis_pos, ScrollStrategy::Center);

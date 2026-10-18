@@ -1,32 +1,67 @@
-//! UI: editor toolbar built from gpui-kit components (Editor, Button, Tag).
+//! UI: editor toolbar built from gpui-kit components (Input, Button, Tag).
 
 use super::AppView;
-use crate::ui::floating_panel::PanelKind;
 use gpui::prelude::FluentBuilder as _;
 use gpui::{div, px, Context, IntoElement, ParentElement, SharedString, Styled};
-use gpui_component::button::{Button, ButtonVariants as _};
-use gpui_component::input::Editor;
+use crate::workspace::working_set::ViewMode;
+use gpui_component::button::{Button, ButtonGroup, ButtonVariants as _};
+use gpui_component::input::Input;
 use gpui_component::tag::Tag;
 use gpui_component::{h_flex, ActiveTheme as _, Icon, Selectable as _, Sizable as _};
 use gpui_kit::assets::IconName;
 
 impl AppView {
-    /// Editor toolbar: query search field, active filter chips and panel toggles.
+    /// Editor toolbar: search field, and active filter chips.
     pub(super) fn render_editor_toolbar(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let raw_mode = self.view_mode == ViewMode::Raw;
+        let is_log = self.active_tab_is_log_file();
         let mut filter_chips = h_flex().gap_1();
-        for cond in &self.filter_engine.conditions {
-            if !cond.enabled || cond.value.trim().is_empty() {
+        for (ix, cf) in self.filter_state.columns.iter().enumerate() {
+            if raw_mode || !cf.is_active() {
                 continue;
             }
-            let cond_id = cond.id;
+            let label = self
+                .filter_index
+                .column(&cf.column)
+                .map_or_else(|| cf.column.clone(), |c| c.label.clone());
+            let mut parts: Vec<String> = Vec::new();
+            for folded in &cf.values {
+                let shown = self
+                    .filter_index
+                    .column(&cf.column)
+                    .and_then(|c| c.values.iter().find(|v| &v.folded == folded))
+                    .map_or_else(|| folded.clone(), |v| v.display.clone());
+                parts.push(shown);
+            }
+            for text in &cf.custom {
+                parts.push(format!("“{}”", text));
+            }
+            let chip = format!("{} {} {}", label, if cf.hide { "≠" } else { ":" }, parts.join(", "));
+            let key = cf.column.clone();
             filter_chips = filter_chips.child(
-                Button::new(("filter-chip", cond_id))
+                Button::new(("filter-chip", ix))
                     .outline()
                     .xsmall()
-                    .label(cond.to_chip_label())
+                    .label(chip)
                     .icon(IconName::Close)
                     .on_click(cx.listener(move |this, _, _window, cx| {
-                        this.remove_filter_condition(cond_id, cx);
+                        this.filter_clear_column(&key, cx);
+                    })),
+            );
+        }
+        if !raw_mode && self.filter_state.time_range.is_active() {
+            let tr = &self.filter_state.time_range;
+            let chip = format!("Time {} – {}", tr.from, tr.to);
+            filter_chips = filter_chips.child(
+                Button::new("filter-chip-time")
+                    .outline()
+                    .xsmall()
+                    .label(chip)
+                    .icon(IconName::Close)
+                    .on_click(cx.listener(|this, _, _window, cx| {
+                        this.filter_state.set_time_range("", "");
+                        this.filter_ui.inputs_dirty = true;
+                        this.apply_filters_and_refresh(cx);
                     })),
             );
         }
@@ -40,15 +75,10 @@ impl AppView {
             }
         });
 
-        let (match_cur, match_total) = self.search_state.current_match_display();
-
-        let panel_toggle = |id: &'static str, label: &'static str, kind: PanelKind, cx: &mut Context<Self>| {
-            Button::new(id)
-                .ghost()
-                .xsmall()
-                .label(label)
-                .selected(self.panel(kind).open)
-                .on_click(cx.listener(move |this, _, _window, cx| this.toggle_panel(kind, cx)))
+        let (match_cur, match_total) = if raw_mode {
+            self.raw.match_display()
+        } else {
+            self.search_state.current_match_display()
         };
 
         h_flex()
@@ -57,7 +87,7 @@ impl AppView {
             .py_1()
             .gap_2()
             .items_center()
-            // Query editor (query-LSP completions) in a bordered search box
+            // Search box: text-only, `&&` / `||` / `()` combine phrases
             .child(
                 h_flex()
                     .flex_1()
@@ -85,7 +115,13 @@ impl AppView {
                                 div()
                                     .flex_1()
                                     .min_w(px(0.0))
-                                    .child(Editor::new(&self.search_input).appearance(false).h(px(28.0))),
+                                    .child(
+                                        Input::new(&self.search_input)
+                                            .appearance(false)
+                                            .bordered(false)
+                                            .focus_bordered(false)
+                                            .h(px(28.0)),
+                                    ),
                             )
                             .when(
                                 self.search_state.is_open && !self.search_state.query.is_empty(),
@@ -97,7 +133,7 @@ impl AppView {
                                             .icon(IconName::Close)
                                             .on_click(cx.listener(|this, _, window, cx| {
                                                 this.search_input.update(cx, |state, cx| {
-                                                    state.replace_all(SharedString::from(""), window, cx);
+                                                    state.set_value(SharedString::from(""), window, cx);
                                                 });
                                                 this.run_search(cx);
                                                 this.search_input
@@ -141,24 +177,41 @@ impl AppView {
                     ),
             )
             .child(filter_chips)
-            .child(
-                h_flex()
-                    .gap_1()
-                    .child(panel_toggle("toolbar-view", "View", PanelKind::View, cx))
-                    .child(panel_toggle("toolbar-filter", "Filter", PanelKind::Filter, cx))
-                    .child(panel_toggle("toolbar-marker", "Marker", PanelKind::Marker, cx))
-                    .child(
-                        Button::new("toolbar-inspector")
-                            .ghost()
-                            .xsmall()
-                            .label("Inspector")
-                            .selected(self.is_inspector_open)
-                            .on_click(cx.listener(|this, _, _window, cx| {
-                                this.is_inspector_open = !this.is_inspector_open;
-                                cx.notify();
-                            })),
-                    ),
-            )
+            .when(is_log, |this| {
+                this.child(
+                    ButtonGroup::new("view-mode")
+                        .small()
+                        .child(
+                            Button::new("view-mode-raw")
+                                .label("Raw")
+                                .selected(raw_mode),
+                        )
+                        .child(
+                            Button::new("view-mode-parsed")
+                                .label("Parsed")
+                                .selected(!raw_mode),
+                        )
+                        .on_click(cx.listener(|this, ix: &Vec<usize>, _, cx| {
+                            if let Some(&i) = ix.first() {
+                                this.set_view_mode(
+                                    if i == 0 { ViewMode::Raw } else { ViewMode::Parsed },
+                                    cx,
+                                );
+                            }
+                        })),
+                )
+                .child(
+                    Button::new("quick-settings")
+                        .ghost()
+                        .small()
+                        .icon(IconName::Settings2)
+                        .selected(self.quick_settings_open)
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.quick_settings_open = !this.quick_settings_open;
+                            cx.notify();
+                        })),
+                )
+            })
             .into_any_element()
     }
 }

@@ -1,14 +1,12 @@
 use log_gpui::column::PinnableColumn;
-use log_gpui::filter::{ConditionField, ConditionOp};
-use log_gpui::workspace::project::{LogFileDescriptor, ProjectColorAccent, slug_project_id};
-use log_gpui::workspace::state::{ContextSidebarState, ContextTab, LeftSidebarState, WorkspaceState};
+use log_gpui::workspace::log_space::LogSpaceKind;
+use log_gpui::workspace::project::{ProjectColorAccent, slug_project_id};
+use log_gpui::workspace::state::{ContextSidebarState, ContextSection, LeftSidebarState, WorkspaceState};
 use log_gpui::workspace::working_set::{TabSessionState, WorkingSet};
 
-fn session_with_filter(level: &str) -> TabSessionState {
+fn session_with_pin(selected_row: usize) -> TabSessionState {
     let mut session = TabSessionState::new();
-    if !level.is_empty() {
-        session.filter.add_condition(ConditionField::Level, ConditionOp::Is, level.to_string());
-    }
+    session.selected_row = Some(selected_row);
     session.column_layout.pin(PinnableColumn::Timestamp);
     session
 }
@@ -33,24 +31,24 @@ fn test_switch_project_isolates_contexts() {
     ws.create_project("Payment Service", ProjectColorAccent::Blue);
     ws.create_project("E-Commerce Core", ProjectColorAccent::Green);
 
-    // Populate Payment project with a file + tab
+    // Populate Payment project with a Log Space + tab
     {
         let payment = ws.project_mut("payment-service").unwrap();
-        payment.register_file(LogFileDescriptor::new("api.log".into(), "api.log".into()));
-        payment.open_file("api.log", session_with_filter("ERROR"));
-        assert!(payment.working_set.is_file_open("api.log"));
+        let id = payment.create_log_space("Checkout", LogSpaceKind::Scratch).unwrap().id.clone();
+        payment.open_log_space(&id, session_with_pin(0));
+        assert_eq!(payment.working_set.tab_count(), 1);
     }
 
     // Switch to E-Commerce
     ws.switch_project("e-commerce-core").unwrap();
     let ecom = ws.active_project().unwrap();
-    assert!(!ecom.working_set.is_file_open("api.log"));
-    assert!(ecom.files.is_empty());
+    assert_eq!(ecom.working_set.tab_count(), 0);
+    assert!(ecom.log_spaces.is_empty());
 
     // Switch back: Payment context fully restored
     ws.switch_project("payment-service").unwrap();
     let payment = ws.active_project().unwrap();
-    assert!(payment.working_set.is_file_open("api.log"));
+    assert_eq!(payment.working_set.tab_count(), 1);
     let tab = payment.working_set.active_tab().unwrap();
     assert!(tab.session.column_layout.is_pinned(PinnableColumn::Timestamp));
 }
@@ -62,11 +60,11 @@ fn test_switch_project_restores_tab_sessions() {
 
     {
         let p = ws.active_project_mut().unwrap();
-        let mut s = session_with_filter("ERROR");
+        let mut s = session_with_pin(0);
         s.scroll_x = 250.0;
         s.selected_row = Some(17);
-        p.register_file(LogFileDescriptor::new("a.log".into(), "a.log".into()));
-        p.open_file("a.log", s);
+        let id = p.create_log_space("A", LogSpaceKind::Scratch).unwrap().id.clone();
+        p.open_log_space(&id, s);
     }
 
     ws.create_project("Proj B", ProjectColorAccent::Red);
@@ -74,8 +72,8 @@ fn test_switch_project_restores_tab_sessions() {
         let p = ws.active_project_mut().unwrap();
         let mut s = TabSessionState::new();
         s.scroll_x = 5.0;
-        p.register_file(LogFileDescriptor::new("b.log".into(), "b.log".into()));
-        p.open_file("b.log", s);
+        let id = p.create_log_space("B", LogSpaceKind::Scratch).unwrap().id.clone();
+        p.open_log_space(&id, s);
     }
 
     // Round trip A -> B -> A
@@ -128,12 +126,14 @@ fn test_projects_are_strictly_isolated() {
     ws.create_project("A", ProjectColorAccent::Blue);
     ws.active_project_mut()
         .unwrap()
-        .register_file(LogFileDescriptor::new("api.log".into(), "api.log".into()));
+        .create_log_space("Payment", LogSpaceKind::Scratch)
+        .unwrap();
 
     ws.create_project("B", ProjectColorAccent::Green);
     ws.active_project_mut()
         .unwrap()
-        .register_file(LogFileDescriptor::new("worker.log".into(), "worker.log".into()));
+        .create_log_space("Payment", LogSpaceKind::Scratch)
+        .unwrap();
 
     assert!(ws.projects_are_isolated("a", "b"));
 }
@@ -146,44 +146,41 @@ fn test_slug_generates_url_safe_id() {
     assert_eq!(slug_project_id("Payment   Service"), "payment-service");
 }
 
-// ─── Project: File Registry ──────────────────────────────────────────────────
+// ─── Project: Log Spaces ─────────────────────────────────────────────────────
 
 #[test]
-fn test_register_file_deduplicates() {
+fn test_remove_log_space_closes_its_tabs() {
     let mut ws = WorkspaceState::new();
     ws.create_project("P", ProjectColorAccent::Blue);
     let p = ws.active_project_mut().unwrap();
+    let id = p.create_log_space("Payment", LogSpaceKind::Imported).unwrap().id.clone();
+    p.log_space_mut(&id)
+        .unwrap()
+        .add_imported_files(&["/var/log/api.log".to_string()])
+        .unwrap();
+    p.open_log_space(&id, session_with_pin(0));
+    p.open_file_view(&id, "/var/log/api.log", session_with_pin(0));
+    assert_eq!(p.working_set.tab_count(), 2);
 
-    assert!(p.register_file(LogFileDescriptor::new("api.log".into(), "api.log".into())));
-    assert!(!p.register_file(LogFileDescriptor::new("api.log".into(), "api.log".into())));
-    assert_eq!(p.files.len(), 1);
-}
+    let removed = p.remove_log_space(&id);
 
-#[test]
-fn test_unregister_file_preserves_disk_file() {
-    let mut ws = WorkspaceState::new();
-    ws.create_project("P", ProjectColorAccent::Blue);
-    let p = ws.active_project_mut().unwrap();
-    p.register_file(LogFileDescriptor::new("db.log".into(), "db.log".into()));
-
-    let removed = p.unregister_file("db.log");
     assert!(removed.is_some());
-    assert!(p.file("db.log").is_none());
-    assert!(p.files.is_empty());
+    assert_eq!(p.working_set.tab_count(), 0);
+    assert!(p.log_spaces.is_empty());
 }
 
 #[test]
-fn test_project_open_file_opens_or_focuses_tab() {
+fn test_open_log_space_opens_or_focuses_tab() {
     let mut ws = WorkspaceState::new();
     ws.create_project("P", ProjectColorAccent::Blue);
     let p = ws.active_project_mut().unwrap();
-    p.register_file(LogFileDescriptor::new("api.log".into(), "api.log".into()));
+    let id = p.create_log_space("Payment", LogSpaceKind::Scratch).unwrap().id.clone();
 
-    p.open_file("api.log", session_with_filter("WARN"));
+    p.open_log_space(&id, session_with_pin(0));
     assert_eq!(p.working_set.tab_count(), 1);
 
-    // Opening same file focuses existing tab, no duplicate
-    p.open_file("api.log", session_with_filter("ERROR"));
+    // Opening the same Log Space focuses the existing tab, no duplicate
+    assert!(p.open_log_space(&id, session_with_pin(0)).is_none());
     assert_eq!(p.working_set.tab_count(), 1);
 }
 
@@ -219,37 +216,40 @@ fn test_left_sidebar_width_defaults_and_resizing() {
 }
 
 #[test]
-fn test_context_sidebar_defaults_hidden_on_files() {
+fn test_context_sidebar_defaults_hidden_with_filter_and_inspector_open() {
     let cs = ContextSidebarState::new();
     assert!(!cs.visible);
-    assert_eq!(cs.active_tab, ContextTab::Files);
+    assert!(!cs.is_collapsed(ContextSection::Filter));
+    assert!(cs.is_collapsed(ContextSection::Marker));
+    assert!(!cs.is_collapsed(ContextSection::Inspector));
     assert!(!cs.is_shown(true));
 }
 
 #[test]
-fn test_context_sidebar_toggle_keeps_active_tab() {
+fn test_context_sidebar_toggle_keeps_section_state() {
     let mut cs = ContextSidebarState::new();
-    cs.show_tab(ContextTab::Markers);
+    cs.reveal(ContextSection::Marker);
     assert!(cs.visible);
+    cs.toggle_section(ContextSection::Filter);
     cs.toggle();
-    assert!(!cs.visible);
     cs.toggle();
     assert!(cs.visible);
-    assert_eq!(cs.active_tab, ContextTab::Markers);
+    assert!(!cs.is_collapsed(ContextSection::Marker));
+    assert!(cs.is_collapsed(ContextSection::Filter));
 }
 
 #[test]
 fn test_context_sidebar_requires_a_log_file_tab() {
     let mut cs = ContextSidebarState::new();
-    cs.show_tab(ContextTab::Investigations);
+    cs.reveal(ContextSection::Filter);
     assert!(cs.is_shown(true));
     assert!(!cs.is_shown(false));
 }
 
 #[test]
-fn test_context_tab_labels() {
-    let labels: Vec<_> = ContextTab::ALL.iter().map(|t| t.as_str()).collect();
-    assert_eq!(labels, ["Files", "Investigations", "Saved Views", "Markers"]);
+fn test_context_section_labels() {
+    let labels: Vec<_> = ContextSection::ALL.iter().map(|t| t.as_str()).collect();
+    assert_eq!(labels, ["Filter", "Marker", "Inspector"]);
 }
 
 #[test]
@@ -266,11 +266,11 @@ fn test_project_working_set_is_independent_per_project() {
     let mut ws = WorkspaceState::new();
     ws.create_project("A", ProjectColorAccent::Blue);
     let p = ws.active_project_mut().unwrap();
-    p.open_file("a.log", session_with_filter("INFO"));
+    p.open_file_view("s", "a.log", session_with_pin(0));
 
     ws.create_project("B", ProjectColorAccent::Red);
     let p = ws.active_project_mut().unwrap();
-    p.open_file("b.log", session_with_filter("ERROR"));
+    p.open_file_view("s", "b.log", session_with_pin(0));
 
     assert_eq!(ws.project("a").unwrap().working_set.tab_count(), 1);
     assert_eq!(ws.project("b").unwrap().working_set.tab_count(), 1);
@@ -283,24 +283,21 @@ fn test_file_open_state_and_tab_close_by_file_id() {
     let mut ws = WorkspaceState::new();
     ws.create_project("Triage", ProjectColorAccent::Green);
     let p = ws.active_project_mut().unwrap();
-    p.register_file(LogFileDescriptor::new("app.log".to_string(), "app.log".to_string()));
-    p.register_file(LogFileDescriptor::new("worker.log".to_string(), "worker.log".to_string()));
 
     assert!(!p.working_set.is_file_open("app.log"));
     assert!(!p.working_set.is_file_open("worker.log"));
 
-    // Open app.log
-    p.open_file("app.log", session_with_filter("INFO"));
+    p.open_file_view("triage", "app.log", session_with_pin(0));
     assert!(p.working_set.is_file_open("app.log"));
     assert!(!p.working_set.is_file_open("worker.log"));
 
-    // Open worker.log
-    p.open_file("worker.log", session_with_filter("ERROR"));
+    p.open_file_view("triage", "worker.log", session_with_pin(0));
     assert!(p.working_set.is_file_open("app.log"));
     assert!(p.working_set.is_file_open("worker.log"));
 
     // Close app.log via find_tab
-    let target = log_gpui::workspace::working_set::TabTarget::LogFile {
+    let target = log_gpui::workspace::working_set::TabTarget::FileView {
+        space_id: "triage".to_string(),
         file_id: "app.log".to_string(),
     };
     let tab_idx = p.working_set.find_tab(&target).expect("app.log tab should exist");
@@ -311,7 +308,7 @@ fn test_file_open_state_and_tab_close_by_file_id() {
 }
 
 #[test]
-fn test_project_investigations_and_saved_views_lifecycle() {
+fn test_project_investigations_lifecycle() {
     let mut ws = WorkspaceState::new();
     ws.create_project("Incident Ops", ProjectColorAccent::Red);
     let p = ws.active_project_mut().unwrap();
@@ -335,26 +332,4 @@ fn test_project_investigations_and_saved_views_lifecycle() {
     assert_eq!(p.investigation_cases.len(), 1);
     assert_eq!(p.investigation_cases[0].id, "INC-404");
     assert_eq!(p.investigation_cases[0].anchors.len(), 1);
-
-    // Save view
-    let mut session = TabSessionState::new();
-    session.filter.add_condition(
-        log_gpui::filter::ConditionField::Level,
-        log_gpui::filter::ConditionOp::Is,
-        "FATAL".to_string(),
-    );
-    let view = log_gpui::workspace::saved_view::SavedView::capture(
-        "view-fatal".to_string(),
-        "Fatal Alerts".to_string(),
-        &session,
-    );
-    p.saved_views.push(view);
-    assert_eq!(p.saved_views.len(), 1);
-    assert_eq!(p.saved_views[0].name, "Fatal Alerts");
-
-    // Apply saved view to a fresh session
-    let mut target_session = TabSessionState::new();
-    p.saved_views[0].apply_to_session(&mut target_session);
-    assert_eq!(target_session.filter.conditions.len(), 1);
-    assert_eq!(target_session.filter.conditions[0].value, "FATAL");
 }

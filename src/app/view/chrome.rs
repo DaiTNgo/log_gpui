@@ -32,7 +32,12 @@ impl AppView {
                     .small()
                     .icon(IconName::PanelLeft)
                     .selected(self.sidebar_state.visible)
-                    .on_click(cx.listener(|this, _, _window, cx| this.toggle_sidebar(cx))),
+                    .on_click(cx.listener(|this, _, _window, cx| {
+                        // Keep the click from reaching the title bar, which zooms the window
+                        // on a double click.
+                        cx.stop_propagation();
+                        this.toggle_sidebar(cx)
+                    })),
             )
             .child(div().flex().items_center().pr_2().when(show_context_toggle, |this| {
                 this.child(
@@ -42,6 +47,7 @@ impl AppView {
                         .icon(IconName::PanelRight)
                         .selected(context_visible)
                         .on_click(cx.listener(|this, _, _window, cx| {
+                            cx.stop_propagation();
                             this.toggle_context_sidebar(cx)
                         })),
                 )

@@ -1,4 +1,5 @@
 pub mod event;
+pub mod schema;
 pub mod text;
 
 pub use event::{LogEvent, LogValue};

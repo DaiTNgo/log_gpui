@@ -1,26 +1,17 @@
 use log_gpui::column::{ColumnLayoutState, PinnableColumn};
-use log_gpui::filter::{ConditionField, ConditionOp, FilterEngine};
 use log_gpui::search::SearchState;
 use log_gpui::workspace::{ProjectColorAccent, TabSessionState, TabTarget, WorkingSet, WorkspaceState};
 
-fn make_session(filter_level: &str, search_query: &str, scroll_x: f32) -> TabSessionState {
-    let mut filter = FilterEngine::new();
-    if !filter_level.is_empty() {
-        filter.add_condition(
-            ConditionField::Level,
-            ConditionOp::Is,
-            filter_level.to_string(),
-        );
-    }
+fn make_session(_filter_level: &str, search_query: &str, scroll_x: f32) -> TabSessionState {
     let mut search = SearchState::new();
     search.query = search_query.to_string();
     TabSessionState {
-        filter,
         search,
         column_layout: ColumnLayoutState::new(),
         scroll_x,
         scroll_top: 0.0,
         selected_row: None,
+        ..TabSessionState::new()
     }
 }
 
@@ -30,16 +21,16 @@ fn make_session(filter_level: &str, search_query: &str, scroll_x: f32) -> TabSes
 fn test_open_tab_adds_to_working_set() {
     let mut ws = WorkingSet::new();
     let session = make_session("ERROR", "", 0.0);
-    ws.open_tab(TabTarget::LogFile {
-        file_id: "api.log".into(),
+    ws.open_tab(TabTarget::LogSpace {
+        space_id: "api.log".into(),
     }, session);
 
     assert_eq!(ws.tabs().len(), 1);
     assert_eq!(ws.active_tab_index(), Some(0));
     assert_eq!(
         ws.active_tab().unwrap().target,
-        TabTarget::LogFile {
-            file_id: "api.log".into()
+        TabTarget::LogSpace {
+            space_id: "api.log".into()
         }
     );
 }
@@ -50,8 +41,8 @@ fn test_open_duplicate_tab_focuses_existing() {
     let mut session1 = make_session("ERROR", "", 0.0);
     session1.scroll_x = 50.0;
     ws.open_tab(
-        TabTarget::LogFile {
-            file_id: "api.log".into(),
+        TabTarget::LogSpace {
+            space_id: "api.log".into(),
         },
         session1,
     );
@@ -59,8 +50,8 @@ fn test_open_duplicate_tab_focuses_existing() {
     // Second open of same file should focus existing tab, not create duplicate
     let session2 = make_session("WARN", "test", 0.0);
     let result = ws.open_tab(
-        TabTarget::LogFile {
-            file_id: "api.log".into(),
+        TabTarget::LogSpace {
+            space_id: "api.log".into(),
         },
         session2,
     );
@@ -75,20 +66,20 @@ fn test_open_duplicate_tab_focuses_existing() {
 fn test_open_different_files_creates_multiple_tabs() {
     let mut ws = WorkingSet::new();
     ws.open_tab(
-        TabTarget::LogFile {
-            file_id: "api.log".into(),
+        TabTarget::LogSpace {
+            space_id: "api.log".into(),
         },
         make_session("ERROR", "", 0.0),
     );
     ws.open_tab(
-        TabTarget::LogFile {
-            file_id: "worker.log".into(),
+        TabTarget::LogSpace {
+            space_id: "worker.log".into(),
         },
         make_session("WARN", "", 0.0),
     );
     ws.open_tab(
-        TabTarget::LogFile {
-            file_id: "nginx.log".into(),
+        TabTarget::LogSpace {
+            space_id: "nginx.log".into(),
         },
         make_session("", "timeout", 0.0),
     );
@@ -101,22 +92,22 @@ fn test_open_different_files_creates_multiple_tabs() {
 fn test_open_tab_switches_to_existing_if_present() {
     let mut ws = WorkingSet::new();
     ws.open_tab(
-        TabTarget::LogFile {
-            file_id: "api.log".into(),
+        TabTarget::LogSpace {
+            space_id: "api.log".into(),
         },
         make_session("ERROR", "", 0.0),
     );
     ws.open_tab(
-        TabTarget::LogFile {
-            file_id: "worker.log".into(),
+        TabTarget::LogSpace {
+            space_id: "worker.log".into(),
         },
         make_session("WARN", "", 0.0),
     );
 
     // Re-open api.log: should switch focus back to it
     ws.open_tab(
-        TabTarget::LogFile {
-            file_id: "api.log".into(),
+        TabTarget::LogSpace {
+            space_id: "api.log".into(),
         },
         make_session("", "", 0.0),
     );
@@ -131,27 +122,27 @@ fn test_open_tab_switches_to_existing_if_present() {
 fn test_close_tab_removes_from_working_set() {
     let mut ws = WorkingSet::new();
     ws.open_tab(
-        TabTarget::LogFile {
-            file_id: "api.log".into(),
+        TabTarget::LogSpace {
+            space_id: "api.log".into(),
         },
         make_session("ERROR", "", 0.0),
     );
     ws.open_tab(
-        TabTarget::LogFile {
-            file_id: "worker.log".into(),
+        TabTarget::LogSpace {
+            space_id: "worker.log".into(),
         },
         make_session("WARN", "", 0.0),
     );
 
     let closed = ws.close_tab(0);
     assert!(closed.is_some());
-    assert_eq!(closed.unwrap().target, TabTarget::LogFile { file_id: "api.log".into() });
+    assert_eq!(closed.unwrap().target, TabTarget::LogSpace { space_id: "api.log".into() });
     assert_eq!(ws.tabs().len(), 1);
     assert_eq!(ws.active_tab_index(), Some(0));
     assert_eq!(
         ws.active_tab().unwrap().target,
-        TabTarget::LogFile {
-            file_id: "worker.log".into()
+        TabTarget::LogSpace {
+            space_id: "worker.log".into()
         }
     );
 }
@@ -160,20 +151,20 @@ fn test_close_tab_removes_from_working_set() {
 fn test_close_active_tab_switches_to_adjacent() {
     let mut ws = WorkingSet::new();
     ws.open_tab(
-        TabTarget::LogFile {
-            file_id: "api.log".into(),
+        TabTarget::LogSpace {
+            space_id: "api.log".into(),
         },
         make_session("", "", 0.0),
     );
     ws.open_tab(
-        TabTarget::LogFile {
-            file_id: "worker.log".into(),
+        TabTarget::LogSpace {
+            space_id: "worker.log".into(),
         },
         make_session("", "", 0.0),
     );
     ws.open_tab(
-        TabTarget::LogFile {
-            file_id: "nginx.log".into(),
+        TabTarget::LogSpace {
+            space_id: "nginx.log".into(),
         },
         make_session("", "", 0.0),
     );
@@ -185,8 +176,8 @@ fn test_close_active_tab_switches_to_adjacent() {
     assert_eq!(ws.active_tab_index(), Some(1));
     assert_eq!(
         ws.active_tab().unwrap().target,
-        TabTarget::LogFile {
-            file_id: "worker.log".into()
+        TabTarget::LogSpace {
+            space_id: "worker.log".into()
         }
     );
 }
@@ -195,8 +186,8 @@ fn test_close_active_tab_switches_to_adjacent() {
 fn test_close_last_tab_results_in_empty_working_set() {
     let mut ws = WorkingSet::new();
     ws.open_tab(
-        TabTarget::LogFile {
-            file_id: "api.log".into(),
+        TabTarget::LogSpace {
+            space_id: "api.log".into(),
         },
         make_session("", "", 0.0),
     );
@@ -210,14 +201,14 @@ fn test_close_last_tab_results_in_empty_working_set() {
 fn test_close_first_tab_switches_to_next() {
     let mut ws = WorkingSet::new();
     ws.open_tab(
-        TabTarget::LogFile {
-            file_id: "api.log".into(),
+        TabTarget::LogSpace {
+            space_id: "api.log".into(),
         },
         make_session("", "", 0.0),
     );
     ws.open_tab(
-        TabTarget::LogFile {
-            file_id: "worker.log".into(),
+        TabTarget::LogSpace {
+            space_id: "worker.log".into(),
         },
         make_session("", "", 0.0),
     );
@@ -231,8 +222,8 @@ fn test_close_first_tab_switches_to_next() {
     assert_eq!(ws.active_tab_index(), Some(0));
     assert_eq!(
         ws.active_tab().unwrap().target,
-        TabTarget::LogFile {
-            file_id: "worker.log".into()
+        TabTarget::LogSpace {
+            space_id: "worker.log".into()
         }
     );
 }
@@ -243,20 +234,20 @@ fn test_close_first_tab_switches_to_next() {
 fn test_set_active_tab_by_index() {
     let mut ws = WorkingSet::new();
     ws.open_tab(
-        TabTarget::LogFile {
-            file_id: "api.log".into(),
+        TabTarget::LogSpace {
+            space_id: "api.log".into(),
         },
         make_session("ERROR", "", 0.0),
     );
     ws.open_tab(
-        TabTarget::LogFile {
-            file_id: "worker.log".into(),
+        TabTarget::LogSpace {
+            space_id: "worker.log".into(),
         },
         make_session("WARN", "timeout", 0.0),
     );
     ws.open_tab(
-        TabTarget::LogFile {
-            file_id: "nginx.log".into(),
+        TabTarget::LogSpace {
+            space_id: "nginx.log".into(),
         },
         make_session("", "", 100.0),
     );
@@ -265,8 +256,8 @@ fn test_set_active_tab_by_index() {
     assert_eq!(ws.active_tab_index(), Some(0));
     assert_eq!(
         ws.active_tab().unwrap().target,
-        TabTarget::LogFile {
-            file_id: "api.log".into()
+        TabTarget::LogSpace {
+            space_id: "api.log".into()
         }
     );
 
@@ -274,8 +265,8 @@ fn test_set_active_tab_by_index() {
     assert_eq!(ws.active_tab_index(), Some(2));
     assert_eq!(
         ws.active_tab().unwrap().target,
-        TabTarget::LogFile {
-            file_id: "nginx.log".into()
+        TabTarget::LogSpace {
+            space_id: "nginx.log".into()
         }
     );
 }
@@ -284,14 +275,14 @@ fn test_set_active_tab_by_index() {
 fn test_next_tab_wraps_around() {
     let mut ws = WorkingSet::new();
     ws.open_tab(
-        TabTarget::LogFile {
-            file_id: "a.log".into(),
+        TabTarget::LogSpace {
+            space_id: "a.log".into(),
         },
         make_session("", "", 0.0),
     );
     ws.open_tab(
-        TabTarget::LogFile {
-            file_id: "b.log".into(),
+        TabTarget::LogSpace {
+            space_id: "b.log".into(),
         },
         make_session("", "", 0.0),
     );
@@ -308,14 +299,14 @@ fn test_next_tab_wraps_around() {
 fn test_prev_tab_wraps_around() {
     let mut ws = WorkingSet::new();
     ws.open_tab(
-        TabTarget::LogFile {
-            file_id: "a.log".into(),
+        TabTarget::LogSpace {
+            space_id: "a.log".into(),
         },
         make_session("", "", 0.0),
     );
     ws.open_tab(
-        TabTarget::LogFile {
-            file_id: "b.log".into(),
+        TabTarget::LogSpace {
+            space_id: "b.log".into(),
         },
         make_session("", "", 0.0),
     );
@@ -330,8 +321,8 @@ fn test_select_tab_by_number_shortcut() {
     let mut ws = WorkingSet::new();
     for i in 0..9 {
         ws.open_tab(
-            TabTarget::LogFile {
-                file_id: format!("file{}.log", i),
+            TabTarget::LogSpace {
+                space_id: format!("file{}.log", i),
             },
             make_session("", "", 0.0),
         );
@@ -376,8 +367,8 @@ fn test_tab_sessions_are_independent() {
     session_a.column_layout.pin(PinnableColumn::Timestamp);
     session_a.selected_row = Some(42);
     ws.open_tab(
-        TabTarget::LogFile {
-            file_id: "api.log".into(),
+        TabTarget::LogSpace {
+            space_id: "api.log".into(),
         },
         session_a,
     );
@@ -385,8 +376,8 @@ fn test_tab_sessions_are_independent() {
     let mut session_b = make_session("WARN", "connection", 200.0);
     session_b.column_layout.pin(PinnableColumn::Module);
     ws.open_tab(
-        TabTarget::LogFile {
-            file_id: "worker.log".into(),
+        TabTarget::LogSpace {
+            space_id: "worker.log".into(),
         },
         session_b,
     );
@@ -412,14 +403,14 @@ fn test_session_state_survives_tab_switching() {
     let mut ws = WorkingSet::new();
 
     ws.open_tab(
-        TabTarget::LogFile {
-            file_id: "api.log".into(),
+        TabTarget::LogSpace {
+            space_id: "api.log".into(),
         },
         make_session("ERROR", "search_term", 100.0),
     );
     ws.open_tab(
-        TabTarget::LogFile {
-            file_id: "worker.log".into(),
+        TabTarget::LogSpace {
+            space_id: "worker.log".into(),
         },
         make_session("WARN", "other_search", 200.0),
     );
@@ -477,22 +468,41 @@ fn test_open_duplicate_investigation_board_focuses_existing() {
 // ─── Chronicle Stream Tabs ───────────────────────────────────────────────────
 
 #[test]
-fn test_open_chronicle_stream_tab() {
+fn test_log_space_and_file_view_are_separate_tabs() {
     let mut ws = WorkingSet::new();
     ws.open_tab(
-        TabTarget::ChronicleStream {
-            file_ids: vec!["api.log".into(), "worker.log".into()],
-        },
+        TabTarget::LogSpace { space_id: "payment".into() },
+        make_session("", "", 0.0),
+    );
+    ws.open_tab(
+        TabTarget::FileView { space_id: "payment".into(), file_id: "api.log".into() },
         make_session("", "", 0.0),
     );
 
-    assert_eq!(ws.tabs().len(), 1);
+    assert_eq!(ws.tabs().len(), 2);
     match &ws.active_tab().unwrap().target {
-        TabTarget::ChronicleStream { file_ids } => {
-            assert_eq!(file_ids.len(), 2);
+        TabTarget::FileView { space_id, file_id } => {
+            assert_eq!(space_id, "payment");
+            assert_eq!(file_id, "api.log");
         }
-        _ => panic!("Expected ChronicleStream tab"),
+        _ => panic!("Expected FileView tab"),
     }
+}
+
+#[test]
+fn test_closing_a_space_closes_its_file_views() {
+    let mut ws = WorkingSet::new();
+    ws.open_tab(TabTarget::LogSpace { space_id: "a".into() }, make_session("", "", 0.0));
+    ws.open_tab(
+        TabTarget::FileView { space_id: "a".into(), file_id: "x.log".into() },
+        make_session("", "", 0.0),
+    );
+    ws.open_tab(TabTarget::LogSpace { space_id: "b".into() }, make_session("", "", 0.0));
+
+    ws.close_tabs_for_space("a");
+
+    assert_eq!(ws.tabs().len(), 1);
+    assert_eq!(ws.tabs()[0].target, TabTarget::LogSpace { space_id: "b".into() });
 }
 
 // ─── Tab Reordering ──────────────────────────────────────────────────────────
@@ -501,20 +511,20 @@ fn test_open_chronicle_stream_tab() {
 fn test_move_tab_forward() {
     let mut ws = WorkingSet::new();
     ws.open_tab(
-        TabTarget::LogFile {
-            file_id: "a.log".into(),
+        TabTarget::LogSpace {
+            space_id: "a.log".into(),
         },
         make_session("", "", 0.0),
     );
     ws.open_tab(
-        TabTarget::LogFile {
-            file_id: "b.log".into(),
+        TabTarget::LogSpace {
+            space_id: "b.log".into(),
         },
         make_session("", "", 0.0),
     );
     ws.open_tab(
-        TabTarget::LogFile {
-            file_id: "c.log".into(),
+        TabTarget::LogSpace {
+            space_id: "c.log".into(),
         },
         make_session("", "", 0.0),
     );
@@ -524,7 +534,7 @@ fn test_move_tab_forward() {
         .tabs()
         .iter()
         .map(|t| match &t.target {
-            TabTarget::LogFile { file_id } => file_id.clone(),
+            TabTarget::LogSpace { space_id } => space_id.clone(),
             _ => unreachable!(),
         })
         .collect();
@@ -535,20 +545,20 @@ fn test_move_tab_forward() {
 fn test_move_tab_backward() {
     let mut ws = WorkingSet::new();
     ws.open_tab(
-        TabTarget::LogFile {
-            file_id: "a.log".into(),
+        TabTarget::LogSpace {
+            space_id: "a.log".into(),
         },
         make_session("", "", 0.0),
     );
     ws.open_tab(
-        TabTarget::LogFile {
-            file_id: "b.log".into(),
+        TabTarget::LogSpace {
+            space_id: "b.log".into(),
         },
         make_session("", "", 0.0),
     );
     ws.open_tab(
-        TabTarget::LogFile {
-            file_id: "c.log".into(),
+        TabTarget::LogSpace {
+            space_id: "c.log".into(),
         },
         make_session("", "", 0.0),
     );
@@ -558,7 +568,7 @@ fn test_move_tab_backward() {
         .tabs()
         .iter()
         .map(|t| match &t.target {
-            TabTarget::LogFile { file_id } => file_id.clone(),
+            TabTarget::LogSpace { space_id } => space_id.clone(),
             _ => unreachable!(),
         })
         .collect();
@@ -571,15 +581,15 @@ fn test_move_tab_backward() {
 fn test_close_middle_tab_selects_next_if_available() {
     let mut ws = WorkingSet::new();
     ws.open_tab(
-        TabTarget::LogFile { file_id: "a.log".into() },
+        TabTarget::LogSpace { space_id: "a.log".into() },
         make_session("", "", 0.0),
     );
     ws.open_tab(
-        TabTarget::LogFile { file_id: "b.log".into() },
+        TabTarget::LogSpace { space_id: "b.log".into() },
         make_session("", "", 0.0),
     );
     ws.open_tab(
-        TabTarget::LogFile { file_id: "c.log".into() },
+        TabTarget::LogSpace { space_id: "c.log".into() },
         make_session("", "", 0.0),
     );
     // Active is c.log (index 2)
@@ -591,7 +601,7 @@ fn test_close_middle_tab_selects_next_if_available() {
     assert_eq!(ws.active_tab_index(), Some(1));
     assert_eq!(
         ws.active_tab().unwrap().target,
-        TabTarget::LogFile { file_id: "c.log".into() }
+        TabTarget::LogSpace { space_id: "c.log".into() }
     );
 }
 
@@ -599,15 +609,15 @@ fn test_close_middle_tab_selects_next_if_available() {
 fn test_close_tab_at_end_selects_previous() {
     let mut ws = WorkingSet::new();
     ws.open_tab(
-        TabTarget::LogFile { file_id: "a.log".into() },
+        TabTarget::LogSpace { space_id: "a.log".into() },
         make_session("", "", 0.0),
     );
     ws.open_tab(
-        TabTarget::LogFile { file_id: "b.log".into() },
+        TabTarget::LogSpace { space_id: "b.log".into() },
         make_session("", "", 0.0),
     );
     ws.open_tab(
-        TabTarget::LogFile { file_id: "c.log".into() },
+        TabTarget::LogSpace { space_id: "c.log".into() },
         make_session("", "", 0.0),
     );
     // Active is c.log (index 2)
@@ -615,7 +625,7 @@ fn test_close_tab_at_end_selects_previous() {
     assert_eq!(ws.active_tab_index(), Some(1));
     assert_eq!(
         ws.active_tab().unwrap().target,
-        TabTarget::LogFile { file_id: "b.log".into() }
+        TabTarget::LogSpace { space_id: "b.log".into() }
     );
 }
 
@@ -625,7 +635,8 @@ fn test_close_tab_at_end_selects_previous() {
 fn test_is_file_open_in_working_set() {
     let mut ws = WorkingSet::new();
     ws.open_tab(
-        TabTarget::LogFile {
+        TabTarget::FileView {
+            space_id: "payment".into(),
             file_id: "api.log".into(),
         },
         make_session("", "", 0.0),
@@ -641,14 +652,14 @@ fn test_tab_count() {
     assert_eq!(ws.tab_count(), 0);
 
     ws.open_tab(
-        TabTarget::LogFile {
-            file_id: "a.log".into(),
+        TabTarget::LogSpace {
+            space_id: "a.log".into(),
         },
         make_session("", "", 0.0),
     );
     ws.open_tab(
-        TabTarget::LogFile {
-            file_id: "b.log".into(),
+        TabTarget::LogSpace {
+            space_id: "b.log".into(),
         },
         make_session("", "", 0.0),
     );

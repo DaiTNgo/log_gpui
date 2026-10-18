@@ -18,6 +18,8 @@ type CustomRow = Rc<dyn Fn(&mut Window, &mut App) -> gpui::AnyElement>;
 #[derive(Clone)]
 enum Entry {
     Item(SidebarMenuItem),
+    /// A menu item indented under the row above it (a file under its Log Space).
+    Nested(SidebarMenuItem),
     Custom(CustomRow),
 }
 
@@ -34,6 +36,11 @@ impl MenuList {
 
     pub fn child(mut self, item: SidebarMenuItem) -> Self {
         self.entries.push(Entry::Item(item));
+        self
+    }
+
+    pub fn nested_child(mut self, item: SidebarMenuItem) -> Self {
+        self.entries.push(Entry::Nested(item));
         self
     }
 
@@ -76,6 +83,16 @@ impl SidebarItem for MenuList {
                     Entry::Item(item) => div()
                         .h(px(ROW_HEIGHT))
                         .flex_shrink_0()
+                        .child(SidebarMenu::new().child(item).collapsed(collapsed).render(
+                            format!("{}-{}", id, ix),
+                            window,
+                            cx,
+                        ))
+                        .into_any_element(),
+                    Entry::Nested(item) => div()
+                        .h(px(ROW_HEIGHT))
+                        .flex_shrink_0()
+                        .pl_5()
                         .child(SidebarMenu::new().child(item).collapsed(collapsed).render(
                             format!("{}-{}", id, ix),
                             window,

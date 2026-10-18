@@ -1,284 +1,290 @@
-use crate::model::{LogEntry, LogLevel};
-use crate::query::ast::{GroupOperator, QueryExpression};
-use crate::query::operator::QueryOperator;
-use crate::query::value::QueryValue;
-use regex::Regex;
+//! Filter: narrowing the shown lines by the values of the file's columns.
+//!
+//! Per column the user ticks Filter Values (equality) or adds Custom Values
+//! (contains); both combine with OR inside a column, columns and the Time
+//! Range combine with AND. Hide Mode flips a column from "show only these" to
+//! "hide these". A row with no value in a column never matches it.
+
+use crate::filter_index::{ColumnIndex, FilterIndex, MISSING, column_value};
+use crate::model::LogEntry;
+use crate::unicode_text::{self, Needle};
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum FilterType {
-    Include,
-    Exclude,
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ColumnFilter {
+    /// Column key (`level`, `module`, `request_id`, `trace_id` or a JSON field).
+    pub column: String,
+    /// Ticked Filter Values, in folded form.
+    #[serde(default)]
+    pub values: Vec<String>,
+    /// Custom Values: rows whose value contains the text.
+    #[serde(default)]
+    pub custom: Vec<String>,
+    /// Hide the matching rows instead of showing only them.
+    #[serde(default)]
+    pub hide: bool,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum ConditionField {
-    Level,
-    Module,
-    Message,
-    RequestId,
-}
+impl ColumnFilter {
+    fn new(column: &str) -> Self {
+        Self { column: column.to_string(), ..Self::default() }
+    }
 
-impl ConditionField {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            ConditionField::Level => "Level",
-            ConditionField::Module => "Module",
-            ConditionField::Message => "Message",
-            ConditionField::RequestId => "Request ID",
-        }
+    /// Whether this column has any condition to apply.
+    pub fn is_active(&self) -> bool {
+        !self.values.is_empty() || !self.custom.is_empty()
+    }
+
+    pub fn has_value(&self, folded: &str) -> bool {
+        self.values.iter().any(|v| v == folded)
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum ConditionOp {
-    Is,
-    IsNot,
-    Contains,
-    NotContains,
-    MatchesRegex,
+/// From/To bounds on `timestamp`, as typed. An empty bound is unbounded.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TimeRange {
+    #[serde(default)]
+    pub from: String,
+    #[serde(default)]
+    pub to: String,
 }
 
-impl ConditionOp {
-    #[allow(non_upper_case_globals)]
-    pub const Equals: ConditionOp = ConditionOp::Is;
-    #[allow(non_upper_case_globals)]
-    pub const NotEquals: ConditionOp = ConditionOp::IsNot;
+impl TimeRange {
+    pub fn is_active(&self) -> bool {
+        !self.from.trim().is_empty() || !self.to.trim().is_empty()
+    }
 
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            ConditionOp::Is => "is",
-            ConditionOp::IsNot => "is not",
-            ConditionOp::Contains => "contains",
-            ConditionOp::NotContains => "doesn't contain",
-            ConditionOp::MatchesRegex => "regex",
-        }
+    /// Resolve both bounds; a bound that does not parse is treated as unbounded.
+    pub fn bounds(&self, anchor_day: f64) -> (Option<f64>, Option<f64>) {
+        (
+            parse_time_bound(&self.from, anchor_day).ok().flatten(),
+            parse_time_bound(&self.to, anchor_day).ok().flatten(),
+        )
     }
 }
 
-/// A filter row shown in the Filter Popover UI. Evaluation is delegated to the
-/// shared `QueryEngine` via `FilterEngine::to_query_expression`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FilterRow {
-    pub id: usize,
-    pub field: ConditionField,
-    pub op: ConditionOp,
-    pub value: String,
-    pub enabled: bool,
-}
+/// A typed time bound that could not be read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct InvalidTime;
 
-impl FilterRow {
-    pub fn new(id: usize, field: ConditionField, op: ConditionOp, value: String) -> Self {
-        Self {
-            id,
-            field,
-            op,
-            value,
-            enabled: true,
+/// Parse a typed time bound in the form the Timestamp column shows.
+///
+/// Accepts a full date and time (`2026-10-17 10:42:03.250`, `T` or `/`
+/// separators), a time of day (`10:42:03`, `10:42`, read as on `anchor_day`),
+/// or a plain number of seconds. Times are taken on the file's own clock, with
+/// no timezone conversion. Empty text is `Ok(None)`.
+pub fn parse_time_bound(text: &str, anchor_day: f64) -> Result<Option<f64>, InvalidTime> {
+    use chrono::{NaiveDateTime, NaiveTime, Timelike};
+    let t = text.trim().trim_end_matches('Z');
+    if t.is_empty() {
+        return Ok(None);
+    }
+    if let Ok(n) = t.parse::<f64>() {
+        return if n.is_finite() { Ok(Some(n)) } else { Err(InvalidTime) };
+    }
+    for fmt in [
+        "%Y-%m-%d %H:%M:%S%.f",
+        "%Y-%m-%dT%H:%M:%S%.f",
+        "%Y/%m/%d %H:%M:%S%.f",
+        "%Y-%m-%d %H:%M",
+        "%Y-%m-%dT%H:%M",
+    ] {
+        if let Ok(dt) = NaiveDateTime::parse_from_str(t, fmt) {
+            let utc = dt.and_utc();
+            return Ok(Some(utc.timestamp() as f64 + f64::from(utc.timestamp_subsec_millis()) / 1000.0));
         }
     }
-
-    pub fn to_chip_label(&self) -> String {
-        match self.field {
-            ConditionField::Level => self.value.to_uppercase(),
-            ConditionField::Module => self.value.clone(),
-            ConditionField::Message => {
-                if self.op == ConditionOp::IsNot || self.op == ConditionOp::NotContains {
-                    format!("!{}", self.value)
-                } else {
-                    self.value.clone()
-                }
-            }
-            ConditionField::RequestId => format!("req:{}", self.value),
+    for fmt in ["%H:%M:%S%.f", "%H:%M"] {
+        if let Ok(tod) = NaiveTime::parse_from_str(t, fmt) {
+            let secs = f64::from(tod.num_seconds_from_midnight()) + f64::from(tod.nanosecond()) / 1e9;
+            return Ok(Some(anchor_day + secs));
         }
     }
-
-    /// Map this row onto a query-language condition. Returns `None` for
-    /// operators without an AST equivalent (forcing the legacy path).
-    fn to_query_condition(&self) -> Option<(String, QueryOperator, QueryValue)> {
-        let field = match self.field {
-            ConditionField::Level => "level",
-            ConditionField::Module => "module",
-            ConditionField::Message => "message",
-            ConditionField::RequestId => "requestId",
-        };
-        let op = match self.op {
-            ConditionOp::Is => QueryOperator::Eq,
-            ConditionOp::IsNot => QueryOperator::Neq,
-            ConditionOp::Contains => QueryOperator::Contains,
-            ConditionOp::MatchesRegex => QueryOperator::Matches,
-            ConditionOp::NotContains => return None,
-        };
-        Some((field.to_string(), op, QueryValue::String(self.value.clone())))
-    }
-
-    pub fn matches(&self, entry: &LogEntry) -> bool {
-        if !self.enabled || self.value.trim().is_empty() {
-            return true;
-        }
-
-        let actual_val: &str = match self.field {
-            ConditionField::Level => entry.level.as_str(),
-            ConditionField::Module => &entry.tag,
-            ConditionField::Message => &entry.payload,
-            ConditionField::RequestId => entry.request_id.as_deref().unwrap_or(""),
-        };
-
-        match self.op {
-            ConditionOp::Is => actual_val.eq_ignore_ascii_case(&self.value),
-            ConditionOp::IsNot => !actual_val.eq_ignore_ascii_case(&self.value),
-            ConditionOp::Contains => actual_val
-                .to_lowercase()
-                .contains(&self.value.to_lowercase()),
-            ConditionOp::NotContains => !actual_val
-                .to_lowercase()
-                .contains(&self.value.to_lowercase()),
-            ConditionOp::MatchesRegex => {
-                if let Ok(re) = Regex::new(&self.value) {
-                    re.is_match(actual_val)
-                } else {
-                    false
-                }
-            }
-        }
-    }
+    Err(InvalidTime)
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum LogicMode {
-    All, // AND
-    Any, // OR
+/// The Filter of one log file.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FilterState {
+    #[serde(default)]
+    pub columns: Vec<ColumnFilter>,
+    #[serde(default)]
+    pub time_range: TimeRange,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FilterEngine {
-    pub conditions: Vec<FilterRow>,
-    pub logic_mode: LogicMode,
-}
-
-impl Default for FilterEngine {
-    fn default() -> Self {
-        Self {
-            conditions: Vec::new(),
-            logic_mode: LogicMode::All,
-        }
-    }
-}
-
-impl FilterEngine {
+impl FilterState {
     pub fn new() -> Self {
         Self::default()
     }
 
     pub fn is_empty(&self) -> bool {
-        self.conditions.iter().all(|c| !c.enabled || c.value.is_empty())
+        !self.time_range.is_active() && self.columns.iter().all(|c| !c.is_active())
     }
 
-    pub fn add_condition(&mut self, field: ConditionField, op: ConditionOp, value: String) -> usize {
-        let id = next_filter_id();
-        self.conditions.push(FilterRow::new(id, field, op, value));
-        id
+    /// Number of active conditions: columns with a condition, plus the Time Range.
+    pub fn active_count(&self) -> usize {
+        self.columns.iter().filter(|c| c.is_active()).count()
+            + usize::from(self.time_range.is_active())
     }
 
-    pub fn remove_condition(&mut self, id: usize) {
-        self.conditions.retain(|c| c.id != id);
+    pub fn column(&self, key: &str) -> Option<&ColumnFilter> {
+        self.columns.iter().find(|c| c.column == key)
+    }
+
+    fn column_mut(&mut self, key: &str) -> &mut ColumnFilter {
+        if let Some(pos) = self.columns.iter().position(|c| c.column == key) {
+            return &mut self.columns[pos];
+        }
+        self.columns.push(ColumnFilter::new(key));
+        self.columns.last_mut().unwrap()
+    }
+
+    fn prune(&mut self) {
+        self.columns.retain(|c| c.is_active() || c.hide);
+    }
+
+    /// Whether the Filter Value `folded` of `key` is ticked.
+    pub fn is_value_ticked(&self, key: &str, folded: &str) -> bool {
+        self.column(key).is_some_and(|c| c.has_value(folded))
+    }
+
+    /// Tick or untick a Filter Value (given in any case; stored folded).
+    pub fn toggle_value(&mut self, key: &str, value: &str) {
+        let folded = unicode_text::fold(value);
+        let col = self.column_mut(key);
+        if let Some(pos) = col.values.iter().position(|v| *v == folded) {
+            col.values.remove(pos);
+        } else {
+            col.values.push(folded);
+        }
+        self.prune();
+    }
+
+    /// Add a Custom Value (contains). Blank or duplicate text is ignored.
+    pub fn add_custom(&mut self, key: &str, text: &str) -> bool {
+        let text = text.trim();
+        if text.is_empty() {
+            return false;
+        }
+        let folded = unicode_text::fold(text);
+        let col = self.column_mut(key);
+        if col.custom.iter().any(|c| unicode_text::fold(c) == folded) {
+            return false;
+        }
+        col.custom.push(text.to_string());
+        true
+    }
+
+    pub fn remove_custom(&mut self, key: &str, text: &str) {
+        if let Some(col) = self.columns.iter_mut().find(|c| c.column == key) {
+            col.custom.retain(|c| c != text);
+        }
+        self.prune();
+    }
+
+    pub fn set_hide(&mut self, key: &str, hide: bool) {
+        self.column_mut(key).hide = hide;
+        self.prune();
+    }
+
+    /// Remove every condition of one column.
+    pub fn clear_column(&mut self, key: &str) {
+        self.columns.retain(|c| c.column != key);
+    }
+
+    pub fn set_time_range(&mut self, from: &str, to: &str) {
+        self.time_range = TimeRange { from: from.trim().to_string(), to: to.trim().to_string() };
     }
 
     pub fn clear(&mut self) {
-        self.conditions.clear();
+        *self = Self::default();
     }
 
-    /// Add a quick filter from log row click
-    pub fn add_quick_level(&mut self, level: LogLevel) {
-        // Replace or add
-        self.conditions.retain(|c| c.field != ConditionField::Level);
-        self.add_condition(ConditionField::Level, ConditionOp::Is, level.as_str().to_string());
-    }
-
-    pub fn hide_level(&mut self, level: LogLevel) {
-        self.add_condition(ConditionField::Level, ConditionOp::IsNot, level.as_str().to_string());
-    }
-
-    pub fn add_quick_module(&mut self, module: &str) {
-        self.conditions.retain(|c| c.field != ConditionField::Module);
-        self.add_condition(ConditionField::Module, ConditionOp::Is, module.to_string());
-    }
-
-    pub fn hide_module(&mut self, module: &str) {
-        self.add_condition(ConditionField::Module, ConditionOp::IsNot, module.to_string());
-    }
-
-    /// Build a query-language expression from the enabled, non-empty rows.
-    /// Returns `None` when rows cannot map to the AST (e.g. `NotContains`).
-    pub fn to_query_expression(&self) -> Option<QueryExpression> {
-        let active_conditions: Vec<&FilterRow> = self
-            .conditions
-            .iter()
-            .filter(|c| c.enabled && !c.value.trim().is_empty())
-            .collect();
-        if active_conditions.is_empty() {
-            return None;
-        }
-
-        let mut children = Vec::with_capacity(active_conditions.len());
-        for cond in active_conditions {
-            let (field, op, value) = cond.to_query_condition()?;
-            children.push(QueryExpression::Condition(crate::query::ast::QueryCondition::new(
-                &field, op, value,
-            )));
-        }
-
-        let operator = match self.logic_mode {
-            LogicMode::All => GroupOperator::And,
-            LogicMode::Any => GroupOperator::Or,
-        };
-        Some(QueryExpression::group(operator, children))
-    }
-
-    /// Evaluate active filters on all entries and return visible indices.
-    /// Delegates to the shared `QueryEngine` when possible; falls back to the
-    /// per-row matcher for rows without an AST equivalent.
-    pub fn evaluate(&self, entries: &mut [LogEntry]) -> Vec<usize> {
-        let active_conditions: Vec<&FilterRow> = self
-            .conditions
-            .iter()
-            .filter(|c| c.enabled && !c.value.trim().is_empty())
-            .collect();
-
-        if active_conditions.is_empty() {
-            let mut prev_ts: Option<f64> = None;
-            for entry in entries.iter_mut() {
-                update_entry_delta_time(entry, &mut prev_ts);
-            }
-            return (0..entries.len()).collect();
-        }
-
+    /// Evaluate the Filter and return the visible row indices. Also refreshes
+    /// each visible row's delta time from the previous visible row.
+    pub fn evaluate(&self, index: &FilterIndex, entries: &mut [LogEntry]) -> Vec<usize> {
         let mut visible = Vec::with_capacity(entries.len());
         let mut prev_ts: Option<f64> = None;
 
-        if let Some(expr) = self.to_query_expression() {
-            for (idx, entry) in entries.iter_mut().enumerate() {
-                if crate::query::engine::QueryEngine::evaluate_entry(entry, &expr) {
-                    update_entry_delta_time(entry, &mut prev_ts);
-                    visible.push(idx);
-                }
-            }
-            return visible;
-        }
+        let stale = index.rows() != entries.len();
+        let active: Vec<(&ColumnFilter, CompiledColumn)> = self
+            .columns
+            .iter()
+            .filter(|c| c.is_active())
+            .map(|c| (c, CompiledColumn::compile(c, index.column(&c.column), stale)))
+            .collect();
+        let (from, to) = self.time_range.bounds(index.anchor_day());
+        let time_active = (from.is_some() || to.is_some()) && !stale;
 
-        for (idx, entry) in entries.iter_mut().enumerate() {
-            let passes = match self.logic_mode {
-                LogicMode::All => active_conditions.iter().all(|c| c.matches(entry)),
-                LogicMode::Any => active_conditions.iter().any(|c| c.matches(entry)),
-            };
-
-            if passes {
+        for (row, entry) in entries.iter_mut().enumerate() {
+            let columns_ok = active.iter().all(|(cf, compiled)| {
+                let matched = compiled.matches(row, entry, &cf.column);
+                matched != cf.hide
+            });
+            let time_ok = !time_active
+                || match index.effective_timestamp(row) {
+                    None => true,
+                    Some(ts) => from.is_none_or(|f| ts >= f) && to.is_none_or(|t| ts <= t),
+                };
+            if columns_ok && time_ok {
                 update_entry_delta_time(entry, &mut prev_ts);
-                visible.push(idx);
+                visible.push(row);
             }
         }
-
         visible
+    }
+}
+
+/// A column's condition prepared for fast evaluation. With value ids available
+/// it is a lookup table over the (at most 500) values; otherwise it compares
+/// the row's text directly.
+struct CompiledColumn<'a> {
+    /// Set only when the column has value ids that match the entries.
+    ids: Option<&'a ColumnIndex>,
+    table: Vec<bool>,
+    values: Vec<Needle>,
+    custom: Vec<Needle>,
+}
+
+impl<'a> CompiledColumn<'a> {
+    fn compile(cf: &ColumnFilter, col: Option<&'a ColumnIndex>, stale: bool) -> Self {
+        let values: Vec<Needle> = cf.values.iter().map(|v| Needle::new(v)).collect();
+        let custom: Vec<Needle> = cf.custom.iter().map(|c| Needle::new(c)).collect();
+        let mut ids = None;
+        let mut table = Vec::new();
+        if let (Some(col), false) = (col, stale)
+            && col.has_row_ids()
+        {
+            let ticked: HashSet<&str> = cf.values.iter().map(String::as_str).collect();
+            table = col
+                .values
+                .iter()
+                .map(|v| {
+                    ticked.contains(v.folded.as_str()) || custom.iter().any(|n| n.is_in(&v.display))
+                })
+                .collect();
+            ids = Some(col);
+        }
+        Self { ids, table, values, custom }
+    }
+
+    fn matches(&self, row: usize, entry: &LogEntry, key: &str) -> bool {
+        if let Some(col) = self.ids {
+            return match col.id_of_row(row) {
+                Some(MISSING) => false,
+                Some(id) => self.table.get(id as usize).copied().unwrap_or(false),
+                None => self.matches_text(entry, key),
+            };
+        }
+        self.matches_text(entry, key)
+    }
+
+    fn matches_text(&self, entry: &LogEntry, key: &str) -> bool {
+        match column_value(entry, key) {
+            None => false,
+            Some(v) => self.values.iter().any(|n| n.equals(v)) || self.custom.iter().any(|n| n.is_in(v)),
+        }
     }
 }
 
@@ -289,10 +295,4 @@ fn update_entry_delta_time(entry: &mut LogEntry, prev_ts: &mut Option<f64>) {
         entry.delta_time_ms = Some(0.0);
     }
     *prev_ts = Some(entry.timestamp);
-}
-
-static NEXT_FILTER_ID: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(1);
-
-fn next_filter_id() -> usize {
-    NEXT_FILTER_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
 }

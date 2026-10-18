@@ -57,12 +57,20 @@ impl LogLevel {
     }
 }
 
+fn default_true() -> bool {
+    true
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LogEntry {
     /// 1-based sequential line index in the log file
     pub index: usize,
     /// Unix timestamp in seconds (with subsecond precision)
     pub timestamp: f64,
+    /// Whether `timestamp` was read from the line (a continuation line or a
+    /// line without a time has only a pseudo timestamp).
+    #[serde(default = "default_true")]
+    pub has_time: bool,
     /// Formatted time string (e.g. 10:32:02.441)
     pub time_str: String,
     /// Time delta from previous displayed log entry in milliseconds
@@ -91,6 +99,13 @@ pub struct LogEntry {
     pub is_expanded: bool,
     /// Highlight marker color if matched by a Marker filter (legacy support)
     pub marker_color: Option<String>,
+    /// `file_id` of the Source File when the entry belongs to a Log Space.
+    #[serde(skip)]
+    pub file_id: Option<std::sync::Arc<str>>,
+    /// Display name of the Source File, shown in the Source Column. Only set
+    /// on the rows of a Log Space's merged timeline.
+    #[serde(skip)]
+    pub source: Option<std::sync::Arc<str>>,
 }
 
 impl LogEntry {
@@ -109,6 +124,7 @@ impl LogEntry {
         Self {
             index,
             timestamp,
+            has_time: timestamp.is_finite() && timestamp > 0.0,
             time_str,
             delta_time_ms: None,
             tag,
@@ -123,6 +139,8 @@ impl LogEntry {
             sub_lines: Vec::new(),
             is_expanded: false,
             marker_color: None,
+            file_id: None,
+            source: None,
         }
     }
 
@@ -183,6 +201,7 @@ impl LogEntry {
             event.message.clone(),
             event.raw_line.clone(),
         );
+        entry.has_time = event.has_time;
         entry.request_id = request_id;
         entry.json_fields = json_fields;
         entry

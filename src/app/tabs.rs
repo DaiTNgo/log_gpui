@@ -1,28 +1,39 @@
 //! Logic: working-set tabs and per-tab session persist/restore.
+//!
+//! The live editor fields (filter/search/layout/selection) mirror the active
+//! tab's `TabSessionState`. Every tab switch persists the current session out
+//! to the domain WorkingSet and restores the newly focused tab's session in.
+//!
+//! A tab is a Log Space (its files merged by timestamp) or a File View (one
+//! file). The Filter belongs to the view: one shared by a Log Space, one of
+//! its own for each File View. Markers belong to lines of files.
 
 use super::AppView;
-use crate::column::{ColumnLayoutState, FieldMaxChars};
-use crate::filter::FilterEngine;
-use crate::model::LogEntry;
+use crate::column::FieldMaxChars;
+use crate::filter::FilterState;
 use crate::search::SearchState;
-use crate::workspace::project::{LogFileDescriptor, Project};
-use crate::workspace::working_set::{TabSessionState, TabTarget, WorkingSet};
-use gpui::{
-    Context, ScrollStrategy,
+use crate::space_view::{
+    BuiltView, ParsedFile, build_file_view, build_space_view, capture_markers_merged,
 };
+use crate::workspace::log_space::{LogSpace, LogSpaceKind, collect_markers};
+use crate::workspace::project::Project;
+use crate::workspace::working_set::{TabSessionState, TabTarget, ViewMode, WorkingSet};
+use gpui::{Context, ScrollStrategy};
+use std::collections::HashSet;
+use std::path::Path;
 
 impl AppView {
-    // ── Issue 01: Multi-Tab Working Set ──────────────────────────────────────
-    // The live editor fields (filter/search/layout/selection) mirror the active
-    // tab's `TabSessionState`. Every tab switch persists the current session out
-    // to the domain WorkingSet and restores the newly focused tab's session in.
-
-    /// Whether the focused tab hosts a log file (gates the context sidebar).
+    /// Whether the focused tab shows log lines (gates the context sidebar).
     pub(crate) fn active_tab_is_log_file(&self) -> bool {
+        self.active_target()
+            .map(|t| t.is_log_view())
+            .unwrap_or(false)
+    }
+
+    pub(crate) fn active_target(&self) -> Option<TabTarget> {
         self.active_project()
             .and_then(|p| p.working_set.active_tab())
-            .map(|t| matches!(t.target, TabTarget::LogFile { .. }))
-            .unwrap_or(false)
+            .map(|t| t.target.clone())
     }
 
     pub(crate) fn active_project(&self) -> Option<&Project> {
@@ -33,22 +44,120 @@ impl AppView {
         self.workspace_state.active_project_mut()
     }
 
+    /// The Log Space the focused tab views.
+    pub(crate) fn active_space(&self) -> Option<&LogSpace> {
+        let target = self.active_target()?;
+        let space_id = target.space_id()?.to_string();
+        self.active_project()?.log_space(&space_id)
+    }
+
     /// Persist the live editor state into the active tab's session so no
     /// context is lost when switching or closing tabs.
+    ///
+    /// The Filter belongs to the view (the Log Space, or the File View) and the
+    /// Markers to the files: they are written to the Log Space so they survive
+    /// closing the tab.
     pub(crate) fn persist_active_session(&mut self) {
-        let (filter, search, layout, selected_row) = (
-            self.filter_engine.clone(),
+        self.flush_scratch_saves();
+        let (search, layout, selected_row, mode) = (
             self.search_state.clone(),
             self.column_layout.clone(),
             self.selected_row_pos,
+            self.view_mode,
         );
-        if let Some(proj) = self.active_project_mut() {
+        let filter = self.filter_state.clone();
+        // In the Raw View the Markers are edited on the files directly, and the
+        // parsed rows are stale; they must not overwrite them.
+        let markers_live = self.view_mode == ViewMode::Parsed;
+        let entries = if markers_live { std::mem::take(&mut self.all_entries) } else { Vec::new() };
+        let loaded: HashSet<String> = self.parsed_files.keys().cloned().collect();
+        let mut target = None;
+        if let Some(proj) = self.workspace_state.active_project_mut() {
             if let Some(tab) = proj.working_set.active_tab_mut() {
-                tab.session.filter = filter;
                 tab.session.search = search;
                 tab.session.column_layout = layout;
                 tab.session.selected_row = selected_row;
+                tab.session.mode = mode;
+                target = Some(tab.target.clone());
             }
+            match target {
+                Some(TabTarget::LogSpace { space_id }) => {
+                    if let Some(space) = proj.log_space_mut(&space_id) {
+                        space.filter = filter;
+                        space.last_mode = mode;
+                        if markers_live {
+                            capture_markers_merged(space, &entries, &loaded);
+                        }
+                    }
+                }
+                Some(TabTarget::FileView { space_id, file_id }) => {
+                    if let Some(space) = proj.log_space_mut(&space_id) {
+                        space.set_file_filter(&file_id, filter);
+                        space.last_mode = mode;
+                        if markers_live && loaded.contains(&file_id) {
+                            if let Some(file) = space.file_mut(&file_id) {
+                                file.markers = collect_markers(&entries);
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        if markers_live {
+            self.all_entries = entries;
+        }
+    }
+
+    /// Make sure the file is parsed and cached. A file that cannot be read
+    /// counts as empty and leaves a notice.
+    pub(crate) fn ensure_file_loaded(&mut self, file_id: &str, path: Option<&str>) {
+        if self.parsed_files.contains_key(file_id) {
+            return;
+        }
+        let parsed = match path {
+            Some(path) => match ParsedFile::from_path(Path::new(path)) {
+                Ok(parsed) => parsed,
+                Err(e) => {
+                    // A scratch file that does not exist yet is just empty.
+                    if e.kind() != std::io::ErrorKind::NotFound {
+                        self.notice = Some(format!("Could not read {path}: {e}"));
+                    } else {
+                        self.notice = Some(format!("{path} was not found"));
+                    }
+                    ParsedFile::empty()
+                }
+            },
+            None => ParsedFile::empty(),
+        };
+        self.parsed_files.insert(file_id.to_string(), parsed);
+    }
+
+    /// Load every file of the Log Space into the cache and re-parse the
+    /// scratch files edited since they were parsed.
+    pub(crate) fn ensure_space_loaded(&mut self, space: &LogSpace) {
+        for file in &space.files {
+            self.ensure_file_loaded(&file.file_id, file.path.as_deref());
+        }
+        self.reparse_edited_scratch_files();
+    }
+
+    /// Build the rows of a tab's view.
+    fn build_view_for(&mut self, target: &TabTarget) -> Option<(BuiltView, FilterState, bool, String)> {
+        let space = self.active_project()?.log_space(target.space_id()?)?.clone();
+        self.ensure_space_loaded(&space);
+        match target {
+            TabTarget::LogSpace { .. } => {
+                let built = build_space_view(&space, &self.parsed_files);
+                Some((built, space.filter.clone(), space.source_column_shown(), space.name.clone()))
+            }
+            TabTarget::FileView { file_id, .. } => {
+                let file = space.file(file_id)?;
+                let parsed = self.parsed_files.get(file_id)?;
+                let built = build_file_view(file, parsed);
+                Some((built, space.file_filter(file_id), false, file.display_name.clone()))
+            }
+            TabTarget::InvestigationBoard { .. } => None,
         }
     }
 
@@ -64,40 +173,61 @@ impl AppView {
 
         match restored {
             Some((session, target)) => {
-                self.filter_engine = session.filter;
                 self.search_state = session.search;
                 self.column_layout = session.column_layout;
                 self.selected_row_pos = session.selected_row;
+                self.view_mode = session.mode;
+                self.raw.clear_search();
 
-                if let TabTarget::LogFile { file_id } = &target {
-                    if let Some(entries) = self.entries_cache.get(file_id) {
-                        self.all_entries = entries.clone();
-                    }
-                    if let Some(max_chars) = self.max_chars_by_file.get(file_id) {
-                        self.column_layout.max_chars = *max_chars;
-                    }
-                    if let Some(f) = self
-                        .active_project()
-                        .and_then(|p| p.file(file_id))
-                    {
-                        self.file_name = f.display_name.clone();
-                    }
+                if let Some((built, filter, source_visible, name)) = self.build_view_for(&target) {
+                    self.install_view(built, filter, source_visible, name);
+                } else if target.is_log_view() {
+                    // The Log Space or file is gone: show nothing.
+                    self.install_view(BuiltView::default(), FilterState::new(), false, String::new());
                 }
             }
             None => {
-                self.filter_engine = FilterEngine::new();
+                self.install_view(BuiltView::default(), FilterState::new(), false, String::new());
                 self.search_state = SearchState::new();
-                self.column_layout = ColumnLayoutState::new();
+                self.column_layout = crate::column::ColumnLayoutState::new();
                 self.selected_row_pos = None;
+                self.view_mode = ViewMode::Parsed;
             }
         }
 
         self.apply_filters_and_refresh(cx);
+        if self.view_mode == ViewMode::Raw {
+            self.run_raw_search(cx);
+        }
         if let Some(pos) = self.selected_row_pos {
             if pos < self.visible_indices.len() {
                 self.scroll_handle.scroll_to_item(pos, ScrollStrategy::Center);
             }
         }
+    }
+
+    /// Put a built view into the live fields.
+    fn install_view(
+        &mut self,
+        built: BuiltView,
+        filter: FilterState,
+        source_visible: bool,
+        name: String,
+    ) {
+        let fresh = self.column_layout.max_chars == FieldMaxChars::new();
+        self.no_timestamp_files = built.no_timestamp_files.iter().cloned().collect();
+        self.all_entries = built.entries;
+        self.filter_index = built.index;
+        self.filter_state = filter;
+        self.filter_ui.picker_open = false;
+        self.filter_ui.expanded = None;
+        self.filter_ui.inputs_dirty = true;
+        self.column_layout.max_chars = built.max_chars;
+        self.column_layout.set_source_visible(source_visible);
+        if fresh {
+            self.column_layout.update_from_entries(&self.all_entries, self.density);
+        }
+        self.file_name = name;
     }
 
     /// Core switching primitive: persist out, apply a WorkingSet mutation, then
@@ -119,6 +249,7 @@ impl AppView {
             op(&mut proj.working_set);
         }
         self.restore_active_session(cx);
+        self.schedule_session_save(cx);
     }
 
     pub fn switch_to_tab(&mut self, index: usize, cx: &mut Context<Self>) {
@@ -141,10 +272,11 @@ impl AppView {
         self.persist_active_session();
         if let Some(proj) = self.active_project_mut() {
             proj.working_set.close_tab(index);
-            // Closing a tab keeps the file registered in the project's file
-            // list; only the view is removed.
+            // Closing a tab only removes the view; the Log Space keeps its
+            // files, Filter and Markers.
         }
         self.restore_active_session(cx);
+        self.schedule_session_save(cx);
     }
 
     pub fn close_active_tab(&mut self, cx: &mut Context<Self>) {
@@ -156,124 +288,79 @@ impl AppView {
         }
     }
 
-    /// Registers a log file in the active project (if new), caches its parsed
-    /// entries, and opens/focuses its tab in the working set.
-    pub fn open_log_file_in_tab(
-        &mut self,
-        file_id: String,
-        display_name: String,
-        entries: Vec<LogEntry>,
-        max_chars: FieldMaxChars,
-        cx: &mut Context<Self>,
-    ) {
-        self.persist_active_session();
-        self.entries_cache.insert(file_id.clone(), entries);
-        self.max_chars_by_file.insert(file_id.clone(), max_chars);
-
-        let session = TabSessionState {
-            filter: self.filter_engine.clone(),
-            search: self.search_state.clone(),
-            column_layout: self.column_layout.clone(),
-            selected_row: self.selected_row_pos,
-            ..TabSessionState::new()
-        };
-
-        if let Some(proj) = self.active_project_mut() {
-            if proj.file(&file_id).is_none() {
-                proj.register_file(LogFileDescriptor::new(file_id.clone(), display_name));
+    /// The session a newly opened tab of `space` starts with. An Imported
+    /// space opens in the Parsed View; a Scratch space opens in the Raw View
+    /// while it is empty and otherwise in the view last used.
+    fn new_tab_session(&mut self, space: &LogSpace) -> TabSessionState {
+        self.ensure_space_loaded(space);
+        let mut session = TabSessionState::new();
+        session.mode = match space.kind {
+            LogSpaceKind::Imported => ViewMode::Parsed,
+            LogSpaceKind::Scratch => {
+                let empty = space.files.iter().all(|f| {
+                    self.parsed_files
+                        .get(&f.file_id)
+                        .is_none_or(|p| p.lines.is_empty())
+                });
+                if empty { ViewMode::Raw } else { space.last_mode }
             }
-            proj.open_file(&file_id, session);
+        };
+        session
+    }
+
+    /// Open a Log Space in a tab, or focus its tab when it is already open.
+    pub fn open_log_space_tab(&mut self, space_id: &str, cx: &mut Context<Self>) {
+        let Some(space) = self.active_project().and_then(|p| p.log_space(space_id)).cloned() else {
+            return;
+        };
+        self.persist_active_session();
+        let session = self.new_tab_session(&space);
+        if let Some(proj) = self.active_project_mut() {
+            proj.open_log_space(space_id, session);
+        }
+        self.expanded_spaces.insert(space_id.to_string());
+        self.restore_active_session(cx);
+        self.schedule_session_save(cx);
+        cx.notify();
+    }
+
+    /// Open one file of a Log Space on its own, or focus its tab.
+    pub fn open_file_view_tab(&mut self, space_id: &str, file_id: &str, cx: &mut Context<Self>) {
+        let Some(space) = self.active_project().and_then(|p| p.log_space(space_id)).cloned() else {
+            return;
+        };
+        if !space.has_file(file_id) {
+            return;
+        }
+        self.persist_active_session();
+        let session = self.new_tab_session(&space);
+        if let Some(proj) = self.active_project_mut() {
+            proj.open_file_view(space_id, file_id, session);
         }
         self.restore_active_session(cx);
-    }
-
-    pub fn open_file_from_sidebar(&mut self, file_id: &str, cx: &mut Context<Self>) {
-        // Switch to the project that owns this file
-        if let Some(proj) = self.workspace_state.active_project() {
-            if proj.file(file_id).is_some() {
-                // File is in active project, open it as a tab
-                self.persist_active_session();
-                let session = TabSessionState::new();
-                if let Some(proj) = self.active_project_mut() {
-                    proj.open_file(file_id, session);
-                }
-                self.restore_active_session(cx);
-                cx.notify();
-                return;
-            }
-        }
-
-        // Find which project owns this file and switch to it
-        let project_id = self
-            .workspace_state
-            .projects
-            .iter()
-            .find(|p| p.file(file_id).is_some())
-            .map(|p| p.id.clone());
-
-        if let Some(pid) = project_id {
-            self.persist_active_session();
-            self.workspace_state.switch_project(&pid);
-            let session = TabSessionState::new();
-            if let Some(proj) = self.active_project_mut() {
-                proj.open_file(file_id, session);
-            }
-            self.restore_active_session(cx);
-            cx.notify();
-        }
-    }
-
-    pub fn close_tab_for_file(&mut self, file_id: &str, cx: &mut Context<Self>) {
-        if let Some(proj) = self.workspace_state.active_project() {
-            let target = TabTarget::LogFile {
-                file_id: file_id.to_string(),
-            };
-            if let Some(idx) = proj.working_set.find_tab(&target) {
-                self.close_tab_at(idx, cx);
-            }
-        }
-    }
-
-    /// Rename a registered file's display name (ignores blank names).
-    pub fn rename_file(&mut self, project_id: &str, file_id: &str, name: &str, cx: &mut Context<Self>) {
-        let name = name.trim();
-        if !name.is_empty() {
-            if let Some(file) = self
-                .workspace_state
-                .project_mut(project_id)
-                .and_then(|p| p.files.iter_mut().find(|f| f.file_id == file_id))
-            {
-                file.display_name = name.to_string();
-            }
-        }
+        self.schedule_session_save(cx);
         cx.notify();
     }
 
-    /// Remove a file from a project's registry (closing its tab). The file on
-    /// disk is never touched; cached entries are dropped once no project uses it.
-    pub fn remove_file_from_project(&mut self, project_id: &str, file_id: &str, cx: &mut Context<Self>) {
-        if self.active_project().map(|p| p.id.as_str()) == Some(project_id) {
-            self.close_tab_for_file(file_id, cx);
+    /// Open a Log Space of another project: switch to that project first.
+    pub fn open_space_in_project(&mut self, project_id: &str, space_id: &str, cx: &mut Context<Self>) {
+        if self.active_project().map(|p| p.id.as_str()) != Some(project_id) {
+            self.switch_project_to(project_id, cx);
         }
-        let target = TabTarget::LogFile {
-            file_id: file_id.to_string(),
-        };
-        if let Some(proj) = self.workspace_state.project_mut(project_id) {
-            if let Some(idx) = proj.working_set.find_tab(&target) {
-                proj.working_set.close_tab(idx);
-            }
-            proj.unregister_file(file_id);
-        }
-        let still_used = self
-            .workspace_state
-            .projects
-            .iter()
-            .any(|p| p.file(file_id).is_some());
-        if !still_used {
-            self.entries_cache.remove(file_id);
-            self.max_chars_by_file.remove(file_id);
-        }
-        cx.notify();
+        self.open_log_space_tab(space_id, cx);
     }
 
+    /// Open a file of a Log Space of another project.
+    pub fn open_file_in_project(
+        &mut self,
+        project_id: &str,
+        space_id: &str,
+        file_id: &str,
+        cx: &mut Context<Self>,
+    ) {
+        if self.active_project().map(|p| p.id.as_str()) != Some(project_id) {
+            self.switch_project_to(project_id, cx);
+        }
+        self.open_file_view_tab(space_id, file_id, cx);
+    }
 }

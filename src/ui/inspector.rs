@@ -21,34 +21,23 @@ pub enum InspectorTab {
 pub struct InspectorView;
 
 impl InspectorView {
-    pub fn render(
+    /// Inspector body (tabs + content) for the right sidebar's Inspector section.
+    pub fn render_body(
         entry: Option<&LogEntry>,
         active_tab: InspectorTab,
-        is_open: bool,
         cx: &mut gpui::Context<crate::app::AppView>,
     ) -> gpui::AnyElement {
-        if !is_open {
-            return div().into_any_element();
-        }
-
         let Some(entry) = entry else {
             return div()
-                .w(px(280.0))
-                .h_full()
-                .border_l_1()
+                .flex_1()
                 .p_4()
                 .flex()
                 .flex_col()
                 .items_center()
                 .justify_center()
-                .child(
-                    div()
-                        .text_xs()
-                        .child("Select a log row to inspect details"),
-                )
+                .child(div().text_xs().child("Select a log row to inspect details"))
                 .into_any_element();
         };
-
 
         // Tabs
         let tabs = div()
@@ -255,57 +244,10 @@ impl InspectorView {
         };
 
         div()
-            .w(px(280.0))
-            .h_full()
-            .border_l_1()
+            .flex_1()
+            .min_h(px(0.0))
             .flex()
             .flex_col()
-            .child(
-                // Inspector Header
-                div()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .justify_between()
-                    .px_3()
-                    .py_2()
-                    .border_b_1()
-                    .child(
-                        div()
-                            .flex()
-                            .flex_row()
-                            .items_center()
-                            .gap_2()
-                            .child(
-                                div()
-                                    .text_xs()
-                                    .font_weight(gpui::FontWeight::SEMIBOLD)
-                                    .child("Inspector"),
-                            )
-                            .child(
-                                div()
-                                    .px_1p5()
-                                    .py_0p5()
-                                    .rounded_xs()
-                                    .border_1()
-                                    .text_xs()
-                                    .font_weight(gpui::FontWeight::SEMIBOLD)
-                                    .child(entry.level.as_str()),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .id("close_inspector_btn")
-                            .cursor_pointer()
-                            .p_1()
-                            .rounded_md()
-                            .child(Icon::new(IconName::Close).size(px(13.0)))
-                            .on_click(cx.listener(|this, _, _window, cx| {
-                                this.is_inspector_open = false;
-                                cx.notify();
-                            })),
-                    ),
-            )
             .child(tabs)
             .child(tab_content)
             .into_any_element()

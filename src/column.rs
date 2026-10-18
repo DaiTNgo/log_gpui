@@ -9,28 +9,34 @@ pub const DEFAULT_GUTTER_WIDTH: Pixels = px(88.0);
 pub const DEFAULT_TIMESTAMP_WIDTH: Pixels = px(120.0);
 pub const DEFAULT_LEVEL_WIDTH: Pixels = px(68.0);
 pub const DEFAULT_MODULE_WIDTH: Pixels = px(100.0);
+pub const DEFAULT_SOURCE_WIDTH: Pixels = px(120.0);
 
 pub const MIN_TIMESTAMP_WIDTH: Pixels = px(48.0);
 pub const MIN_LEVEL_WIDTH: Pixels = px(36.0);
 pub const MIN_MODULE_WIDTH: Pixels = px(48.0);
+pub const MIN_SOURCE_WIDTH: Pixels = px(48.0);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum PinnableColumn {
     Timestamp,
     Level,
     Module,
+    /// The Source Column of a Log Space: the name of each row's Source File.
+    /// Shown only when the Log Space turns it on.
+    Source,
 }
 
 impl PinnableColumn {
-    pub const ALL: [PinnableColumn; 3] = [
+    pub const ALL: [PinnableColumn; 4] = [
         PinnableColumn::Timestamp,
         PinnableColumn::Level,
         PinnableColumn::Module,
+        PinnableColumn::Source,
     ];
 
     #[inline]
     pub fn is_pinnable(name: &str) -> bool {
-        matches!(name.to_ascii_uppercase().as_str(), "TIMESTAMP" | "LEVEL" | "MODULE")
+        matches!(name.to_ascii_uppercase().as_str(), "TIMESTAMP" | "LEVEL" | "MODULE" | "SOURCE")
     }
 
     #[inline]
@@ -39,6 +45,7 @@ impl PinnableColumn {
             PinnableColumn::Timestamp => "TIMESTAMP",
             PinnableColumn::Level => "LEVEL",
             PinnableColumn::Module => "MODULE",
+            PinnableColumn::Source => "SOURCE",
         }
     }
 
@@ -54,6 +61,7 @@ impl PinnableColumn {
             PinnableColumn::Timestamp => 9, // "TIMESTAMP"
             PinnableColumn::Level => 5,     // "LEVEL"
             PinnableColumn::Module => 6,    // "MODULE"
+            PinnableColumn::Source => 6,    // "SOURCE"
         }
     }
 }
@@ -94,6 +102,8 @@ pub struct FieldMaxChars {
     pub timestamp: usize,
     pub level: usize,
     pub module: usize,
+    #[serde(default)]
+    pub source: usize,
 }
 
 impl FieldMaxChars {
@@ -102,6 +112,7 @@ impl FieldMaxChars {
             timestamp: 0,
             level: 0,
             module: 0,
+            source: 0,
         }
     }
 
@@ -111,6 +122,9 @@ impl FieldMaxChars {
         self.timestamp = self.timestamp.max(entry.time_str.chars().count());
         self.level = self.level.max(entry.level.short_code().chars().count());
         self.module = self.module.max(entry.tag.chars().count());
+        if let Some(source) = &entry.source {
+            self.source = self.source.max(source.chars().count());
+        }
     }
 
     /// Scans a slice of log entries in a single O(N) pass, O(1) per entry.
@@ -141,6 +155,7 @@ pub fn compute_column_width(
         PinnableColumn::Timestamp => 16.0,
         PinnableColumn::Level => 24.0,
         PinnableColumn::Module => 16.0,
+        PinnableColumn::Source => 16.0,
     };
     let content_width = (effective_chars as f32) * char_width + padding;
     px(content_width).max(min_width)
@@ -154,6 +169,10 @@ pub struct ColumnLayoutState {
     pub min_widths: HashMap<PinnableColumn, Pixels>,
     pub max_chars: FieldMaxChars,
     pub gutter_width: Pixels,
+    /// Whether the Source Column is shown (a pinned Source Column that is
+    /// hidden keeps its pin and is simply not laid out).
+    #[serde(default)]
+    pub source_visible: bool,
     pub is_resizing: Option<(PinnableColumn, Pixels)>,
     pub resize_start_x: Option<Pixels>,
     pub hovered_header: Option<PinnableColumn>,
@@ -172,11 +191,13 @@ impl ColumnLayoutState {
         widths.insert(PinnableColumn::Timestamp, DEFAULT_TIMESTAMP_WIDTH);
         widths.insert(PinnableColumn::Level, DEFAULT_LEVEL_WIDTH);
         widths.insert(PinnableColumn::Module, DEFAULT_MODULE_WIDTH);
+        widths.insert(PinnableColumn::Source, DEFAULT_SOURCE_WIDTH);
 
         let mut min_widths = HashMap::new();
         min_widths.insert(PinnableColumn::Timestamp, MIN_TIMESTAMP_WIDTH);
         min_widths.insert(PinnableColumn::Level, MIN_LEVEL_WIDTH);
         min_widths.insert(PinnableColumn::Module, MIN_MODULE_WIDTH);
+        min_widths.insert(PinnableColumn::Source, MIN_SOURCE_WIDTH);
 
         Self {
             pinned_columns: BTreeSet::new(),
@@ -185,6 +206,7 @@ impl ColumnLayoutState {
             min_widths,
             max_chars: FieldMaxChars::new(),
             gutter_width: DEFAULT_GUTTER_WIDTH,
+            source_visible: false,
             is_resizing: None,
             resize_start_x: None,
             hovered_header: None,
@@ -242,7 +264,25 @@ impl ColumnLayoutState {
     }
 
     fn sync_ordered_pinned(&mut self) {
-        self.ordered_pinned = self.pinned_columns.iter().copied().collect();
+        self.ordered_pinned = self
+            .pinned_columns
+            .iter()
+            .copied()
+            .filter(|c| self.is_laid_out(*c))
+            .collect();
+    }
+
+    /// Whether the column takes part in the layout (every column but a
+    /// hidden Source Column).
+    #[inline]
+    pub fn is_laid_out(&self, col: PinnableColumn) -> bool {
+        col != PinnableColumn::Source || self.source_visible
+    }
+
+    /// Show or hide the Source Column.
+    pub fn set_source_visible(&mut self, visible: bool) {
+        self.source_visible = visible;
+        self.sync_ordered_pinned();
     }
 
     /// Returns pinned columns in natural schema order (`TIMESTAMP` -> `LEVEL` -> `MODULE`).
@@ -264,6 +304,7 @@ impl ColumnLayoutState {
         self.widths.insert(PinnableColumn::Timestamp, DEFAULT_TIMESTAMP_WIDTH);
         self.widths.insert(PinnableColumn::Level, DEFAULT_LEVEL_WIDTH);
         self.widths.insert(PinnableColumn::Module, DEFAULT_MODULE_WIDTH);
+        self.widths.insert(PinnableColumn::Source, DEFAULT_SOURCE_WIDTH);
     }
 
     /// Returns unpinned columns in natural schema order.
@@ -271,7 +312,7 @@ impl ColumnLayoutState {
         PinnableColumn::ALL
             .iter()
             .copied()
-            .filter(|col| !self.is_pinned(*col))
+            .filter(|col| self.is_laid_out(*col) && !self.is_pinned(*col))
             .collect()
     }
 
@@ -304,21 +345,27 @@ impl ColumnLayoutState {
     /// Natural schema position of a column at scroll_x = 0.
     #[inline]
     pub fn natural_column_left(&self, col: PinnableColumn) -> Pixels {
-        match col {
-            PinnableColumn::Timestamp => self.gutter_width,
-            PinnableColumn::Level => self.gutter_width + self.width(PinnableColumn::Timestamp),
-            PinnableColumn::Module => {
-                self.gutter_width
-                    + self.width(PinnableColumn::Timestamp)
-                    + self.width(PinnableColumn::Level)
+        let mut left = self.gutter_width;
+        for earlier in PinnableColumn::ALL {
+            if earlier == col {
+                break;
+            }
+            if self.is_laid_out(earlier) {
+                left += self.width(earlier);
             }
         }
+        left
     }
 
     /// Natural schema position of the MESSAGE column at scroll_x = 0.
     #[inline]
     pub fn natural_message_left(&self) -> Pixels {
-        self.natural_column_left(PinnableColumn::Module) + self.width(PinnableColumn::Module)
+        PinnableColumn::ALL
+            .iter()
+            .filter(|c| self.is_laid_out(**c))
+            .map(|c| self.width(*c))
+            .sum::<Pixels>()
+            + self.gutter_width
     }
 
     /// Target anchored position of a column when sticky. Returns None if not pinned.
@@ -403,6 +450,7 @@ impl ColumnLayoutState {
             PinnableColumn::Timestamp => DEFAULT_TIMESTAMP_WIDTH,
             PinnableColumn::Level => DEFAULT_LEVEL_WIDTH,
             PinnableColumn::Module => DEFAULT_MODULE_WIDTH,
+            PinnableColumn::Source => DEFAULT_SOURCE_WIDTH,
         })
     }
 
@@ -412,6 +460,7 @@ impl ColumnLayoutState {
             PinnableColumn::Timestamp => MIN_TIMESTAMP_WIDTH,
             PinnableColumn::Level => MIN_LEVEL_WIDTH,
             PinnableColumn::Module => MIN_MODULE_WIDTH,
+            PinnableColumn::Source => MIN_SOURCE_WIDTH,
         })
     }
 
@@ -460,11 +509,7 @@ impl ColumnLayoutState {
 
     /// Recalculates dynamic widths from recorded max_chars for a given density.
     pub fn recompute_widths(&mut self, density: Density) {
-        for col in [
-            PinnableColumn::Timestamp,
-            PinnableColumn::Level,
-            PinnableColumn::Module,
-        ] {
+        for col in PinnableColumn::ALL {
             self.auto_fit(col, density);
         }
     }
@@ -475,6 +520,7 @@ impl ColumnLayoutState {
             PinnableColumn::Timestamp => self.max_chars.timestamp,
             PinnableColumn::Level => self.max_chars.level,
             PinnableColumn::Module => self.max_chars.module,
+            PinnableColumn::Source => self.max_chars.source,
         };
         let min = self.min_width(col);
         let calculated = compute_column_width(col, count, density.font_size(), min);
