@@ -1,5 +1,7 @@
 # 0004. Search Is Text-Only
 
+_Partly superseded by ADR-0008: Search and Filter now narrow the Focus Pane, and the view always shows every line._
+
 ## Context
 
 The Search box used the same field-aware query language as Filter (`level == "error" && module contains "db"`), which read like SQL. Users had to learn a syntax just to find a word, and the line between Search and Filter was blurry.

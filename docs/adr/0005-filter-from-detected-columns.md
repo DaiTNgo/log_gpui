@@ -1,5 +1,7 @@
 # 0005. Filter Is Built From Detected Columns; Remove Saved Views
 
+_Partly superseded by ADR-0008: Search and Filter now narrow the Focus Pane, and the view always shows every line._
+
 ## Context
 
 Filter was a list of rows (`level`/`module`/`message`/`request_id` with operators such as `is`, `contains`, `regex`) evaluated through a shared query engine. The `module` list in the View panel was hard-coded, so the UI did not reflect the file that was open. `SavedView` bundled filter, search and column layout into a project-wide preset, which made "View" mean three different things. A quick menu on level and module values offered "search this value".

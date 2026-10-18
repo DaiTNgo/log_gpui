@@ -91,13 +91,16 @@ Hệ thống SHALL cho Save As một file scratch ra vị trí người dùng ch
 - **THEN** nội dung mới vào `untitled.log` trong ứng dụng, còn `~/Desktop/incident.log` giữ nguyên nội dung lúc Save As
 
 ### Requirement: Marker trong Raw View
-Hệ thống SHALL cho đặt và gỡ Marker trên dòng trong Raw View. Marker SHALL dùng chung giữa Raw View, Parsed View, Log Space và File View. Sửa nội dung một dòng scratch SHALL làm mất Marker của dòng đó.
+Hệ thống SHALL cho tô Marker lên đoạn text đã chọn trong Raw View, và đổi màu hoặc gỡ Marker từ chính đoạn đã tô, như trong Parsed View. Marker SHALL dùng chung giữa Raw View, Parsed View, Log Space và File View. Sửa nội dung một dòng scratch SHALL làm mất mọi Marker của dòng đó.
 
 #### Scenario: Marker dùng chung
-- **WHEN** người dùng đặt Marker trên dòng 42 của `api.log` trong Raw View rồi chuyển sang Parsed View
-- **THEN** dòng 42 của `api.log` có Marker trong Parsed View
+- **WHEN** người dùng tô `timeout` ở dòng 42 của `api.log` trong Raw View rồi chuyển sang Parsed View
+- **THEN** chữ `timeout` ở dòng 42 của `api.log` có cùng màu trong Parsed View
 
 #### Scenario: Sửa dòng có Marker
 - **WHEN** dòng 10 của `untitled.log` có Marker và người dùng sửa nội dung dòng đó
-- **THEN** sau khi lưu, dòng 10 không còn Marker
+- **THEN** sau khi lưu, dòng 10 không còn Marker nào
 
+#### Scenario: Không có Highlight Rule
+- **WHEN** một dòng có Marker và khớp một Highlight Rule đang bật
+- **THEN** Raw View chỉ hiện màu Marker, không có màu của rule
