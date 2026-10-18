@@ -15,3 +15,12 @@ serde_json = "*"
 gpui-component = "*"
 gpui = { package = "gpui-pre", version = "*" }
 unicode-normalization = "0.1.26"
+
+russh = "=0.64.1"
+russh-sftp = "=3.0.1"
+tokio = { version = "=1.53.3", features = ["rt-multi-thread", "net", "time", "sync", "io-util", "macros"] }
+async-channel = "=2.5.0"
+keyring = "=4.2.0"
+
+[dev-dependencies]
+tempfile = "3"
