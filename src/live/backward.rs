@@ -34,13 +34,18 @@ impl ReadAt for Vec<u8> {
 /// Reads the lines of a file from the end towards the start, a block at a
 /// time. The first batch holds the last complete lines; the unfinished line
 /// after the last newline is left to the forward reader (`follow_offset`).
+///
+/// The reader only plans the reads (`want_block`) and takes the bytes
+/// (`absorb_block`), so a synchronous file and an SFTP handle driven with
+/// `await` share the same logic.
 #[derive(Debug, Clone)]
 pub struct BackwardLines {
-    /// Start of the bytes read so far.
+    /// Start of the bytes held in `data`.
     pos: u64,
-    /// Bytes from `pos` up to the first newline read so far: the end of a
-    /// line whose start is still further up.
-    carry: Vec<u8>,
+    /// Bytes from `pos` on. Its first segment (up to the first newline) is
+    /// the end of a line whose start is still further up, unless `pos` is 0.
+    data: Vec<u8>,
+    newlines: usize,
     block: usize,
     first: bool,
     follow_offset: u64,
@@ -49,7 +54,7 @@ pub struct BackwardLines {
 impl BackwardLines {
     /// `end` is the size of the file when reading starts.
     pub fn new(end: u64, block: usize) -> Self {
-        Self { pos: end, carry: Vec::new(), block: block.max(1), first: true, follow_offset: end }
+        Self { pos: end, data: Vec::new(), newlines: 0, block: block.max(1), first: true, follow_offset: end }
     }
 
     /// Where forward reading continues: just after the last newline.
@@ -58,72 +63,95 @@ impl BackwardLines {
     }
 
     pub fn is_done(&self) -> bool {
-        self.pos == 0 && self.carry.is_empty()
+        self.pos == 0 && self.data.is_empty()
+    }
+
+    /// The next block to read as `(offset, length)`, or `None` when enough is
+    /// held to give `max_lines` lines.
+    pub fn want_block(&self, max_lines: usize) -> Option<(u64, usize)> {
+        if self.pos == 0 {
+            return None;
+        }
+        // One more newline than wanted: the first segment may be cut.
+        if !self.first && self.newlines > max_lines.max(1) {
+            return None;
+        }
+        let take = (self.block as u64).min(self.pos) as usize;
+        Some((self.pos - take as u64, take))
+    }
+
+    /// Add the block read at the offset `want_block` gave.
+    pub fn absorb_block(&mut self, mut block: Vec<u8>) {
+        self.pos -= block.len().min(self.pos as usize) as u64;
+        block.extend_from_slice(&self.data);
+        self.data = block;
+        if self.first {
+            if let Some(last) = self.data.iter().rposition(|b| *b == b'\n') {
+                // Drop the unfinished tail line.
+                self.follow_offset = self.pos + last as u64 + 1;
+                self.data.truncate(last + 1);
+                self.first = false;
+            } else if self.pos == 0 {
+                // No newline in the whole file: nothing complete.
+                self.follow_offset = 0;
+                self.data.clear();
+                self.first = false;
+            }
+        }
+        self.newlines = self.data.iter().filter(|b| **b == b'\n').count();
     }
 
     /// The next `max_lines` complete lines above what was returned before, in
-    /// file order. Empty when there is nothing more.
-    pub fn next_batch<R: ReadAt>(&mut self, src: &mut R, max_lines: usize) -> std::io::Result<Vec<String>> {
+    /// file order. Empty when there is nothing more. Call once `want_block`
+    /// says nothing more is needed.
+    pub fn take_batch(&mut self, max_lines: usize) -> Vec<String> {
         let max_lines = max_lines.max(1);
-        // `data` holds whole lines (after its first newline) plus `carry`.
-        let mut data = std::mem::take(&mut self.carry);
-        loop {
-            let newlines = data.iter().filter(|b| **b == b'\n').count();
-            // One more than wanted: the first segment of `data` may be cut.
-            if self.pos == 0 || newlines > max_lines {
-                break;
-            }
-            let take = (self.block as u64).min(self.pos) as usize;
-            self.pos -= take as u64;
-            let mut block = vec![0u8; take];
-            let n = src.read_at(self.pos, &mut block)?;
-            block.truncate(n);
-            block.extend_from_slice(&data);
-            data = block;
-            if self.first {
-                if let Some(last) = data.iter().rposition(|b| *b == b'\n') {
-                    // Drop the unfinished tail line.
-                    self.follow_offset = self.pos + last as u64 + 1;
-                    data.truncate(last + 1);
-                    self.first = false;
-                } else if self.pos == 0 {
-                    // No newline in the whole file: nothing complete.
-                    self.follow_offset = 0;
-                    data.clear();
-                    self.first = false;
-                } else {
-                    // Keep reading: the last newline is still further up.
-                    continue;
-                }
-            }
-        }
         if self.first {
-            // Only reached with an empty file.
+            // Only an empty file gets here.
             self.first = false;
             self.follow_offset = 0;
+            self.data.clear();
+            self.newlines = 0;
+            return Vec::new();
         }
-        // `data` is [start of a possibly cut line][\n]line\n line\n ...
-        // Split it into segments; every segment ends with a newline.
+        let data = std::mem::take(&mut self.data);
         let mut segments: Vec<&[u8]> = data.split_inclusive(|b| *b == b'\n').collect();
-        // The first segment is complete only when we reached the file start.
+        // The first segment is whole only when we reached the file start.
         let mut cut_head: Option<&[u8]> = None;
         if self.pos > 0 && !segments.is_empty() {
             cut_head = Some(segments.remove(0));
         }
         let keep_from = segments.len().saturating_sub(max_lines);
-        let extra = &segments[..keep_from];
-        let mut carry = Vec::new();
+        let mut rest = Vec::new();
         if let Some(head) = cut_head {
-            carry.extend_from_slice(head);
+            rest.extend_from_slice(head);
         }
-        for s in extra {
-            carry.extend_from_slice(s);
+        for s in &segments[..keep_from] {
+            rest.extend_from_slice(s);
         }
         let lines: Vec<String> = segments[keep_from..]
             .iter()
             .map(|s| decode_line(&s[..s.len() - 1]))
             .collect();
-        self.carry = carry;
-        Ok(lines)
+        self.newlines = rest.iter().filter(|b| **b == b'\n').count();
+        self.data = rest;
+        lines
+    }
+
+    /// Synchronous convenience over a `ReadAt`.
+    pub fn next_batch<R: ReadAt>(&mut self, src: &mut R, max_lines: usize) -> std::io::Result<Vec<String>> {
+        while let Some((offset, len)) = self.want_block(max_lines) {
+            let mut block = vec![0u8; len];
+            let n = src.read_at(offset, &mut block)?;
+            block.truncate(n);
+            if n < len {
+                // A short read inside the file: the file shrank; stop here.
+                self.absorb_block(block);
+                self.pos = 0;
+                break;
+            }
+            self.absorb_block(block);
+        }
+        Ok(self.take_batch(max_lines))
     }
 }

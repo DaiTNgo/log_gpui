@@ -99,6 +99,7 @@ fn kind_icon(kind: LogSpaceKind) -> IconName {
     match kind {
         LogSpaceKind::Imported => IconName::Layers,
         LogSpaceKind::Scratch => IconName::FilePen,
+        LogSpaceKind::Remote => IconName::Globe,
     }
 }
 
@@ -136,6 +137,17 @@ pub fn space_menu(
                 add.view.update(app, |this, cx| this.new_scratch_file_in(&id, cx));
             },
         )),
+        LogSpaceKind::Remote => {
+            let download = space.clone();
+            menu.item(PopupMenuItem::new("Add remote files…").on_click(move |_, _, app| {
+                let id = add.space_id.clone();
+                add.view.update(app, |this, cx| this.add_remote_files_dialog(&id, cx));
+            }))
+            .item(PopupMenuItem::new("Download all").on_click(move |_, _, app| {
+                let id = download.space_id.clone();
+                download.view.update(app, |this, cx| this.download_space(&id, cx));
+            }))
+        }
     };
     menu.submenu("Sort files by", window, cx, move |menu, _, _| {
         let (a, n) = (sort_added.clone(), sort_name.clone());
@@ -186,6 +198,18 @@ fn file_menu(menu: PopupMenu, file: &FileRef) -> PopupMenu {
                         }
                     }),
             )
+        }
+        LogSpaceKind::Remote => {
+            let remove = file.clone();
+            let download = file.clone();
+            menu.item(PopupMenuItem::new("Download").on_click(move |_, _, app| {
+                let (space, id) = (download.space_id.clone(), download.file_id.clone());
+                download.view.update(app, |this, cx| this.download_file(&space, &id, cx));
+            }))
+            .item(PopupMenuItem::new("Remove from Log Space").on_click(move |_, _, app| {
+                let (space, id) = (remove.space_id.clone(), remove.file_id.clone());
+                remove.view.update(app, |this, cx| this.remove_file_from_space(&space, &id, cx));
+            }))
         }
         LogSpaceKind::Scratch => {
             let rename = file.clone();

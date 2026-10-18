@@ -77,8 +77,9 @@ struct Row {
 
 /// What the rows read from the app, taken once per frame.
 struct Values {
-    tail: bool,
+    live_window: usize,
     shown: bool,
+    minimap: bool,
     in_space: bool,
     wrap: bool,
     density: Density,
@@ -91,8 +92,9 @@ pub fn open_settings_dialog(view: Entity<AppView>, window: &mut Window, cx: &mut
             let v = view.read(cx);
             (
                 Values {
-                    tail: v.tail_enabled,
+                    live_window: v.live.window,
                     shown: v.source_column_shown(),
+                    minimap: v.show_minimap,
                     in_space: v.active_is_log_space(),
                     wrap: v.raw.soft_wrap,
                     density: v.density,
@@ -224,20 +226,29 @@ fn rows_of(section: SettingsSection, view: &Entity<AppView>, v: &Values, cx: &Ap
     match section {
         SettingsSection::General => {
             let view = view.clone();
+            let windows = [10_000usize, 50_000, 100_000, 500_000, 1_000_000];
+            let current = v.live_window;
             vec![Row {
-                title: "Auto-tail follow",
-                description: "Keep the view scrolled to new lines while a file is still growing.",
-                control: Switch::new("auto-tail")
-                    .checked(v.tail)
-                    .on_click(move |_, window, app| {
-                        view.update(app, |this, cx| this.toggle_tail(cx));
-                        window.refresh();
+                title: "Live Window",
+                description: "How many of the newest lines each Remote File keeps. Older lines leave the view as new ones arrive.",
+                control: ButtonGroup::new("settings-live-window")
+                    .small()
+                    .children(windows.map(|n| {
+                        Button::new(SharedString::from(format!("live-window-{n}")))
+                            .label(format!("{n}"))
+                            .selected(current == n)
+                    }))
+                    .on_click(move |ix: &Vec<usize>, window, app| {
+                        if let Some(&i) = ix.first() {
+                            view.update(app, |this, cx| this.set_live_window(windows[i], cx));
+                            window.refresh();
+                        }
                     })
                     .into_any_element(),
             }]
         }
         SettingsSection::Appearance => {
-            let (v_source, v_density) = (view.clone(), view.clone());
+            let (v_source, v_density, v_minimap) = (view.clone(), view.clone(), view.clone());
             let densities = [
                 (Density::Comfortable, "Comfortable"),
                 (Density::Compact, "Compact"),
@@ -260,6 +271,18 @@ fn rows_of(section: SettingsSection, view: &Entity<AppView>, v: &Values, cx: &Ap
                                 v_density.update(app, |this, cx| this.set_density(densities[i].0, cx));
                                 window.refresh();
                             }
+                        })
+                        .into_any_element(),
+                },
+                Row {
+                    title: "Show minimap",
+                    description: "A thin overview of the whole log beside the table; click or drag it to scroll.",
+                    control: Switch::new("show-minimap")
+                        .checked(v.minimap)
+                        .on_click(move |checked: &bool, window, app| {
+                            let on = *checked;
+                            v_minimap.update(app, |this, cx| this.set_show_minimap(on, cx));
+                            window.refresh();
                         })
                         .into_any_element(),
                 },

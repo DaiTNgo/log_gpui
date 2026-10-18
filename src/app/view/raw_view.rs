@@ -35,7 +35,8 @@ impl AppView {
         let view = cx.entity();
         let file_id = section.file_id.clone();
         let theme = cx.theme();
-        let (bg, border, muted) = (theme.table_head, theme.border, theme.muted_foreground);
+        let (bg, border, muted) =
+            (crate::ui::main_view::background(cx), theme.border, theme.muted_foreground);
         h_flex()
             .id(SharedString::from(format!("raw-section-{}", section.file_id)))
             .h(px(RAW_ROW_HEIGHT))
@@ -77,6 +78,31 @@ impl AppView {
             .into_any_element()
     }
 
+    /// The Breaks of a live file, listed above its text: the editor holds
+    /// only the lines, so a Break cannot sit between two of them, and it is
+    /// never part of what is copied.
+    fn break_strip(&self, section: &RawSection, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
+        if section.breaks.is_empty() {
+            return None;
+        }
+        let warning = cx.theme().warning;
+        let border = cx.theme().border;
+        let mut strip = v_flex().w_full().border_b_1().border_color(border).py_0p5();
+        for (line, mark) in section.breaks.iter() {
+            strip = strip.child(
+                h_flex()
+                    .px_2()
+                    .gap_2()
+                    .text_size(px(10.0))
+                    .text_color(warning)
+                    .child("⏤")
+                    .child(mark.label.clone())
+                    .child(format!("(above line {})", line + 1)),
+            );
+        }
+        Some(strip.into_any_element())
+    }
+
     /// One editor per File Section (read-only unless it is a scratch File View), so
     /// text can be selected and copied.
     fn render_scratch_sections(
@@ -87,18 +113,20 @@ impl AppView {
         // One file: the editor fills the whole area, like a text editor.
         if sections.len() == 1 {
             if let Some(editor) = self.raw.editors.get(&sections[0].file_id) {
-                return div()
+                let strip = self.break_strip(&sections[0], cx);
+                return v_flex()
                     .flex_1()
                     .h_full()
                     .min_w(px(0.0))
                     .text_size(px(13.0))
-                    .child(
+                    .children(strip)
+                    .child(div().flex_1().min_h(px(0.0)).child(
                         Editor::new(&editor.state)
                             .appearance(false)
                             .bordered(false)
                             .readonly(!sections[0].editable)
                             .h(gpui::relative(1.0)),
-                    )
+                    ))
                     .into_any_element();
             }
             return div().flex_1().into_any_element();
@@ -114,6 +142,9 @@ impl AppView {
                 block = block.child(self.section_header(section, collapsed, cx));
             }
             if !collapsed {
+                if let Some(strip) = self.break_strip(section, cx) {
+                    block = block.child(strip);
+                }
                 if let Some(editor) = self.raw.editors.get(&section.file_id) {
                     block = block.child(
                         div()

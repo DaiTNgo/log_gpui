@@ -1,4 +1,5 @@
 pub mod app;
+pub mod archive;
 pub mod column;
 pub mod filter;
 pub mod filter_index;
@@ -10,6 +11,7 @@ pub mod model;
 pub mod palette;
 pub mod parser;
 pub mod raw_view;
+pub mod remote;
 pub mod sample;
 pub mod search;
 pub mod search_expr;

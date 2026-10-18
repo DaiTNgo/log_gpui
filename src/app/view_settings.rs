@@ -1,4 +1,4 @@
-//! Logic: density, tail, columns, sidebar and drawer state.
+//! Logic: density, columns, sidebar and drawer state.
 
 use super::AppView;
 use crate::density::Density;
@@ -88,11 +88,15 @@ impl AppView {
     pub fn set_density(&mut self, density: Density, cx: &mut Context<Self>) {
         self.density = density;
         self.column_layout.update_density(self.density);
+        self.workspace_state.density = density;
+        self.schedule_session_save(cx);
         cx.notify();
     }
 
-    pub fn toggle_tail(&mut self, cx: &mut Context<Self>) {
-        self.tail_enabled = !self.tail_enabled;
+    pub fn set_show_minimap(&mut self, show: bool, cx: &mut Context<Self>) {
+        self.show_minimap = show;
+        self.workspace_state.show_minimap = show;
+        self.schedule_session_save(cx);
         cx.notify();
     }
 

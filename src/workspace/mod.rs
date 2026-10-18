@@ -14,7 +14,7 @@ pub mod state;
 pub mod working_set;
 
 pub use investigation::{CaseStatus, InvestigationCase, LogAnchor};
-pub use log_space::{FileOrder, LogFile, LogSpace, LogSpaceKind};
+pub use log_space::{FileOrder, ImportSource, LogFile, LogSpace, LogSpaceKind, RemoteRef};
 pub use project::{Project, ProjectColorAccent};
 pub use correlation::{CorrelationHit, CorrelationResult, nearest_timestamp_index, search_across_files};
 pub use session::{SessionManifest, SessionPersistence};

@@ -18,6 +18,17 @@ pub struct SessionManifest {
     /// Colors of the Search and Focus Find matches.
     #[serde(default)]
     pub match_colors: crate::palette::MatchColors,
+    /// Newest lines kept for each Remote File.
+    #[serde(default = "crate::workspace::state::default_live_window")]
+    pub live_window: usize,
+    #[serde(default)]
+    pub density: crate::density::Density,
+    #[serde(default = "crate::workspace::state::default_true")]
+    pub show_minimap: bool,
+    #[serde(default = "crate::workspace::state::default_true")]
+    pub raw_soft_wrap: bool,
+    #[serde(default)]
+    pub show_source: Option<bool>,
 }
 
 /// Project-level snapshot inside a session manifest.
@@ -70,6 +81,11 @@ impl SessionManifest {
             projects,
             focus_pane: ws.focus_pane.clone(),
             match_colors: ws.match_colors,
+            live_window: ws.live_window,
+            density: ws.density,
+            show_minimap: ws.show_minimap,
+            raw_soft_wrap: ws.raw_soft_wrap,
+            show_source: ws.show_source,
         }
     }
 
@@ -91,6 +107,11 @@ impl SessionManifest {
         ws.active_project_id = self.active_project_id;
         ws.focus_pane = self.focus_pane;
         ws.match_colors = self.match_colors;
+        ws.live_window = self.live_window;
+        ws.density = self.density;
+        ws.show_minimap = self.show_minimap;
+        ws.raw_soft_wrap = self.raw_soft_wrap;
+        ws.show_source = self.show_source;
         ws
     }
 

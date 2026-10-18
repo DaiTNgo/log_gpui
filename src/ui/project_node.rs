@@ -156,10 +156,12 @@ impl SidebarItem for ProjectNode {
                     .gap_0p5()
                     .invisible()
                     .group_hover(group, |s| s.visible())
-                    .children(self.actions.iter().map(|a| {
-                        // Action clicks must not toggle/select the row.
+                    .children(self.actions.iter().enumerate().map(|(ix, a)| {
+                        // Action clicks must not toggle/select the row. Each wrapper needs its own
+                        // id: sharing one shares the click state, so only one of them would swallow
+                        // its click and the row would toggle.
                         div()
-                            .id("project-action")
+                            .id(SharedString::from(format!("{}-action-{ix}", id)))
                             .on_click(|_, _, cx| cx.stop_propagation())
                             .child(a(window, cx))
                     })),

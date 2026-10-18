@@ -2,7 +2,7 @@
 //! files, ordering, deleting, and Save As.
 
 use super::{AppView, ConfirmAction};
-use crate::workspace::log_space::{FileOrder, LogSpaceKind, RemoveFileError, scratch_dir_for};
+use crate::workspace::log_space::{FileOrder, ImportSource, LogSpaceKind, RemoveFileError, scratch_dir_for};
 use crate::workspace::new_space::{self, NewLogSpaceForm};
 use crate::workspace::scratch_store;
 use crate::workspace::working_set::ViewMode;
@@ -22,6 +22,7 @@ impl AppView {
     // ── New Log Space dialog ────────────────────────────────────────────────
 
     pub fn open_new_space_dialog(&mut self, cx: &mut Context<Self>) {
+        self.remote.new_space_files.clear();
         self.new_space = Some(NewSpaceDialog {
             form: NewLogSpaceForm::new(),
             name_input: None,
@@ -60,14 +61,32 @@ impl AppView {
 
     pub fn new_space_cancel(&mut self, cx: &mut Context<Self>) {
         self.new_space = None;
+        self.remote.new_space_files.clear();
         cx.notify();
     }
 
     /// Add dropped or picked paths to the dialog's list.
     pub fn new_space_add_paths(&mut self, paths: Vec<String>, cx: &mut Context<Self>) {
-        if let Some(dialog) = self.new_space.as_mut() {
-            dialog.form.add_paths(&paths);
-            cx.notify();
+        let Some(dialog) = self.new_space.as_mut() else { return };
+        let archives = dialog.form.begin_paths(&paths);
+        cx.notify();
+        // An Archive is listed in the background: it may be unpacked whole.
+        for (archive, kind) in archives {
+            cx.spawn(async move |this, cx| {
+                let path = archive.clone();
+                let items = cx
+                    .background_executor()
+                    .spawn(async move { new_space::list_archive(&path, kind) })
+                    .await;
+                this.update(cx, |this, cx| {
+                    if let Some(dialog) = this.new_space.as_mut() {
+                        dialog.form.finish_archive(&archive, items);
+                        cx.notify();
+                    }
+                })
+                .ok();
+            })
+            .detach();
         }
     }
 
@@ -102,10 +121,43 @@ impl AppView {
             return;
         }
         let name = dialog.form.name.clone();
-        let paths = dialog.form.importable_paths();
+        if !self.remote.new_space_files.is_empty() {
+            let files = std::mem::take(&mut self.remote.new_space_files);
+            self.new_space = None;
+            self.create_remote_log_space(&name, files, cx);
+            return;
+        }
+        let sources = dialog.form.importable_sources();
         let kind = dialog.form.kind();
         self.new_space = None;
-        self.create_log_space(&name, kind, &paths, cx);
+        self.create_log_space(&name, kind, &sources, cx);
+    }
+
+    /// Create a Remote Log Space with files on Servers, given as
+    /// `(server id, server name, path)`, and open it.
+    pub fn create_remote_log_space(
+        &mut self,
+        name: &str,
+        files: Vec<(String, String, String)>,
+        cx: &mut Context<Self>,
+    ) -> Option<String> {
+        self.persist_active_session();
+        let space_id = {
+            let project = self.active_project_mut()?;
+            let space = match project.create_log_space(name, LogSpaceKind::Remote) {
+                Ok(space) => space,
+                Err(e) => {
+                    self.notice = Some(e.message().to_string());
+                    cx.notify();
+                    return None;
+                }
+            };
+            let _ = space.add_remote_files(&files);
+            space.id.clone()
+        };
+        self.expanded_spaces.insert(space_id.clone());
+        self.open_log_space_tab(&space_id, cx);
+        Some(space_id)
     }
 
     /// Create a Log Space in the active project and open it.
@@ -113,7 +165,7 @@ impl AppView {
         &mut self,
         name: &str,
         kind: LogSpaceKind,
-        paths: &[String],
+        sources: &[ImportSource],
         cx: &mut Context<Self>,
     ) -> Option<String> {
         self.persist_active_session();
@@ -131,10 +183,11 @@ impl AppView {
             };
             match kind {
                 LogSpaceKind::Imported => {
-                    if let Ok(outcome) = space.add_imported_files(paths) {
+                    if let Ok(outcome) = space.add_imported_sources(sources) {
                         skipped = outcome.skipped;
                     }
                 }
+                LogSpaceKind::Remote => {}
                 LogSpaceKind::Scratch => {
                     let dir = scratch_dir_for(&space.id);
                     if let Ok(file) = space.new_scratch_file(&dir) {
@@ -198,7 +251,7 @@ impl AppView {
     // ── Changing a Log Space ────────────────────────────────────────────────
 
     /// Rebuild the open view after the files of a space changed.
-    fn refresh_after_space_change(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn refresh_after_space_change(&mut self, cx: &mut Context<Self>) {
         self.restore_active_session(cx);
         self.schedule_session_save(cx);
         cx.notify();
@@ -253,35 +306,49 @@ impl AppView {
         .detach();
     }
 
-    /// Add files to an Imported Log Space. Folders are opened one level, binary
+    /// Add files to an Imported Log Space. Folders are opened one level,
+    /// Archives are opened into their entries (in the background), binary
     /// files are left out, and files already in the space are skipped.
     pub fn add_files_to_space(&mut self, space_id: &str, paths: Vec<String>, cx: &mut Context<Self>) {
+        if paths.iter().any(|p| crate::archive::detect(Path::new(p)).is_some()) {
+            self.notice = Some("Reading archive…".to_string());
+            cx.notify();
+        }
+        let space_id = space_id.to_string();
+        cx.spawn(async move |this, cx| {
+            let items = cx
+                .background_executor()
+                .spawn(async move { new_space::resolve_paths(&paths) })
+                .await;
+            this.update(cx, |this, cx| this.add_resolved_to_space(&space_id, items, cx)).ok();
+        })
+        .detach();
+    }
+
+    fn add_resolved_to_space(&mut self, space_id: &str, items: Vec<new_space::PendingFile>, cx: &mut Context<Self>) {
         self.persist_active_session();
-        let mut binary = 0;
-        let text_paths: Vec<String> = new_space::expand_paths(&paths)
-            .into_iter()
-            .filter(|p| {
-                let is_binary = new_space::path_is_binary(Path::new(p));
-                binary += is_binary as usize;
-                !is_binary
-            })
-            .collect();
+        let mut form = NewLogSpaceForm::new();
+        form.files = items;
+        let left_out = form.files.iter().filter(|f| !f.is_importable()).count();
+        let mut messages = Vec::new();
+        if let Some(message) = form.size_limit_message() {
+            self.notice = Some(message);
+            cx.notify();
+            return;
+        }
         let outcome = self
             .active_project_mut()
             .and_then(|p| p.log_space_mut(space_id))
-            .and_then(|s| s.add_imported_files(&text_paths).ok());
-        let mut messages = Vec::new();
+            .and_then(|s| s.add_imported_sources(&form.importable_sources()).ok());
         if let Some(outcome) = &outcome {
             if !outcome.skipped.is_empty() {
                 messages.push(format!("{} file(s) already in this Log Space", outcome.skipped.len()));
             }
         }
-        if binary > 0 {
-            messages.push(format!("{binary} file(s) are not text and were left out"));
+        if left_out > 0 {
+            messages.push(format!("{left_out} file(s) are not readable text and were left out"));
         }
-        if !messages.is_empty() {
-            self.notice = Some(messages.join("; "));
-        }
+        self.notice = if messages.is_empty() { None } else { Some(messages.join("; ")) };
         self.refresh_after_space_change(cx);
     }
 
@@ -488,17 +555,12 @@ impl AppView {
         self.column_layout.source_visible
     }
 
-    /// The "Show source file" switch of Quick Settings; remembered per Log Space.
+    /// The "Show source file" switch of Settings; one choice for every Log Space.
     pub fn set_show_source(&mut self, shown: bool, cx: &mut Context<Self>) {
-        let Some(space_id) = self.active_target().and_then(|t| match t {
-            crate::workspace::working_set::TabTarget::LogSpace { space_id } => Some(space_id),
-            _ => None,
-        }) else {
+        if !self.active_is_log_space() {
             return;
-        };
-        if let Some(space) = self.active_project_mut().and_then(|p| p.log_space_mut(&space_id)) {
-            space.show_source = Some(shown);
         }
+        self.workspace_state.show_source = Some(shown);
         self.column_layout.set_source_visible(shown);
         if shown {
             self.column_layout

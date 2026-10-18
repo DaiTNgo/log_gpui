@@ -22,6 +22,27 @@ pub struct WorkspaceState {
     /// Colors of the Search and Focus Find matches: an app setting.
     #[serde(default)]
     pub match_colors: crate::palette::MatchColors,
+    /// Newest lines kept for each Remote File: an app setting.
+    #[serde(default = "default_live_window")]
+    pub live_window: usize,
+    /// Row density of the log table: an app setting.
+    #[serde(default)]
+    pub density: crate::density::Density,
+    /// Whether the minimap is shown: an app setting.
+    #[serde(default = "default_true")]
+    pub show_minimap: bool,
+    /// Whether the Raw View wraps long lines: an app setting.
+    #[serde(default = "default_true")]
+    pub raw_soft_wrap: bool,
+    /// Whether Log Space views show the Source Column; `None` until chosen,
+    /// then a Log Space shows it when it has two or more files.
+    #[serde(default)]
+    pub show_source: Option<bool>,
+}
+
+/// Default Live Window.
+pub fn default_live_window() -> usize {
+    100_000
 }
 
 impl Default for WorkspaceState {
@@ -31,6 +52,11 @@ impl Default for WorkspaceState {
             active_project_id: None,
             focus_pane: FocusPaneState::default(),
             match_colors: Default::default(),
+            live_window: default_live_window(),
+            density: Default::default(),
+            show_minimap: true,
+            raw_soft_wrap: true,
+            show_source: None,
         }
     }
 }
@@ -220,7 +246,7 @@ fn default_drawer_width() -> f32 {
     DEFAULT_DRAWER_WIDTH
 }
 
-fn default_true() -> bool {
+pub fn default_true() -> bool {
     true
 }
 

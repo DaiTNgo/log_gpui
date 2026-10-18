@@ -3,17 +3,16 @@
 use super::AppView;
 use crate::density::Density;
 use crate::ui::command_palette::PaletteAction;
-use gpui::{
-    Context,
-};
+use gpui::{Context, Window};
 
 impl AppView {
-    pub fn execute_palette_action(&mut self, action: PaletteAction, cx: &mut Context<Self>) {
+    pub fn execute_palette_action(&mut self, action: PaletteAction, window: &mut Window, cx: &mut Context<Self>) {
         self.is_palette_open = false;
         match action {
             PaletteAction::ToggleSearch => self.toggle_search(cx),
             PaletteAction::ShowHighlights => self.toggle_or_reveal_context_section(crate::workspace::state::ContextSection::Highlights, cx),
             PaletteAction::ToggleFocusPane => self.toggle_focus_pane(cx),
+            PaletteAction::MoveFocusToWindow => self.move_focus_to_window(window, cx),
             PaletteAction::ToggleFilter => self.toggle_filter_builder(cx),
             PaletteAction::ShowContext => {
                 self.is_context_open = true;
@@ -36,10 +35,9 @@ impl AppView {
                 self.column_layout.update_density(self.density);
                 cx.notify();
             }
-            PaletteAction::ToggleTail => {
-                self.tail_enabled = !self.tail_enabled;
-                cx.notify();
-            }
+            PaletteAction::ManageServers => self.open_servers_dialog(cx),
+            PaletteAction::ToggleFollow => self.toggle_follow(cx),
+            PaletteAction::TogglePause => self.toggle_pause(cx),
             PaletteAction::ToggleInspector => {
                 self.toggle_or_reveal_context_section(crate::workspace::state::ContextSection::Inspector, cx);
             }

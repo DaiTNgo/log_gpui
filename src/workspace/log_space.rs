@@ -56,6 +56,14 @@ pub fn line_hash(text: &str) -> u64 {
     hash
 }
 
+/// A file on a Server.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RemoteRef {
+    pub server_id: String,
+    /// Absolute path on the Server.
+    pub path: String,
+}
+
 /// A log file belonging to a Log Space. For an Imported space the file on
 /// disk is never modified or deleted; for a Scratch space it lives in the
 /// app's data folder.
@@ -73,6 +81,12 @@ pub struct LogFile {
     /// The colors painted on text, remembered automatically.
     #[serde(default, deserialize_with = "read_markers")]
     pub markers: Vec<StoredMarker>,
+    /// Where a Remote File is: its Server and path on it.
+    #[serde(default)]
+    pub remote: Option<RemoteRef>,
+    /// For an Archive Entry, its path inside the Archive at `path`.
+    #[serde(default)]
+    pub entry: Option<String>,
     /// The file's current Generation, counted from 0 each time it is opened
     /// and raised on every rotation, truncation or deletion.
     #[serde(skip)]
@@ -87,6 +101,23 @@ impl LogFile {
             path: None,
             added_seq: 0,
             markers: Vec::new(),
+            remote: None,
+            entry: None,
+            generation: 0,
+        }
+    }
+
+    /// A file on a Server. Its identity is the Server and the path; it is
+    /// shown as `<server>:<path>`.
+    pub fn remote(server_id: &str, server_name: &str, path: &str) -> Self {
+        Self {
+            file_id: format!("remote:{server_id}:{path}"),
+            display_name: format!("{server_name}:{path}"),
+            path: None,
+            added_seq: 0,
+            markers: Vec::new(),
+            remote: Some(RemoteRef { server_id: server_id.to_string(), path: path.to_string() }),
+            entry: None,
             generation: 0,
         }
     }
@@ -103,11 +134,45 @@ impl LogFile {
             path: Some(path.to_string()),
             added_seq: 0,
             markers: Vec::new(),
+            remote: None,
+            entry: None,
             generation: 0,
         }
     }
 
-    /// Name of the folder holding the file, shown beside the name in a File
+    /// A file inside an Archive. Its identity is the Archive and the entry;
+    /// it is shown as `<archive name> › <entry>` (a lone `.gz` shows its
+    /// name without `.gz`).
+    pub fn from_archive_entry(archive: &str, entry: &str) -> Self {
+        let archive_path = Path::new(archive);
+        let archive_name = archive_path
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| archive.to_string());
+        let lone_gz = archive_name.ends_with(".gz") && entry == crate::archive::gz_entry_name(archive_path);
+        Self {
+            file_id: format!("{archive}!/{entry}"),
+            display_name: if lone_gz { entry.to_string() } else { format!("{archive_name} › {entry}") },
+            path: Some(archive.to_string()),
+            added_seq: 0,
+            markers: Vec::new(),
+            remote: None,
+            entry: Some(entry.to_string()),
+            generation: 0,
+        }
+    }
+
+    /// Where the file's bytes are read from, if it has a local source.
+    pub fn source(&self) -> Option<crate::archive::FileSource<'_>> {
+        let path = Path::new(self.path.as_deref()?);
+        Some(match self.entry.as_deref() {
+            Some(entry) => crate::archive::FileSource::ArchiveEntry { archive: path, entry },
+            None => crate::archive::FileSource::Disk(path),
+        })
+    }
+
+    /// Name of the folder holding the file (for an Archive Entry, the
+    /// folder holding the Archive), shown beside the name in a File
     /// Section header.
     pub fn folder(&self) -> Option<String> {
         self.path
@@ -271,6 +336,8 @@ impl LogFile {
 pub enum LogSpaceKind {
     Imported,
     Scratch,
+    /// Files on Servers, read live over SSH; read-only.
+    Remote,
 }
 
 /// How the files of a Log Space are ordered everywhere: sidebar, File
@@ -307,6 +374,22 @@ pub enum RemoveFileError {
     NotFound,
     /// A Scratch Log Space always keeps at least one file.
     LastScratchFile,
+}
+
+/// What to import into an Imported Log Space.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ImportSource {
+    Disk(String),
+    Entry { archive: String, entry: String },
+}
+
+impl ImportSource {
+    fn to_file(&self) -> LogFile {
+        match self {
+            ImportSource::Disk(path) => LogFile::from_path(path),
+            ImportSource::Entry { archive, entry } => LogFile::from_archive_entry(archive, entry),
+        }
+    }
 }
 
 /// Outcome of importing files into an Imported Log Space.
@@ -413,21 +496,60 @@ impl LogSpace {
     /// Import files by path into an Imported Log Space. Paths the space
     /// already holds are skipped and reported.
     pub fn add_imported_files(&mut self, paths: &[String]) -> Result<ImportOutcome, WrongKind> {
+        let sources: Vec<ImportSource> = paths.iter().cloned().map(ImportSource::Disk).collect();
+        self.add_imported_sources(&sources)
+    }
+
+    /// Import files and Archive Entries. A source the space already holds
+    /// (same path, or same Archive and entry) is skipped and reported by name.
+    pub fn add_imported_sources(&mut self, sources: &[ImportSource]) -> Result<ImportOutcome, WrongKind> {
         if self.kind != LogSpaceKind::Imported {
             return Err(WrongKind);
         }
         let mut outcome = ImportOutcome::default();
-        for path in paths {
-            if self.has_file(path) {
-                outcome.skipped.push(path.clone());
+        for source in sources {
+            let mut file = source.to_file();
+            if self.has_file(&file.file_id) {
+                outcome.skipped.push(match source {
+                    ImportSource::Disk(path) => path.clone(),
+                    ImportSource::Entry { .. } => file.display_name.clone(),
+                });
                 continue;
             }
-            let mut file = LogFile::from_path(path);
             file.added_seq = self.take_seq();
             outcome.added.push(file.file_id.clone());
             self.files.push(file);
         }
         Ok(outcome)
+    }
+
+    /// Add Remote Files, given as `(server id, server name, path)`. A file
+    /// already in the space (same Server and path) is skipped and reported by
+    /// its name.
+    pub fn add_remote_files(&mut self, files: &[(String, String, String)]) -> Result<ImportOutcome, WrongKind> {
+        if self.kind != LogSpaceKind::Remote {
+            return Err(WrongKind);
+        }
+        let mut outcome = ImportOutcome::default();
+        for (server_id, server_name, path) in files {
+            let mut file = LogFile::remote(server_id, server_name, path);
+            if self.has_file(&file.file_id) {
+                outcome.skipped.push(file.display_name.clone());
+                continue;
+            }
+            file.added_seq = self.take_seq();
+            outcome.added.push(file.file_id.clone());
+            self.files.push(file);
+        }
+        Ok(outcome)
+    }
+
+    /// Names of the Remote Files on a Server.
+    pub fn files_on_server(&self, server_id: &str) -> Vec<&LogFile> {
+        self.files
+            .iter()
+            .filter(|f| f.remote.as_ref().is_some_and(|r| r.server_id == server_id))
+            .collect()
     }
 
     /// The name of the next scratch file: `untitled.log`, then

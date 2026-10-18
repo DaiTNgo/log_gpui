@@ -2,11 +2,13 @@
 
 use super::AppView;
 use crate::workspace::working_set::TabTarget;
-use gpui::{Context, IntoElement, Styled};
-use gpui_component::button::{Button, ButtonVariants as _};
-use gpui_component::tab::{Tab, TabBar};
-use gpui_component::{Sizable as _};
+use gpui::prelude::FluentBuilder as _;
+use gpui::{div, px, MouseButton, Context, InteractiveElement as _, IntoElement, ParentElement as _, SharedString, StatefulInteractiveElement as _, Styled};
+use gpui_component::{h_flex, ActiveTheme as _, Icon};
 use gpui_kit::assets::IconName;
+
+/// Matches the Zed tab strip height.
+const TAB_BAR_HEIGHT: f32 = 34.0;
 
 impl AppView {
     pub(super) fn render_tab_bar(&mut self, cx: &mut Context<Self>) -> gpui::AnyElement {
@@ -37,24 +39,73 @@ impl AppView {
             None => (Vec::new(), None),
         };
 
+        let theme = cx.theme();
+        let (border, muted, fg) = (theme.border, theme.muted_foreground, theme.foreground);
+        let active_bg = crate::ui::main_view::background(cx);
+        // Inactive tabs and the empty strip are darker than the active tab, as in Zed.
+        let mut bar_bg = active_bg;
+        bar_bg.l *= 0.55;
+        let last = labels.len().saturating_sub(1);
+
+        // Zed-style strip: flat tabs split by a hairline; the active tab takes
+        // the main view's tone and drops the bottom border so it joins the
+        // content below. The close button shows on hover (always when active).
         let tabs = labels.into_iter().enumerate().map(|(index, label)| {
-            let close_view = view.clone();
-            Tab::new().label(label).suffix(
-                Button::new(("close-tab", index))
-                    .ghost()
-                    .xsmall()
-                    .icon(IconName::Close)
-                    .on_click(move |_, _, app| {
-                        app.stop_propagation();
-                        close_view.update(app, |this, cx| this.close_tab_at(index, cx));
-                    }),
-            )
+            let active = active_idx == Some(index);
+            let group = SharedString::from(format!("working-tab-{index}"));
+            let (click_view, close_view) = (view.clone(), view.clone());
+            h_flex()
+                .id(("working-tab", index))
+                .group(group.clone())
+                .h_full()
+                .flex_shrink_0()
+                .px_3()
+                .gap_2()
+                .items_center()
+                .cursor_pointer()
+                .text_sm()
+                .border_r_1()
+                .border_color(border)
+                .when(index == last, |this| this.border_r_0())
+                .when(active, |this| this.bg(active_bg).text_color(fg))
+                .when(!active, |this| {
+                    this.bg(bar_bg).text_color(muted).hover(|s| s.text_color(fg))
+                })
+                .child(label)
+                .child(
+                    div()
+                        .id(("close-tab", index))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .size_4()
+                        .rounded_sm()
+                        .when(!active, |this| this.invisible())
+                        .group_hover(group, |s| s.visible())
+                        .hover(|s| s.bg(border))
+                        .child(Icon::new(IconName::Close).size_3())
+                        .on_mouse_down(MouseButton::Left, |_, _, app| app.stop_propagation())
+                        .on_click(move |_, _, app| {
+                            close_view.update(app, |this, cx| this.close_tab_at(index, cx));
+                        }),
+                )
+                // Switch on mouse down like Zed; re-selecting the active tab is a no-op.
+                .on_mouse_down(MouseButton::Left, move |_, _, app| {
+                    if !active {
+                        click_view.update(app, |this, cx| this.switch_to_tab(index, cx));
+                    }
+                })
         });
 
-        TabBar::new("working-set")
-            .bg(crate::ui::main_view::background(cx))
-            .selected_index(active_idx.unwrap_or(0))
-            .on_click(cx.listener(|this, ix: &usize, _window, cx| this.switch_to_tab(*ix, cx)))
+        h_flex()
+            .id("working-set")
+            .w_full()
+            .h(px(TAB_BAR_HEIGHT))
+            .flex_shrink_0()
+            .overflow_x_scroll()
+            .bg(bar_bg)
+            .border_b_1()
+            .border_color(border)
             .children(tabs)
             .into_any_element()
     }

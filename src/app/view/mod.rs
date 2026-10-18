@@ -7,6 +7,8 @@ mod filter_panel;
 mod focus_pane;
 mod highlights_panel;
 mod raw_view;
+mod remote_dialogs;
+mod server_views;
 mod status_bar;
 mod tab_bar;
 mod toolbar;
@@ -38,6 +40,9 @@ impl Render for AppView {
         self.sync_raw_editors(window, cx);
         self.sync_raw_color_bar(window, cx);
         self.sync_new_space_dialog(window, cx);
+        self.sync_secret_prompt(window, cx);
+        self.sync_server_dialog(window, cx);
+        self.sync_remote_picker(window, cx);
 
         let window_chrome = self.render_window_chrome(window, cx);
         let editor_toolbar = self.render_editor_toolbar(cx);
@@ -45,27 +50,8 @@ impl Render for AppView {
 
         // 5. Center: Raw View, Parsed View (the Log Canvas) or an empty state.
         let has_files = self.active_space().is_some_and(|s| !s.files.is_empty());
-        let colors = CanvasColors {
-            background: cx.theme().accent,
-            header_bg: cx.theme().table_head,
-            header_fg: cx.theme().table_head_foreground,
-            border: cx.theme().border,
-            selected: cx.theme().list_active,
-            search: self.workspace_state.match_colors.search.map_or(
-                gpui::hsla(0.55, 0.85, 0.55, 1.0),
-                hue_color,
-            ),
-            find: self.workspace_state.match_colors.find.map_or(cx.theme().warning, hue_color),
-            muted: cx.theme().muted_foreground,
-            danger: cx.theme().danger,
-            warning: cx.theme().warning,
-            info: cx.theme().info,
-            text_selection: cx.theme().selection,
-            dark: cx.theme().is_dark(),
-        };
-        let parsed_entries =
-            (self.active_tab_is_log_file() && has_files && self.view_mode == ViewMode::Parsed)
-                .then(|| Arc::new(self.all_entries.clone()));
+        let colors = self.canvas_colors(cx);
+        let parsed = self.active_tab_is_log_file() && has_files && self.view_mode == ViewMode::Parsed;
         let log_canvas = if !self.active_tab_is_log_file() || !has_files {
             self.render_empty_state(cx)
         } else if self.view_mode == ViewMode::Raw {
@@ -73,10 +59,11 @@ impl Render for AppView {
         } else {
             LogCanvas::render(CanvasViewState {
                 view: cx.entity().clone(),
-                entries: parsed_entries.clone().unwrap_or_default(),
+                entries: if parsed { &self.all_entries } else { &[] },
                 visible_indices: self.visible_indices.clone(),
                 selected_row_pos: self.selected_row_pos,
                 density: self.density,
+                show_minimap: self.show_minimap,
                 column_layout: &self.column_layout,
                 search_state: self.focus.search(),
                 bounds_sink: self.canvas_bounds.clone(),
@@ -89,7 +76,7 @@ impl Render for AppView {
 
         let viewport_height = f32::from(window.viewport_size().height);
         let focus_pane =
-            self.render_focus_pane(parsed_entries.clone(), colors, viewport_height, cx);
+            self.render_focus_pane(parsed, colors, viewport_height, cx);
         // The sidebars end where the pane begins.
         let pane_taken = if focus_pane.is_some() {
             self.focus_pane_height(viewport_height)
@@ -110,6 +97,11 @@ impl Render for AppView {
         let command_palette = CommandPalette::render(self.is_palette_open, cx);
         let new_space_dialog = self.render_new_space_dialog(cx);
         let confirm = self.render_confirm(cx);
+        let host_key_dialog = self.render_host_key_dialog(cx);
+        let secret_dialog = self.render_secret_dialog(cx);
+        let servers_dialog = self.render_servers_dialog(cx);
+        let remote_picker = self.render_remote_picker(cx);
+        let download_panel = self.render_download(cx);
         let color_bar = self.render_color_bar(cx);
         let notice = self.render_notice(cx);
 
@@ -203,7 +195,36 @@ impl Render for AppView {
             .child(project_switcher)
             .child(new_space_dialog)
             .child(confirm)
+            .child(servers_dialog)
+            .child(remote_picker)
+            .child(download_panel)
+            .child(secret_dialog)
+            .child(host_key_dialog)
             .children(color_bar)
+    }
+}
+
+impl AppView {
+    /// The colors the Log Canvas and the Focus Pane paint with.
+    pub(crate) fn canvas_colors(&self, cx: &gpui::App) -> CanvasColors {
+        CanvasColors {
+            background: crate::ui::main_view::background(cx),
+            header_bg: crate::ui::main_view::background(cx),
+            header_fg: cx.theme().table_head_foreground,
+            border: cx.theme().border,
+            selected: cx.theme().list_active,
+            search: self.workspace_state.match_colors.search.map_or(
+                gpui::hsla(0.55, 0.85, 0.55, 1.0),
+                hue_color,
+            ),
+            find: self.workspace_state.match_colors.find.map_or(cx.theme().warning, hue_color),
+            muted: cx.theme().muted_foreground,
+            danger: cx.theme().danger,
+            warning: cx.theme().warning,
+            info: cx.theme().info,
+            text_selection: cx.theme().selection,
+            dark: cx.theme().is_dark(),
+        }
     }
 }
 

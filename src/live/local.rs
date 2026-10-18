@@ -75,7 +75,7 @@ impl LocalFileSource {
                     Ok(SourceCommand::Close) => return,
                     Ok(SourceCommand::Pause) => paused = true,
                     Ok(SourceCommand::Resume) => paused = false,
-                    Ok(SourceCommand::SetWindow(_)) => {}
+                    Ok(SourceCommand::SetWindow(_)) | Ok(SourceCommand::Reconnect) => {}
                     Err(async_channel::TryRecvError::Empty) => break,
                     Err(async_channel::TryRecvError::Closed) => return,
                 }

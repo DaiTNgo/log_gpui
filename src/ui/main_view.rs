@@ -5,7 +5,8 @@
 use gpui::{App, Hsla};
 use gpui_component::ActiveTheme as _;
 
-/// Background of the main view, set apart from the sidebars.
+/// Background of the main view: the tone of the title bar and the status bar,
+/// so only the sidebars stay darker.
 pub fn background(cx: &App) -> Hsla {
-    cx.theme().table_head
+    cx.theme().status_bar
 }

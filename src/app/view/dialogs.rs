@@ -17,10 +17,12 @@ use gpui_component::{
 use gpui_kit::assets::IconName;
 
 impl AppView {
-    fn modal_backdrop() -> gpui::Div {
+    pub(super) fn modal_backdrop() -> gpui::Div {
         div()
             .absolute()
             .inset_0()
+            // Swallow mouse and scroll events so nothing under the dialog reacts.
+            .occlude()
             .bg(gpui::rgba(0x00000088))
             .flex()
             .items_center()
@@ -41,16 +43,21 @@ impl AppView {
             (theme.popover, theme.border, theme.muted_foreground, theme.danger, theme.warning);
         let can_create = dialog.form.can_create(project);
         let name_message = dialog.form.name_message(project);
-        let create_label = dialog.form.create_label();
+        let remote_files = self.remote.new_space_files.clone();
+        let create_label = if remote_files.is_empty() {
+            dialog.form.create_label()
+        } else if remote_files.len() == 1 {
+            "Create remote with 1 file".to_string()
+        } else {
+            format!("Create remote with {} files", remote_files.len())
+        };
         let files = dialog.form.files.clone();
+        let size_message = dialog.form.size_limit_message();
         let name_input = dialog.name_input.clone();
 
         let mut file_list = v_flex().id("new-space-files").gap_1().max_h(px(180.0)).overflow_y_scroll();
         for (ix, file) in files.iter().enumerate() {
-            let name = std::path::Path::new(&file.path)
-                .file_name()
-                .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or_else(|| file.path.clone());
+            let name = file.display_name();
             file_list = file_list.child(
                 h_flex()
                     .gap_2()
@@ -64,7 +71,14 @@ impl AppView {
                     .child(Icon::new(IconName::File).size_4())
                     .child(div().flex_1().truncate().child(name))
                     .when_some(file.warning(), |this, warning_text| {
-                        let color = if file.status == PendingStatus::Binary { danger } else { warning };
+                        let color = if matches!(
+                            file.status,
+                            PendingStatus::Binary | PendingStatus::Damaged | PendingStatus::Encrypted
+                        ) {
+                            danger
+                        } else {
+                            warning
+                        };
                         this.child(div().text_xs().text_color(color).child(warning_text))
                     })
                     .child(
@@ -138,8 +152,48 @@ impl AppView {
                         v_flex()
                             .gap_1()
                             .child(div().text_sm().child("Files"))
-                            .child(drop_zone)
-                            .when(!files.is_empty(), |this| this.child(file_list)),
+                            .when(remote_files.is_empty(), |this| this.child(drop_zone))
+                            .when(!files.is_empty() && remote_files.is_empty(), |this| this.child(file_list))
+                            .when_some(size_message, |this, message| {
+                                this.child(div().text_xs().text_color(danger).child(message))
+                            }),
+                    )
+                    .child(
+                        v_flex()
+                            .gap_1()
+                            .child(div().text_sm().child("Remote files"))
+                            .children(remote_files.iter().enumerate().map(|(ix, (_, server, path))| {
+                                h_flex()
+                                    .gap_2()
+                                    .items_center()
+                                    .px_2()
+                                    .py_1()
+                                    .rounded_md()
+                                    .border_1()
+                                    .border_color(border)
+                                    .text_sm()
+                                    .child(Icon::new(IconName::Globe).size_4())
+                                    .child(div().flex_1().truncate().child(format!("{server}:{path}")))
+                                    .child(
+                                        Button::new(("new-space-remove-remote", ix))
+                                            .ghost()
+                                            .xsmall()
+                                            .icon(IconName::Close)
+                                            .on_click(cx.listener(move |this, _, _, cx| {
+                                                this.new_space_remove_remote(ix, cx)
+                                            })),
+                                    )
+                            }))
+                            .child(
+                                // Local and remote files are never mixed in one Log Space.
+                                Button::new("new-space-add-remote")
+                                    .small()
+                                    .label("Add remote files…")
+                                    .disabled(!files.is_empty())
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.open_remote_picker(crate::app::remote_picker::PickerTarget::NewSpace, cx)
+                                    })),
+                            ),
                     )
                     .child(
                         h_flex()

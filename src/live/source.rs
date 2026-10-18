@@ -42,6 +42,8 @@ pub enum SourceStatus {
     Reconnecting,
     Disconnected,
     WaitingForFile,
+    /// A password or passphrase is needed: waits for the user to Connect.
+    NeedsSecret,
     Error(String),
 }
 
@@ -52,6 +54,7 @@ impl SourceStatus {
             SourceStatus::Live => 0,
             SourceStatus::Connecting => 1,
             SourceStatus::WaitingForFile => 2,
+            SourceStatus::NeedsSecret => 3,
             SourceStatus::Reconnecting => 3,
             SourceStatus::Disconnected => 4,
             SourceStatus::Error(_) => 5,
@@ -65,6 +68,7 @@ impl SourceStatus {
             SourceStatus::Reconnecting => "Reconnecting".into(),
             SourceStatus::Disconnected => "Disconnected".into(),
             SourceStatus::WaitingForFile => "Waiting for file".into(),
+            SourceStatus::NeedsSecret => "Waiting to connect".into(),
             SourceStatus::Error(message) => message.clone(),
         }
     }
@@ -92,6 +96,8 @@ pub enum SourceCommand {
     Pause,
     Resume,
     SetWindow(usize),
+    /// Try again now (after Disconnected or an error the user has fixed).
+    Reconnect,
     Close,
 }
 

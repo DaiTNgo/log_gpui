@@ -131,9 +131,12 @@ fn wait_for(handle: &SourceHandle, mut want: impl FnMut(&SourceEvent) -> bool) -
 }
 
 fn source(path: &std::path::Path, offset: u64) -> SourceHandle {
-    LocalFileSource::new(path, offset)
+    let handle = LocalFileSource::new(path, offset)
         .with_poll_interval(Duration::from_millis(10))
-        .spawn()
+        .spawn();
+    // The source opens the file as it is when it starts.
+    wait_for(&handle, |e| matches!(e, SourceEvent::Status(_)));
+    handle
 }
 
 fn appended(lines: &[&str]) -> SourceEvent {

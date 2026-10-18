@@ -166,6 +166,28 @@ impl ColumnIndex {
         !self.overflow && self.row_ids.len() == self.rows
     }
 
+    /// Forget the rows from `keep` on; `removed` are those rows' entries.
+    fn truncate(&mut self, keep: usize, removed: &[LogEntry]) {
+        self.rows = keep;
+        if self.overflow {
+            return;
+        }
+        for (i, entry) in removed.iter().enumerate() {
+            if entry.parent.is_some() {
+                continue;
+            }
+            let Some(&id) = self.row_ids.get(keep + i) else { continue };
+            if id == MISSING {
+                continue;
+            }
+            self.values[id as usize].count -= 1;
+            if let Some((_, n)) = self.source.value(entry).and_then(|raw| self.spellings.get_mut(raw)) {
+                *n = n.saturating_sub(1);
+            }
+        }
+        self.row_ids.truncate(keep);
+    }
+
     fn push_row(&mut self, entry: &LogEntry, parent_row: usize) {
         self.rows += 1;
         if self.overflow {
@@ -322,6 +344,21 @@ impl FilterIndex {
         }
     }
 
+    /// Forget the rows after the first `kept.len()`; `removed` are the
+    /// entries of those rows. They are meant to be added again with
+    /// [`append`](Self::append), in a new order and with new rows among them,
+    /// so the earliest and latest time are left as they were.
+    pub fn truncate(&mut self, kept: &[LogEntry], removed: &[LogEntry]) {
+        debug_assert_eq!(self.rows, kept.len() + removed.len());
+        for col in &mut self.columns {
+            col.truncate(kept.len(), removed);
+        }
+        self.rows = kept.len();
+        self.effective_ts.truncate(kept.len());
+        self.first_ts = self.effective_ts.iter().copied().find(|t| !t.is_nan());
+        self.parent_row = kept.iter().rposition(|e| e.parent.is_none()).unwrap_or(0);
+    }
+
     fn push_row(&mut self, entry: &LogEntry) {
         let row = self.rows;
         if self.columns.is_empty() && row == 0 {
@@ -347,10 +384,10 @@ impl FilterIndex {
                 self.first_ts = Some(entry.timestamp);
             }
             if self.min_entry.as_ref().is_none_or(|(t, _)| entry.timestamp < *t) {
-                self.min_entry = Some((entry.timestamp, entry.time_str.clone()));
+                self.min_entry = Some((entry.timestamp, entry.time_str.to_string()));
             }
             if self.max_entry.as_ref().is_none_or(|(t, _)| entry.timestamp > *t) {
-                self.max_entry = Some((entry.timestamp, entry.time_str.clone()));
+                self.max_entry = Some((entry.timestamp, entry.time_str.to_string()));
             }
         } else {
             self.effective_ts.push(prev);

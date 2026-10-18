@@ -1,6 +1,7 @@
 //! Building what a Log Space or a File View shows: each file is parsed on its
 //! own, then the rows of a Log Space are merged by timestamp.
 
+use crate::archive::{FileSource, read_source};
 use crate::column::FieldMaxChars;
 use crate::filter_index::FilterIndex;
 use crate::model::LogEntry;
@@ -8,7 +9,8 @@ use crate::parser::text::parse_text_bytes_with_max_chars;
 use crate::timeline;
 use crate::marker::TextMarker;
 use crate::workspace::log_space::{LogFile, LogSpace};
-use std::collections::HashMap;
+use crate::live::{BreakMark, LiveBuffer};
+use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 use std::sync::Arc;
 
@@ -20,6 +22,10 @@ pub struct ParsedFile {
     pub max_chars: FieldMaxChars,
     /// Every line of the file as stored, empty lines included.
     pub lines: Arc<Vec<String>>,
+    /// Breaks of a live file, by position of the line they are drawn above.
+    pub raw_breaks: BTreeMap<usize, Arc<BreakMark>>,
+    /// What a live file keeps besides its lines.
+    pub live: Option<LiveBuffer>,
 }
 
 /// The lines of `text` as shown in the Raw View.
@@ -35,6 +41,27 @@ impl ParsedFile {
             entries: parsed.entries,
             max_chars: parsed.max_chars,
             lines: Arc::new(split_lines(&String::from_utf8_lossy(bytes))),
+            raw_breaks: BTreeMap::new(),
+            live: None,
+        }
+    }
+
+    /// The lines, to change them in place.
+    pub fn lines_mut(&mut self) -> &mut Vec<String> {
+        Arc::make_mut(&mut self.lines)
+    }
+
+    /// Move the Breaks at line positions `from` and below by `by` lines;
+    /// Breaks that move below position 0 are dropped.
+    pub fn shift_breaks_from(&mut self, from: usize, by: isize) {
+        let moved: Vec<(usize, Arc<BreakMark>)> = std::mem::take(&mut self.raw_breaks)
+            .into_iter()
+            .collect();
+        for (pos, mark) in moved {
+            let pos = if pos >= from { pos as isize + by } else { pos as isize };
+            if pos >= 0 {
+                self.raw_breaks.insert(pos as usize, mark);
+            }
         }
     }
 
@@ -43,7 +70,11 @@ impl ParsedFile {
     }
 
     pub fn from_path(path: &Path) -> std::io::Result<Self> {
-        Ok(Self::from_bytes(&std::fs::read(path)?))
+        Self::from_source(FileSource::Disk(path))
+    }
+
+    pub fn from_source(source: FileSource) -> std::io::Result<Self> {
+        Ok(Self::from_bytes(&read_source(source)?))
     }
 
     pub fn empty() -> Self {

@@ -148,7 +148,7 @@ pub fn generate_sample_text() -> String {
         let nanos = (entry.timestamp.fract() * 1_000_000_000.0) as u32;
         let stamp = DateTime::from_timestamp(secs, nanos)
             .map(|dt| dt.format("%Y-%m-%d %H:%M:%S%.3f").to_string())
-            .unwrap_or_else(|| entry.time_str.clone());
+            .unwrap_or_else(|| entry.time_str.to_string());
         out.push_str(&format!(
             "{} [{}] [{}] {}\n",
             stamp,

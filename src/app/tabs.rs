@@ -12,20 +12,37 @@ use super::AppView;
 use crate::column::FieldMaxChars;
 use crate::filter::FilterState;
 use crate::focus::FocusTabs;
+use crate::live::LiveBuffer;
 use crate::space_view::{BuiltView, ParsedFile, build_file_view, build_space_view};
-use crate::workspace::log_space::{LogSpace, LogSpaceKind};
+use crate::archive::{ArchiveError, MAX_UNCOMPRESSED_BYTES, detect, read_entries, read_source};
+use crate::workspace::log_space::{LogFile, LogSpace, LogSpaceKind};
 use crate::workspace::project::Project;
 use crate::workspace::working_set::{TabSessionState, TabTarget, ViewMode, WorkingSet};
 use gpui::{Context, ScrollStrategy};
 use std::path::Path;
 
+/// The notice for a file that could not be read; an Archive Entry is named
+/// by its display name.
+fn read_failure(file: &LogFile, e: &std::io::Error) -> String {
+    let name = if file.entry.is_some() {
+        file.display_name.as_str()
+    } else {
+        file.path.as_deref().unwrap_or(&file.display_name)
+    };
+    if e.kind() == std::io::ErrorKind::NotFound {
+        format!("{name} was not found")
+    } else {
+        format!("Could not read {name}: {e}")
+    }
+}
+
 /// What a tab's view opens with.
-struct OpenView {
-    built: BuiltView,
-    filter: FilterState,
-    focus: FocusTabs,
-    source_visible: bool,
-    name: String,
+pub(crate) struct OpenView {
+    pub built: BuiltView,
+    pub filter: FilterState,
+    pub focus: FocusTabs,
+    pub source_visible: bool,
+    pub name: String,
 }
 
 impl OpenView {
@@ -113,39 +130,138 @@ impl AppView {
 
     /// Make sure the file is parsed and cached. A file that cannot be read
     /// counts as empty and leaves a notice.
-    pub(crate) fn ensure_file_loaded(&mut self, file_id: &str, path: Option<&str>) {
-        if self.parsed_files.contains_key(file_id) {
+    pub(crate) fn ensure_file_loaded(&mut self, file: &LogFile) {
+        if self.parsed_files.contains_key(&file.file_id) {
             return;
         }
-        let parsed = match path {
-            Some(path) => match ParsedFile::from_path(Path::new(path)) {
+        let parsed = match file.source() {
+            Some(source) => match ParsedFile::from_source(source) {
                 Ok(parsed) => parsed,
                 Err(e) => {
-                    // A scratch file that does not exist yet is just empty.
-                    if e.kind() != std::io::ErrorKind::NotFound {
-                        self.notice = Some(format!("Could not read {path}: {e}"));
-                    } else {
-                        self.notice = Some(format!("{path} was not found"));
-                    }
+                    self.notice = Some(read_failure(file, &e));
                     ParsedFile::empty()
                 }
             },
             None => ParsedFile::empty(),
         };
+        self.parsed_files.insert(file.file_id.clone(), parsed);
+    }
+
+    /// Load a file that is read live: what is on disk now, and the state the
+    /// source needs to carry on from there. An Archive Entry is static: it
+    /// is read once and has no live state.
+    pub(crate) fn ensure_live_file_loaded(&mut self, file: &LogFile) {
+        if self.parsed_files.contains_key(&file.file_id) {
+            return;
+        }
+        let Some(source) = file.source() else {
+            self.parsed_files.insert(file.file_id.clone(), ParsedFile::empty());
+            return;
+        };
+        let bytes = match read_source(source) {
+            Ok(bytes) => bytes,
+            Err(e) => {
+                self.notice = Some(read_failure(file, &e));
+                Vec::new()
+            }
+        };
+        let mut parsed = ParsedFile::from_bytes(&bytes);
+        if file.entry.is_none() {
+            parsed.live = Some(LiveBuffer::loaded_from_bytes(&file.display_name, &bytes, parsed.entries.len()));
+        }
+        self.parsed_files.insert(file.file_id.clone(), parsed);
+    }
+
+    /// Read the Archive Entries of a space that are not cached yet, once per
+    /// Archive, so a `.tar.gz` is unpacked a single time however many of its
+    /// entries the space holds.
+    fn ensure_archive_entries_loaded(&mut self, space: &LogSpace) {
+        let mut by_archive: Vec<(&str, Vec<&LogFile>)> = Vec::new();
+        for file in &space.files {
+            let (Some(archive), Some(_)) = (file.path.as_deref(), file.entry.as_deref()) else { continue };
+            if self.parsed_files.contains_key(&file.file_id) {
+                continue;
+            }
+            match by_archive.iter_mut().find(|(a, _)| *a == archive) {
+                Some((_, files)) => files.push(file),
+                None => by_archive.push((archive, vec![file])),
+            }
+        }
+        let mut notices = Vec::new();
+        for (archive, files) in by_archive {
+            let names: Vec<&str> = files.iter().filter_map(|f| f.entry.as_deref()).collect();
+            let path = Path::new(archive);
+            let result = match detect(path) {
+                Some(kind) => read_entries(path, kind, &names, MAX_UNCOMPRESSED_BYTES),
+                None if path.exists() => Err(ArchiveError::Damaged("not an archive".into())),
+                None => Err(ArchiveError::NotFound),
+            };
+            let mut entries = match result {
+                Ok(entries) => entries,
+                Err(e) => {
+                    let e = std::io::Error::from(e);
+                    notices.extend(files.iter().map(|f| read_failure(f, &e)));
+                    for file in files {
+                        self.parsed_files.insert(file.file_id.clone(), ParsedFile::empty());
+                    }
+                    continue;
+                }
+            };
+            for file in files {
+                let content = file.entry.as_deref().and_then(|name| entries.remove(name));
+                let parsed = match content {
+                    Some(Ok(bytes)) => ParsedFile::from_bytes(&bytes),
+                    Some(Err(e)) => {
+                        notices.push(read_failure(file, &std::io::Error::from(e)));
+                        ParsedFile::empty()
+                    }
+                    None => ParsedFile::empty(),
+                };
+                self.parsed_files.insert(file.file_id.clone(), parsed);
+            }
+        }
+        if !notices.is_empty() {
+            self.notice = Some(notices.join("; "));
+        }
+    }
+
+    /// A Remote File starts empty: its lines come from its source.
+    pub(crate) fn ensure_remote_file_loaded(&mut self, file_id: &str, name: &str) {
+        if self.parsed_files.contains_key(file_id) {
+            return;
+        }
+        let mut parsed = ParsedFile::empty();
+        parsed.live = Some(LiveBuffer::remote(name));
         self.parsed_files.insert(file_id.to_string(), parsed);
+    }
+
+    /// Put freshly built rows into the live fields, keeping the Filter, the
+    /// Focus Tabs and every other setting of the open view.
+    pub(crate) fn install_live_rows(&mut self, open: OpenView) {
+        let OpenView { built, source_visible, .. } = open;
+        self.no_timestamp_files = built.no_timestamp_files.iter().cloned().collect();
+        self.all_entries = built.entries;
+        self.filter_index = built.index;
+        self.column_layout.max_chars = built.max_chars;
+        self.column_layout.set_source_visible(source_visible);
     }
 
     /// Load every file of the Log Space into the cache and re-parse the
     /// scratch files edited since they were parsed.
     pub(crate) fn ensure_space_loaded(&mut self, space: &LogSpace) {
+        self.ensure_archive_entries_loaded(space);
         for file in &space.files {
-            self.ensure_file_loaded(&file.file_id, file.path.as_deref());
+            match space.kind {
+                LogSpaceKind::Scratch => self.ensure_file_loaded(file),
+                LogSpaceKind::Remote => self.ensure_remote_file_loaded(&file.file_id, &file.display_name),
+                _ => self.ensure_live_file_loaded(file),
+            }
         }
         self.reparse_edited_scratch_files();
     }
 
     /// Build the rows of a tab's view, with the Filter and Focus Tabs it keeps.
-    fn build_view_for(&mut self, target: &TabTarget) -> Option<OpenView> {
+    pub(crate) fn build_view_for(&mut self, target: &TabTarget) -> Option<OpenView> {
         let space = self.active_project()?.log_space(target.space_id()?)?.clone();
         self.ensure_space_loaded(&space);
         match target {
@@ -155,7 +271,10 @@ impl AppView {
                     built,
                     filter: space.filter.clone(),
                     focus: space.focus.clone(),
-                    source_visible: space.source_column_shown(),
+                    source_visible: self
+                        .workspace_state
+                        .show_source
+                        .unwrap_or_else(|| space.source_column_shown()),
                     name: space.name.clone(),
                 })
             }
@@ -211,6 +330,9 @@ impl AppView {
             }
         }
 
+        self.live.follow = true;
+        self.live.unseen = 0;
+        self.sync_live_sources(cx);
         self.apply_filters_and_refresh(cx);
         if self.view_mode == ViewMode::Raw {
             self.run_raw_search_keep_position(cx);
@@ -224,6 +346,9 @@ impl AppView {
                     if pos < self.visible_indices.len() {
                         self.scroll_handle.scroll_to_item(pos, ScrollStrategy::Center);
                     }
+                } else if self.active_space_is_live() && self.view_mode == ViewMode::Parsed {
+                    // A live Log Space opens with Follow on: at its newest line.
+                    self.scroll_handle.scroll_to_bottom();
                 }
                 self.adopt_view_selection();
             }
@@ -318,7 +443,7 @@ impl AppView {
         self.ensure_space_loaded(space);
         let mut session = TabSessionState::new();
         session.mode = match space.kind {
-            LogSpaceKind::Imported => ViewMode::Parsed,
+            LogSpaceKind::Imported | LogSpaceKind::Remote => ViewMode::Parsed,
             LogSpaceKind::Scratch => {
                 let empty = space.files.iter().all(|f| {
                     self.parsed_files

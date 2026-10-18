@@ -43,7 +43,6 @@ pub const COLLAPSED_HEIGHT: f32 = TAB_STRIP_HEIGHT + 1.0;
 /// Where the pane reads the text of its rows from.
 pub enum PaneSource {
     Parsed {
-        entries: Arc<Vec<LogEntry>>,
         paints: Arc<Vec<Option<RowPaint>>>,
     },
     Raw {
@@ -59,8 +58,20 @@ pub struct PaneTab {
     pub active: bool,
 }
 
+/// Where the pane is drawn.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum PaneMode {
+    /// Under the main window, at a height of its own.
+    Docked,
+    /// Filling a Focus Window, with the Search field of the open tab on top.
+    Window,
+}
+
 pub struct PaneState<'a> {
     pub view: gpui::Entity<AppView>,
+    pub mode: PaneMode,
+    /// The Search field shown in a Focus Window.
+    pub search_input: Option<&'a gpui::Entity<InputState>>,
     pub height: f32,
     /// Collapsed, the pane is just its strip of tabs.
     pub expanded: bool,
@@ -82,6 +93,9 @@ pub struct PaneState<'a> {
     pub scroll_handle: &'a UniformListScrollHandle,
     pub selection: Option<TextSelection>,
     pub bounds_sink: std::rc::Rc<std::cell::Cell<Bounds<Pixels>>>,
+    /// Index in `rows` of the widest row. Computed by the caller: the pane
+    /// renders inside the AppView's own render, so it must not read it back.
+    pub longest: usize,
 }
 
 /// Width taken by the cells before the text of a row.
@@ -97,6 +111,7 @@ pub struct FocusPane;
 impl FocusPane {
     pub fn render(state: PaneState, cx: &mut gpui::App) -> gpui::AnyElement {
         let height = state.height;
+        let pane_bg = state.colors.background;
         let theme = cx.theme();
         let (border, muted, bg, fg) = (theme.border, theme.muted_foreground, theme.background, theme.foreground);
         let tab_active_bg = theme.list_active;
@@ -151,6 +166,7 @@ impl FocusPane {
         let (find_cur, find_total) = state.find.display();
         let find_error = state.find.parse_error.is_some();
         let (v_prev, v_next, v_hide) = (state.view.clone(), state.view.clone(), state.view.clone());
+        let v_detach = state.view.clone();
         let find_box = h_flex()
             .gap_1()
             .items_center()
@@ -193,13 +209,36 @@ impl FocusPane {
                     .on_click(move |_, _w, cx| v_next.update(cx, |this, cx| this.focus_find_next(cx))),
             )
             .child(div().min_w(px(40.0)).text_xs().text_color(muted).child(format!("{find_cur}/{find_total}")))
-            .child(
-                Button::new("focus-pane-collapse")
-                    .ghost()
-                    .xsmall()
-                    .icon(if state.expanded { IconName::ChevronDown } else { IconName::ChevronUp })
-                    .on_click(move |_, _w, cx| v_hide.update(cx, |this, cx| this.toggle_focus_pane(cx))),
-            );
+            .map(|this| match state.mode {
+                PaneMode::Docked => this
+                    .child(
+                        Button::new("focus-pane-detach")
+                            .ghost()
+                            .xsmall()
+                            .icon(IconName::ExternalLink)
+                            .tooltip("Move to window")
+                            .on_click(move |_, window, cx| {
+                                v_detach.update(cx, |this, cx| this.move_focus_to_window(window, cx))
+                            }),
+                    )
+                    .child(
+                        Button::new("focus-pane-collapse")
+                            .ghost()
+                            .xsmall()
+                            .icon(if state.expanded { IconName::ChevronDown } else { IconName::ChevronUp })
+                            .on_click(move |_, _w, cx| v_hide.update(cx, |this, cx| this.toggle_focus_pane(cx))),
+                    ),
+                PaneMode::Window => this.child(
+                    Button::new("focus-pane-back")
+                        .ghost()
+                        .xsmall()
+                        .icon(IconName::PictureInPicture2)
+                        .tooltip("Move back")
+                        .on_click(move |_, window, cx| {
+                            v_detach.update(cx, |this, cx| this.move_focus_back(window, cx))
+                        }),
+                ),
+            });
 
         let header = h_flex()
             .w_full()
@@ -210,10 +249,32 @@ impl FocusPane {
             .flex_shrink_0()
             .border_b_1()
             .border_color(border)
+            .when_some(state.search_input.filter(|_| state.mode == PaneMode::Window), |this, input| {
+                this.child(
+                    h_flex()
+                        .w(px(280.0))
+                        .h(px(24.0))
+                        .px_2()
+                        .gap_1()
+                        .items_center()
+                        .flex_shrink_0()
+                        .rounded_md()
+                        .border_1()
+                        .border_color(border)
+                        .bg(bg)
+                        .child(Icon::new(IconName::Search).size_3().text_color(muted))
+                        .child(
+                            div().flex_1().min_w(px(0.0)).child(
+                                Input::new(input).appearance(false).bordered(false).focus_bordered(false).h(px(22.0)),
+                            ),
+                        ),
+                )
+            })
             .child(div().flex_1().min_w(px(0.0)).overflow_hidden().child(strip))
             .child(find_box);
 
-        let expanded = state.expanded;
+        let window_mode = state.mode == PaneMode::Window;
+        let expanded = state.expanded || window_mode;
         let body = if !expanded {
             div().into_any_element()
         } else if state.rows.is_empty() {
@@ -236,34 +297,35 @@ impl FocusPane {
         div()
             .id("focus-pane")
             .w_full()
-            .h(px(if expanded { height } else { COLLAPSED_HEIGHT }))
-            .flex_shrink_0()
+            .map(|this| {
+                if window_mode {
+                    this.size_full()
+                } else {
+                    this.h(px(if expanded { height } else { COLLAPSED_HEIGHT })).flex_shrink_0().border_t_1()
+                }
+            })
             .flex()
             .flex_col()
-            .bg(bg)
+            .bg(pane_bg)
             .text_color(fg)
-            .border_t_1()
             .border_color(border)
             .child(header)
             .child(body)
             .into_any_element()
     }
 
-    fn render_rows(state: PaneState, _cx: &mut gpui::App) -> gpui::AnyElement {
-        // The widest row sets the width the list scrolls to.
-        let longest = state
-            .rows
-            .iter()
-            .enumerate()
-            .max_by_key(|(_, row)| row_len(&state.source, **row))
-            .map(|(i, _)| i)
-            .unwrap_or(0);
+    fn render_rows(state: PaneState, cx: &mut gpui::App) -> gpui::AnyElement {
+        // The widest row sets the width the list scrolls to. The rows are
+        // read from the view, never copied.
+        let longest = state.longest;
         let count = state.rows.len();
         let scroll_handle = state.scroll_handle.clone();
+        let alt_handle = state.scroll_handle.clone();
         let bounds_sink = state.bounds_sink.clone();
         let view = state.view.clone();
         let (v_down, v_move, v_up, v_up_out) = (view.clone(), view.clone(), view.clone(), view);
         let env = PaneRows {
+            view: state.view.clone(),
             rows: state.rows,
             source: state.source,
             selected: state.selected,
@@ -275,18 +337,20 @@ impl FocusPane {
             row_height: state.density.row_height(),
             font_size: state.density.font_size(),
         };
-        let list = uniform_list("focus_pane_list", count, move |range, _window, _cx| {
-            range.filter_map(|i| env.row(i)).collect::<Vec<_>>()
+        let list = uniform_list("focus_pane_list", count, move |range, _window, cx| {
+            let this = env.view.read(cx);
+            range.filter_map(|i| env.row(i, &this.all_entries)).collect::<Vec<_>>()
         })
         .size_full()
         .with_width_from_item(Some(longest))
         .with_horizontal_sizing_behavior(ListHorizontalSizingBehavior::Unconstrained)
         .track_scroll(state.scroll_handle);
 
-        div()
+        let container = div()
             .id("focus_pane_container")
             .flex_1()
-            .min_h(px(0.0))
+            .min_w(px(0.0))
+            .h_full()
             .overflow_hidden()
             .relative()
             .horizontal_scrollbar(&scroll_handle)
@@ -305,18 +369,43 @@ impl FocusPane {
                 v_up_out.update(cx, |this, cx| this.finish_pane_selection(event.position, cx));
             })
             .child(
-                gpui::canvas(|bounds, _, _| bounds, move |bounds, _, _, _| bounds_sink.set(bounds))
+                gpui::canvas(
+                    |bounds, _, _| bounds,
+                    move |bounds, _, window, _| {
+                        bounds_sink.set(bounds);
+                        crate::ui::canvas::boost_scroll_with_alt(&alt_handle, bounds, window);
+                    },
+                )
                     .absolute()
                     .size_full(),
             )
-            .child(list)
+            .child(list);
+
+        // The vertical scrollbar has its own column at the far right, so it never covers the rows.
+        div()
+            .flex_1()
+            .min_h(px(0.0))
+            .flex()
+            .flex_row()
+            .child(container)
+            .child(
+                div().w(px(12.0)).h_full().flex_shrink_0().relative().child(
+                    div().absolute().inset_0().child(
+                        gpui_component::scroll::Scrollbar::new(&scroll_handle)
+                            .id("focus-pane-vscrollbar")
+                            .axis(gpui_component::scroll::ScrollbarAxis::Vertical)
+                            .viewport_from_layout()
+                            .styles(|styles| styles.thumb(|t| t.min_length(px(120.0)))),
+                    ),
+                ),
+            )
             .into_any_element()
     }
 }
 
-fn row_len(source: &PaneSource, row: FocusRow) -> usize {
+pub fn row_len(source: &PaneSource, entries: &[LogEntry], row: FocusRow) -> usize {
     match (source, row) {
-        (PaneSource::Parsed { entries, .. }, FocusRow::Entry(ix)) => {
+        (PaneSource::Parsed { .. }, FocusRow::Entry(ix)) => {
             entries.get(ix).map_or(0, |e| e.raw_line.len())
         }
         (PaneSource::Raw { sections, .. }, FocusRow::Raw { section, line }) => sections
@@ -329,6 +418,7 @@ fn row_len(source: &PaneSource, row: FocusRow) -> usize {
 
 /// What the virtualized list needs to build the rows on its own.
 struct PaneRows {
+    view: gpui::Entity<AppView>,
     rows: Arc<Vec<FocusRow>>,
     source: PaneSource,
     selected: Option<usize>,
@@ -342,16 +432,18 @@ struct PaneRows {
 }
 
 impl PaneRows {
-    fn row(&self, index: usize) -> Option<gpui::Stateful<gpui::Div>> {
+    fn row(&self, index: usize, entries: &[LogEntry]) -> Option<gpui::Stateful<gpui::Div>> {
         let row = *self.rows.get(index)?;
         let colors = self.colors;
         // Each row is read as a `LogEntry`: the Parsed View has them, a Raw
         // line gets a plain one that carries its Markers.
         let raw_entry;
+        let break_label: Option<String>;
         let (entry, paint, number, source_name): (&LogEntry, Option<&RowPaint>, usize, Option<String>) =
             match (&self.source, row) {
-                (PaneSource::Parsed { entries, paints }, FocusRow::Entry(ix)) => {
+                (PaneSource::Parsed { paints }, FocusRow::Entry(ix)) => {
                     let e = entries.get(ix)?;
+                    break_label = e.break_before.as_ref().map(|m| m.label.clone());
                     (e, paints.get(ix).and_then(|p| p.as_ref()), e.index, e.source.as_deref().map(str::to_string))
                 }
                 (PaneSource::Raw { sections, markers }, FocusRow::Raw { section, line }) => {
@@ -372,6 +464,7 @@ impl PaneRows {
                         .cloned()
                         .unwrap_or_default();
                     raw_entry = e;
+                    break_label = s.breaks.get(&line).map(|m| m.label.clone());
                     (&raw_entry, None, line + 1, Some(s.display_name.clone()))
                 }
                 _ => return None,
@@ -403,10 +496,11 @@ impl PaneRows {
             rule_cell: None,
         };
         let level_symbol = level_marker(entry.level).map_or(" ", |m| m.symbol());
-        let outline = if is_selected {
-            Some(colors.header_fg)
-        } else if is_find_current {
+        // The current Match outranks the selected row, as on the Log Canvas.
+        let outline = if is_find_current {
             Some(colors.find)
+        } else if is_selected {
+            Some(colors.header_fg)
         } else {
             None
         };
@@ -431,7 +525,7 @@ impl PaneRows {
                         .px_2()
                         .text_right()
                         .text_color(colors.muted)
-                        .child(number.to_string()),
+                        .child(crate::live::line_number_text(number)),
                 )
                 .when(parsed, |this| {
                     this.child(
@@ -470,6 +564,9 @@ impl PaneRows {
                     row.child(
                         div().absolute().top_0().left_0().right_0().bottom_0().border_1().border_color(color),
                     )
+                })
+                .when_some(break_label, |row, label| {
+                    row.child(crate::ui::canvas::render_break(label, px(NUMBER_WIDTH + 8.0), &colors))
                 }),
         )
     }

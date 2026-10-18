@@ -1,4 +1,4 @@
-use log_gpui::workspace::log_space::{LogSpaceKind, SpaceNameError};
+use log_gpui::workspace::log_space::{ImportSource, LogSpaceKind, SpaceNameError};
 use log_gpui::workspace::new_space::{
     NewLogSpaceForm, PendingStatus, expand_paths, is_binary, path_is_binary,
 };
@@ -79,7 +79,7 @@ fn binary_files_are_listed_but_not_counted() {
 
     assert_eq!(form.files.len(), 2);
     assert_eq!(form.files[1].warning(), Some("Not a text file"));
-    assert_eq!(form.importable_paths(), vec!["/a.log".to_string()]);
+    assert_eq!(form.importable_sources(), vec![ImportSource::Disk("/a.log".to_string())]);
     assert_eq!(form.create_label(), "Create with 1 file");
 }
 
@@ -119,7 +119,7 @@ fn a_dropped_folder_gives_its_files_one_level_deep() {
     let names: Vec<String> = form
         .files
         .iter()
-        .map(|f| std::path::Path::new(&f.path).file_name().unwrap().to_string_lossy().to_string())
+        .map(|f| f.display_name())
         .collect();
     assert_eq!(names, ["a.log", "b.log"]);
     assert!(form.files.iter().all(|f| f.status == PendingStatus::Ok));
@@ -141,7 +141,7 @@ fn a_file_with_nul_bytes_is_binary() {
     form.add_paths(&[dump.to_string_lossy().to_string(), text.to_string_lossy().to_string()]);
     assert_eq!(form.files[0].status, PendingStatus::Binary);
     assert_eq!(form.files[1].status, PendingStatus::Ok);
-    assert_eq!(form.importable_paths().len(), 1);
+    assert_eq!(form.importable_sources().len(), 1);
     std::fs::remove_dir_all(&dir).ok();
 }
 

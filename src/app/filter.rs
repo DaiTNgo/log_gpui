@@ -76,7 +76,16 @@ impl AppView {
             .evaluate(&self.filter_index, &mut self.all_entries);
         self.filter_pass = std::sync::Arc::new(pass);
         if self.visible_indices.len() != self.all_entries.len() {
-            self.visible_indices = std::sync::Arc::new((0..self.all_entries.len()).collect());
+            // Always every row in order: grow or cut the list where it is, not
+            // a new one of the size of the file for every batch of live lines.
+            let rows = self.all_entries.len();
+            let visible = std::sync::Arc::make_mut(&mut self.visible_indices);
+            let have = visible.len();
+            if have < rows {
+                visible.extend(have..rows);
+            } else {
+                visible.truncate(rows);
+            }
         }
         // Rows may be new: a selection of them no longer means the same.
         self.text_selection = None;

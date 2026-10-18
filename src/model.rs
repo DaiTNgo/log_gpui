@@ -1,4 +1,5 @@
 use crate::marker::TextMarker;
+use gpui::SharedString;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::ops::Range;
@@ -73,6 +74,67 @@ impl LogLevel {
     }
 }
 
+/// The byte range in `raw_line` of each field read from the line, by field
+/// name. A line has a handful of them, so a plain list takes far less memory
+/// than a map; the names are shared, never copied per line, and so is the
+/// list when an entry is copied into a view.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(from = "HashMap<String, Range<usize>>", into = "HashMap<String, Range<usize>>")]
+pub struct Spans(std::sync::Arc<[(&'static str, Range<usize>)]>);
+
+/// The one copy of a field name, kept for the rest of the run: names come
+/// from the fields of the logs read, so there are few of them.
+fn intern(name: &str) -> &'static str {
+    use std::cell::RefCell;
+    use std::collections::HashSet;
+    thread_local! {
+        static NAMES: RefCell<HashSet<&'static str>> = RefCell::new(HashSet::new());
+    }
+    NAMES.with(|names| {
+        let mut names = names.borrow_mut();
+        if let Some(known) = names.get(name) {
+            return *known;
+        }
+        let leaked: &'static str = Box::leak(name.to_string().into_boxed_str());
+        names.insert(leaked);
+        leaked
+    })
+}
+
+impl Spans {
+    pub fn from_map(map: &HashMap<String, Range<usize>>) -> Self {
+        Self(map.iter().map(|(name, range)| (intern(name), range.clone())).collect())
+    }
+
+    pub fn get(&self, name: &str) -> Option<&Range<usize>> {
+        self.0.iter().find(|(key, _)| *key == name).map(|(_, range)| range)
+    }
+
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = (&'static str, &Range<usize>)> {
+        self.0.iter().map(|(name, range)| (*name, range))
+    }
+}
+
+impl From<HashMap<String, Range<usize>>> for Spans {
+    fn from(map: HashMap<String, Range<usize>>) -> Self {
+        Self::from_map(&map)
+    }
+}
+
+impl From<Spans> for HashMap<String, Range<usize>> {
+    fn from(spans: Spans) -> Self {
+        spans.0.iter().map(|(name, range)| (name.to_string(), range.clone())).collect()
+    }
+}
+
 fn default_true() -> bool {
     true
 }
@@ -88,27 +150,27 @@ pub struct LogEntry {
     #[serde(default = "default_true")]
     pub has_time: bool,
     /// Formatted time string (e.g. 10:32:02.441)
-    pub time_str: String,
+    pub time_str: SharedString,
     /// Time delta from previous displayed log entry in milliseconds
     pub delta_time_ms: Option<f64>,
     /// Tag / Service / Logger module name (e.g. "auth", "api", "database")
-    pub tag: String,
+    pub tag: SharedString,
     /// Log severity level, as understood from `level_text`
     pub level: LogLevel,
     /// The level exactly as written in the line (`err`, `E`, `ERROR`); empty
     /// when the line has none.
     #[serde(default)]
-    pub level_text: String,
+    pub level_text: SharedString,
     /// Byte range in `raw_line` of each field read from the line.
     #[serde(default)]
-    pub spans: HashMap<String, Range<usize>>,
+    pub spans: Spans,
     /// Line number of the Parent Line when this is a Continuation Line.
     #[serde(default)]
     pub parent: Option<usize>,
     /// Parsed message payload
-    pub payload: String,
+    pub payload: SharedString,
     /// Raw unparsed line content
-    pub raw_line: String,
+    pub raw_line: SharedString,
     /// Colors the user painted on stretches of this line's text.
     #[serde(default)]
     pub markers: Vec<TextMarker>,
@@ -122,6 +184,10 @@ pub struct LogEntry {
     /// from 1 in each Generation.
     #[serde(default)]
     pub generation: u32,
+    /// A Break drawn just above this row: the file was not continuous here.
+    /// Not part of the line; it has no line number and is never copied.
+    #[serde(skip)]
+    pub break_before: Option<std::sync::Arc<crate::live::BreakMark>>,
     /// `file_id` of the Source File when the entry belongs to a Log Space.
     #[serde(skip)]
     pub file_id: Option<std::sync::Arc<str>>,
@@ -145,20 +211,21 @@ impl LogEntry {
             index,
             timestamp,
             has_time: timestamp.is_finite() && timestamp > 0.0,
-            time_str,
+            time_str: time_str.into(),
             delta_time_ms: None,
-            tag,
+            tag: tag.into(),
             level,
-            level_text: if level == LogLevel::Unknown { String::new() } else { level.as_str().to_string() },
-            spans: HashMap::new(),
+            level_text: if level == LogLevel::Unknown { SharedString::default() } else { level.as_str().into() },
+            spans: Spans::default(),
             parent: None,
-            payload,
-            raw_line,
+            payload: payload.into(),
+            raw_line: raw_line.into(),
             markers: Vec::new(),
             request_id: None,
             trace_id: None,
             json_fields: Vec::new(),
             generation: 0,
+            break_before: None,
             file_id: None,
             source: None,
         }
@@ -226,8 +293,8 @@ impl LogEntry {
             event.message.clone(),
             event.raw_line.clone(),
         );
-        entry.level_text = level_text;
-        entry.spans = event.spans.clone();
+        entry.level_text = level_text.into();
+        entry.spans = Spans::from_map(&event.spans);
         entry.parent = event.parent;
         entry.has_time = event.has_time;
         entry.request_id = request_id;

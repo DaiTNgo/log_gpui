@@ -50,6 +50,8 @@ pub struct RawSection {
     pub display_name: String,
     pub folder: Option<String>,
     pub lines: Arc<Vec<String>>,
+    /// Breaks of a live file, by position of the line they are drawn above.
+    pub breaks: Arc<std::collections::BTreeMap<usize, Arc<crate::live::BreakMark>>>,
     /// A scratch file opened as a File View can be edited here.
     pub editable: bool,
 }
@@ -80,6 +82,11 @@ pub struct RawViewState {
     /// Selection each editor had when the view last re-rendered for it.
     pub last_selection: HashMap<String, std::ops::Range<usize>>,
     lines_cache: std::cell::RefCell<HashMap<String, Arc<Vec<String>>>>,
+    /// Text a live file received, to add to its editor at the next render.
+    pub pending_appends: HashMap<String, String>,
+    /// Live files whose editor must be built again (lines were inserted
+    /// above, dropped or renumbered).
+    pub stale: HashSet<String>,
 }
 
 impl RawViewState {
@@ -99,6 +106,8 @@ impl RawViewState {
             selected: None,
             last_selection: HashMap::new(),
             lines_cache: Default::default(),
+            pending_appends: HashMap::new(),
+            stale: HashSet::new(),
         }
     }
 
@@ -187,6 +196,12 @@ impl AppView {
                     display_name: f.display_name.clone(),
                     folder: f.folder(),
                     lines,
+                    breaks: Arc::new(
+                        scratch
+                            .then(|| None)
+                            .unwrap_or_else(|| self.parsed_files.get(&f.file_id).map(|p| p.raw_breaks.clone()))
+                            .unwrap_or_default(),
+                    ),
                     editable,
                 }
             })
@@ -228,6 +243,29 @@ impl AppView {
             return;
         }
         let mut created = false;
+        for file_id in std::mem::take(&mut self.raw.stale) {
+            self.raw.pending_appends.remove(&file_id);
+            self.raw.editors.remove(&file_id);
+            self.raw.last_selection.remove(&file_id);
+        }
+        let search_focused = gpui::Focusable::focus_handle(self.search_input.read(cx), cx).is_focused(window);
+        let mut appended = false;
+        for (file_id, text) in std::mem::take(&mut self.raw.pending_appends) {
+            let Some(editor) = self.raw.editors.get(&file_id) else { continue };
+            let sel = editor.state.read(cx).selected_range();
+            editor.state.update(cx, |state, cx| {
+                use gpui_component::input::RopeExt as _;
+                let end = state.text().offset_to_position(state.text().len());
+                state.set_cursor_position(end, window, cx);
+                state.insert(text, window, cx);
+            });
+            // The caret moved with the insert; the current line is unchanged.
+            self.raw.last_selection.insert(file_id.clone(), sel);
+            appended = true;
+        }
+        if appended && search_focused {
+            self.search_input.update(cx, |state, cx| state.focus(window, cx));
+        }
         for section in self.raw_sections() {
             if self.raw.editors.contains_key(&section.file_id) {
                 continue;
@@ -314,6 +352,8 @@ impl AppView {
 
     pub fn set_raw_soft_wrap(&mut self, wrap: bool, window: &mut Window, cx: &mut Context<Self>) {
         self.raw.soft_wrap = wrap;
+        self.workspace_state.raw_soft_wrap = wrap;
+        self.schedule_session_save(cx);
         for editor in self.raw.editors.values() {
             editor.state.update(cx, |state, cx| state.set_soft_wrap(wrap, window, cx));
         }
@@ -407,6 +447,9 @@ impl AppView {
 
     /// Forget everything cached about a file (it was removed).
     pub(crate) fn forget_file(&mut self, file_id: &str) {
+        if let Some(source) = self.live.sources.remove(file_id) {
+            source.handle.close();
+        }
         self.parsed_files.remove(file_id);
         self.raw.editors.remove(file_id);
         self.raw.texts.remove(file_id);

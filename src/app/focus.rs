@@ -381,6 +381,10 @@ impl AppView {
     }
 
     pub fn toggle_focus_pane(&mut self, cx: &mut Context<Self>) {
+        // In the Focus Window the pane cannot be hidden; bring the window up.
+        if self.activate_focus_window(cx) {
+            return;
+        }
         self.workspace_state.focus_pane.toggle();
         self.schedule_session_save(cx);
         cx.notify();

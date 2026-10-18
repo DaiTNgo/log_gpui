@@ -1,0 +1,902 @@
+//! Logic: live reading. A source per file sends the lines written after the
+//! Log Space was opened; the app gathers what arrived in about 100 ms and
+//! applies it once: parse, place by timestamp, update Filter, Search and the
+//! Focus Pane, and follow the end when Follow is on.
+
+use super::AppView;
+use crate::focus::LineRef;
+use crate::live::{
+    BreakKind, LineSource, LocalFileSource, SourceCommand, SourceEvent, SourceHandle,
+    SourceStatus, Trimmed,
+};
+use crate::model::LogEntry;
+use crate::workspace::log_space::LogSpaceKind;
+use crate::workspace::working_set::{TabTarget, ViewMode};
+use gpui::{Context, Pixels, point};
+use std::collections::{HashMap, HashSet};
+use std::ops::Range;
+use std::sync::Arc;
+use std::time::Duration;
+
+/// How long the app gathers new lines before applying them.
+pub const LIVE_BATCH_INTERVAL: Duration = Duration::from_millis(100);
+
+/// Default Live Window: the newest lines kept for each Remote File.
+pub const DEFAULT_LIVE_WINDOW: usize = 100_000;
+
+/// A running source and what it last said.
+pub struct LiveSourceState {
+    pub handle: SourceHandle,
+    pub status: SourceStatus,
+    /// Name shown for the file in the status bar list.
+    pub name: String,
+    /// Whether the file is on a Server (Live Window applies).
+    pub remote: bool,
+    /// Where a remote source's real line numbers could not be counted.
+    pub numbers_unavailable: bool,
+}
+
+/// Live state of the app: not remembered when the app closes.
+pub struct LiveRuntime {
+    pub sources: HashMap<String, LiveSourceState>,
+    /// Log Spaces whose files are not read for now.
+    pub paused_spaces: HashSet<String>,
+    /// The view scrolls to the newest line.
+    pub follow: bool,
+    /// Lines that arrived while Follow was off.
+    pub unseen: usize,
+    /// Live Window: newest lines kept per Remote File.
+    pub window: usize,
+    pub pump_started: bool,
+    /// Batches applied since the allocator's cache was last given back.
+    batches_since_release: usize,
+}
+
+impl LiveRuntime {
+    pub fn new() -> Self {
+        Self {
+            sources: HashMap::new(),
+            paused_spaces: HashSet::new(),
+            follow: true,
+            unseen: 0,
+            window: DEFAULT_LIVE_WINDOW,
+            pump_started: false,
+            batches_since_release: 0,
+        }
+    }
+}
+
+impl Default for LiveRuntime {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// A file read live while a tab of its Log Space is open.
+struct NeededFile {
+    path: Option<String>,
+    name: String,
+    remote: Option<crate::workspace::log_space::RemoteRef>,
+    spaces: Vec<String>,
+}
+
+/// The row at the top of the view before rows moved.
+struct TopAnchor {
+    line: LineRef,
+    /// Its position in the rows.
+    row: usize,
+    /// How far the view is scrolled into the row.
+    within: Pixels,
+    row_height: Pixels,
+}
+
+/// What a batch did to one file.
+#[derive(Default)]
+struct FileDelta {
+    /// Positions in the file's entries of the lines appended at the end.
+    appended: Option<Range<usize>>,
+    /// Lines were inserted above, dropped, or renumbered.
+    structural: bool,
+    trimmed: Option<Trimmed>,
+    renumbered: Option<isize>,
+    generation: u32,
+    /// The last line already shown was replaced by its finished version.
+    replaced_last: bool,
+}
+
+fn now_label() -> String {
+    chrono::Local::now().format("%H:%M:%S").to_string()
+}
+
+impl AppView {
+    // ── Which Log Space is live ─────────────────────────────────────────────
+
+    /// Log Spaces of the active project that have a tab open.
+    fn open_space_ids(&self) -> Vec<String> {
+        let Some(project) = self.active_project() else { return Vec::new() };
+        let mut ids: Vec<String> = Vec::new();
+        for tab in project.working_set.tabs() {
+            if let Some(id) = tab.target.space_id() {
+                if !ids.iter().any(|i| i == id) {
+                    ids.push(id.to_string());
+                }
+            }
+        }
+        ids
+    }
+
+    /// Whether the open tab reads a Log Space that is read live (Scratch is
+    /// not).
+    pub fn active_space_is_live(&self) -> bool {
+        // A space of only Archive Entries has nothing to follow.
+        self.active_space().is_some_and(|s| {
+            s.kind != LogSpaceKind::Scratch
+                && (s.files.is_empty() || s.files.iter().any(|f| f.entry.is_none()))
+        })
+    }
+
+    /// The files of the Log Spaces with a tab open that are read live, by
+    /// `file_id`: local path, name, Server and path for a Remote File, and
+    /// the Log Spaces holding it.
+    fn needed_files(&self) -> HashMap<String, NeededFile> {
+        let open = self.open_space_ids();
+        let mut needed: HashMap<String, NeededFile> = HashMap::new();
+        if let Some(project) = self.active_project() {
+            for space_id in &open {
+                let Some(space) = project.log_space(space_id) else { continue };
+                if space.kind == LogSpaceKind::Scratch {
+                    continue;
+                }
+                // Archive Entries are static: they are read once, never live.
+                for file in space.files.iter().filter(|f| f.entry.is_none()) {
+                    let entry = needed.entry(file.file_id.clone()).or_insert_with(|| NeededFile {
+                        path: file.path.clone(),
+                        name: file.display_name.clone(),
+                        remote: file.remote.clone(),
+                        spaces: Vec::new(),
+                    });
+                    entry.spaces.push(space.id.clone());
+                }
+            }
+        }
+        needed
+    }
+
+    /// Start the sources of the files in open tabs and stop those of files no
+    /// tab shows any more. Safe to call at any time.
+    pub(crate) fn sync_live_sources(&mut self, cx: &mut Context<Self>) {
+        let open = self.open_space_ids();
+        let needed = self.needed_files();
+        // Stop the sources nobody needs.
+        let stale: Vec<String> = self
+            .live
+            .sources
+            .keys()
+            .filter(|id| !needed.contains_key(*id))
+            .cloned()
+            .collect();
+        for file_id in stale {
+            if let Some(source) = self.live.sources.remove(&file_id) {
+                source.handle.close();
+            }
+            // What was received is not kept after the Log Space closes.
+            self.parsed_files.remove(&file_id);
+        }
+        self.live.paused_spaces.retain(|id| open.contains(id));
+        self.start_missing_sources(cx);
+    }
+
+    /// Start a source for every needed file that has none.
+    pub(crate) fn start_missing_sources(&mut self, cx: &mut Context<Self>) {
+        for (file_id, file) in self.needed_files() {
+            if self.live.sources.contains_key(&file_id) {
+                continue;
+            }
+            let Some(parsed) = self.parsed_files.get(&file_id) else { continue };
+            let Some(buffer) = parsed.live.as_ref() else { continue };
+            let local_offset = buffer.local_offset;
+            let handle = match (&file.remote, &file.path) {
+                (Some(remote), _) => {
+                    match self.spawn_remote_source(&remote.server_id, &remote.path, &file.name, cx) {
+                        Some(handle) => handle,
+                        None => continue,
+                    }
+                }
+                (None, Some(path)) => LocalFileSource::new(path, local_offset).spawn(),
+                _ => continue,
+            };
+            // A source starts a new run: Markers of older Generations are gone.
+            if let Some(project) = self.active_project_mut() {
+                for space in &mut project.log_spaces {
+                    if let Some(f) = space.file_mut(&file_id) {
+                        f.markers.retain(|m| m.generations_ago == 0);
+                        f.generation = 0;
+                    }
+                }
+            }
+            if file.spaces.iter().any(|s| self.live.paused_spaces.contains(s)) {
+                handle.send(SourceCommand::Pause);
+            }
+            self.live.sources.insert(
+                file_id,
+                LiveSourceState {
+                    handle,
+                    status: SourceStatus::Connecting,
+                    name: file.name,
+                    remote: file.remote.is_some(),
+                    numbers_unavailable: false,
+                },
+            );
+        }
+    }
+
+    /// Run the loop that applies what the sources sent, every 100 ms.
+    pub(crate) fn start_live_pump(&mut self, cx: &mut Context<Self>) {
+        if self.live.pump_started {
+            return;
+        }
+        self.live.pump_started = true;
+        cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor().timer(LIVE_BATCH_INTERVAL).await;
+                if this.update(cx, |this, cx| this.pump_live(cx)).is_err() {
+                    break;
+                }
+            }
+        })
+        .detach();
+    }
+
+    // ── Follow and Pause ────────────────────────────────────────────────────
+
+    pub fn toggle_follow(&mut self, cx: &mut Context<Self>) {
+        if !self.active_space_is_live() {
+            return;
+        }
+        self.set_follow(!self.live.follow, cx);
+    }
+
+    pub fn set_follow(&mut self, on: bool, cx: &mut Context<Self>) {
+        self.live.follow = on;
+        if on {
+            self.live.unseen = 0;
+            self.scroll_to_newest();
+        }
+        cx.notify();
+    }
+
+    fn scroll_to_newest(&mut self) {
+        match self.view_mode {
+            ViewMode::Parsed => self.scroll_handle.scroll_to_bottom(),
+            ViewMode::Raw => self.raw.scroll.scroll_to_bottom(),
+        }
+    }
+
+    /// Whether the open Log Space is paused.
+    pub fn active_space_paused(&self) -> bool {
+        self.active_space().is_some_and(|s| self.live.paused_spaces.contains(&s.id))
+    }
+
+    /// Pause or resume every file of the open Log Space together.
+    pub fn toggle_pause(&mut self, cx: &mut Context<Self>) {
+        if !self.active_space_is_live() {
+            return;
+        }
+        let Some(space) = self.active_space().cloned() else { return };
+        let pause = !self.live.paused_spaces.contains(&space.id);
+        if pause {
+            self.live.paused_spaces.insert(space.id.clone());
+        } else {
+            self.live.paused_spaces.remove(&space.id);
+        }
+        for file in &space.files {
+            if let Some(source) = self.live.sources.get(&file.file_id) {
+                source.handle.send(if pause { SourceCommand::Pause } else { SourceCommand::Resume });
+            }
+        }
+        cx.notify();
+    }
+
+    /// Every Remote File is told the new Live Window.
+    pub fn set_live_window(&mut self, window: usize, cx: &mut Context<Self>) {
+        self.live.window = window.max(1_000);
+        self.workspace_state.live_window = self.live.window;
+        self.schedule_session_save(cx);
+        for source in self.live.sources.values().filter(|s| s.remote) {
+            source.handle.send(SourceCommand::SetWindow(self.live.window));
+        }
+        let window = self.live.window;
+        let mut trimmed_any = false;
+        let remote_ids: Vec<String> = self
+            .live
+            .sources
+            .iter()
+            .filter(|(_, s)| s.remote)
+            .map(|(id, _)| id.clone())
+            .collect();
+        for file_id in remote_ids {
+            if let Some(parsed) = self.parsed_files.get_mut(&file_id) {
+                if let Some(mut buffer) = parsed.live.take() {
+                    // A smaller window drops at once, not after 10% more.
+                    let trimmed = buffer.trim_to_window(parsed, window);
+                    parsed.live = Some(buffer);
+                    if let Some(trimmed) = trimmed {
+                        self.drop_markers_for(&file_id, &trimmed);
+                        trimmed_any = true;
+                    }
+                }
+            }
+        }
+        if trimmed_any {
+            self.rebuild_open_view_keeping_position(cx);
+        }
+        cx.notify();
+    }
+
+    // ── Applying a batch ────────────────────────────────────────────────────
+
+    /// Drain every source and apply what arrived, once.
+    pub fn pump_live(&mut self, cx: &mut Context<Self>) {
+        if self.live.sources.is_empty() {
+            return;
+        }
+        self.update_follow_from_scroll();
+
+        let mut batches: Vec<(String, Vec<SourceEvent>)> = Vec::new();
+        let mut budget = 200_000usize;
+        for (file_id, source) in &self.live.sources {
+            let mut events = Vec::new();
+            while budget > 0 {
+                match source.handle.events.try_recv() {
+                    Ok(event) => {
+                        budget = budget.saturating_sub(match &event {
+                            SourceEvent::Tail { lines, .. }
+                            | SourceEvent::Backfill { lines, .. }
+                            | SourceEvent::Append { lines } => lines.len().max(1),
+                            _ => 1,
+                        });
+                        events.push(event);
+                    }
+                    Err(_) => break,
+                }
+            }
+            if !events.is_empty() {
+                batches.push((file_id.clone(), events));
+            }
+        }
+        if batches.is_empty() {
+            return;
+        }
+
+        let started = std::time::Instant::now();
+        let mut deltas: Vec<(String, FileDelta)> = Vec::new();
+        for (file_id, events) in batches {
+            let delta = self.apply_file_events(&file_id, events);
+            deltas.push((file_id, delta));
+        }
+        let parsed_in = started.elapsed();
+        self.apply_deltas(deltas, cx);
+        if std::env::var_os("LOG_GPUI_LIVE_TRACE").is_some() {
+            eprintln!(
+                "live batch: parse {:?}, view {:?}, rows {}",
+                parsed_in,
+                started.elapsed() - parsed_in,
+                self.all_entries.len()
+            );
+        }
+    }
+
+    /// Follow turns off when the user scrolled away from the newest line, and
+    /// on when they scrolled back to it.
+    fn update_follow_from_scroll(&mut self) {
+        if self.view_mode != ViewMode::Parsed || !self.active_space_is_live() {
+            return;
+        }
+        let state = self.scroll_handle.0.borrow();
+        // A scroll we asked for has not been laid out yet.
+        if state.deferred_scroll_to_item.is_some() {
+            return;
+        }
+        drop(state);
+        let at_end = self.scroll_handle.is_scrolled_to_end().unwrap_or(true);
+        if at_end && !self.live.follow {
+            self.live.follow = true;
+            self.live.unseen = 0;
+        } else if !at_end && self.live.follow {
+            self.live.follow = false;
+        }
+    }
+
+    fn apply_file_events(&mut self, file_id: &str, events: Vec<SourceEvent>) -> FileDelta {
+        let mut delta = FileDelta::default();
+        let remote = self.live.sources.get(file_id).is_some_and(|s| s.remote);
+        let window = self.live.window;
+        let time = now_label();
+        let Some(mut parsed) = self.parsed_files.remove(file_id) else { return delta };
+        let Some(mut buffer) = parsed.live.take() else {
+            self.parsed_files.insert(file_id.to_string(), parsed);
+            return delta;
+        };
+        for event in events {
+            match event {
+                SourceEvent::Tail { lines, generation } => {
+                    buffer.apply_tail(&mut parsed, &lines, generation);
+                    delta.structural = true;
+                }
+                SourceEvent::Backfill { lines, .. } => {
+                    buffer.apply_backfill(&mut parsed, &lines);
+                    delta.structural = true;
+                }
+                SourceEvent::Append { lines } => {
+                    if buffer.replaces_last_line() && !lines.is_empty() {
+                        delta.replaced_last = true;
+                    }
+                    let range = buffer.apply_append(&mut parsed, &lines);
+                    delta.appended = Some(match delta.appended.take() {
+                        Some(old) => old.start..range.end,
+                        None => range,
+                    });
+                }
+                SourceEvent::TotalLines(total) => match total {
+                    Some(total) => {
+                        if let Some(d) = buffer.apply_total(&mut parsed, Some(total)) {
+                            delta.structural = true;
+                            delta.renumbered = Some(d);
+                            delta.generation = buffer.generation;
+                        }
+                    }
+                    None => {
+                        if let Some(source) = self.live.sources.get_mut(file_id) {
+                            source.numbers_unavailable = true;
+                        }
+                    }
+                },
+                SourceEvent::Break { kind } => {
+                    buffer.apply_break(kind, &time);
+                    if kind.starts_generation() {
+                        self.begin_generation_for(file_id);
+                    }
+                    if matches!(kind, BreakKind::Disconnected | BreakKind::Reconnected) {
+                        // Only the label changes; rows do not.
+                    }
+                }
+                SourceEvent::Status(status) => {
+                    if std::env::var_os("LOG_GPUI_LIVE_TRACE").is_some() {
+                        eprintln!("live status: {file_id}: {}", status.label());
+                    }
+                    if let Some(source) = self.live.sources.get_mut(file_id) {
+                        source.status = status;
+                    }
+                }
+            }
+        }
+        if remote {
+            if let Some(trimmed) = buffer.trim_to_window(&mut parsed, window) {
+                delta.structural = true;
+                delta.trimmed = Some(trimmed);
+            }
+        }
+        parsed.live = Some(buffer);
+        self.parsed_files.insert(file_id.to_string(), parsed);
+        if let Some(trimmed) = delta.trimmed.clone() {
+            self.drop_markers_for(file_id, &trimmed);
+        }
+        delta
+    }
+
+    /// The file has a new Generation in every Log Space that holds it.
+    fn begin_generation_for(&mut self, file_id: &str) {
+        if let Some(project) = self.active_project_mut() {
+            for space in &mut project.log_spaces {
+                if let Some(file) = space.file_mut(file_id) {
+                    file.begin_generation();
+                }
+            }
+        }
+    }
+
+    /// Lines left the Live Window: their Markers go with them.
+    fn drop_markers_for(&mut self, file_id: &str, trimmed: &Trimmed) {
+        if let Some(project) = self.active_project_mut() {
+            for space in &mut project.log_spaces {
+                if let Some(file) = space.file_mut(file_id) {
+                    file.drop_markers_before(trimmed.generation, trimmed.first_kept);
+                }
+            }
+        }
+    }
+
+    /// Show a batch in the open view.
+    fn apply_deltas(&mut self, deltas: Vec<(String, FileDelta)>, cx: &mut Context<Self>) {
+        // Numbers that moved: stored Markers and current lines follow them.
+        for (file_id, delta) in &deltas {
+            if let Some(by) = delta.renumbered {
+                self.renumber_file(file_id, delta.generation, by);
+            }
+        }
+
+        self.queue_raw_updates(&deltas);
+
+        let Some(target) = self.active_target() else {
+            return;
+        };
+        let space_files: HashSet<String> = match (&target, self.active_space()) {
+            (TabTarget::LogSpace { .. }, Some(space)) => space.files.iter().map(|f| f.file_id.clone()).collect(),
+            (TabTarget::FileView { file_id, .. }, _) => HashSet::from([file_id.clone()]),
+            _ => return,
+        };
+        let relevant: Vec<&(String, FileDelta)> = deltas
+            .iter()
+            .filter(|(id, d)| space_files.contains(id) && (d.appended.is_some() || d.structural))
+            .collect();
+        if relevant.is_empty() {
+            cx.notify();
+            return;
+        }
+
+        let before = self.all_entries.len();
+        let structural = relevant.iter().any(|(_, d)| d.structural);
+        if structural || !self.append_to_open_view(&relevant, cx) {
+            self.rebuild_open_view_keeping_position(cx);
+
+            if let Some((file_id, d)) = relevant.iter().find(|(_, d)| d.trimmed.is_some()).map(|(f, d)| (f.as_str(), d)) {
+                if let Some(trimmed) = &d.trimmed {
+                    self.move_current_lines_off_dropped(file_id, trimmed);
+                }
+            }
+        }
+        // Rows are copied and freed in large blocks all the time: give the
+        // allocator's cache back now and then, or it grows to gigabytes.
+        self.live.batches_since_release += 1;
+        if structural || self.live.batches_since_release >= 50 {
+            self.live.batches_since_release = 0;
+            release_freed_memory();
+        }
+        let grew = self.all_entries.len().saturating_sub(before);
+        if self.live.follow {
+            self.live.unseen = 0;
+            self.scroll_to_newest();
+        } else {
+            self.live.unseen += grew;
+        }
+        cx.notify();
+    }
+
+    /// Tell the Raw View's editors what changed: lines at the end are added to
+    /// the text, anything else builds the editor again.
+    fn queue_raw_updates(&mut self, deltas: &[(String, FileDelta)]) {
+        for (file_id, delta) in deltas {
+            if !self.raw.editors.contains_key(file_id) {
+                continue;
+            }
+            if delta.structural || delta.replaced_last {
+                self.raw.stale.insert(file_id.clone());
+                continue;
+            }
+            let Some(range) = delta.appended.clone() else { continue };
+            let Some(parsed) = self.parsed_files.get(file_id) else { continue };
+            let Some(lines) = parsed.lines.get(range.clone()) else {
+                self.raw.stale.insert(file_id.clone());
+                continue;
+            };
+            let mut text = lines.join("\n");
+            if range.start > 0 {
+                text.insert(0, '\n');
+            }
+            self.raw.pending_appends.entry(file_id.clone()).or_default().push_str(&text);
+        }
+    }
+
+    /// The fast case: lines appended in time order go straight to the end of
+    /// the rows. Returns false when the view has to be built again.
+    fn append_to_open_view(&mut self, relevant: &[&(String, FileDelta)], cx: &mut Context<Self>) -> bool {
+        let Some(target) = self.active_target() else { return false };
+        if !self.no_timestamp_files.is_empty() {
+            return false;
+        }
+        let is_space = matches!(target, TabTarget::LogSpace { .. });
+        let Some(space) = self.active_space().cloned() else { return false };
+        let order: HashMap<&str, usize> = space
+            .ordered_files()
+            .iter()
+            .enumerate()
+            .map(|(i, f)| (f.file_id.as_str(), i))
+            .collect();
+
+        // New rows with the time they sort by and where they came from.
+        struct NewRow {
+            ts: f64,
+            file: usize,
+            pos: usize,
+            entry: LogEntry,
+        }
+        let mut rows: Vec<NewRow> = Vec::new();
+        for (file_id, delta) in relevant {
+            let Some(range) = delta.appended.clone() else { continue };
+            let Some(parsed) = self.parsed_files.get(file_id) else { return false };
+            let Some(file) = space.file(file_id) else { return false };
+            let file_ix = order.get(file_id.as_str()).copied().unwrap_or(0);
+            let name: Arc<str> = Arc::from(file.display_name.as_str());
+            let id: Arc<str> = Arc::from(file_id.as_str());
+            // A file whose time goes backwards is not a sorted lane.
+            let mut lane_ts = f64::NEG_INFINITY;
+            if let Some(before) = range.start.checked_sub(1) {
+                let Some(prev) = effective_ts_at(&parsed.entries, before) else { return false };
+                lane_ts = prev;
+            }
+            for pos in range {
+                let Some(entry) = parsed.entries.get(pos) else { return false };
+                let Some(ts) = effective_ts_at(&parsed.entries, pos) else { return false };
+                if ts < lane_ts {
+                    return false;
+                }
+                lane_ts = ts;
+                let mut entry = entry.clone();
+                entry.file_id = Some(id.clone());
+                if is_space {
+                    entry.source = Some(name.clone());
+                }
+                rows.push(NewRow { ts, file: file_ix, pos, entry });
+            }
+        }
+        if rows.is_empty() {
+            return true;
+        }
+        // Lines of one file stay in order; files interleave by time.
+        rows.sort_by(|a, b| {
+            a.ts.partial_cmp(&b.ts)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then(a.file.cmp(&b.file))
+                .then(a.pos.cmp(&b.pos))
+        });
+        // The view is sorted by (time, file): the new rows go where the first
+        // of them belongs, and only the rows from there on move. A line that
+        // replaced the last one already shown, or a file whose time goes
+        // backwards, needs the view built again.
+        if relevant.iter().any(|(_, d)| d.replaced_last) {
+            return false;
+        }
+        let first_key = (rows[0].ts, rows[0].file);
+        let view_file = |entry: &LogEntry| -> usize {
+            entry
+                .file_id
+                .as_deref()
+                .and_then(|id| order.get(id).copied())
+                .unwrap_or(0)
+        };
+        let ts_index = &self.filter_index;
+        let from = partition_rows(self.all_entries.len(), |r| match ts_index.effective_timestamp(r) {
+            Some(ts) => (ts, view_file(&self.all_entries[r])) <= first_key,
+            None => true,
+        });
+        if (0..self.all_entries.len().saturating_sub(from)).any(|i| ts_index.effective_timestamp(from + i).is_none()) {
+            return false;
+        }
+        let selected = self.selected_row_pos.filter(|pos| *pos >= from).and_then(|pos| self.line_ref_of_entry(pos));
+        let anchor = self.top_row_anchor().filter(|a| a.row >= from);
+
+        // Merge the rows below `from` with the new ones, by the same key a
+        // full merge uses. Continuation Lines share their Parent's key and
+        // follow it in line order, so they stay under it.
+        let tail: Vec<LogEntry> = self.all_entries.split_off(from);
+        let tail_ts: Vec<f64> = (0..tail.len())
+            .map(|i| self.filter_index.effective_timestamp(from + i).unwrap_or(0.0))
+            .collect();
+        self.filter_index.truncate(&self.all_entries, &tail);
+        let mut merged: Vec<LogEntry> = Vec::with_capacity(tail.len() + rows.len());
+        let mut old = tail.into_iter().zip(tail_ts).peekable();
+        let mut new = rows.into_iter().peekable();
+        loop {
+            let take_old = match (old.peek(), new.peek()) {
+                (Some((entry, ts)), Some(n)) => (*ts, view_file(entry)) <= (n.ts, n.file),
+                (Some(_), None) => true,
+                (None, Some(_)) => false,
+                (None, None) => break,
+            };
+            if take_old {
+                merged.push(old.next().map(|(e, _)| e).unwrap());
+            } else {
+                let row = new.next().unwrap();
+                self.column_layout.max_chars.record_entry(&row.entry);
+                merged.push(row.entry);
+            }
+        }
+        let grew_from = self.all_entries.len();
+        if std::env::var_os("LOG_GPUI_LIVE_TRACE").is_some() {
+            eprintln!("live insert: {} rows from row {grew_from} of {}", merged.len(), grew_from + merged.len());
+        }
+        self.all_entries.extend(merged);
+        self.filter_index.append(&self.all_entries[grew_from..]);
+        self.apply_filters_and_refresh(cx);
+
+        if let Some(line) = selected {
+            self.selected_row_pos = self.entry_of_line_ref(&line);
+        }
+        self.restore_top_anchor(anchor);
+        true
+    }
+
+    /// Build the rows again from the cache, keeping the reading position:
+    /// the row at the top of the view stays at the top.
+    pub(crate) fn rebuild_open_view_keeping_position(&mut self, cx: &mut Context<Self>) {
+        let anchor = self.top_row_anchor();
+        let selected = self
+            .selected_row_pos
+            .and_then(|pos| self.line_ref_of_entry(pos));
+        let Some(target) = self.active_target() else { return };
+        // The old rows go first: both lists at once would double the memory
+        // for a moment.
+        self.all_entries = Vec::new();
+        self.filter_index = Default::default();
+        let Some(open) = self.build_view_for(&target) else { return };
+        self.install_live_rows(open);
+        self.apply_filters_and_refresh(cx);
+        if let Some(line) = selected {
+            self.selected_row_pos = self.entry_of_line_ref(&line);
+        }
+        self.restore_top_anchor(anchor);
+    }
+
+    /// The row at the top of the Parsed View, as a line that survives rows
+    /// being inserted above it, and how far the view is scrolled into it.
+    fn top_row_anchor(&self) -> Option<TopAnchor> {
+        if self.view_mode != ViewMode::Parsed {
+            return None;
+        }
+        let state = self.scroll_handle.0.borrow();
+        let base = &state.base_handle;
+        let (row, scrolled) = base.logical_scroll_top();
+        let row_height = base.bounds_for_item(row)?.size.height;
+        drop(state);
+        let line = self.line_ref_of_entry(row)?;
+        Some(TopAnchor { line, row, within: (-scrolled).max(Pixels::ZERO), row_height })
+    }
+
+    /// Scroll so the anchor's line is at the same pixel offset from the top as
+    /// before, wherever the rows around it moved. Does nothing while Follow
+    /// is on (the view goes to the newest line) or when the line is gone.
+    fn restore_top_anchor(&mut self, anchor: Option<TopAnchor>) {
+        let Some(anchor) = anchor else { return };
+        if self.live.follow {
+            return;
+        }
+        let Some(ix) = self.entry_of_line_ref(&anchor.line) else { return };
+        let top = anchor.row_height * ix as f32 + anchor.within;
+        let state = self.scroll_handle.0.borrow();
+        let mut offset = state.base_handle.offset();
+        offset.y = -top;
+        state.base_handle.set_offset(point(offset.x, offset.y));
+    }
+
+    /// Stored Markers and the current lines of Focus Tabs of a file whose
+    /// numbers moved by `by`.
+    fn renumber_file(&mut self, file_id: &str, generation: u32, by: isize) {
+        let shift = |n: usize| (n as isize + by).max(0) as usize;
+        if let Some(project) = self.active_project_mut() {
+            for space in &mut project.log_spaces {
+                if let Some(file) = space.file_mut(file_id) {
+                    let ago = file.generations_ago(generation);
+                    for m in file.markers.iter_mut().filter(|m| m.generations_ago == ago) {
+                        m.line = shift(m.line);
+                    }
+                }
+                for tabs in std::iter::once(&mut space.focus).chain(space.file_focus.values_mut()) {
+                    for tab in tabs.tabs.iter_mut() {
+                        if let Some(line) = tab.current.as_mut() {
+                            if &*line.file_id == file_id && line.generation == generation {
+                                line.line = shift(line.line);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        for tab in self.focus.tabs.iter_mut() {
+            if let Some(line) = tab.current.as_mut() {
+                if &*line.file_id == file_id && line.generation == generation {
+                    line.line = shift(line.line);
+                }
+            }
+        }
+        if let Some((f, line)) = self.raw.selected.as_mut() {
+            if f == file_id {
+                *line = shift(*line + 1).saturating_sub(1);
+            }
+        }
+    }
+
+    /// The current line of a Focus Tab that left the Live Window becomes the
+    /// oldest line still kept.
+    fn move_current_lines_off_dropped(&mut self, file_id: &str, trimmed: &Trimmed) {
+        let oldest = self
+            .all_entries
+            .first()
+            .and_then(|_| self.line_ref_of_entry(0));
+        let Some(oldest) = oldest else { return };
+        for tab in self.focus.tabs.iter_mut() {
+            if let Some(line) = tab.current.as_ref() {
+                let dropped = &*line.file_id == file_id
+                    && (line.generation < trimmed.generation
+                        || (line.generation == trimmed.generation && line.line < trimmed.first_kept));
+                if dropped {
+                    tab.current = Some(oldest.clone());
+                }
+            }
+        }
+    }
+
+    // ── Status ──────────────────────────────────────────────────────────────
+
+    /// The files of the open Log Space and what each source says.
+    pub fn live_file_statuses(&self) -> Vec<(String, SourceStatus)> {
+        let Some(space) = self.active_space() else { return Vec::new() };
+        space
+            .ordered_files()
+            .into_iter()
+            .filter_map(|f| {
+                self.live
+                    .sources
+                    .get(&f.file_id)
+                    .map(|s| (f.display_name.clone(), s.status.clone()))
+            })
+            .collect()
+    }
+
+    /// The worst status of the open Log Space's files with how many files
+    /// have it: `("Reconnecting", 1, 3)` is "Reconnecting (1 of 3)".
+    pub fn worst_live_status(&self) -> Option<(SourceStatus, usize, usize)> {
+        let statuses = self.live_file_statuses();
+        let worst = statuses.iter().map(|(_, s)| s).max_by_key(|s| s.severity())?.clone();
+        let count = statuses.iter().filter(|(_, s)| *s == worst).count();
+        Some((worst, count, statuses.len()))
+    }
+}
+
+/// The time row `pos` of a file sorts by: its own, or its Parent Line's.
+/// `None` when it has none (the rows then need the view built again).
+fn effective_ts_at(entries: &[LogEntry], pos: usize) -> Option<f64> {
+    let entry = entries.get(pos)?;
+    if entry.has_time && entry.timestamp.is_finite() && entry.timestamp > 0.0 {
+        return Some(entry.timestamp);
+    }
+    let parent = entry.parent?;
+    let back = entry.index.checked_sub(parent)?;
+    let parent_pos = pos.checked_sub(back)?;
+    let parent_entry = entries.get(parent_pos)?;
+    if parent_entry.index == parent && parent_entry.has_time {
+        Some(parent_entry.timestamp)
+    } else {
+        None
+    }
+}
+
+/// The number of leading rows of `0..len` for which `before` holds, given that
+/// it holds for a prefix.
+fn partition_rows(len: usize, before: impl Fn(usize) -> bool) -> usize {
+    let (mut lo, mut hi) = (0, len);
+    while lo < hi {
+        let mid = lo + (hi - lo) / 2;
+        if before(mid) {
+            lo = mid + 1;
+        } else {
+            hi = mid;
+        }
+    }
+    lo
+}
+
+/// Return the memory the allocator keeps after large blocks were freed.
+#[cfg(target_os = "macos")]
+fn release_freed_memory() {
+    unsafe extern "C" {
+        fn malloc_zone_pressure_relief(zone: *mut std::ffi::c_void, goal: usize) -> usize;
+    }
+    // SAFETY: a null zone means every zone; a goal of 0 means as much as can be.
+    let freed = unsafe { malloc_zone_pressure_relief(std::ptr::null_mut(), 0) };
+    if std::env::var_os("LOG_GPUI_LIVE_TRACE").is_some() {
+        eprintln!("released {} MB", freed >> 20);
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn release_freed_memory() {}

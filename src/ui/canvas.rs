@@ -1,6 +1,6 @@
 use crate::density::Density;
 use crate::highlight::RowPaint;
-use crate::marker::{RulerMark, level_marker};
+use crate::marker::level_marker;
 use crate::model::{LogEntry, LogLevel};
 use crate::palette::{HighlightColor, Tone, Weight, text_rgb};
 use crate::search::SearchState;
@@ -8,10 +8,9 @@ use crate::text_selection::{TextSelection, clip_to_span};
 use crate::ui::cells::{Layer, TextCell, cell_text, compose, shows_placeholder};
 use gpui::StyledText;
 use gpui::{
-    AppContext as _, DefiniteLength, ElementId, InteractiveElement, IntoElement,
-    ListHorizontalSizingBehavior, MouseButton, ParentElement, Pixels, Render,
-    StatefulInteractiveElement, Styled, UniformListScrollHandle, Window, div,
-    prelude::FluentBuilder as _, px, uniform_list,
+    AppContext as _, ElementId, InteractiveElement, IntoElement, ListHorizontalSizingBehavior,
+    MouseButton, ParentElement, Pixels, Render, StatefulInteractiveElement, Styled,
+    UniformListScrollHandle, Window, div, prelude::FluentBuilder as _, px, uniform_list,
 };
 use gpui_component::Icon;
 use gpui_component::menu::ContextMenuExt as _;
@@ -74,7 +73,8 @@ impl CanvasColors {
 
 pub struct CanvasViewState<'a> {
     pub view: gpui::Entity<crate::app::AppView>,
-    pub entries: Arc<Vec<LogEntry>>,
+    /// The rows, borrowed from the view for this frame only (never cloned).
+    pub entries: &'a [LogEntry],
     pub visible_indices: Arc<Vec<usize>>,
     pub selected_row_pos: Option<usize>,
     /// The Highlight Rule paint of each entry (by entry position).
@@ -83,6 +83,8 @@ pub struct CanvasViewState<'a> {
     /// Receives where the rows are on screen while painting.
     pub bounds_sink: std::rc::Rc<std::cell::Cell<gpui::Bounds<Pixels>>>,
     pub density: Density,
+    /// Whether the minimap shows beside the table.
+    pub show_minimap: bool,
     pub column_layout: &'a crate::column::ColumnLayoutState,
     pub search_state: &'a SearchState,
     pub colors: CanvasColors,
@@ -120,7 +122,6 @@ impl LogCanvas {
             .items_center()
             .bg(state.colors.background)
             .child(div().absolute().inset_0().bg(state.colors.header_bg))
-            .border_b_1()
             .border_color(state.colors.border)
             .map(|d| apply_partition_divider_style(d, is_divider_active))
             .child(
@@ -184,13 +185,19 @@ impl LogCanvas {
             )
             .child(
                 div()
-                    .w(px(16.0)) // Spacer for overview ruler
+                    // Spacer for the minimap and the scrollbar
+                    .w(px(SCROLLBAR_WIDTH
+                        + if state.show_minimap {
+                            MINIMAP_WIDTH
+                        } else {
+                            0.0
+                        }))
                     .child(""),
             )
             .child(anchored_header);
 
         // 2. Virtualized List using uniform_list
-        let entries_clone = state.entries.clone();
+        let entries_clone = state.entries;
         let visible_clone = state.visible_indices.clone();
         let longest_vis_pos = visible_clone
             .iter()
@@ -204,7 +211,6 @@ impl LogCanvas {
             .map(|(vis_pos, _)| vis_pos)
             .unwrap_or(0);
         let env = RowEnv {
-            entries: state.entries.clone(),
             visible: state.visible_indices.clone(),
             view: state.view.clone(),
             colors: state.colors,
@@ -223,9 +229,12 @@ impl LogCanvas {
         let list = uniform_list(
             "log_canvas_list",
             total_visible,
-            move |range, _window, _cx| {
+            move |range, _window, cx| {
+                // The rows are read from the view as each one is drawn, so a
+                // frame never copies them.
+                let this = env.view.read(cx);
                 range
-                    .filter_map(|vis_pos| env.row(vis_pos))
+                    .filter_map(|vis_pos| env.row(vis_pos, &this.all_entries))
                     .collect::<Vec<_>>()
             },
         )
@@ -234,124 +243,148 @@ impl LogCanvas {
         .with_horizontal_sizing_behavior(ListHorizontalSizingBehavior::Unconstrained)
         .track_scroll(state.scroll_handle);
 
-        // 3. Overview Ruler (Minimap at right edge - 16px)
-        let ruler_marks =
-            compute_ruler_marks(&state.entries, &state.visible_indices, state.search_state);
-
-        let mut ruler_elements = div().w(px(16.0)).h_full().border_l_1().relative();
-
-        for mark in &ruler_marks {
-            let color = if mark.is_search {
-                state.colors.search
-            } else if let Some(c) = &mark.color {
-                gpui::rgb(c.rgb(state.colors.tone())).into()
-            } else {
-                state.colors.muted
-            };
-            let mark_el = if mark.is_current_match {
-                div()
-                    .absolute()
-                    .top(DefiniteLength::Fraction(mark.position))
-                    .left(px(2.0))
-                    .w(px(12.0))
-                    .h(px(5.0))
-                    .rounded_xs()
-                    .bg(color)
-                    .border_1()
-                    .shadow_sm()
-            } else {
-                div()
-                    .absolute()
-                    .top(DefiniteLength::Fraction(mark.position))
-                    .left(px(3.0))
-                    .w(px(10.0))
-                    .h(px(3.0))
-                    .rounded_xs()
-                    .bg(color.opacity(if mark.is_search {
-                        0.7
-                    } else if mark.color.is_some() {
-                        1.0
+        // 3. Minimap: the whole log as one thin bar per row, with the part in view shaded.
+        let colors = state.colors;
+        let minimap_view = state.view.clone();
+        let minimap_visible = state.visible_indices.clone();
+        let minimap_matches = state.search_state.matched_shared.clone();
+        let minimap_selected = state.selected_row_pos;
+        let minimap_handle = state.scroll_handle.clone();
+        let minimap_current = state.search_state.current_match_pos();
+        let minimap_canvas = gpui::canvas(
+            |_, _, _| (),
+            move |bounds, _, window, cx| {
+                let (start, rows_fit, first_visible, visible_rows) = minimap_window(
+                    &minimap_handle,
+                    minimap_visible.len(),
+                    bounds.size.height,
+                    row_height,
+                );
+                let entries = &minimap_view.read(cx).all_entries;
+                let bar_max = MINIMAP_WIDTH - 10.0;
+                for r in 0..rows_fit {
+                    let pos = start + r;
+                    let Some(entry) = minimap_visible.get(pos).and_then(|&ix| entries.get(ix))
+                    else {
+                        break;
+                    };
+                    let y = bounds.origin.y + px(r as f32 * MINIMAP_ROW_PX);
+                    let is_match = minimap_matches.binary_search(&pos).is_ok();
+                    if is_match || minimap_selected == Some(pos) {
+                        let tint = if minimap_selected == Some(pos) {
+                            colors.selected
+                        } else if minimap_current == Some(pos) {
+                            colors.search.opacity(0.6)
+                        } else {
+                            colors.search.opacity(0.3)
+                        };
+                        window.paint_quad(gpui::fill(
+                            gpui::Bounds::new(
+                                gpui::point(bounds.origin.x, y),
+                                gpui::size(bounds.size.width, px(MINIMAP_ROW_PX)),
+                            ),
+                            tint,
+                        ));
+                    }
+                    let color = if let Some(marker) = entry.markers.first() {
+                        gpui::rgb(marker.color.rgb(colors.tone())).into()
+                    } else if is_match {
+                        colors.search
                     } else {
-                        0.5
-                    }))
-            };
+                        match entry.level {
+                            LogLevel::Fatal | LogLevel::Error | LogLevel::Warn => {
+                                colors.level(entry.level)
+                            }
+                            _ => colors.muted.opacity(0.5),
+                        }
+                    };
+                    let width = (entry.payload.len() as f32 / 160.0).clamp(0.0, 1.0) * bar_max;
+                    window.paint_quad(gpui::fill(
+                        gpui::Bounds::new(
+                            gpui::point(bounds.origin.x + px(4.0), y),
+                            gpui::size(px(width.max(3.0)), px(MINIMAP_ROW_PX - 1.0)),
+                        ),
+                        color,
+                    ));
+                }
 
-            ruler_elements = ruler_elements.child(mark_el);
+                let top = ((first_visible - start as f32) * MINIMAP_ROW_PX).max(0.0);
+                let bottom = ((first_visible + visible_rows - start as f32) * MINIMAP_ROW_PX)
+                    .min(f32::from(bounds.size.height));
+                if bottom > top {
+                    window.paint_quad(gpui::quad(
+                        gpui::Bounds::new(
+                            gpui::point(bounds.origin.x, bounds.origin.y + px(top)),
+                            gpui::size(bounds.size.width, px((bottom - top).max(6.0))),
+                        ),
+                        px(0.0),
+                        colors.muted.opacity(0.2),
+                        px(1.0),
+                        colors.muted.opacity(0.35),
+                        gpui::BorderStyle::default(),
+                    ));
+                }
+            },
+        )
+        .absolute()
+        .size_full();
+
+        // Scroll so the row under the mouse is centred in the list.
+        fn scroll_to_minimap_y(
+            handle: &UniformListScrollHandle,
+            y: Pixels,
+            total: usize,
+            row_height: f32,
+            window: &mut Window,
+        ) {
+            let base = handle.0.borrow().base_handle.clone();
+            let list = base.bounds();
+            if list.size.height <= px(0.0) || total == 0 {
+                return;
+            }
+            let (start, _, _, _) = minimap_window(handle, total, list.size.height, row_height);
+            let row = start as f32 + f32::from(y - list.origin.y) / MINIMAP_ROW_PX;
+            let viewport = list.size.height;
+            let max = base.max_offset().y.max(px(0.0));
+            let top = (px(row * row_height) - viewport * 0.5).clamp(px(0.0), max);
+            base.set_offset(gpui::point(base.offset().x, -top));
+            window.refresh();
         }
 
-        // Clickable surface on overview ruler to jump to line
-        // or jump to the nearest search match when a query is active.
-        let view_for_ruler = state.view.clone();
-        let search_marks: Vec<(f32, usize)> = ruler_marks
-            .iter()
-            .filter(|m| m.is_search)
-            .map(|m| (m.position, m.entry_index))
-            .collect();
-        // A Marker on the ruler: a click near it scrolls to its line.
-        let marker_marks: Vec<(f32, usize)> = ruler_marks
-            .iter()
-            .filter(|m| m.color.is_some())
-            .map(|m| (m.position, m.row_pos))
-            .collect();
-        let ruler_interactive = div()
-            .id("overview_ruler")
+        let (handle_down, handle_move) = (state.scroll_handle.clone(), state.scroll_handle.clone());
+        let minimap_total = total_visible;
+        let minimap = div()
+            .id("minimap")
             .cursor_pointer()
-            .w(px(16.0))
+            .flex_shrink_0()
+            .w(px(MINIMAP_WIDTH))
             .h_full()
-            .child(ruler_elements)
-            .on_click(move |event: &gpui::ClickEvent, window, cx| {
-                let click_y = event.position().y;
-                let vp_height = window.viewport_size().height;
-                let header_offset = px(80.0);
-                let footer_offset = px(24.0);
-                let usable_height = vp_height - header_offset - footer_offset;
-                let ratio = if usable_height > px(0.0) {
-                    ((click_y - header_offset) / usable_height).clamp(0.0, 1.0)
-                } else {
-                    0.0
-                };
-
-                let near_marker = marker_marks
-                    .iter()
-                    .min_by(|a, b| {
-                        (a.0 - ratio)
-                            .abs()
-                            .partial_cmp(&(b.0 - ratio).abs())
-                            .unwrap()
-                    })
-                    .copied()
-                    .filter(|(pos, _)| (pos - ratio).abs() <= 0.02);
-                if let Some((_, row_pos)) = near_marker {
-                    view_for_ruler.update(cx, |this, cx| this.jump_to_row(row_pos, cx));
-                    return;
+            .border_l_1()
+            .relative()
+            .child(minimap_canvas)
+            .on_mouse_move(move |event: &gpui::MouseMoveEvent, window, _cx| {
+                if event.pressed_button == Some(MouseButton::Left) {
+                    scroll_to_minimap_y(
+                        &handle_move,
+                        event.position.y,
+                        minimap_total,
+                        row_height,
+                        window,
+                    );
                 }
-
-                if !search_marks.is_empty() {
-                    let nearest = search_marks
-                        .iter()
-                        .min_by(|a, b| {
-                            (a.0 - ratio)
-                                .abs()
-                                .partial_cmp(&(b.0 - ratio).abs())
-                                .unwrap()
-                        })
-                        .copied();
-                    if let Some((_, entry_ix)) = nearest {
-                        view_for_ruler.update(cx, |this, cx| {
-                            this.jump_to_match_by_entry(entry_ix, cx);
-                        });
-                        return;
-                    }
-                }
-
-                view_for_ruler.update(cx, |this, cx| {
-                    let total = this.visible_indices.len();
-                    if total > 0 {
-                        let target_row = ((total as f32) * ratio) as usize;
-                        this.jump_to_row(target_row.min(total.saturating_sub(1)), cx);
-                    }
-                });
-            });
+            })
+            .on_mouse_down(
+                MouseButton::Left,
+                move |event: &gpui::MouseDownEvent, window, _cx| {
+                    scroll_to_minimap_y(
+                        &handle_down,
+                        event.position.y,
+                        minimap_total,
+                        row_height,
+                        window,
+                    );
+                },
+            );
 
         // 5. Combined Canvas Container
         div()
@@ -369,6 +402,7 @@ impl LogCanvas {
                     .relative()
                     .child({
                         let bounds_sink = state.bounds_sink.clone();
+                        let alt_handle = state.scroll_handle.clone();
                         let (v_down, v_right, v_move, v_up, v_up_out) = (
                             state.view.clone(),
                             state.view.clone(),
@@ -380,6 +414,7 @@ impl LogCanvas {
                         div()
                             .id("canvas_list_container")
                             .flex_1()
+                            .min_w(px(0.0))
                             .h_full()
                             .overflow_hidden()
                             .relative()
@@ -414,7 +449,10 @@ impl LogCanvas {
                             .child(
                                 gpui::canvas(
                                     |bounds, _, _| bounds,
-                                    move |bounds, _, _, _| bounds_sink.set(bounds),
+                                    move |bounds, _, window, _| {
+                                        bounds_sink.set(bounds);
+                                        boost_scroll_with_alt(&alt_handle, bounds, window);
+                                    },
                                 )
                                 .absolute()
                                 .size_full(),
@@ -424,7 +462,25 @@ impl LogCanvas {
                                 crate::ui::cell_menu::cell_menu(menu, &view_menu, cx)
                             })
                     })
-                    .child(ruler_interactive),
+                    .when(state.show_minimap, |el| el.child(minimap))
+                    // The scrollbar sits at the far right, with the minimap to its left.
+                    // Its own column, so it never covers the rows or the minimap.
+                    .child(
+                        div()
+                            .w(px(SCROLLBAR_WIDTH))
+                            .h_full()
+                            .flex_shrink_0()
+                            .relative()
+                            .child(
+                                div().absolute().inset_0().child(
+                                    gpui_component::scroll::Scrollbar::new(state.scroll_handle)
+                                        .id("canvas-vscrollbar")
+                                        .axis(gpui_component::scroll::ScrollbarAxis::Vertical)
+                                        .viewport_from_layout()
+                                        .styles(|styles| styles.thumb(|t| t.min_length(px(120.0)))),
+                                ),
+                            ),
+                    ),
             )
             .into_any_element()
     }
@@ -580,7 +636,6 @@ fn render_pinnable_column_header(
 /// Everything one row needs to draw itself, cloned out of the view state so
 /// the virtualized list can build rows on its own.
 struct RowEnv {
-    entries: Arc<Vec<LogEntry>>,
     visible: Arc<Vec<usize>>,
     view: gpui::Entity<crate::app::AppView>,
     colors: CanvasColors,
@@ -603,10 +658,10 @@ impl RowEnv {
         gpui::rgb(rgb).into()
     }
 
-    fn row(&self, vis_pos: usize) -> Option<gpui::Stateful<gpui::Div>> {
+    fn row(&self, vis_pos: usize, entries: &[LogEntry]) -> Option<gpui::Stateful<gpui::Div>> {
         let colors = self.colors;
         let &entry_ix = self.visible.get(vis_pos)?;
-        let entry = self.entries.get(entry_ix)?;
+        let entry = entries.get(entry_ix)?;
         let paint = self.paints.get(entry_ix).and_then(|p| p.as_ref());
 
         let level_symbol = if entry.is_continuation() {
@@ -735,7 +790,7 @@ impl RowEnv {
                                     .w(px(64.0))
                                     .px_2()
                                     .text_right()
-                                    .child(format!("{}", entry.index)),
+                                    .child(crate::live::line_number_text(entry.index)),
                             )
                             // Gutter: Level Marker
                             .child(
@@ -757,19 +812,71 @@ impl RowEnv {
                         inner
                     })
             });
-        Some(row_element.when_some(outline, |row, color| {
-            row.child(
-                div()
-                    .absolute()
-                    .top_0()
-                    .left_0()
-                    .right_0()
-                    .bottom_0()
-                    .border_1()
-                    .border_color(color),
-            )
-        }))
+        let break_label = entry.break_before.as_ref().map(|mark| mark.label.clone());
+        let label_left = scroll_x + anchored_width + px(8.0);
+        Some(
+            row_element
+                .when_some(outline, |row, color| {
+                    row.child(
+                        div()
+                            .absolute()
+                            .top_0()
+                            .left_0()
+                            .right_0()
+                            .bottom_0()
+                            .border_1()
+                            .border_color(color),
+                    )
+                })
+                .when_some(break_label, |row, label| {
+                    row.child(render_break(label, label_left, &colors))
+                }),
+        )
     }
+}
+
+/// A Break drawn on the line between two rows: a rule with a label. It is
+/// not a row, so it takes no height of its own and sits half over the row
+/// above.
+pub(crate) fn render_break(
+    label: String,
+    label_left: Pixels,
+    colors: &CanvasColors,
+) -> gpui::AnyElement {
+    div()
+        .absolute()
+        .top(px(-7.0))
+        .left_0()
+        .right_0()
+        .h(px(14.0))
+        .child(
+            div()
+                .absolute()
+                .top(px(6.5))
+                .left_0()
+                .right_0()
+                .h(px(1.0))
+                .bg(colors.warning.opacity(0.7)),
+        )
+        .child(
+            div()
+                .absolute()
+                .top_0()
+                .left(label_left)
+                .h(px(14.0))
+                .px_2()
+                .flex()
+                .items_center()
+                .rounded_sm()
+                .border_1()
+                .border_color(colors.warning.opacity(0.7))
+                .bg(colors.header_bg)
+                .text_color(colors.warning)
+                .text_size(px(10.0))
+                .whitespace_nowrap()
+                .child(label),
+        )
+        .into_any_element()
 }
 
 /// What a cell needs to know about its row.
@@ -931,51 +1038,74 @@ fn render_column_cell(
     }
 }
 
-fn compute_ruler_marks(
-    entries: &[LogEntry],
-    visible_indices: &[usize],
-    search_state: &SearchState,
-) -> Vec<RulerMark> {
-    let mut marks = Vec::new();
-    let total = entries.len();
-    if total == 0 {
-        return marks;
-    }
+/// How many times faster the wheel scrolls while Alt is held.
+const ALT_SCROLL_FACTOR: f32 = 5.0;
 
-    for (vis_pos, &entry_ix) in visible_indices.iter().enumerate() {
-        if let Some(entry) = entries.get(entry_ix) {
-            let pos = (entry_ix as f32 / total as f32).clamp(0.0, 1.0);
-
-            if let Some(marker) = entry.markers.first() {
-                marks.push(RulerMark {
-                    position: pos,
-                    entry_index: entry_ix,
-                    row_pos: vis_pos,
-                    color: Some(marker.color.clone()),
-                    is_search: false,
-                    is_current_match: false,
-                });
-            } else if !search_state.query.trim().is_empty()
-                && search_state
-                    .matched_visible_indices
-                    .binary_search(&vis_pos)
-                    .is_ok()
-            {
-                let is_current = search_state
-                    .matched_visible_indices
-                    .get(search_state.current_match_idx)
-                    == Some(&vis_pos);
-                marks.push(RulerMark {
-                    position: pos,
-                    entry_index: entry_ix,
-                    row_pos: vis_pos,
-                    color: None,
-                    is_search: true,
-                    is_current_match: is_current,
-                });
-            }
+/// While Alt is held, make wheel scrolling over `bounds` faster.
+///
+/// Runs in the capture phase, before the list scrolls by the plain wheel delta, and adds
+/// the rest of the boost, so the list ends up moving `ALT_SCROLL_FACTOR` times as far.
+/// Call it from the paint step of an element covering the list.
+pub fn boost_scroll_with_alt(
+    handle: &UniformListScrollHandle,
+    bounds: gpui::Bounds<Pixels>,
+    window: &mut Window,
+) {
+    let handle = handle.clone();
+    let line_height = window.line_height();
+    window.on_mouse_event(move |event: &gpui::ScrollWheelEvent, phase, window, _cx| {
+        if phase != gpui::DispatchPhase::Capture
+            || !event.modifiers.alt
+            || !bounds.contains(&event.position)
+        {
+            return;
         }
-    }
+        let base = handle.0.borrow().base_handle.clone();
+        let extra = event.delta.pixel_delta(line_height) * (ALT_SCROLL_FACTOR - 1.0);
+        let max = base.max_offset();
+        let offset = base.offset();
+        base.set_offset(gpui::point(
+            (offset.x + extra.x).clamp(-max.x.max(px(0.0)), px(0.0)),
+            (offset.y + extra.y).clamp(-max.y.max(px(0.0)), px(0.0)),
+        ));
+        window.refresh();
+    });
+}
 
-    marks
+/// Width of the column the vertical scrollbar sits in, at the far right.
+const SCROLLBAR_WIDTH: f32 = 12.0;
+/// Width of the minimap, left of the scrollbar.
+const MINIMAP_WIDTH: f32 = 56.0;
+/// Height of one row in the minimap.
+const MINIMAP_ROW_PX: f32 = 3.0;
+
+/// Which rows the minimap shows and where the list's viewport sits among them.
+///
+/// A log that fits is shown whole; a longer one slides along with the scroll position,
+/// as in a text editor. Returns the first row shown, how many fit, the first row in view
+/// and how many rows are in view.
+fn minimap_window(
+    handle: &UniformListScrollHandle,
+    total: usize,
+    height: Pixels,
+    row_height: f32,
+) -> (usize, usize, f32, f32) {
+    let base = handle.0.borrow().base_handle.clone();
+    let viewport = base.bounds().size.height;
+    let max = base.max_offset().y.max(px(0.0));
+    let top = (-base.offset().y).max(px(0.0)).min(max);
+    let ratio = if max > px(0.0) { top / max } else { 0.0 };
+    let rows_fit = (f32::from(height) / MINIMAP_ROW_PX) as usize;
+    let start = if total > rows_fit {
+        ((total - rows_fit) as f32 * ratio) as usize
+    } else {
+        0
+    };
+    let row_height = row_height.max(1.0);
+    (
+        start,
+        rows_fit,
+        f32::from(top) / row_height,
+        f32::from(viewport) / row_height,
+    )
 }

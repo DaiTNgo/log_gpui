@@ -29,13 +29,13 @@ impl AppView {
             ViewMode::Parsed => {
                 let ix = self.entry_of_line_ref(&current)?;
                 let first = self.all_entries.get(ix)?;
-                let mut lines = vec![first.raw_line.clone()];
+                let mut lines = vec![first.raw_line.to_string()];
                 if !first.is_continuation() {
                     lines.extend(
                         self.all_entries[ix + 1..]
                             .iter()
                             .take_while(|e| e.is_continuation() && e.file_id == first.file_id)
-                            .map(|e| e.raw_line.clone()),
+                            .map(|e| e.raw_line.to_string()),
                     );
                 }
                 Some(lines)

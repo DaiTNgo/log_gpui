@@ -99,7 +99,7 @@ pub fn search_across_files(
                     line_number: entry.index,
                     timestamp: entry.timestamp,
                     level: entry.level,
-                    payload: entry.payload.clone(),
+                    payload: entry.payload.to_string(),
                 });
             }
         }

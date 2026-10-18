@@ -22,7 +22,9 @@ pub enum PaletteAction {
     SetComfortable,
     SetCompact,
     SetUltraCompact,
-    ToggleTail,
+    ManageServers,
+    ToggleFollow,
+    TogglePause,
     ToggleInspector,
     LoadDemo,
     NewLogSpace,
@@ -32,6 +34,7 @@ pub enum PaletteAction {
     ToggleProjectSwitcher,
     ShowHighlights,
     ToggleFocusPane,
+    MoveFocusToWindow,
 }
 
 impl CommandPalette {
@@ -51,6 +54,11 @@ impl CommandPalette {
                 name: "Focus Pane: Show or Hide",
                 shortcut: "⌘J",
                 action: PaletteAction::ToggleFocusPane,
+            },
+            PaletteCommand {
+                name: "Focus Pane: Move to Window",
+                shortcut: "",
+                action: PaletteAction::MoveFocusToWindow,
             },
             PaletteCommand {
                 name: "Highlights: Open Highlight Rules",
@@ -88,9 +96,19 @@ impl CommandPalette {
                 action: PaletteAction::SetUltraCompact,
             },
             PaletteCommand {
-                name: "Stream: Toggle Tail Mode",
+                name: "Servers: Manage…",
+                shortcut: "",
+                action: PaletteAction::ManageServers,
+            },
+            PaletteCommand {
+                name: "Live: Toggle Follow",
                 shortcut: "T",
-                action: PaletteAction::ToggleTail,
+                action: PaletteAction::ToggleFollow,
+            },
+            PaletteCommand {
+                name: "Live: Toggle Pause",
+                shortcut: "",
+                action: PaletteAction::TogglePause,
             },
             PaletteCommand {
                 name: "Inspector: Toggle Slide-out Inspector",
@@ -165,8 +183,8 @@ impl CommandPalette {
                         .font_family(".AppleSystemUIFontMonospaced")
                         .child(cmd.shortcut),
                 )
-                .on_click(cx.listener(move |this, _, _window, cx| {
-                    this.execute_palette_action(act, cx);
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.execute_palette_action(act, window, cx);
                 }));
 
             list = list.child(item);

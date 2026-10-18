@@ -7,10 +7,15 @@ pub mod color;
 mod commands;
 mod filter;
 mod focus;
+mod focus_window;
 mod highlights;
 mod keyboard;
+pub mod live;
 mod marking;
 mod persist;
+pub mod remote;
+pub mod remote_picker;
+pub mod server_dialog;
 pub mod raw;
 mod panels;
 mod projects;
@@ -69,6 +74,8 @@ pub struct AppView {
     /// The lines the open Focus Tab lists.
     pub focus_rows: Arc<Vec<FocusRow>>,
     pub focus_scroll: UniformListScrollHandle,
+    /// The Focus Window, while the Focus Pane lives there. Never saved.
+    pub focus_window: Option<focus_window::FocusWindowHandle>,
     pub focus_find_input: Entity<InputState>,
     /// Focus Find's field must be rewritten from the open tab.
     pub focus_find_dirty: bool,
@@ -120,8 +127,14 @@ pub struct AppView {
     pub floating_panels: HashMap<PanelKind, FloatingPanelState>,
     pub panel_gesture: Option<PanelGesture>,
     pub density: Density,
+    /// Whether the minimap shows beside the log table.
+    pub show_minimap: bool,
     pub column_layout: ColumnLayoutState,
-    pub tail_enabled: bool,
+    /// Live reading: sources, Follow and Pause.
+    pub live: live::LiveRuntime,
+    /// Servers, the SSH hub and their dialogs.
+    pub remote: remote::RemoteUi,
+    pub server_dialog: Option<server_dialog::ServerDialog>,
 
     // Multi-tab working set inside an isolated project workspace.
     pub workspace_state: WorkspaceState,
@@ -242,7 +255,9 @@ impl AppView {
             |this: &mut Self, input, event: &InputEvent, _window, cx| match event {
                 InputEvent::Change => {
                     let text = input.read(cx).value().to_string();
-                    this.on_focus_find_changed(&text, cx);
+                    if this.focus.find().query != text {
+                        this.on_focus_find_changed(&text, cx);
+                    }
                 }
                 InputEvent::PressEnter { shift, .. } => {
                     if *shift {
@@ -262,6 +277,9 @@ impl AppView {
             |this: &mut Self, input, event: &InputEvent, _window, cx| match event {
                 InputEvent::Change => {
                     let text = input.read(cx).value().to_string();
+                    if this.focus.search().query == text {
+                        return;
+                    }
                     let search = this.active_search_mut();
                     search.query = text;
                     if !search.query.trim().is_empty() {
@@ -319,6 +337,7 @@ impl AppView {
             focus: FocusTabs::new(),
             focus_rows: Arc::new(Vec::new()),
             focus_scroll: UniformListScrollHandle::new(),
+            focus_window: None,
             focus_find_input,
             focus_find_dirty: true,
             pane_selection: None,
@@ -353,8 +372,11 @@ impl AppView {
             ]),
             panel_gesture: None,
             density: Density::Compact,
+            show_minimap: true,
             column_layout,
-            tail_enabled: false,
+            live: live::LiveRuntime::new(),
+            remote: remote::RemoteUi::load(),
+            server_dialog: None,
             workspace_state,
             parsed_files: HashMap::new(),
             no_timestamp_files: HashSet::new(),
@@ -376,7 +398,19 @@ impl AppView {
             persistence,
             focus_handle,
         };
+        // Closing the main window closes the Focus Window with it.
+        let weak = cx.entity().downgrade();
+        window.on_window_should_close(cx, move |_window, cx| {
+            weak.update(cx, |this, cx| this.close_focus_window(cx)).ok();
+            true
+        });
+        this.live.window = this.workspace_state.live_window.max(1_000);
+        this.density = this.workspace_state.density;
+        this.column_layout.update_density(this.density);
+        this.show_minimap = this.workspace_state.show_minimap;
+        this.raw.soft_wrap = this.workspace_state.raw_soft_wrap;
         this.restore_active_session(cx);
+        this.start_live_pump(cx);
         this
     }
 }

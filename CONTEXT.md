@@ -34,6 +34,14 @@ _Avoid_: View panel, view options.
 A Log Space whose files were dropped or picked when it was created. Its files are read-only.
 _Avoid_: Read-only space.
 
+**Archive**:
+A `.zip`, `.tar`, `.tar.gz`/`.tgz` or single `.gz` file dropped or picked like a log file. It is never added itself: it stands for the Archive Entries inside it. Recognized by its first bytes, not its extension.
+_Avoid_: Compressed file, bundle.
+
+**Archive Entry**:
+A text file inside an Archive, added to an Imported Log Space and shown as `<archive name> › <path in archive>` (a lone `.gz` shows its name without `.gz`). It is read straight into memory, never extracted to disk, and never read live.
+_Avoid_: Extracted file, unpacked file.
+
 **Scratch Log Space**:
 A Log Space created with only a name. Its files (`untitled.log`, `untitled-2.log`, …) start empty in the app's own data folder, and the user types or pastes log text into them.
 _Avoid_: Empty space, manual space.
@@ -190,6 +198,10 @@ _Avoid_: Query, view.
 The full-width pane under the view and both sidebars, holding one or more Focus Tabs. The open Focus Tab lists only the lines passing both Filter and its Search Expression, each as its raw line with its line number and, when the Log Space has several files, its Source File. An empty Search Expression or an empty Filter sets no limit; when both are empty the pane is empty. In the Raw View only the Search Expression applies. Its current line and the view's selection always follow each other. It shows Markers and Level Markers, and keeps up with tailed lines and scratch edits.
 _Avoid_: Match Pane, Filter Log, result pane, search results.
 
+**Focus Window**:
+A separate window the Focus Pane can be moved into, to be made larger or put on another screen. While it is open the Focus Pane exists only there, together with the Search field of the open Focus Tab. It always follows the view open in the main window, and closing it or choosing "Move back" returns the Focus Pane under the main window. It is not reopened after a restart.
+_Avoid_: Popup, second window, detached pane.
+
 **Focus Tab**:
 One numbered tab (1, 2, 3, …) of the Focus Pane with its own Search Expression and its own Focus Find. The Search field in the toolbar always edits the open Focus Tab's Search Expression, and only the open tab's Matches are marked in the view. Numbers are never reused while the tab is open, and a new tab takes the next number after the highest. The last remaining Focus Tab cannot be closed.
 _Avoid_: Search tab, result tab.
@@ -273,8 +285,8 @@ L15. **Servers In Use Stay**: A Server cannot be deleted while a Remote Log Spac
 21. **No Quick Filter Menu**: There is no quick menu for filtering by a cell value; filtering is done from the Filter section only. A cell's context menu may offer "Highlight rows where…", which creates an ordinary Highlight Rule managed with all the others.
 22. **Interleave By Timestamp**: A Log Space's rows are ordered by timestamp across files. Equal timestamps keep the order of files in the Log Space, then line order. Continuation lines stay with their parent row. Lines before a file's first timestamp take that first timestamp. A file with no timestamps goes after all other rows and is flagged.
 23. **Columns Are United By Name**: A Log Space's columns are the union of columns detected in its files, matched by name.
-24. **Space Kinds Never Mix**: An Imported Log Space only gains files by import; a Scratch Log Space only gains new empty scratch files; a Remote Log Space only gains Remote Files.
-25. **Imported And Remote Files Are Read-Only**: The app never changes an imported file or a Remote File. Removing it from a Log Space leaves it untouched on disk or on its server.
+24. **Space Kinds Never Mix**: An Imported Log Space only gains files and Archive Entries by import; a Scratch Log Space only gains new empty scratch files; a Remote Log Space only gains Remote Files.
+25. **Imported And Remote Files Are Read-Only**: The app never changes an imported file, an Archive Entry (or its Archive) or a Remote File. Removing it from a Log Space leaves it untouched on disk or on its server. An Archive Entry is static: it does not follow the Archive if it changes.
 26. **Scratch Edits Happen In Raw View**: The Parsed View of a scratch file is read-only and is re-parsed when switching from Raw View. Editing a line drops that line's Marker; the Filter keeps its conditions while its values are re-detected.
 27. **Save As Copies**: Save As on a scratch file writes a copy to the chosen place; the scratch file stays in the app's data folder.
 28. **Log Space Names Are Unique Per Project**: A Log Space needs a non-blank name not used by another Log Space in the same Project.

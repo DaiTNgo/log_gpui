@@ -113,6 +113,32 @@ impl AppView {
                     }),
             );
         }
+        // A ticked value whose last line left the Live Window stays, with 0.
+        let missing: Vec<String> = self
+            .filter_state
+            .column(&col.key)
+            .map(|c| {
+                c.values
+                    .iter()
+                    .filter(|v| !col.values.iter().any(|x| &x.folded == *v))
+                    .cloned()
+                    .collect()
+            })
+            .unwrap_or_default();
+        for (i, folded) in missing.into_iter().enumerate() {
+            let key = col.key.clone();
+            let view = view.clone();
+            let toggled = folded.clone();
+            list = list.child(
+                Checkbox::new(ElementId::from(format!("filter-val-{}-missing-{}", col.key, i)))
+                    .label(SharedString::from(format!("{folded}  (0)")))
+                    .checked(true)
+                    .on_click(move |_, _window, app| {
+                        let (key, folded) = (key.clone(), toggled.clone());
+                        view.update(app, |this, cx| this.filter_toggle_value(&key, &folded, cx));
+                    }),
+            );
+        }
         list.into_any_element()
     }
 

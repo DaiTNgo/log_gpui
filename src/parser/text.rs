@@ -112,6 +112,36 @@ pub fn parse_events(content: &str) -> Vec<LogEvent> {
     events
 }
 
+/// Parses lines one at a time as they arrive, the way `parse_events` parses a
+/// whole file: a line without a time of its own continues the nearest line
+/// above that has one.
+#[derive(Debug, Clone, Default)]
+pub struct LineParser {
+    parent: Option<usize>,
+}
+
+impl LineParser {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Forget the Parent Line: what comes next starts a new file.
+    pub fn reset(&mut self) {
+        self.parent = None;
+    }
+
+    /// The entry for line number `index`.
+    pub fn parse(&mut self, index: usize, line: &str) -> LogEntry {
+        let mut event = parse_line(index, line);
+        if event.has_time {
+            self.parent = Some(index);
+        } else if let Some(p) = self.parent {
+            event = event.into_continuation(p);
+        }
+        LogEntry::from_event(&event)
+    }
+}
+
 /// Byte range of a regex group, shifted by the leading whitespace that was
 /// trimmed off the line before matching.
 fn group_range(caps: &regex::Captures, i: usize, lead: usize) -> Option<Range<usize>> {

@@ -382,7 +382,7 @@ fn timed() -> Vec<LogEntry> {
     let day = 86400.0 * 20000.0;
     let mk = |i: usize, secs: f64, msg: &str| {
         let mut e = entry(i, day + secs, "API", LogLevel::Info, msg);
-        e.time_str = format!("{secs}");
+        e.time_str = format!("{secs}").into();
         e
     };
     vec![

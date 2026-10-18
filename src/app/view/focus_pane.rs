@@ -3,7 +3,8 @@
 use super::AppView;
 use crate::marker::TextMarker;
 use crate::ui::canvas::CanvasColors;
-use crate::ui::focus_pane::{FocusPane, PaneSource, PaneState, PaneTab};
+use crate::ui::focus_pane::{FocusPane, PaneMode, PaneSource, PaneState, PaneTab};
+use gpui_component::input::InputState;
 use crate::workspace::log_space::line_hash;
 use crate::workspace::working_set::ViewMode;
 use gpui::{
@@ -45,22 +46,23 @@ impl AppView {
         out
     }
 
-    /// The Focus Pane, the drag handle above it, or nothing when hidden.
-    pub(super) fn render_focus_pane(
-        &mut self,
-        entries: Option<Arc<Vec<crate::model::LogEntry>>>,
+    /// What the Focus Pane draws, read from the app. The docked pane and the
+    /// Focus Window both build their state here; they differ in the fields
+    /// they pass in.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn pane_state<'a>(
+        &'a self,
+        view: gpui::Entity<AppView>,
+        mode: PaneMode,
+        find_input: &'a gpui::Entity<InputState>,
+        search_input: Option<&'a gpui::Entity<InputState>>,
+        parsed: bool,
         colors: CanvasColors,
-        viewport_height: f32,
-        cx: &mut Context<Self>,
-    ) -> Option<gpui::AnyElement> {
-        if !self.active_tab_is_log_file() || !self.focus_pane_has_content() {
-            return None;
-        }
-        let expanded = self.workspace_state.focus_pane.visible;
-        let height = self.focus_pane_height(viewport_height);
-        let source = match (self.view_mode, entries) {
-            (ViewMode::Parsed, Some(entries)) => PaneSource::Parsed {
-                entries,
+        height: f32,
+        expanded: bool,
+    ) -> PaneState<'a> {
+        let source = match (self.view_mode, parsed) {
+            (ViewMode::Parsed, true) => PaneSource::Parsed {
                 paints: self.highlight_paints.clone(),
             },
             _ => {
@@ -73,8 +75,17 @@ impl AppView {
         let hint = (self.focus.search().matcher.is_none() && !filtering).then_some(
             "Type a Search Expression, or pick a Filter, to list lines here",
         );
-        let state = PaneState {
-            view: cx.entity(),
+        let longest = self
+            .focus_rows
+            .iter()
+            .enumerate()
+            .max_by_key(|(_, row)| crate::ui::focus_pane::row_len(&source, &self.all_entries, **row))
+            .map(|(i, _)| i)
+            .unwrap_or(0);
+        PaneState {
+            view,
+            mode,
+            search_input,
             height,
             expanded,
             tabs: self
@@ -85,7 +96,7 @@ impl AppView {
                 .map(|(i, t)| PaneTab { label: t.label(), active: i == self.focus.active })
                 .collect(),
             can_close: self.focus.can_close(),
-            find_input: &self.focus_find_input,
+            find_input,
             find: self.focus.find().clone(),
             search_matcher: self.focus.search().matcher.clone(),
             rows: self.focus_rows.clone(),
@@ -98,7 +109,37 @@ impl AppView {
             scroll_handle: &self.focus_scroll,
             selection: self.pane_selection,
             bounds_sink: self.pane_bounds.clone(),
-        };
+            longest,
+        }
+    }
+
+    /// The Focus Pane, the drag handle above it, or nothing when hidden or
+    /// when it lives in the Focus Window.
+    pub(super) fn render_focus_pane(
+        &mut self,
+        parsed: bool,
+        colors: CanvasColors,
+        viewport_height: f32,
+        cx: &mut Context<Self>,
+    ) -> Option<gpui::AnyElement> {
+        if self.focus_window.is_some()
+            || !self.active_tab_is_log_file()
+            || !self.focus_pane_has_content()
+        {
+            return None;
+        }
+        let expanded = self.workspace_state.focus_pane.visible;
+        let height = self.focus_pane_height(viewport_height);
+        let state = self.pane_state(
+            cx.entity(),
+            PaneMode::Docked,
+            &self.focus_find_input,
+            None,
+            parsed,
+            colors,
+            height,
+            expanded,
+        );
         let pane = FocusPane::render(state, cx);
         // Collapsed, there is nothing to drag.
         if !expanded {
