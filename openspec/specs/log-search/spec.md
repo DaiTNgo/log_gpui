@@ -1,7 +1,9 @@
 # log-search Specification
 
-## Requirements
+## Purpose
 
+Search trên dòng log bằng Search Expression, tô sáng Match và đi qua các Match.
+## Requirements
 ### Requirement: Search khớp trên toàn bộ dòng log
 Hệ thống SHALL khớp Search Expression trên toàn bộ `raw_line` của từng dòng log, không theo trường hay theo cột nào.
 
@@ -14,11 +16,15 @@ Hệ thống SHALL khớp Search Expression trên toàn bộ `raw_line` của t�
 - **THEN** danh sách dòng đang hiển thị không đổi, chỉ có Match được đánh dấu và có thể điều hướng
 
 ### Requirement: Search chỉ tìm trên dòng Filter đang hiển thị
-Hệ thống SHALL chỉ tìm và đếm Match trên các dòng Filter đang hiển thị, và SHALL NOT đếm dòng khớp nhưng đang bị Filter ẩn.
+Trong Parsed View, hệ thống SHALL chỉ tìm và đếm Match trên các dòng Filter đang hiển thị, và SHALL NOT đếm dòng khớp nhưng đang bị Filter ẩn. Trong Raw View, Filter không áp dụng, nên hệ thống SHALL tìm và đếm Match trên mọi dòng của mọi File Section.
 
 #### Scenario: Dòng bị Filter ẩn
-- **WHEN** Filter ẩn mọi dòng `DEBUG` và người dùng gõ `timeout`, trong đó 5 dòng `DEBUG` có `timeout` và 12 dòng khác có `timeout`
+- **WHEN** đang ở Parsed View, Filter ẩn mọi dòng `DEBUG` và người dùng gõ `timeout`, trong đó 5 dòng `DEBUG` có `timeout` và 12 dòng khác có `timeout`
 - **THEN** tổng số Match là 12
+
+#### Scenario: Raw View đếm mọi dòng
+- **WHEN** cùng Filter và Search Expression như trên nhưng người dùng chuyển sang Raw View
+- **THEN** tổng số Match là 17
 
 ### Requirement: Search không phân biệt hoa thường
 Hệ thống SHALL khớp Search Term không phân biệt hoa thường và SHALL NOT cung cấp tùy chọn match case.
@@ -130,3 +136,4 @@ Hệ thống SHALL cho phép nhảy tới Match kế tiếp hoặc trước đó
 #### Scenario: Quay vòng
 - **WHEN** đang ở Match cuối và người dùng nhảy tới Match kế tiếp
 - **THEN** vị trí hiện tại là Match đầu tiên
+

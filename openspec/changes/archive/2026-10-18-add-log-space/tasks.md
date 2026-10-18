@@ -75,5 +75,5 @@
 
 - [x] 10.1 Gỡ code dùng `Project.files`, `TabTarget::LogFile`, `ChronicleStream`; sửa `project_test`, `session_test`, `workspace_test`, `filter_test`
 - [x] 10.2 `cargo build` và `cargo test` qua hết
-- [ ] 10.3 Chạy app thử: tạo Imported bằng kéo thả và bằng Browse, tạo Scratch rồi dán log, chuyển Raw/Parsed, Source Column và Quick Settings, File View, menu chuột phải, Save As, khởi động lại thấy dữ liệu còn
-- [ ] 10.4 Rà soát lại các spec so với hành vi thực tế
+- [x] 10.3 Chạy app thử: tạo Imported bằng kéo thả và bằng Browse, tạo Scratch rồi dán log, chuyển Raw/Parsed, Source Column và Quick Settings, File View, menu chuột phải, Save As, khởi động lại thấy dữ liệu còn
+- [x] 10.4 Rà soát lại các spec so với hành vi thực tế
