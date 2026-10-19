@@ -15,7 +15,7 @@ use super::source::{
 use crate::workspace::log_space::line_hash;
 use super::splitter::LineSplitter;
 use crate::remote::browse::{dirname, join};
-use crate::remote::compress::{AsyncBridge, Compression, decoder};
+use crate::remote::compress::{AsyncBridge, decoder};
 use crate::remote::rotated::{RotatedFile, list_rotated};
 use crate::remote::starting_time::resolve_start;
 use crate::remote::{ConnectError, RemoteHub, RemoteSession, ServerStore, shell_quote};

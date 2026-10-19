@@ -3,6 +3,7 @@
 pub mod browse;
 pub mod command;
 pub mod compress;
+pub mod copy;
 pub mod download;
 pub mod full_read;
 pub mod glob_plan;
