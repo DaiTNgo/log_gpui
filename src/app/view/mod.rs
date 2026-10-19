@@ -109,6 +109,7 @@ impl Render for AppView {
         let remote_picker = self.render_remote_picker(cx);
         let download_panel = self.render_download(cx);
         let full_dialog = self.render_open_in_full(cx);
+        let download_options = self.render_download_options(cx);
         let color_bar = self.render_color_bar(cx);
         let notice = self.render_notice(cx);
 
@@ -208,6 +209,7 @@ impl Render for AppView {
             .child(remote_picker)
             .child(download_panel)
             .child(full_dialog)
+            .child(download_options)
             .child(secret_dialog)
             .child(host_key_dialog)
             .children(color_bar)

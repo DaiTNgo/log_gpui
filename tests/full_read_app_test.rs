@@ -348,3 +348,54 @@ fn above_the_limit_the_dialog_waits_for_a_choice_and_newest_reads_less(cx: &mut 
         assert_eq!(app.all_entries.last().unwrap().index, 5_000);
     });
 }
+
+#[gpui::test]
+fn download_offers_rotated_files_keeps_them_compressed_and_opens_them_as_archives(cx: &mut TestAppContext) {
+    use std::io::Write;
+    if ssh().is_none() {
+        return;
+    }
+    let mut h = common::open_app(cx);
+    let server_id = add_server(&mut h, "web1");
+    let root = tempfile::tempdir().unwrap();
+    std::fs::write(root.path().join("app.log"), (10..20).map(stamp).collect::<String>()).unwrap();
+    let mut enc = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+    enc.write_all((0..10).map(stamp).collect::<String>().as_bytes()).unwrap();
+    std::fs::write(root.path().join("app.log.1.gz"), enc.finish().unwrap()).unwrap();
+    let path = root.path().join("app.log").to_string_lossy().to_string();
+    let space_id = remote_space(&mut h, &server_id, &path);
+    let file_id = h.view.read_with(&h.cx, |app, _| {
+        app.workspace_state.active_project().unwrap().log_space(&space_id).unwrap().files[0].file_id.clone()
+    });
+    h.view.update(&mut h.cx, |app, cx| app.download_file(&space_id, &file_id, cx));
+    wait_for(&mut h, |app| app.remote.download_options.is_some());
+    h.view.read_with(&h.cx, |app, _| {
+        let o = app.remote.download_options.as_ref().unwrap();
+        assert_eq!(o.rotated[0].len(), 1);
+        assert_eq!(o.rotated[0][0].name, "app.log.1.gz");
+        assert_eq!(o.ticked[0], [false]);
+    });
+    h.view.update(&mut h.cx, |app, cx| app.toggle_download_rotated(0, 0, cx));
+    // Skip the folder dialog: start the download as the confirm would.
+    let (files, extras) = h.view.update(&mut h.cx, |app, _| {
+        let o = app.remote.download_options.take().unwrap();
+        let folder = log_gpui::remote::browse::dirname(&path);
+        let extras = vec![(o.files[0].remote.as_ref().unwrap().server_id.clone(), log_gpui::remote::browse::join(&folder, &o.rotated[0][0].name))];
+        (o.files, extras)
+    });
+    let target = tempfile::tempdir().unwrap();
+    let dir = target.path().to_path_buf();
+    h.view.update(&mut h.cx, |app, cx| app.start_download("Checkout".into(), files, extras, dir.clone(), cx));
+    wait_for(&mut h, |app| app.remote.download.as_ref().is_some_and(|d| d.outcome.is_some()));
+    assert!(dir.join("app.log").exists());
+    // Kept compressed, not unpacked.
+    let kept = std::fs::read(dir.join("app.log.1.gz")).unwrap();
+    assert_eq!(&kept[..2], &[0x1f, 0x8b]);
+    h.view.update(&mut h.cx, |app, cx| app.finish_download(true, cx));
+    h.view.read_with(&h.cx, |app, _| {
+        let space = last_space(app);
+        assert_eq!(space.files.len(), 2);
+        let gz = space.files.iter().find(|f| f.entry.is_some()).expect("the .gz is an Archive Entry");
+        assert_eq!(gz.entry.as_deref(), Some("app.log.1"));
+    });
+}

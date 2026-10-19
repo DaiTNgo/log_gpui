@@ -197,3 +197,66 @@ impl AppView {
             .into_any_element()
     }
 }
+
+impl AppView {
+    /// The Rotated Files to take along with a download.
+    pub(super) fn render_download_options(&mut self, cx: &mut gpui::Context<Self>) -> gpui::AnyElement {
+        let Some(options) = self.remote.download_options.as_ref() else { return div().into_any_element() };
+        let theme = cx.theme();
+        let (bg, border, muted) = (theme.popover, theme.border, theme.muted_foreground);
+        let mut list = v_flex().gap_2();
+        for (fi, file) in options.files.iter().enumerate() {
+            if options.rotated[fi].is_empty() {
+                continue;
+            }
+            let mut block = v_flex()
+                .gap_1()
+                .child(div().text_sm().font_weight(gpui::FontWeight::SEMIBOLD).child(file.display_name.clone()));
+            for (ri, rotated) in options.rotated[fi].iter().enumerate() {
+                block = block.child(
+                    Checkbox::new(SharedString::from(format!("dl-rotated-{fi}-{ri}")))
+                        .label(format!("{} ({})", rotated.name, size_text(rotated.size)))
+                        .checked(options.ticked[fi][ri])
+                        .on_click(cx.listener(move |this, _, _, cx| this.toggle_download_rotated(fi, ri, cx))),
+                );
+            }
+            list = list.child(block);
+        }
+        Self::modal_backdrop()
+            .child(
+                v_flex()
+                    .w(px(480.0))
+                    .max_h(px(560.0))
+                    .overflow_hidden()
+                    .gap_3()
+                    .p_4()
+                    .bg(bg)
+                    .border_1()
+                    .border_color(border)
+                    .rounded_lg()
+                    .shadow_2xl()
+                    .child(div().text_base().font_weight(gpui::FontWeight::SEMIBOLD).child("Download"))
+                    .child(div().text_xs().text_color(muted).child(
+                        "The files are downloaded. Tick the Rotated Files to take along; they are kept as they are, compressed ones included.",
+                    ))
+                    .child(list)
+                    .child(
+                        h_flex()
+                            .justify_end()
+                            .gap_2()
+                            .child(
+                                Button::new("dl-options-cancel")
+                                    .label("Cancel")
+                                    .on_click(cx.listener(|this, _, _, cx| this.cancel_download_options(cx))),
+                            )
+                            .child(
+                                Button::new("dl-options-go")
+                                    .primary()
+                                    .label("Choose folder…")
+                                    .on_click(cx.listener(|this, _, _, cx| this.confirm_download_options(cx))),
+                            ),
+                    ),
+            )
+            .into_any_element()
+    }
+}

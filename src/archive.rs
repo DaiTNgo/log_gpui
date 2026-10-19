@@ -31,6 +31,12 @@ pub enum ArchiveKind {
 }
 
 impl ArchiveKind {
+    /// A lone packed file (`.gz`, `.zst`, `.xz`, `.bz2`): one entry, named
+    /// after the file without the suffix.
+    pub fn is_single_file(self) -> bool {
+        self.single().is_some()
+    }
+
     /// The compression of a lone packed file, `None` for the others.
     fn single(self) -> Option<Compression> {
         match self {

@@ -45,6 +45,8 @@ pub struct RemoteUi {
     pub secret_prompt: Option<SecretPrompt>,
     pub picker: Option<super::remote_picker::RemotePicker>,
     pub download: Option<DownloadState>,
+    /// The Rotated Files to tick before a download.
+    pub download_options: Option<DownloadOptions>,
     /// The Open in full dialog.
     pub full_dialog: Option<super::open_in_full::OpenInFull>,
     /// Remote Files chosen for the New Log Space being made, as
@@ -84,6 +86,7 @@ impl RemoteUi {
             picker: None,
             download: None,
             full_dialog: None,
+            download_options: None,
             new_space_files: Vec::new(),
             new_space_globs: Vec::new(),
             new_space_start: None,
@@ -461,6 +464,15 @@ impl AppView {
     }
 }
 
+/// The Rotated Files next to the files about to be downloaded, to tick.
+pub struct DownloadOptions {
+    pub space_name: String,
+    pub files: Vec<crate::workspace::log_space::LogFile>,
+    /// Per file, its Rotated Files newest first and which are ticked.
+    pub rotated: Vec<Vec<crate::remote::rotated::RotatedFile>>,
+    pub ticked: Vec<Vec<bool>>,
+}
+
 /// A download in progress, or just finished.
 pub struct DownloadState {
     /// The Log Space the files came from (names the new Imported Log Space).
@@ -477,7 +489,7 @@ impl AppView {
     pub fn download_file(&mut self, space_id: &str, file_id: &str, cx: &mut Context<Self>) {
         let Some(space) = self.active_project().and_then(|p| p.log_space(space_id)).cloned() else { return };
         let files: Vec<_> = space.files.iter().filter(|f| f.file_id == file_id).cloned().collect();
-        self.pick_folder_and_download(space.name, files, cx);
+        self.begin_download(space.name, files, cx);
     }
 
     pub fn download_space(&mut self, space_id: &str, cx: &mut Context<Self>) {
@@ -498,13 +510,99 @@ impl AppView {
                 self.live.sources.get(&f.file_id).is_none_or(|s| s.status != crate::live::SourceStatus::Gone)
             })
             .collect();
-        self.pick_folder_and_download(space.name, files, cx);
+        self.begin_download(space.name, files, cx);
+    }
+
+    /// Look for the Rotated Files of the files; when there are some, the
+    /// user ticks the ones to take along (none by default), then picks the
+    /// folder.
+    fn begin_download(&mut self, space_name: String, files: Vec<crate::workspace::log_space::LogFile>, cx: &mut Context<Self>) {
+        if files.is_empty() || self.remote.download.is_some() || self.remote.download_options.is_some() {
+            return;
+        }
+        let hub = self.remote_hub(cx);
+        let store = self.remote.servers.clone();
+        let targets: Vec<Option<(String, String)>> = files
+            .iter()
+            .map(|f| {
+                let r = f.remote.as_ref()?;
+                Some((r.server_id.clone(), r.path()?.to_string()))
+            })
+            .collect();
+        let task = hub.spawn({
+            let hub = hub.clone();
+            async move {
+                let mut found = Vec::new();
+                for target in targets {
+                    let Some((server_id, path)) = target else {
+                        found.push(Vec::new());
+                        continue;
+                    };
+                    let listed = async {
+                        let session = hub.session(&store, &server_id).await.map_err(|e| e.message())?;
+                        let sftp = session.open_sftp().await?;
+                        crate::remote::rotated::list_rotated(&sftp, &path).await
+                    }
+                    .await;
+                    // A folder that cannot be listed just has none to offer.
+                    found.push(listed.unwrap_or_default());
+                }
+                found
+            }
+        });
+        cx.spawn(async move |this, cx| {
+            let rotated = task.await.unwrap_or_default();
+            this.update(cx, |this, cx| {
+                if rotated.iter().all(Vec::is_empty) {
+                    this.pick_folder_and_download(space_name, files, Vec::new(), cx);
+                    return;
+                }
+                let ticked = rotated.iter().map(|r| vec![false; r.len()]).collect();
+                this.remote.download_options = Some(DownloadOptions { space_name, files, rotated, ticked });
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    pub fn toggle_download_rotated(&mut self, file: usize, rotated: usize, cx: &mut Context<Self>) {
+        if let Some(options) = self.remote.download_options.as_mut() {
+            if let Some(t) = options.ticked.get_mut(file).and_then(|r| r.get_mut(rotated)) {
+                *t = !*t;
+            }
+        }
+        cx.notify();
+    }
+
+    pub fn cancel_download_options(&mut self, cx: &mut Context<Self>) {
+        self.remote.download_options = None;
+        cx.notify();
+    }
+
+    /// The ticks are made: pick the folder and download.
+    pub fn confirm_download_options(&mut self, cx: &mut Context<Self>) {
+        let Some(options) = self.remote.download_options.take() else { return };
+        let mut extras = Vec::new();
+        for (fi, file) in options.files.iter().enumerate() {
+            let Some(remote) = file.remote.as_ref() else { continue };
+            let Some(path) = remote.path() else { continue };
+            let folder = crate::remote::browse::dirname(path);
+            for (ri, rotated) in options.rotated[fi].iter().enumerate() {
+                if options.ticked[fi][ri] {
+                    extras.push((remote.server_id.clone(), crate::remote::browse::join(&folder, &rotated.name)));
+                }
+            }
+        }
+        self.pick_folder_and_download(options.space_name, options.files, extras, cx);
+        cx.notify();
     }
 
     fn pick_folder_and_download(
         &mut self,
         space_name: String,
         files: Vec<crate::workspace::log_space::LogFile>,
+        extras: Vec<(String, String)>,
         cx: &mut Context<Self>,
     ) {
         if files.is_empty() || self.remote.download.is_some() {
@@ -513,21 +611,24 @@ impl AppView {
         cx.spawn(async move |this, cx| {
             let Some(folder) = rfd::AsyncFileDialog::new().pick_folder().await else { return };
             let dir = folder.path().to_path_buf();
-            this.update(cx, |this, cx| this.start_download(space_name, files, dir, cx)).ok();
+            this.update(cx, |this, cx| this.start_download(space_name, files, extras, dir, cx)).ok();
         })
         .detach();
     }
 
-    fn start_download(
+    /// Download the files, and the Rotated Files `extras` (`(server id,
+    /// path)`), into `dir`; a Rotated File keeps its name and its compression.
+    pub fn start_download(
         &mut self,
         space_name: String,
         files: Vec<crate::workspace::log_space::LogFile>,
+        extras: Vec<(String, String)>,
         dir: PathBuf,
         cx: &mut Context<Self>,
     ) {
         use crate::remote::download::{DownloadError, Progress, download_file, download_names};
         use std::sync::atomic::Ordering;
-        let jobs: Vec<(String, String, String)> = files
+        let mut jobs: Vec<(String, String, String)> = files
             .iter()
             .filter_map(|f| {
                 // A Remote Command has no file to download.
@@ -536,6 +637,11 @@ impl AppView {
                 Some((r.server_id.clone(), server.name.clone(), r.path()?.to_string()))
             })
             .collect();
+        for (server_id, path) in extras {
+            if let Some(server) = self.remote.servers.get(&server_id) {
+                jobs.push((server_id, server.name.clone(), path));
+            }
+        }
         let existing: std::collections::HashSet<String> = std::fs::read_dir(&dir)
             .map(|rd| rd.flatten().map(|e| e.file_name().to_string_lossy().to_string()).collect())
             .unwrap_or_default();
@@ -582,19 +688,17 @@ impl AppView {
         // Redraw while it runs, then take the result.
         cx.spawn(async move |this, cx| {
             let mut task = task;
-            loop {
+            let outcome = loop {
                 let tick = cx.background_executor().timer(std::time::Duration::from_millis(200));
-                futures_lite_select(&mut task, tick).await;
-                if task.is_finished() {
-                    break;
+                if let Some(done) = race(&mut task, tick).await {
+                    break match done {
+                        Ok(result) => result,
+                        Err(e) => Err(e.to_string()),
+                    };
                 }
                 if this.update(cx, |_, cx| cx.notify()).is_err() {
                     return;
                 }
-            }
-            let outcome = match task.await {
-                Ok(result) => result,
-                Err(e) => Err(e.to_string()),
             };
             this.update(cx, |this, cx| {
                 if let Some(download) = this.remote.download.as_mut() {
@@ -628,8 +732,17 @@ impl AppView {
                     name = format!("{base} {n}");
                     n += 1;
                 }
-                let sources: Vec<crate::workspace::log_space::ImportSource> =
-                    paths.into_iter().map(crate::workspace::log_space::ImportSource::Disk).collect();
+                // A compressed Rotated File opens as an Archive of one file.
+                let sources: Vec<crate::workspace::log_space::ImportSource> = paths
+                    .into_iter()
+                    .map(|path| match crate::archive::detect(std::path::Path::new(&path)) {
+                        Some(kind) if kind.is_single_file() => {
+                            let entry = crate::archive::gz_entry_name(std::path::Path::new(&path));
+                            crate::workspace::log_space::ImportSource::Entry { archive: path, entry }
+                        }
+                        _ => crate::workspace::log_space::ImportSource::Disk(path),
+                    })
+                    .collect();
                 self.create_log_space(&name, LogSpaceKind::Imported, &sources, cx);
             }
         }
@@ -637,21 +750,22 @@ impl AppView {
     }
 }
 
-/// Wait for whichever of the two finishes first.
-async fn futures_lite_select<A, B>(a: &mut A, b: B)
+/// Wait for `a` or for `tick`, whichever comes first: `Some(output)` when `a`
+/// finished. `a` is polled to its end only once, so its output is not lost.
+async fn race<A, B>(a: &mut A, tick: B) -> Option<A::Output>
 where
     A: std::future::Future + Unpin,
     B: std::future::Future,
 {
     use std::pin::pin;
     use std::task::Poll;
-    let mut b = pin!(b);
+    let mut tick = pin!(tick);
     std::future::poll_fn(|cx| {
-        if std::pin::Pin::new(&mut *a).poll(cx).is_ready() {
-            return Poll::Ready(());
+        if let Poll::Ready(output) = std::pin::Pin::new(&mut *a).poll(cx) {
+            return Poll::Ready(Some(output));
         }
-        if b.as_mut().poll(cx).is_ready() {
-            return Poll::Ready(());
+        if tick.as_mut().poll(cx).is_ready() {
+            return Poll::Ready(None);
         }
         Poll::Pending
     })
