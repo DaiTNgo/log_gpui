@@ -119,7 +119,7 @@ fn varint(bytes: &[u8], pos: &mut usize) -> Option<u64> {
 /// line counts as a line of 100 bytes.
 pub fn estimate_lines(bytes: u64, sample: &[u8]) -> u64 {
     let newlines = sample.iter().filter(|b| **b == b'\n').count() as u64;
-    let average = if newlines == 0 { 100 } else { (sample.len() as u64 / newlines).max(1) };
+    let average = (sample.len() as u64).checked_div(newlines).map_or(100, |a| a.max(1));
     bytes / average
 }
 

@@ -135,6 +135,9 @@ fn field_error(text: &str, newest: Option<f64>, any_times: bool) -> Option<Strin
     }
 }
 
+/// One file to estimate: its index, Server, Generations, and the time range.
+type EstimateJob = (usize, String, Vec<GenerationPlan>, Option<f64>, Option<f64>);
+
 /// What listing one Remote File found.
 struct Listing {
     size: u64,
@@ -428,7 +431,7 @@ impl AppView {
             return;
         }
         dialog.estimate = EstimateState::Working;
-        let jobs: Vec<(usize, String, Vec<GenerationPlan>, Option<f64>, Option<f64>)> = dialog
+        let jobs: Vec<EstimateJob> = dialog
             .files
             .iter()
             .enumerate()

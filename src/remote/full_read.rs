@@ -240,7 +240,7 @@ pub async fn estimate_generations(
         .map_err(|e| format!("{}: {e}", gp.name))?;
         let bytes = until - from;
         let lines = estimate::estimate_lines(bytes, &sample);
-        let average_line = if lines == 0 { 100 } else { (bytes / lines).max(1) };
+        let average_line = bytes.checked_div(lines).map_or(100, |a| a.max(1));
         out.push(GenerationEstimate { distance: gp.distance, lines, bytes, approximate: true, average_line });
     }
     Ok(out)
@@ -287,7 +287,6 @@ pub fn fit_newest(plan: &mut Vec<GenerationPlan>, estimates: &[GenerationEstimat
             } else {
                 gp.start_byte = Some(gp.size.saturating_sub(room * e.average_line));
             }
-            room = 0;
             break;
         }
         room -= e.lines;

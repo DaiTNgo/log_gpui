@@ -124,7 +124,7 @@ fn group(n: usize) -> String {
     let digits = n.to_string();
     let mut out = String::new();
     for (i, c) in digits.chars().enumerate() {
-        if i > 0 && (digits.len() - i) % 3 == 0 {
+        if i > 0 && (digits.len() - i).is_multiple_of(3) {
             out.push(',');
         }
         out.push(c);
@@ -182,7 +182,7 @@ pub fn recover_meta(dir: &Path) -> io::Result<CopyMeta> {
         return Err(io::Error::new(io::ErrorKind::NotFound, "no Remote Copy here"));
     }
     // The biggest distance is the oldest.
-    found.sort_by(|a, b| b.0.cmp(&a.0));
+    found.sort_by_key(|f| std::cmp::Reverse(f.0));
     let generations = found
         .iter()
         .map(|(distance, file)| GenerationMeta {

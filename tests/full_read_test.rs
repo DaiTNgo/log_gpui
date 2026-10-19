@@ -279,10 +279,7 @@ fn read_newest_lines_cuts_the_oldest_and_says_older_lines_were_not_read() {
 
 /// Drop every session of the test sshd (its listener stays up).
 fn drop_sessions(env_dir: &str) -> bool {
-    let out = std::process::Command::new("pgrep").args(["-f", &format!("sshd -f {env_dir}/sshd_config")]).output();
-    let Ok(out) = out else { return false };
-    let text = String::from_utf8_lossy(&out.stdout);
-    let Some(pid) = text.lines().next() else { return false };
+    let Ok(pid) = std::fs::read_to_string(format!("{env_dir}/sshd.pid")) else { return false };
     std::process::Command::new("pkill").args(["-P", pid.trim()]).status().map(|s| s.success()).unwrap_or(false)
 }
 

@@ -10,7 +10,7 @@ use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::checkbox::Checkbox;
 use gpui_component::Disableable as _;
 use gpui_component::input::Input;
-use gpui_component::{ActiveTheme as _, Sizable as _, h_flex, v_flex};
+use gpui_component::{ActiveTheme as _, h_flex, v_flex};
 
 impl AppView {
     pub(super) fn render_open_in_full(&mut self, cx: &mut gpui::Context<Self>) -> gpui::AnyElement {
