@@ -13,6 +13,7 @@ pub mod picker_state;
 pub mod rotated;
 pub mod secrets;
 pub mod server;
+pub mod starting_time;
 
 pub use command::{Elevation, PresetFields, Start, check_elevation, render, shell_quote};
 pub use health::{HealthBoard, ServerHealth, ServerState, latency_text};

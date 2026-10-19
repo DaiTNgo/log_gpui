@@ -1,4 +1,9 @@
+use super::line_time::line_timestamp;
 use super::splitter::decode_line;
+
+/// Lines this much older than the Starting Time are still kept: writers of a
+/// log do not agree on the second.
+pub const START_SLACK_SECS: f64 = 1.0;
 
 /// Bytes of a file at an offset. A local file and an SFTP handle both fit.
 pub trait ReadAt {
@@ -49,12 +54,28 @@ pub struct BackwardLines {
     block: usize,
     first: bool,
     follow_offset: u64,
+    /// Starting Time: reading stops at the first Parent Line older than it.
+    stop_before: Option<f64>,
+    stopped: bool,
 }
 
 impl BackwardLines {
     /// `end` is the size of the file when reading starts.
     pub fn new(end: u64, block: usize) -> Self {
-        Self { pos: end, data: Vec::new(), newlines: 0, block: block.max(1), first: true, follow_offset: end }
+        Self { pos: end, data: Vec::new(), newlines: 0, block: block.max(1), first: true, follow_offset: end, stop_before: None, stopped: false }
+    }
+
+    /// Stop at the first Parent Line older than `time` (less a second of
+    /// slack): that line and the Continuation Lines of it are not given, and
+    /// nothing older is read.
+    pub fn with_stop_before(mut self, time: Option<f64>) -> Self {
+        self.stop_before = time;
+        self
+    }
+
+    /// Whether a line older than the Starting Time was found.
+    pub fn reached_start_time(&self) -> bool {
+        self.stopped
     }
 
     /// Where forward reading continues: just after the last newline.
@@ -142,6 +163,26 @@ impl BackwardLines {
         let lens: Vec<u32> = segments[keep_from..].iter().map(|s| s.len() as u32).collect();
         self.newlines = rest.iter().filter(|b| **b == b'\n').count();
         self.data = rest;
+        self.cut_at_start_time(lines, lens)
+    }
+
+    /// Drop what is older than the Starting Time, if the batch reaches it.
+    fn cut_at_start_time(&mut self, mut lines: Vec<String>, mut lens: Vec<u32>) -> (Vec<String>, Vec<u32>) {
+        let Some(time) = self.stop_before else { return (lines, lens) };
+        let limit = time - START_SLACK_SECS;
+        let old = lines.iter().rposition(|l| line_timestamp(l).is_some_and(|t| t < limit));
+        let Some(old) = old else { return (lines, lens) };
+        // The Continuation Lines after that Parent Line belong to it.
+        let keep_from = lines[old + 1..]
+            .iter()
+            .position(|l| line_timestamp(l).is_some())
+            .map_or(lines.len(), |i| old + 1 + i);
+        lines.drain(..keep_from);
+        lens.drain(..keep_from);
+        self.stopped = true;
+        self.pos = 0;
+        self.data.clear();
+        self.newlines = 0;
         (lines, lens)
     }
 
@@ -169,5 +210,77 @@ impl BackwardLines {
             self.absorb_block(block);
         }
         Ok(self.take_batch_with_lens(max_lines))
+    }
+}
+
+#[cfg(test)]
+mod start_time_tests {
+    use super::*;
+
+    fn lines_from(text: &str, t: Option<f64>, max: usize) -> (Vec<String>, bool) {
+        let mut src = text.as_bytes().to_vec();
+        let mut b = BackwardLines::new(src.len() as u64, 16).with_stop_before(t);
+        let got = b.next_batch(&mut src, max).unwrap();
+        (got, b.reached_start_time())
+    }
+
+    fn t(s: &str) -> f64 {
+        line_timestamp(&format!("{s} INFO x")).unwrap()
+    }
+
+    const LOG: &str = "2026-10-19 09:00:00 INFO old\n  old continued\n2026-10-19 10:00:00 INFO a\n  a continued\n2026-10-19 10:05:00 INFO b\n";
+
+    #[test]
+    fn stops_at_the_first_older_parent_line_and_keeps_continuations_of_new_ones() {
+        let (got, stopped) = lines_from(LOG, Some(t("2026-10-19 10:00:00")), 100);
+        assert!(stopped);
+        assert_eq!(got, ["2026-10-19 10:00:00 INFO a", "  a continued", "2026-10-19 10:05:00 INFO b"]);
+    }
+
+    #[test]
+    fn a_line_without_time_between_new_lines_stays() {
+        let text = "2026-10-19 10:00:00 INFO a\nno time\n2026-10-19 10:01:00 INFO b\n";
+        let (got, stopped) = lines_from(text, Some(t("2026-10-19 09:00:00")), 100);
+        assert!(!stopped);
+        assert_eq!(got.len(), 3);
+    }
+
+    #[test]
+    fn a_second_of_skew_is_tolerated() {
+        let text = "2026-10-19 09:59:59 INFO a\n2026-10-19 10:00:01 INFO b\n";
+        let (got, stopped) = lines_from(text, Some(t("2026-10-19 10:00:00")), 100);
+        assert!(!stopped);
+        assert_eq!(got.len(), 2);
+        let text = "2026-10-19 09:59:58 INFO a\n2026-10-19 10:00:01 INFO b\n";
+        let (got, stopped) = lines_from(text, Some(t("2026-10-19 10:00:00")), 100);
+        assert!(stopped);
+        assert_eq!(got, ["2026-10-19 10:00:01 INFO b"]);
+    }
+
+    #[test]
+    fn everything_older_gives_no_lines() {
+        let (got, stopped) = lines_from(LOG, Some(t("2026-10-19 11:00:00")), 100);
+        assert!(stopped);
+        assert!(got.is_empty());
+    }
+
+    #[test]
+    fn without_a_start_time_nothing_changes() {
+        let (got, stopped) = lines_from(LOG, None, 100);
+        assert!(!stopped);
+        assert_eq!(got.len(), 5);
+    }
+
+    #[test]
+    fn the_start_time_is_found_across_batches() {
+        // Only two lines per batch: the old line is in a later batch.
+        let mut src = LOG.as_bytes().to_vec();
+        let mut b = BackwardLines::new(src.len() as u64, 16).with_stop_before(Some(t("2026-10-19 10:00:00")));
+        let first = b.next_batch(&mut src, 2).unwrap();
+        assert_eq!(first, ["  a continued", "2026-10-19 10:05:00 INFO b"]);
+        assert!(!b.reached_start_time());
+        let second = b.next_batch(&mut src, 3).unwrap();
+        assert_eq!(second, ["2026-10-19 10:00:00 INFO a"]);
+        assert!(b.reached_start_time() && b.is_done());
     }
 }

@@ -5,6 +5,7 @@ pub mod backward;
 pub mod buffer;
 pub mod command;
 pub mod health;
+pub mod line_time;
 pub mod local;
 pub mod remote;
 pub mod resume;
