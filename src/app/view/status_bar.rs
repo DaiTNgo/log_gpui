@@ -24,6 +24,24 @@ impl AppView {
         Some((label, list))
     }
 
+    /// "Reading app.log.2.gz 45% (17 / 38 MB)" for a long read of a file of
+    /// the open Log Space.
+    fn read_progress_text(&self) -> Option<String> {
+        let space = self.active_space()?;
+        let progress = space.files.iter().find_map(|f| self.live.progress.get(&f.file_id))?;
+        let size = crate::live::buffer::size_text;
+        Some(match progress.total.filter(|t| *t > 0) {
+            Some(total) => format!(
+                "Reading {} {}% ({} / {})",
+                progress.what,
+                (progress.done.min(total) * 100 / total),
+                size(progress.done),
+                size(total)
+            ),
+            None => format!("Reading {} ({})", progress.what, size(progress.done)),
+        })
+    }
+
     /// The plain labels on the left of the status bar, in order.
     pub fn status_bar_labels(&self) -> Vec<String> {
         let total_count = self.all_entries.len();
@@ -73,6 +91,9 @@ impl AppView {
                     .label(pending[0].clone())
                     .tooltip(pending.join("\n")),
             );
+        }
+        if let Some(text) = self.read_progress_text() {
+            bar = bar.right(Button::new("status-read-progress").ghost().xsmall().label(text));
         }
         if let Some((label, action)) = self.connect_button() {
             bar = bar.right(

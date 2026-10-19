@@ -506,7 +506,8 @@ impl AppView {
                 }
                 SourceEvent::EarlierAvailable(file) => {
                     self.live.loading_earlier.remove(file_id);
-                    buffer.set_earlier_available(&mut parsed, file.as_ref());
+                    let full = parsed.entries.len() >= window;
+                    buffer.set_earlier_available(&mut parsed, file.as_ref(), full);
                     match file {
                         Some(file) => self.live.earlier.insert(file_id.to_string(), file),
                         None => self.live.earlier.remove(file_id),
@@ -601,7 +602,7 @@ impl AppView {
         if let Some(project) = self.active_project_mut() {
             for space in &mut project.log_spaces {
                 if let Some(file) = space.file_mut(file_id) {
-                    file.generation += 1;
+                    file.begin_earlier_generation();
                 }
             }
         }

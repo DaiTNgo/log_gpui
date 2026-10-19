@@ -324,7 +324,10 @@ impl LiveBuffer {
         };
         if let Some(top) = parsed.entries.first_mut() {
             if top.break_before.as_ref().is_some_and(|m| {
-                matches!(m.kind, BreakKind::LeftWindow | BreakKind::StartOfLoaded | BreakKind::EarlierAvailable)
+                matches!(
+                    m.kind,
+                    BreakKind::LeftWindow | BreakKind::StartOfLoaded | BreakKind::EarlierAvailable | BreakKind::EarlierWindowFull
+                )
             }) {
                 top.break_before = None;
                 parsed.raw_breaks.remove(&0);
@@ -351,17 +354,25 @@ impl LiveBuffer {
     /// Draw (or take away) the Break at the top of the lines that offers the
     /// next Rotated File. It only exists while the top line is the first line
     /// of its Generation.
-    pub fn set_earlier_available(&mut self, parsed: &mut ParsedFile, file: Option<&super::source::EarlierFile>) {
+    pub fn set_earlier_available(
+        &mut self,
+        parsed: &mut ParsedFile,
+        file: Option<&super::source::EarlierFile>,
+        window_full: bool,
+    ) {
         let Some(top) = parsed.entries.first_mut() else { return };
-        let is_ours = |m: &Arc<BreakMark>| m.kind == BreakKind::EarlierAvailable;
+        let is_ours =
+            |m: &Arc<BreakMark>| matches!(m.kind, BreakKind::EarlierAvailable | BreakKind::EarlierWindowFull);
         match file {
             Some(file) => {
                 if top.break_before.is_none() {
                     let size = size_text(file.size);
-                    let mark = Arc::new(BreakMark {
-                        kind: BreakKind::EarlierAvailable,
-                        label: format!("Load earlier generation ({}, {size})", file.name),
-                    });
+                    let (kind, label) = if window_full {
+                        (BreakKind::EarlierWindowFull, format!("Live Window is full; earlier generation: {}, {size}", file.name))
+                    } else {
+                        (BreakKind::EarlierAvailable, format!("Load earlier generation ({}, {size})", file.name))
+                    };
+                    let mark = Arc::new(BreakMark { kind, label });
                     top.break_before = Some(mark.clone());
                     parsed.raw_breaks.insert(0, mark);
                 }

@@ -351,3 +351,26 @@ fn an_old_space_without_globs_still_loads() {
     assert!(space.globs.is_empty());
     assert_eq!(space.files[0].from_glob, None);
 }
+
+#[test]
+fn markers_keep_their_distance_when_a_rotated_file_is_loaded_above() {
+    use log_gpui::workspace::log_space::LogFile;
+    let mut file = LogFile::remote("s1", "web1", "/app/app.log");
+    // A Marker on line 5 of the file being read (distance 0).
+    assert!(file.paint_marker(5, "line five", 0..4, red()));
+    // The file rotated once while it was open: that Marker is now 1 back.
+    file.begin_generation();
+    assert_eq!(file.markers_on_line_in(5, 1).len(), 1);
+    // A Rotated File is loaded above: lines read in the old Generation 0 are
+    // now 2 back, the current lines 0 back, and the Marker stays on its line.
+    file.begin_earlier_generation();
+    assert_eq!(file.generations_ago(2), 0);
+    assert_eq!(file.generations_ago(1), 1);
+    assert_eq!(file.generations_ago(0), 2);
+    assert_eq!(file.markers_on_line_in(5, 1).len(), 1);
+    // A Marker on a line of the Rotated File is stored 2 back, and found
+    // again when the file is reopened and loads the same Generations.
+    assert!(file.paint_marker_in(2, 120, "an older line", 0..2, red()));
+    assert_eq!(file.markers_on_line_in(120, 2).len(), 1);
+    assert!(file.markers_on_line_in(120, 0).is_empty());
+}

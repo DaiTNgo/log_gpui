@@ -871,7 +871,14 @@ pub(crate) struct BreakActions {
 /// Server.
 fn break_has_actions(kind: crate::live::BreakKind) -> bool {
     use crate::live::BreakKind;
-    matches!(kind, BreakKind::LeftWindow | BreakKind::Cleared | BreakKind::StartOfLoaded)
+    matches!(
+        kind,
+        BreakKind::LeftWindow
+            | BreakKind::Cleared
+            | BreakKind::StartOfLoaded
+            | BreakKind::EarlierAvailable
+            | BreakKind::EarlierWindowFull
+    )
 }
 
 /// A small text button on a Break.
@@ -908,6 +915,26 @@ pub(crate) fn render_break(
 ) -> gpui::AnyElement {
     let buttons: Vec<gpui::AnyElement> = actions
         .map(|a| {
+            use crate::live::BreakKind;
+            if matches!(a.kind, BreakKind::EarlierAvailable | BreakKind::EarlierWindowFull) {
+                let (view, file) = (a.view.clone(), a.file_id.clone());
+                let full = a.kind == BreakKind::EarlierWindowFull;
+                return vec![break_button(
+                    ElementId::from(gpui::SharedString::from(format!("break-earlier-{}-{}", a.file_id, a.id))),
+                    if full { "Open in full…" } else { "Load" },
+                    colors,
+                    move |cx| {
+                        let id = file.clone();
+                        view.update(cx, |this, cx| {
+                            if full {
+                                this.request_open_in_full(&id, cx);
+                            } else {
+                                this.load_earlier(&id, cx);
+                            }
+                        });
+                    },
+                )];
+            }
             let more_view = a.view.clone();
             let more_file = a.file_id.clone();
             let mut buttons = vec![break_button(

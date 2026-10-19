@@ -282,6 +282,30 @@ impl AppView {
         cx.notify();
     }
 
+    /// Load the next Rotated File above the lines the file holds, as many
+    /// lines as the Live Window has room for.
+    pub fn load_earlier(&mut self, file_id: &str, cx: &mut Context<Self>) {
+        if self.live.loading_earlier.contains(file_id) {
+            return;
+        }
+        let Some(parsed) = self.parsed_files.get(file_id) else { return };
+        let room = self.live.window.saturating_sub(parsed.entries.len());
+        if room == 0 {
+            self.request_open_in_full(file_id, cx);
+            return;
+        }
+        let Some(source) = self.live.sources.get(file_id) else { return };
+        source.handle.send(SourceCommand::LoadEarlier { room });
+        self.live.loading_earlier.insert(file_id.to_string());
+        cx.notify();
+    }
+
+    /// Read the file and its Rotated Files whole into a Remote Copy.
+    pub fn request_open_in_full(&mut self, _file_id: &str, cx: &mut Context<Self>) {
+        self.notice = Some("Open in full is not available yet".into());
+        cx.notify();
+    }
+
     /// Drop a Load More that has not started reading.
     pub fn cancel_load_more(&mut self, file_id: &str) {
         if let Some(source) = self.live.sources.get(file_id) {

@@ -309,6 +309,14 @@ impl LogFile {
         }
     }
 
+    /// A Rotated File was loaded above everything held: it is a Generation
+    /// before all the others. The file's own count moves with the lines'
+    /// Generations, so Markers keep their distance (and the new Generation is
+    /// one further back than the oldest held).
+    pub fn begin_earlier_generation(&mut self) {
+        self.generation += 1;
+    }
+
     /// How many Generations back a line read in `generation` is.
     pub fn generations_ago(&self, generation: u32) -> u32 {
         self.generation.saturating_sub(generation)

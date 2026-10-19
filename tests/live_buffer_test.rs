@@ -237,7 +237,7 @@ mod earlier {
     fn the_button_break_goes_on_top_and_leaves_with_the_next_load() {
         let (mut parsed, mut buf) = current_file();
         let next = EarlierFile { name: "app.log.2.gz".into(), size: 38 * 1024 * 1024, compressed: true };
-        buf.set_earlier_available(&mut parsed, Some(&next));
+        buf.set_earlier_available(&mut parsed, Some(&next), false);
         let mark = parsed.entries[0].break_before.as_ref().unwrap();
         assert_eq!(mark.kind, BreakKind::EarlierAvailable);
         assert_eq!(mark.label, "Load earlier generation (app.log.2.gz, 38 MB)");
@@ -245,7 +245,17 @@ mod earlier {
         // The Break between the Generations replaced it.
         assert_eq!(parsed.entries[2].break_before.as_ref().unwrap().kind, BreakKind::Rotated);
         assert!(parsed.entries[0].break_before.is_none());
-        buf.set_earlier_available(&mut parsed, None);
+        buf.set_earlier_available(&mut parsed, None, false);
         assert!(parsed.entries[0].break_before.is_none());
+    }
+
+    #[test]
+    fn a_full_window_offers_open_in_full_instead() {
+        let (mut parsed, mut buf) = current_file();
+        let next = EarlierFile { name: "app.log.1".into(), size: 2048, compressed: false };
+        buf.set_earlier_available(&mut parsed, Some(&next), true);
+        let mark = parsed.entries[0].break_before.as_ref().unwrap();
+        assert_eq!(mark.kind, BreakKind::EarlierWindowFull);
+        assert!(mark.label.contains("app.log.1, 2.0 KB"));
     }
 }

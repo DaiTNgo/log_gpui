@@ -49,6 +49,9 @@ pub enum BreakKind {
     /// An earlier Generation, a Rotated File, can be loaded above the oldest
     /// line held. Drawn at the top of the lines of the file, with a button.
     EarlierAvailable,
+    /// Like `EarlierAvailable`, but the Live Window is full: only Open in
+    /// full can read it.
+    EarlierWindowFull,
 }
 
 impl BreakKind {
@@ -68,7 +71,7 @@ impl BreakKind {
             BreakKind::Cleared => "cleared",
             BreakKind::StartOfLoaded => "start of loaded lines",
             BreakKind::Changed => "earlier lines of this generation are no longer on the Server",
-            BreakKind::EarlierAvailable => "earlier generation",
+            BreakKind::EarlierAvailable | BreakKind::EarlierWindowFull => "earlier generation",
         }
     }
 
