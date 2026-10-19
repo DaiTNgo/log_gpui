@@ -276,3 +276,45 @@ fn read_newest_lines_cuts_the_oldest_and_says_older_lines_were_not_read() {
     let first = meta.generations[0].first_line_no.unwrap();
     assert!(got.first().unwrap().ends_with(&format!("line {}", first - 1)));
 }
+
+/// Drop every session of the test sshd (its listener stays up).
+fn drop_sessions(env_dir: &str) -> bool {
+    let out = std::process::Command::new("pgrep").args(["-f", &format!("sshd -f {env_dir}/sshd_config")]).output();
+    let Ok(out) = out else { return false };
+    let text = String::from_utf8_lossy(&out.stdout);
+    let Some(pid) = text.lines().next() else { return false };
+    std::process::Command::new("pkill").args(["-P", pid.trim()]).status().map(|s| s.success()).unwrap_or(false)
+}
+
+#[test]
+fn a_lost_connection_is_picked_up_again_and_no_line_is_missing_or_repeated() {
+    let Some(env) = env() else { return };
+    let key_dir = std::env::var("SSH_TEST_DIR").unwrap();
+    let total = 600_000u32;
+    std::fs::write(env.path("app.log"), (0..total).map(|i| stamp(i % 80_000)).collect::<String>()).unwrap();
+    let plan = env.plan(vec![env.generation(0, "app.log")], None, None, 2_000_000);
+    let (rx, ctl) = env.start(plan);
+    // Wait for the first lines, hold the read, drop the connection, go on.
+    let mut events = Vec::new();
+    let deadline = std::time::Instant::now() + Duration::from_secs(20);
+    while !events.iter().any(|e| matches!(e, ReadEvent::Lines { .. })) {
+        while let Ok(e) = rx.try_recv() {
+            events.push(e);
+        }
+        assert!(std::time::Instant::now() < deadline);
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    ctl.set_paused(true);
+    std::thread::sleep(Duration::from_millis(300));
+    assert!(drop_sessions(&key_dir), "no session of the test sshd to drop");
+    std::thread::sleep(Duration::from_millis(500));
+    ctl.set_paused(false);
+    events.extend(all_events(&rx));
+    let got = lines_of(&events);
+    assert_eq!(got.len(), total as usize);
+    for (i, line) in got.iter().enumerate().step_by(997) {
+        assert_eq!(line, stamp(i as u32 % 80_000).trim_end(), "line {i}");
+    }
+    let ReadEvent::Done(meta) = events.last().unwrap() else { panic!("{:?}", events.last()) };
+    assert!(meta.is_complete());
+}

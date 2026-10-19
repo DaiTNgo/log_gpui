@@ -165,3 +165,39 @@ fn cancel_keeps_the_lines_and_ends_with_a_break(cx: &mut TestAppContext) {
 fn last_space(app: &log_gpui::app::AppView) -> &log_gpui::workspace::log_space::LogSpace {
     app.workspace_state.active_project().unwrap().log_spaces.last().unwrap()
 }
+
+#[gpui::test]
+fn removing_the_copy_deletes_its_folder_and_orphans_are_swept(cx: &mut TestAppContext) {
+    if ssh().is_none() {
+        return;
+    }
+    let mut h = common::open_app(cx);
+    let server_id = add_server(&mut h, "web1");
+    let root = tempfile::tempdir().unwrap();
+    std::fs::write(root.path().join("app.log"), (0..50).map(stamp).collect::<String>()).unwrap();
+    let request = FullReadRequest {
+        server_id,
+        server_name: "web1".into(),
+        path: root.path().join("app.log").to_string_lossy().to_string(),
+        generations: vec![plan(root.path(), 0, "app.log")],
+        start: None,
+        to: None,
+        start_text: None,
+        to_text: None,
+        destination: Destination::NewSpace("Copy".into()),
+    };
+    let file_id = h.view.update(&mut h.cx, |app, cx| app.start_full_read(request, cx)).unwrap();
+    wait_for(&mut h, |app| app.live.copy_reads.is_empty());
+    let (space_id, dir) = h.view.read_with(&h.cx, |app, _| {
+        let space = last_space(app);
+        (space.id.clone(), std::path::PathBuf::from(space.file(&file_id).unwrap().copy.clone().unwrap()))
+    });
+    assert!(dir.join("gen-0.log").exists());
+    // A folder nobody holds is swept.
+    let orphan = log_gpui::remote::copy::create_dir(dir.parent().unwrap()).unwrap();
+    let swept = h.view.read_with(&h.cx, |app, _| log_gpui::remote::copy::sweep(&app.copies_root_for_test(), &app.copy_dirs_in_use_for_test()));
+    assert_eq!(swept, 1);
+    assert!(!orphan.exists() && dir.exists());
+    h.view.update(&mut h.cx, |app, cx| app.remove_file_from_space(&space_id, &file_id, cx));
+    assert!(!dir.exists());
+}

@@ -28,6 +28,9 @@ pub struct WorkspaceState {
     /// Lines one Load More reads: an app setting.
     #[serde(default = "default_load_more_step")]
     pub load_more_step: usize,
+    /// Most lines one Open in full reads: an app setting.
+    #[serde(default = "default_full_read_limit")]
+    pub full_read_limit_lines: usize,
     /// Most files one Live Glob reads at once: an app setting.
     #[serde(default = "default_glob_limit")]
     pub live_glob_limit: usize,
@@ -67,6 +70,11 @@ pub fn default_glob_interval() -> u64 {
     5
 }
 
+/// Default Full Read Limit.
+pub fn default_full_read_limit() -> usize {
+    2_000_000
+}
+
 /// Default Load More Step.
 pub fn default_load_more_step() -> usize {
     10_000
@@ -81,6 +89,7 @@ impl Default for WorkspaceState {
             match_colors: Default::default(),
             live_window: default_live_window(),
             load_more_step: default_load_more_step(),
+            full_read_limit_lines: default_full_read_limit(),
             live_glob_limit: default_glob_limit(),
             live_glob_interval: default_glob_interval(),
             density: Default::default(),

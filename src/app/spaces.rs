@@ -400,7 +400,8 @@ impl AppView {
         let removed = self
             .active_project_mut()
             .and_then(|p| p.remove_file(space_id, file_id).ok());
-        if removed.is_some() {
+        if let Some(file) = &removed {
+            self.delete_copy_of(file);
             self.forget_file(file_id);
         }
         self.refresh_after_space_change(cx);
@@ -577,6 +578,7 @@ impl AppView {
                     .and_then(|p| p.remove_log_space(&space_id));
                 if let Some(space) = removed {
                     for file in &space.files {
+                        self.delete_copy_of(file);
                         self.forget_file(&file.file_id);
                     }
                     // A Scratch space owns its folder; an Imported one owns nothing on disk.

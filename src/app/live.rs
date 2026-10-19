@@ -382,7 +382,7 @@ impl AppView {
             if let Some(parsed) = self.parsed_files.get_mut(&file_id) {
                 if let Some(mut buffer) = parsed.live.take() {
                     // A smaller window drops at once, not after 10% more.
-                    let limit = buffer.limit(window, FULL_READ_LIMIT);
+                    let limit = buffer.limit(window, self.live.full_read_limit);
                     let trimmed = buffer.trim_to_window(parsed, limit);
                     parsed.live = Some(buffer);
                     if let Some(trimmed) = trimmed {
@@ -586,7 +586,7 @@ impl AppView {
             }
         }
         if remote {
-            let limit = buffer.limit(window, FULL_READ_LIMIT);
+            let limit = buffer.limit(window, self.live.full_read_limit);
             if let Some(trimmed) = buffer.trim_to_window(&mut parsed, limit) {
                 delta.structural = true;
                 delta.trimmed = Some(trimmed);
@@ -684,7 +684,8 @@ impl AppView {
         if self.live.follow {
             self.live.unseen = 0;
             self.scroll_to_newest();
-        } else {
+        } else if !relevant.iter().all(|(id, _)| self.live.copy_reads.contains_key(id)) {
+            // A Remote Copy being read is not news: it is all there to read.
             self.live.unseen += grew;
         }
         cx.notify();

@@ -81,8 +81,9 @@ impl AppView {
         }
         let removing_active = self.active_project().map(|p| p.id.as_str()) == Some(project_id);
         self.persist_active_session();
-        if self.workspace_state.remove_project(project_id).is_none() {
-            return;
+        let Some(removed) = self.workspace_state.remove_project(project_id) else { return };
+        for file in removed.log_spaces.iter().flat_map(|s| s.files.iter()) {
+            self.delete_copy_of(file);
         }
         if removing_active {
             self.restore_active_session(cx);

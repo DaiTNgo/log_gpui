@@ -79,6 +79,7 @@ struct Row {
 struct Values {
     live_window: usize,
     load_more_step: usize,
+    full_read_limit: usize,
     glob_limit: usize,
     glob_interval: u64,
     shown: bool,
@@ -100,6 +101,7 @@ pub fn open_settings_dialog(view: Entity<AppView>, window: &mut Window, cx: &mut
                 Values {
                     live_window: v.live.window,
                     load_more_step: v.live.load_more_step,
+                    full_read_limit: v.live.full_read_limit,
                     glob_limit: v.live.glob_limit,
                     glob_interval: v.live.glob_interval,
                     shown: v.source_column_shown(),
@@ -242,7 +244,9 @@ fn rows_of(section: SettingsSection, view: &Entity<AppView>, v: &Values, cx: &Ap
             let steps = [1_000usize, 10_000, 100_000, 1_000_000];
             let current = v.live_window;
             let current_step = v.load_more_step;
-            let (limit_view, interval_view) = (view.clone(), view.clone());
+            let (limit_view, interval_view, read_view) = (view.clone(), view.clone(), view.clone());
+            let read_limits = [500_000usize, 1_000_000, 2_000_000, 5_000_000, 10_000_000];
+            let current_read = v.full_read_limit;
             let limits = [10usize, 25, 50, 100, 200, 500];
             let intervals = [2u64, 5, 10, 30, 60, 300];
             let (current_limit, current_interval) = (v.glob_limit, v.glob_interval);
@@ -277,6 +281,24 @@ fn rows_of(section: SettingsSection, view: &Entity<AppView>, v: &Values, cx: &Ap
                     .on_click(move |ix: &Vec<usize>, window, app| {
                         if let Some(&i) = ix.first() {
                             step_view.update(app, |this, cx| this.set_load_more_step(steps[i], cx));
+                            window.refresh();
+                        }
+                    })
+                    .into_any_element(),
+            },
+            Row {
+                title: "Full Read Limit",
+                description: "The most lines one Open in full reads, and the most a Remote File holds once Load more made its window longer. About 1.3 KB of memory per line.",
+                control: ButtonGroup::new("settings-full-read-limit")
+                    .small()
+                    .children(read_limits.map(|n| {
+                        Button::new(SharedString::from(format!("full-read-limit-{n}")))
+                            .label(format!("{}M", n as f64 / 1_000_000.0))
+                            .selected(current_read == n)
+                    }))
+                    .on_click(move |ix: &Vec<usize>, window, app| {
+                        if let Some(&i) = ix.first() {
+                            read_view.update(app, |this, cx| this.set_full_read_limit(read_limits[i], cx));
                             window.refresh();
                         }
                     })

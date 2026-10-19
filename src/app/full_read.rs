@@ -73,6 +73,16 @@ impl AppView {
         copy::root_in(&base)
     }
 
+    #[doc(hidden)]
+    pub fn copies_root_for_test(&self) -> PathBuf {
+        self.copies_root()
+    }
+
+    #[doc(hidden)]
+    pub fn copy_dirs_in_use_for_test(&self) -> std::collections::HashSet<PathBuf> {
+        self.copy_dirs_in_use()
+    }
+
     /// The Full Read Limit in lines.
     pub fn full_read_limit(&self) -> usize {
         self.live.full_read_limit
@@ -202,8 +212,8 @@ impl AppView {
             let delta = self.apply_copy_events(&file_id, events);
             deltas.push((file_id, delta));
         }
-        self.live.copy_reads.retain(|_, read| !read.finished);
         self.apply_deltas(deltas, cx);
+        self.live.copy_reads.retain(|_, read| !read.finished);
         self.schedule_session_save(cx);
     }
 
@@ -330,6 +340,16 @@ impl AppView {
                     f.generation = generation;
                 }
             }
+        }
+    }
+
+    /// A Remote Copy leaves the app: its read stops and its folder goes.
+    pub(crate) fn delete_copy_of(&mut self, file: &LogFile) {
+        if let Some(read) = self.live.copy_reads.remove(&file.file_id) {
+            read.ctl.cancel();
+        }
+        if let Some(dir) = &file.copy {
+            let _ = copy::remove(Path::new(dir));
         }
     }
 
