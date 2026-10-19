@@ -2,6 +2,7 @@
 
 pub mod browse;
 pub mod command;
+pub mod compress;
 pub mod download;
 pub mod glob_plan;
 pub mod glob_watcher;

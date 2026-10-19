@@ -266,7 +266,7 @@ impl LogFile {
             .file_name()
             .map(|n| n.to_string_lossy().to_string())
             .unwrap_or_else(|| archive.to_string());
-        let lone_gz = archive_name.ends_with(".gz") && entry == crate::archive::gz_entry_name(archive_path);
+        let lone_gz = crate::archive::SINGLE_SUFFIXES.iter().any(|s| archive_name.ends_with(s)) && entry == crate::archive::gz_entry_name(archive_path);
         Self {
             file_id: format!("{archive}!/{entry}"),
             display_name: if lone_gz { entry.to_string() } else { format!("{archive_name} › {entry}") },

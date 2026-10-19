@@ -332,3 +332,24 @@ fn an_archive_reads_as_reading_until_it_is_listed() {
     assert!(!form.is_reading());
     assert_eq!(form.files[0].display_name(), "bundle.zip › app.log");
 }
+
+#[test]
+fn zstd_xz_and_bzip2_files_are_one_entry_each() {
+    let d = dir();
+    for (name, kind, bytes) in [
+        ("app.log.1.zst", ArchiveKind::Zstd, include_bytes!("../src/remote/testdata/t.zst").as_slice()),
+        ("app.log.2.xz", ArchiveKind::Xz, include_bytes!("../src/remote/testdata/t.xz").as_slice()),
+        ("app.log.3.bz2", ArchiveKind::Bzip2, include_bytes!("../src/remote/testdata/t.bz2").as_slice()),
+    ] {
+        let path = d.path().join(name);
+        std::fs::write(&path, bytes).unwrap();
+        assert_eq!(detect(&path), Some(kind), "{name}");
+        let entries = list(&path, kind).unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].name, name.rsplit_once('.').unwrap().0);
+        let file = LogFile::from_archive_entry(&path_str(&path), &entries[0].name);
+        assert_eq!(file.display_name, entries[0].name);
+        let content = read_source(file.source().unwrap()).unwrap();
+        assert_eq!(content, b"first line\nsecond line\nthird line\n", "{name}");
+    }
+}
