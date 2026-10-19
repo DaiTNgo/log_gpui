@@ -424,6 +424,7 @@ impl AppView {
         }
         let parsed_in = started.elapsed();
         self.apply_deltas(deltas, cx);
+        self.ask_again_after_auth_failure(cx);
         if std::env::var_os("LOG_GPUI_LIVE_TRACE").is_some() {
             eprintln!(
                 "live batch: parse {:?}, view {:?}, rows {}",

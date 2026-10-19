@@ -98,6 +98,9 @@ pub enum SourceStatus {
     Gone,
     /// A password or passphrase is needed: waits for the user to Connect.
     NeedsSecret,
+    /// The Server refused the password or passphrase; waits for the user to
+    /// type it again.
+    AuthFailed,
     Error(String),
 }
 
@@ -112,6 +115,7 @@ impl SourceStatus {
             SourceStatus::Exited(_) => 3,
             SourceStatus::NeedsSecret => 4,
             SourceStatus::Reconnecting => 4,
+            SourceStatus::AuthFailed => 5,
             SourceStatus::Disconnected => 5,
             SourceStatus::Error(_) => 6,
         }
@@ -137,6 +141,7 @@ impl SourceStatus {
             SourceStatus::Exited(None) => "Exited".into(),
             SourceStatus::Gone => "Gone".into(),
             SourceStatus::NeedsSecret => "Waiting to connect".into(),
+            SourceStatus::AuthFailed => "Authentication failed".into(),
             SourceStatus::Error(message) => message.clone(),
         }
     }

@@ -191,3 +191,31 @@ fn downloads_a_file_with_progress_and_cancel_leaves_nothing() {
     assert_eq!(std::fs::read(&dest).unwrap(), body);
     assert!(!cancelled.exists(), "a cancelled download leaves no file");
 }
+
+#[test]
+fn a_refused_passphrase_is_forgotten_so_the_user_is_asked_again() {
+    let Some((dir, port, user)) = setup() else { return };
+    let mut store = ServerStore::default();
+    let mut server = key_server("box", &user, port, format!("{dir}/userkey_pp"));
+    server.remember_secret = true;
+    let id = store.save(server).unwrap();
+    let server = store.get(&id).unwrap().clone();
+
+    let secrets = Arc::new(MemorySecrets::default());
+    let known = Arc::new(Mutex::new(KnownHosts::default()));
+    let (hub, requests) = RemoteHub::new(secrets.clone(), known);
+    answer_prompts(requests, true);
+
+    // A wrong remembered passphrase fails once…
+    hub.provide_secret(&server, "wrong");
+    assert_eq!(secrets.get(&server.secret_account()).as_deref(), Some("wrong"));
+    let (h, st, s) = (hub.clone(), store.clone(), id.clone());
+    let err = hub.handle().block_on(async move { h.session(&st, &s).await.err() });
+    assert!(matches!(err, Some(ConnectError::AuthFailed { .. })), "{err:?}");
+
+    // …then is gone, typed and remembered: the next try asks for it.
+    assert_eq!(secrets.get(&server.secret_account()), None);
+    let (h, st, s) = (hub.clone(), store.clone(), id.clone());
+    let err = hub.handle().block_on(async move { h.session(&st, &s).await.err() });
+    assert!(matches!(err, Some(ConnectError::NeedsSecret { .. })), "{err:?}");
+}

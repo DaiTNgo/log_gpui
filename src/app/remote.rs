@@ -168,6 +168,35 @@ impl AppView {
         cx.notify();
     }
 
+    /// Ask again for a secret a Server refused: the files on it that report
+    /// `AuthFailed` wait to Connect, and the secret dialog reopens with why.
+    /// Called after each batch of source events; one Server at a time.
+    pub fn ask_again_after_auth_failure(&mut self, cx: &mut Context<Self>) {
+        if self.remote.secret_prompt.is_some() {
+            return;
+        }
+        let server_id = self.workspace_state.projects.iter().flat_map(|p| &p.log_spaces).find_map(|space| {
+            space.files.iter().find_map(|file| {
+                let remote = file.remote.as_ref()?;
+                let failed = self.live.sources.get(&file.file_id)?.status == SourceStatus::AuthFailed;
+                failed.then(|| remote.server_id.clone())
+            })
+        });
+        let Some(server_id) = server_id else { return };
+        for id in self.remote_file_ids_on_server(&server_id) {
+            if let Some(source) = self.live.sources.get_mut(&id) {
+                if source.status == SourceStatus::AuthFailed {
+                    source.status = SourceStatus::NeedsSecret;
+                }
+            }
+        }
+        self.open_secret_prompt(&server_id, cx);
+        if let Some(prompt) = self.remote.secret_prompt.as_mut() {
+            let what = if prompt.passphrase { "passphrase" } else { "password" };
+            prompt.error = Some(format!("Wrong {what} \u{2014} try again"));
+        }
+    }
+
     pub fn cancel_secret_prompt(&mut self, cx: &mut Context<Self>) {
         self.remote.secret_prompt = None;
         cx.notify();

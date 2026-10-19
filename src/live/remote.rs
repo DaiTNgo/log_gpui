@@ -217,6 +217,7 @@ impl RemoteFileSource {
                 Err(e) => {
                     let status = match &e {
                         ConnectError::NeedsSecret { .. } => Some(SourceStatus::NeedsSecret),
+                        ConnectError::AuthFailed { .. } => Some(SourceStatus::AuthFailed),
                         ConnectError::Network(_) | ConnectError::Other(_) => None,
                         other => Some(SourceStatus::Error(other.message())),
                     };

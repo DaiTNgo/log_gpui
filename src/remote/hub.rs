@@ -319,6 +319,13 @@ impl RemoteHub {
         }
     }
 
+    /// Forget a secret the Server refused, typed or remembered, so the user
+    /// is asked again instead of it being tried over and over.
+    fn forget_secret(&self, server: &Server) {
+        self.typed_secrets.lock().unwrap().remove(&server.id);
+        self.secrets.delete(&server.secret_account());
+    }
+
     fn secret_for(&self, server: &Server) -> Option<String> {
         self.typed_secrets
             .lock()
@@ -526,6 +533,7 @@ impl RemoteHub {
                         }
                         let unreadable = text.contains("no such file") || text.contains("permission") || text.contains("not found");
                         if passphrase.is_some() && !unreadable {
+                            self.forget_secret(server);
                             return Err(ConnectError::AuthFailed { server_name: server.name.clone() });
                         }
                         return Err(ConnectError::Other(format!("Could not read the key {path}: {e}")));
@@ -545,8 +553,7 @@ impl RemoteHub {
         if result.success() {
             Ok(())
         } else {
-            // A wrong typed secret is forgotten so the user is asked again.
-            self.typed_secrets.lock().unwrap().remove(&server.id);
+            self.forget_secret(server);
             Err(ConnectError::AuthFailed { server_name: server.name.clone() })
         }
     }
