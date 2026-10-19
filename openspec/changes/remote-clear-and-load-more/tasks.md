@@ -51,7 +51,7 @@
 
 ## 7. Kiểm thử
 
-- [ ] 7.1 Test tích hợp với sshd cục bộ (theo cách test remote live hiện có): Clear rồi ghi thêm dòng, Load more sau Clear đọc lại đúng dòng, Load more qua xoay vòng, chạm đầu Generation
-- [ ] 7.2 Test `filter_index` khi bỏ toàn bộ một file khỏi Log Space nhiều file, và cột trở lại ≤ 500 giá trị
-- [ ] 7.3 Đo RSS trước và sau Clear một file 100.000 dòng, và sau Back to Live Window từ 500.000 dòng; ghi kết quả vào design.md
+- [x] 7.1 Test tích hợp với sshd cục bộ (theo cách test remote live hiện có): Clear rồi ghi thêm dòng, Load more sau Clear đọc lại đúng dòng, Load more qua xoay vòng, chạm đầu Generation
+- [x] 7.2 Test `filter_index` khi bỏ toàn bộ một file khỏi Log Space nhiều file, và cột trở lại ≤ 500 giá trị
+- [x] 7.3 Đo RSS trước và sau Clear một file 100.000 dòng, và sau Back to Live Window từ 500.000 dòng; ghi kết quả vào design.md
 - [ ] 7.4 Smoke GUI: Clear, Load more ba lần, Back to Live Window trên một Remote Log Space hai file, kiểm tra vị trí đọc không nhảy

@@ -342,3 +342,69 @@ fn cancel_drops_a_load_more_that_has_not_started() {
     assert!(lines.is_empty() || lines.len() == 100);
     h.close();
 }
+
+#[test]
+fn load_more_after_clear_reads_the_cleared_lines_again() {
+    let Some(env) = env() else { return };
+    let path = env.dir.path().join("after_clear.log");
+    std::fs::write(&path, numbered(1..=5_000)).unwrap();
+    let (h, _) = env.source("after_clear.log", 1_000);
+    let SourceEvent::Tail { end_offset, .. } = next(&h, |e| matches!(e, SourceEvent::Tail { .. })) else {
+        unreachable!()
+    };
+    // The Clear Point is where the file ended; new lines come after it.
+    h.send(SourceCommand::Clear);
+    let mut f = std::fs::OpenOptions::new().append(true).open(&path).unwrap();
+    f.write_all(b"new 1\nnew 2\n").unwrap();
+    let SourceEvent::Append { lines, .. } = next(&h, |e| matches!(e, SourceEvent::Append { .. })) else {
+        unreachable!()
+    };
+    assert_eq!(lines, vec!["new 1", "new 2"]);
+    let hash = log_gpui::workspace::log_space::line_hash("new 1");
+    h.send(SourceCommand::LoadMore { generation: 0, end_offset, lines: 200, first_hash: Some(hash) });
+    let SourceEvent::Older { lines, reached_start, .. } =
+        next(&h, |e| matches!(e, SourceEvent::Older { .. } | SourceEvent::OlderUnavailable)) else {
+            panic!("Load More was refused")
+        };
+    assert_eq!(lines.len(), 200);
+    assert_eq!(lines.first().unwrap(), "line 4801");
+    assert_eq!(lines.last().unwrap(), "line 5000");
+    assert!(!reached_start);
+    h.close();
+}
+
+#[test]
+fn load_more_after_a_rotation_only_reads_the_generation_being_read() {
+    let Some(env) = env() else { return };
+    let path = env.dir.path().join("rot.log");
+    std::fs::write(&path, numbered(1..=3_000)).unwrap();
+    let (h, _) = env.source("rot.log", 1_000);
+    let SourceEvent::Tail { bytes, end_offset, .. } = next(&h, |e| matches!(e, SourceEvent::Tail { .. })) else {
+        unreachable!()
+    };
+    let old_start = end_offset - bytes.iter().map(|b| u64::from(*b)).sum::<u64>();
+    std::fs::rename(&path, env.dir.path().join("rot.log.1")).unwrap();
+    std::fs::write(&path, numbered(1..=50)).unwrap();
+    next(&h, |e| *e == SourceEvent::Break { kind: BreakKind::Rotated });
+    next(&h, |e| matches!(e, SourceEvent::Append { .. }));
+    // The held lines of the old Generation are in a Rotated File now: not
+    // read here.
+    h.send(SourceCommand::LoadMore { generation: 0, end_offset: old_start, lines: 100, first_hash: None });
+    assert_eq!(
+        next(&h, |e| matches!(e, SourceEvent::Older { .. } | SourceEvent::OlderUnavailable)),
+        SourceEvent::OlderUnavailable
+    );
+    // The new Generation reads up to its first line and says so.
+    h.send(SourceCommand::LoadMore {
+        generation: 1,
+        end_offset: numbered(1..=10).len() as u64,
+        lines: 100,
+        first_hash: None,
+    });
+    let SourceEvent::Older { lines, reached_start, .. } =
+        next(&h, |e| matches!(e, SourceEvent::Older { .. } | SourceEvent::OlderUnavailable)) else {
+            panic!("Load More was refused")
+        };
+    assert_eq!((lines.len(), reached_start), (10, true));
+    h.close();
+}

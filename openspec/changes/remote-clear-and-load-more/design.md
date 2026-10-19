@@ -150,7 +150,17 @@ Setting `load_more_step`, mặc định **10.000**, chỉnh trong Settings (1.00
 
 Trim thường (rời window từng 10%) giữ nguyên cách hiện tại, không `shrink_to_fit`, vì vùng nhớ sẽ được dùng lại ngay.
 
-Allocator của hệ điều hành có thể không trả trang cho OS ngay. Task 6.3 đo RSS trước và sau Clear trên file 100.000 dòng để biết thực tế.
+Allocator của hệ điều hành có thể không trả trang cho OS ngay. Task 7.3 đo (macOS, `cargo run --release --example clear_rss`, dùng `footprint`, chỉ tính bộ nhớ của cache một file, chưa tính bản sao view):
+
+| Bước | Bộ nhớ |
+|---|---|
+| Mới khởi động | 2 MB |
+| Giữ 100.000 dòng | 99 MB (≈1 KB/dòng) |
+| Sau Clear | 16 MB (trả gần hết) |
+| Giữ 500.000 dòng | 316–377 MB |
+| Sau Back to Live Window (còn 100.000 dòng) | ≈273 MB |
+
+Clear trả gần hết bộ nhớ vì thay hẳn các vector. Back to Live Window thì chỉ trả được phần nhỏ: còn ≈273 MB trong khi 100.000 dòng mới nạp chỉ ≈99 MB. `shrink_to_fit` không đủ, và thử sao chép phần còn lại sang vùng nhớ mới cũng không khá hơn (đã bỏ). Nguyên nhân chưa rõ; cần tìm hiểu thêm trước khi hứa với người dùng là Back to Live Window "trả lại bộ nhớ".
 
 ### 10. Clear trên Remote Command
 Remote Command (`remote-command-source`) là thành viên thứ hai của Remote Log Space, đọc output của một Run qua cùng `LiveBuffer` và `SourceEvent`. Clear dùng cùng `LiveBuffer::clear` và `remove_lines` như Remote File:
