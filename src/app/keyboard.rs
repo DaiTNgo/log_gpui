@@ -7,24 +7,51 @@ use gpui::{
 };
 
 impl AppView {
+    /// Close the topmost open dialog as its Cancel would, innermost first
+    /// (the Confirm above everything, the Server form before the Servers
+    /// list). Returns whether one was open.
+    pub fn close_top_dialog(&mut self, cx: &mut Context<Self>) -> bool {
+        if self.confirm.is_some() {
+            self.cancel_confirm(cx);
+        } else if !self.remote.host_prompts.is_empty() {
+            self.answer_host_key(false, cx);
+        } else if self.remote.secret_prompt.is_some() {
+            self.cancel_secret_prompt(cx);
+        } else if let Some(dialog) = self.server_dialog.as_ref() {
+            if dialog.form.is_some() {
+                self.cancel_server_form(cx);
+            } else {
+                self.close_servers_dialog(cx);
+            }
+        } else if self.new_space.is_some() {
+            self.new_space_cancel(cx);
+        } else {
+            return false;
+        }
+        true
+    }
+
     pub(crate) fn handle_key_down(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
-        let key = event.keystroke.key.as_str();
+        // gpui names the key "escape"; the arms below spell it "Escape".
+        let key = match event.keystroke.key.as_str() {
+            "escape" => "Escape",
+            other => other,
+        };
         let cmd = event.keystroke.modifiers.platform || event.keystroke.modifiers.control;
         let shift = event.keystroke.modifiers.shift;
         let alt = event.keystroke.modifiers.alt;
 
+        // Escape closes the topmost dialog as its Cancel, and goes no further.
+        if key == "Escape" && self.close_top_dialog(cx) {
+            return;
+        }
         // The New Log Space dialog and the delete confirmation capture keys while open.
         if self.new_space.is_some() {
-            if key == "Escape" {
-                self.new_space_cancel(cx);
-            }
             return;
         }
         if self.confirm.is_some() {
-            match key {
-                "Escape" => self.cancel_confirm(cx),
-                "Enter" | "enter" => self.accept_confirm(cx),
-                _ => {}
+            if matches!(key, "Enter" | "enter") {
+                self.accept_confirm(cx);
             }
             return;
         }
@@ -136,10 +163,7 @@ impl AppView {
                 self.toggle_view_mode(cx);
             }
             (true, false, false, "f") => {
-                self.toggle_search(cx);
-                if self.focus.search().is_open {
-                    self.search_input.update(cx, |state, cx| state.focus(window, cx));
-                }
+                self.activate_search(window, cx);
             }
             (true, true, false, "F") => {
                 self.toggle_or_reveal_context_section(crate::workspace::state::ContextSection::Filter, cx);

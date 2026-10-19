@@ -9,7 +9,7 @@ impl AppView {
     pub fn execute_palette_action(&mut self, action: PaletteAction, window: &mut Window, cx: &mut Context<Self>) {
         self.is_palette_open = false;
         match action {
-            PaletteAction::ToggleSearch => self.toggle_search(cx),
+            PaletteAction::ToggleSearch => self.activate_search(window, cx),
             PaletteAction::ShowHighlights => self.toggle_or_reveal_context_section(crate::workspace::state::ContextSection::Highlights, cx),
             PaletteAction::ToggleFocusPane => self.toggle_focus_pane(cx),
             PaletteAction::MoveFocusToWindow => self.move_focus_to_window(window, cx),
