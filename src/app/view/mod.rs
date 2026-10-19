@@ -2,6 +2,8 @@
 
 mod chrome;
 mod color_bar;
+mod command_views;
+mod connection_view;
 mod dialogs;
 mod filter_panel;
 mod focus_pane;
@@ -223,6 +225,7 @@ impl AppView {
             danger: cx.theme().danger,
             warning: cx.theme().warning,
             info: cx.theme().info,
+            stderr: crate::ui::canvas::stderr_color(cx.theme().is_dark()),
             text_selection: cx.theme().selection,
             dark: cx.theme().is_dark(),
         }

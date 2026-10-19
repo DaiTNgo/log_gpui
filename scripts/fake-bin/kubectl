@@ -1,0 +1,15 @@
+#!/bin/sh
+# A stand-in for a `kubectl` that does not know `--since-time` (an old one):
+# every `kubectl logs` with it exits 1 with an error text, as the real tool
+# does for an unknown flag. Without it, the "pod log" is $FAKE_DIR/kube-POD.log
+# (printed once, then the command ends).
+for arg in "$@"; do
+  case "$arg" in
+    --since-time*)
+      echo "error: unknown flag: --since-time" >&2
+      exit 1
+      ;;
+  esac
+  pod="$arg"
+done
+cat "$FAKE_DIR/kube-$pod.log" 2>/dev/null

@@ -34,6 +34,14 @@ fn main() {
         let space = project.create_log_space("Remote", LogSpaceKind::Remote).unwrap();
         let triples: Vec<_> = files.iter().map(|p| (id.clone(), "web1".to_string(), p.clone())).collect();
         space.add_remote_files(&triples).unwrap();
+        // `SEED_REMOTE_COMMANDS="cmd one;;cmd two"` adds Remote Commands.
+        if let Ok(commands) = std::env::var("SEED_REMOTE_COMMANDS") {
+            let commands: Vec<_> = commands
+                .split(";;")
+                .map(|c| (id.clone(), "web1".to_string(), c.to_string(), None))
+                .collect();
+            space.add_remote_commands(&commands).unwrap();
+        }
         space.id.clone()
     } else {
         let space = project.create_log_space("Live", LogSpaceKind::Imported).unwrap();

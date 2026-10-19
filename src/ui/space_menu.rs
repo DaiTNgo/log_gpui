@@ -38,6 +38,8 @@ pub struct SpaceRef {
 /// Identity and state of the file a row acts on.
 #[derive(Clone)]
 pub struct FileRef {
+    /// `Some(restart_on_exit)` for a Remote Command.
+    pub command: Option<bool>,
     pub view: Entity<AppView>,
     pub project_id: String,
     pub space_id: String,
@@ -139,9 +141,14 @@ pub fn space_menu(
         )),
         LogSpaceKind::Remote => {
             let download = space.clone();
+            let add_command = space.clone();
             menu.item(PopupMenuItem::new("Add remote files…").on_click(move |_, _, app| {
                 let id = add.space_id.clone();
                 add.view.update(app, |this, cx| this.add_remote_files_dialog(&id, cx));
+            }))
+            .item(PopupMenuItem::new("Add remote command…").on_click(move |_, _, app| {
+                let id = add_command.space_id.clone();
+                add_command.view.update(app, |this, cx| this.add_remote_command_dialog(&id, cx));
             }))
             .item(PopupMenuItem::new("Download all").on_click(move |_, _, app| {
                 let id = download.space_id.clone();
@@ -198,6 +205,26 @@ fn file_menu(menu: PopupMenu, file: &FileRef) -> PopupMenu {
                         }
                     }),
             )
+        }
+        LogSpaceKind::Remote if file.command.is_some() => {
+            // A command has no file to download.
+            let restart = file.clone();
+            let on_exit = file.clone();
+            let remove = file.clone();
+            let restart_on_exit = file.command.unwrap_or(false);
+            menu.item(PopupMenuItem::new("Restart").on_click(move |_, _, app| {
+                let id = restart.file_id.clone();
+                restart.view.update(app, |this, cx| this.restart_remote_command(&id, cx));
+            }))
+            .item(PopupMenuItem::new("Restart on exit").checked(restart_on_exit).on_click(move |_, _, app| {
+                let (space, id) = (on_exit.space_id.clone(), on_exit.file_id.clone());
+                on_exit.view.update(app, |this, cx| this.set_restart_on_exit(&space, &id, !restart_on_exit, cx));
+            }))
+            .item(PopupMenuItem::separator())
+            .item(PopupMenuItem::new("Remove from Log Space").on_click(move |_, _, app| {
+                let (space, id) = (remove.space_id.clone(), remove.file_id.clone());
+                remove.view.update(app, |this, cx| this.remove_file_from_space(&space, &id, cx));
+            }))
         }
         LogSpaceKind::Remote => {
             let remove = file.clone();

@@ -29,6 +29,8 @@ pub struct SessionManifest {
     pub raw_soft_wrap: bool,
     #[serde(default)]
     pub show_source: Option<bool>,
+    #[serde(default)]
+    pub show_stream: bool,
 }
 
 /// Project-level snapshot inside a session manifest.
@@ -86,6 +88,7 @@ impl SessionManifest {
             show_minimap: ws.show_minimap,
             raw_soft_wrap: ws.raw_soft_wrap,
             show_source: ws.show_source,
+            show_stream: ws.show_stream,
         }
     }
 
@@ -112,6 +115,7 @@ impl SessionManifest {
         ws.show_minimap = self.show_minimap;
         ws.raw_soft_wrap = self.raw_soft_wrap;
         ws.show_source = self.show_source;
+        ws.show_stream = self.show_stream;
         ws
     }
 

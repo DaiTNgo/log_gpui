@@ -4,6 +4,7 @@
 //! `view_settings`, `commands`, `keyboard`, `workspace_items`); rendering lives in `view/`.
 
 pub mod color;
+mod connection_details;
 mod commands;
 mod filter;
 mod focus;
@@ -14,6 +15,7 @@ pub mod live;
 mod marking;
 mod persist;
 pub mod remote;
+pub mod remote_command;
 pub mod remote_picker;
 pub mod server_dialog;
 pub mod raw;

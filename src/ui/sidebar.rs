@@ -128,6 +128,12 @@ impl SidebarView {
                     files = push_file(
                         files,
                         FileRef {
+                            command: match file.remote.as_ref().map(|r| &r.target) {
+                                Some(crate::workspace::log_space::RemoteTarget::Command { restart_on_exit, .. }) => {
+                                    Some(*restart_on_exit)
+                                }
+                                _ => None,
+                            },
                             view: view.clone(),
                             project_id: project.id.clone(),
                             space_id: space.id.clone(),

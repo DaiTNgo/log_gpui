@@ -2,11 +2,11 @@
 //! connects Remote Files to their sources.
 
 use super::AppView;
-use crate::live::{LineSource, RemoteFileSource, SourceCommand, SourceStatus};
+use crate::live::{LineSource, RemoteCommandSource, RemoteFileSource, SourceCommand, SourceStatus};
 use crate::remote::{
     AuthMethod, HostKeyRequest, Keychain, KnownHosts, RemoteHub, SecretStore, Server, ServerError, ServerStore,
 };
-use crate::workspace::log_space::LogSpaceKind;
+use crate::workspace::log_space::{LogSpaceKind, RemoteTarget};
 use crate::workspace::session::app_data_dir;
 use gpui::{Context, Entity};
 use gpui_component::input::InputState;
@@ -48,6 +48,9 @@ pub struct RemoteUi {
     /// Remote Files chosen for the New Log Space being made, as
     /// `(server id, server name, path)`.
     pub new_space_files: Vec<(String, String, String)>,
+    /// Remote Commands chosen for the New Log Space: `(server id, server name,
+    /// command, preset)`.
+    pub new_space_commands: Vec<(String, String, String, Option<crate::remote::PresetFields>)>,
     pub secrets: Arc<dyn SecretStore>,
 }
 
@@ -68,6 +71,7 @@ impl RemoteUi {
             picker: None,
             download: None,
             new_space_files: Vec::new(),
+            new_space_commands: Vec::new(),
             secrets,
         }
     }
@@ -82,6 +86,33 @@ impl AppView {
         }
         let (hub, requests) = RemoteHub::new(self.remote.secrets.clone(), self.remote.known_hosts.clone());
         self.remote.hub = Some(hub.clone());
+        // Quitting ends the commands still running on Servers (a source that
+        // is closed asks its process to stop): wait for that, up to the
+        // time the app gives a quitting app.
+        let quit_hub = hub.clone();
+        cx.on_app_quit(move |this, _cx| {
+            for source in this.live.sources.values() {
+                source.handle.close();
+            }
+            let hub = quit_hub.clone();
+            async move {
+                let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+                while hub.running_commands() > 0 && std::time::Instant::now() < deadline {
+                    std::thread::sleep(std::time::Duration::from_millis(20));
+                }
+            }
+        })
+        .detach();
+        // Connection Details follow the health of the Servers.
+        let changes = hub.health().changes();
+        cx.spawn(async move |this, cx| {
+            while changes.recv().await.is_ok() {
+                if this.update(cx, |_, cx| cx.notify()).is_err() {
+                    break;
+                }
+            }
+        })
+        .detach();
         cx.spawn(async move |this, cx| {
             while let Ok(request) = requests.recv().await {
                 if this
@@ -217,7 +248,10 @@ impl AppView {
                 for file in &mut space.files {
                     if let Some(remote) = &file.remote {
                         if remote.server_id == server.id {
-                            file.display_name = format!("{}:{}", server.name, remote.path);
+                            file.display_name = match &remote.target {
+                                RemoteTarget::File { path } => format!("{}:{}", server.name, path),
+                                RemoteTarget::Command { command, .. } => format!("{}$ {}", server.name, command),
+                            };
                         }
                     }
                 }
@@ -317,6 +351,34 @@ impl AppView {
     }
 }
 
+impl AppView {
+    /// Start reading the output of a Remote Command.
+    pub(crate) fn spawn_command_source(
+        &mut self,
+        server_id: &str,
+        target: &RemoteTarget,
+        name: &str,
+        cx: &mut Context<Self>,
+    ) -> Option<crate::live::SourceHandle> {
+        let RemoteTarget::Command { command, preset, restart_on_exit } = target else { return None };
+        self.remote.servers.get(server_id)?;
+        let hub = self.remote_hub(cx);
+        Some(
+            RemoteCommandSource {
+                hub,
+                servers: self.remote.shared_servers.clone(),
+                server_id: server_id.to_string(),
+                command: command.clone(),
+                preset: crate::remote::command::unedited_preset(command, preset.as_ref()),
+                restart_on_exit: *restart_on_exit,
+                name: name.to_string(),
+                window: self.live.window,
+            }
+            .spawn(),
+        )
+    }
+}
+
 /// What the Connect button does.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ConnectAction {
@@ -363,7 +425,15 @@ impl AppView {
 
     pub fn download_space(&mut self, space_id: &str, cx: &mut Context<Self>) {
         let Some(space) = self.active_project().and_then(|p| p.log_space(space_id)).cloned() else { return };
-        let files = space.files.clone();
+        // A Remote Command has no file to download: say so before downloading.
+        let (commands, files): (Vec<_>, Vec<_>) = space.files.iter().cloned().partition(|f| f.is_remote_command());
+        if !commands.is_empty() {
+            self.notice = Some(match commands.len() {
+                1 => "1 remote command will be skipped".to_string(),
+                n => format!("{n} remote commands will be skipped"),
+            });
+            cx.notify();
+        }
         self.pick_folder_and_download(space.name, files, cx);
     }
 
@@ -396,9 +466,10 @@ impl AppView {
         let jobs: Vec<(String, String, String)> = files
             .iter()
             .filter_map(|f| {
+                // A Remote Command has no file to download.
                 let r = f.remote.as_ref()?;
                 let server = self.remote.servers.get(&r.server_id)?;
-                Some((r.server_id.clone(), server.name.clone(), r.path.clone()))
+                Some((r.server_id.clone(), server.name.clone(), r.path()?.to_string()))
             })
             .collect();
         let existing: std::collections::HashSet<String> = std::fs::read_dir(&dir)

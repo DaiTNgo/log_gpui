@@ -3,6 +3,7 @@
 //! all its Remote Files; a Server behind Jump Servers is reached through
 //! `direct-tcpip` channels, each hop checked and logged in on its own.
 
+use super::health::{HealthBoard, ServerState};
 use super::known_hosts::{HostKeyStatus, KnownHosts};
 use super::secrets::SecretStore;
 use super::server::{AuthMethod, Server, ServerStore};
@@ -11,12 +12,10 @@ use russh::keys::{HashAlg, PrivateKeyWithHashAlg, PublicKeyOrCertificate, load_s
 use russh_sftp::client::SftpSession;
 use std::collections::HashMap;
 use std::future::Future;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::runtime::Runtime;
-
-/// How often a session is kept alive.
-pub const KEEPALIVE: Duration = Duration::from_secs(30);
 
 /// Why a connection could not be made.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -105,6 +104,11 @@ impl client::Handler for ClientHandler {
 /// A live connection to one Server (and the hops in front of it).
 pub struct RemoteSession {
     pub server: Server,
+    /// When this session was made.
+    connected_at: Instant,
+    /// Commands running through the hub's sessions, counted until their
+    /// channel is closed.
+    runs: Arc<AtomicUsize>,
     handle: Handle<ClientHandler>,
     /// The sessions the channel to this one runs through.
     _hops: Vec<Handle<ClientHandler>>,
@@ -114,6 +118,7 @@ pub struct RemoteSession {
 #[derive(Debug, Clone, Default)]
 pub struct ExecOutput {
     pub stdout: Vec<u8>,
+    pub stderr: Vec<u8>,
     pub exit_status: Option<u32>,
 }
 
@@ -136,11 +141,96 @@ impl RemoteSession {
         while let Some(msg) = channel.wait().await {
             match msg {
                 russh::ChannelMsg::Data { data } => out.stdout.extend_from_slice(&data),
+                russh::ChannelMsg::ExtendedData { data, ext: 1 } => out.stderr.extend_from_slice(&data),
                 russh::ChannelMsg::ExitStatus { exit_status } => out.exit_status = Some(exit_status),
                 _ => {}
             }
         }
         Ok(out)
+    }
+
+    /// Start a command and read its output as it comes: no terminal, and its
+    /// input is closed at once so a command that reads it sees the end.
+    pub async fn exec_stream(&self, command: &str) -> Result<ExecStream, String> {
+        let channel = self.handle.channel_open_session().await.map_err(|e| e.to_string())?;
+        channel.exec(true, command).await.map_err(|e| e.to_string())?;
+        channel.eof().await.map_err(|e| e.to_string())?;
+        self.runs.fetch_add(1, Ordering::SeqCst);
+        Ok(ExecStream { channel, exit_status: None, ended: false, runs: self.runs.clone() })
+    }
+}
+
+/// How long a command gets to end after `signal TERM` before its channel is
+/// closed anyway.
+pub const TERMINATE_GRACE: Duration = Duration::from_secs(2);
+
+/// What a running command produced.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ExecEvent {
+    Stdout(Vec<u8>),
+    Stderr(Vec<u8>),
+    /// The command ended (or the channel closed): its exit status, `None`
+    /// when it was killed by a signal or the connection dropped. Last event.
+    Exited(Option<u32>),
+}
+
+/// A command running on a Server, read through an exec channel.
+pub struct ExecStream {
+    channel: russh::Channel<russh::client::Msg>,
+    exit_status: Option<u32>,
+    ended: bool,
+    runs: Arc<AtomicUsize>,
+}
+
+impl Drop for ExecStream {
+    fn drop(&mut self) {
+        self.runs.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+impl ExecStream {
+    /// The next piece of output, then `Exited`, then `None`.
+    pub async fn next(&mut self) -> Option<ExecEvent> {
+        if self.ended {
+            return None;
+        }
+        loop {
+            match self.channel.wait().await {
+                Some(russh::ChannelMsg::Data { data }) => return Some(ExecEvent::Stdout(data.to_vec())),
+                // Extended data type 1 is stderr.
+                Some(russh::ChannelMsg::ExtendedData { data, ext: 1 }) => {
+                    return Some(ExecEvent::Stderr(data.to_vec()));
+                }
+                Some(russh::ChannelMsg::ExitStatus { exit_status }) => self.exit_status = Some(exit_status),
+                Some(russh::ChannelMsg::Close) | None => {
+                    self.ended = true;
+                    return Some(ExecEvent::Exited(self.exit_status));
+                }
+                Some(_) => {}
+            }
+        }
+    }
+
+    /// Ask the command to stop (`signal TERM`), give it `TERMINATE_GRACE` to
+    /// end, then close the channel. `true` when the command was seen to end;
+    /// `false` when it may still be running on the Server.
+    pub async fn terminate(mut self) -> bool {
+        if self.ended {
+            return true;
+        }
+        let _ = self.channel.signal(russh::Sig::TERM).await;
+        let ended = tokio::time::timeout(TERMINATE_GRACE, async {
+            while let Some(event) = self.next().await {
+                if matches!(event, ExecEvent::Exited(_)) {
+                    return true;
+                }
+            }
+            true
+        })
+        .await
+        .unwrap_or(false);
+        let _ = self.channel.close().await;
+        ended
     }
 }
 
@@ -153,6 +243,13 @@ pub struct RemoteHub {
     sessions: Arc<tokio::sync::Mutex<HashMap<String, Arc<RemoteSession>>>>,
     /// Secrets typed this run and not remembered.
     typed_secrets: Arc<Mutex<HashMap<String, String>>>,
+    /// Connection state, latency and errors per Server.
+    health: HealthBoard,
+    /// Commands (Runs) not yet ended on a Server.
+    runs: Arc<AtomicUsize>,
+    /// Held while one Server is being connected, so files that ask at the
+    /// same time share one session (and one host key question).
+    connecting: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
 }
 
 impl RemoteHub {
@@ -174,8 +271,22 @@ impl RemoteHub {
             prompts,
             sessions: Arc::default(),
             typed_secrets: Arc::default(),
+            health: HealthBoard::new(),
+            runs: Arc::default(),
+            connecting: Mutex::default(),
         });
         (hub, requests)
+    }
+
+    /// How many commands are still running through the hub's sessions: a
+    /// Run counts until `terminate` has finished with it.
+    pub fn running_commands(&self) -> usize {
+        self.runs.load(Ordering::SeqCst)
+    }
+
+    /// The health of every Server (`changes()` says when it changed).
+    pub fn health(&self) -> &HealthBoard {
+        &self.health
     }
 
     fn rt(&self) -> &Runtime {
@@ -225,17 +336,24 @@ impl RemoteHub {
         if let Some(session) = session {
             let _ = session.handle.disconnect(russh::Disconnect::ByApplication, "", "en").await;
         }
+        self.health.update(server_id, |h| {
+            h.clear_session();
+            if h.state == ServerState::Connected {
+                h.state = ServerState::Disconnected;
+            }
+        });
     }
 
     /// The shared session to a Server, connecting if needed.
     pub async fn session(&self, store: &ServerStore, server_id: &str) -> Result<Arc<RemoteSession>, ConnectError> {
-        {
-            let sessions = self.sessions.lock().await;
-            if let Some(s) = sessions.get(server_id) {
-                if !s.is_closed() {
-                    return Ok(s.clone());
-                }
-            }
+        if let Some(session) = self.live_session(server_id).await {
+            return Ok(session);
+        }
+        // One connection at a time per Server; those who waited use its session.
+        let gate = self.connecting.lock().unwrap().entry(server_id.to_string()).or_default().clone();
+        let _connecting = gate.lock().await;
+        if let Some(session) = self.live_session(server_id).await {
+            return Ok(session);
         }
         let chain: Vec<Server> = store
             .chain(server_id)
@@ -243,20 +361,113 @@ impl RemoteHub {
             .into_iter()
             .cloned()
             .collect();
-        let session = Arc::new(self.connect_chain(&chain).await?);
+        self.health.update(server_id, |h| {
+            h.state = if h.ever_connected { ServerState::Reconnecting } else { ServerState::Connecting };
+        });
+        let session = match self.connect_chain(&chain).await {
+            Ok(session) => Arc::new(session),
+            Err(e) => {
+                self.health.update(server_id, |h| {
+                    h.state = match e {
+                        ConnectError::NeedsSecret { .. }
+                        | ConnectError::HostKeyChanged { .. }
+                        | ConnectError::HostKeyRejected { .. }
+                        | ConnectError::AuthFailed { .. } => ServerState::Waiting,
+                        _ => ServerState::Disconnected,
+                    };
+                    h.record_error(e.message());
+                });
+                return Err(e);
+            }
+        };
+        let since = session.connected_at;
+        let server = session.server.clone();
+        let hops: Vec<String> = chain[..chain.len() - 1].iter().map(|s| s.name.clone()).collect();
+        self.health.update(server_id, |h| {
+            if h.ever_connected {
+                h.reconnects += 1;
+            }
+            h.ever_connected = true;
+            h.state = ServerState::Connected;
+            h.connected_since = Some(since);
+            h.clear_samples();
+            h.keepalive = (Duration::from_secs(u64::from(server.keepalive_interval_secs)), server.keepalive_max_missed);
+            h.hops = hops;
+        });
         self.sessions.lock().await.insert(server_id.to_string(), session.clone());
+        self.spawn_latency(&session, server_id.to_string());
         Ok(session)
     }
 
-    async fn connect_chain(&self, chain: &[Server]) -> Result<RemoteSession, ConnectError> {
-        let config = Arc::new(client::Config {
-            keepalive_interval: Some(KEEPALIVE),
-            keepalive_max: 3,
-            nodelay: true,
-            ..Default::default()
+    async fn live_session(&self, server_id: &str) -> Option<Arc<RemoteSession>> {
+        let sessions = self.sessions.lock().await;
+        sessions.get(server_id).filter(|s| !s.is_closed()).cloned()
+    }
+
+    /// Measure the round trip of the session every keepalive interval, by a
+    /// `keepalive@openssh.com` global request that waits for its reply
+    /// (`REQUEST_FAILURE` is a reply too). Ends with the session.
+    fn spawn_latency(&self, session: &Arc<RemoteSession>, server_id: String) {
+        let weak = Arc::downgrade(session);
+        let board = self.health.clone();
+        let interval = Duration::from_secs(u64::from(session.server.keepalive_interval_secs));
+        let since = session.connected_at;
+        self.spawn(async move {
+            let lost = |board: &HealthBoard, why: &str| {
+                board.update(&server_id, |h| {
+                    // Only the session this task watches may be marked lost.
+                    if h.connected_since == Some(since) {
+                        h.clear_session();
+                        h.state = ServerState::Disconnected;
+                        h.record_error(why);
+                    }
+                });
+            };
+            let mut wait = Duration::from_secs(1);
+            loop {
+                tokio::time::sleep(wait).await;
+                wait = interval;
+                let Some(session) = weak.upgrade() else { return };
+                if session.is_closed() {
+                    lost(&board, "Connection lost");
+                    return;
+                }
+                let started = Instant::now();
+                let reply = tokio::time::timeout(
+                    interval,
+                    session.handle.send_global_request("keepalive@openssh.com", &[], true),
+                )
+                .await;
+                match reply {
+                    Ok(Ok(_)) | Ok(Err(russh::Error::RequestDenied)) => {
+                        let round_trip = started.elapsed();
+                        board.update(&server_id, |h| {
+                            if h.connected_since == Some(since) {
+                                h.record_latency(round_trip);
+                            }
+                        });
+                    }
+                    Ok(Err(e)) => {
+                        lost(&board, &e.to_string());
+                        return;
+                    }
+                    // No answer yet: the session's own keepalive decides.
+                    Err(_) => {}
+                }
+            }
         });
+    }
+
+    async fn connect_chain(&self, chain: &[Server]) -> Result<RemoteSession, ConnectError> {
         let mut hops: Vec<Handle<ClientHandler>> = Vec::new();
         for (i, server) in chain.iter().enumerate() {
+            // Each hop keeps itself alive with its own Server's settings.
+            let config = Arc::new(client::Config {
+                keepalive_interval: Some(Duration::from_secs(u64::from(server.keepalive_interval_secs))),
+                keepalive_max: server.keepalive_max_missed as usize,
+                nodelay: true,
+                ..Default::default()
+            });
             let refused = Arc::new(Mutex::new(None));
             let handler = ClientHandler {
                 address: server.address(),
@@ -286,7 +497,7 @@ impl RemoteHub {
             };
             self.authenticate(&mut handle, server).await?;
             if i + 1 == chain.len() {
-                return Ok(RemoteSession { server: server.clone(), handle, _hops: hops });
+                return Ok(RemoteSession { server: server.clone(), connected_at: Instant::now(), runs: self.runs.clone(), handle, _hops: hops });
             }
             hops.push(handle);
         }

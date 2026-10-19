@@ -21,6 +21,12 @@ start)
   ssh-keygen -q -t ed25519 -N "" -f "$DIR/userkey"
   cat "$DIR/userkey.pub" "$DIR/userkey_pp.pub" > "$DIR/authorized_keys"
   chmod 600 "$DIR/authorized_keys"
+  # Stand-ins for docker, journalctl and kubectl (Remote Command tests): first
+  # on the PATH of every command, reading their "logs" from $DIR/fake.
+  HERE="$(cd "$(dirname "$0")" && pwd)"
+  mkdir -p "$DIR/fakebin" "$DIR/fake"
+  cp "$HERE"/fake-bin/* "$DIR/fakebin/"
+  chmod +x "$DIR"/fakebin/*
   cat > "$DIR/sshd_config" <<CONF
 Port $PORT
 ListenAddress 127.0.0.1
@@ -33,6 +39,7 @@ PubkeyAuthentication yes
 UsePAM no
 StrictModes no
 AllowTcpForwarding yes
+SetEnv PATH=$DIR/fakebin:/usr/bin:/bin:/usr/sbin:/sbin FAKE_DIR=$DIR/fake
 Subsystem sftp /usr/libexec/sftp-server
 LogLevel ERROR
 CONF

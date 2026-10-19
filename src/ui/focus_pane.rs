@@ -511,15 +511,22 @@ impl PaneRows {
                 .font_family(mono_font.clone())
                 .text_size(px(self.font_size))
                 .bg(if is_selected { base_bg.blend(colors.selected.opacity(0.5)) } else { base_bg })
-                .child(
+                .child({
+                    // Muted, or the stderr color for a line of a command's
+                    // standard error.
+                    let stderr = entry.stream == Some(crate::model::Stream::Stderr);
                     div()
+                        .id(ElementId::from(("focus-line-number", index)))
                         .flex_shrink_0()
                         .w(px(NUMBER_WIDTH))
                         .px_2()
                         .text_right()
-                        .text_color(colors.muted)
-                        .child(crate::live::line_number_text(number)),
-                )
+                        .text_color(if stderr { colors.stderr } else { colors.muted })
+                        .when(stderr, |d| {
+                            d.tooltip(|window, cx| gpui_component::tooltip::Tooltip::new("stderr").build(window, cx))
+                        })
+                        .child(crate::live::line_number_text(number))
+                })
                 .when(parsed, |this| {
                     this.child(
                         div()

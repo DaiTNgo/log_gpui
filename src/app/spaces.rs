@@ -23,6 +23,7 @@ impl AppView {
 
     pub fn open_new_space_dialog(&mut self, cx: &mut Context<Self>) {
         self.remote.new_space_files.clear();
+        self.remote.new_space_commands.clear();
         self.new_space = Some(NewSpaceDialog {
             form: NewLogSpaceForm::new(),
             name_input: None,
@@ -62,6 +63,7 @@ impl AppView {
     pub fn new_space_cancel(&mut self, cx: &mut Context<Self>) {
         self.new_space = None;
         self.remote.new_space_files.clear();
+        self.remote.new_space_commands.clear();
         cx.notify();
     }
 
@@ -121,10 +123,11 @@ impl AppView {
             return;
         }
         let name = dialog.form.name.clone();
-        if !self.remote.new_space_files.is_empty() {
+        if !self.remote.new_space_files.is_empty() || !self.remote.new_space_commands.is_empty() {
             let files = std::mem::take(&mut self.remote.new_space_files);
+            let commands = std::mem::take(&mut self.remote.new_space_commands);
             self.new_space = None;
-            self.create_remote_log_space(&name, files, cx);
+            self.create_remote_log_space(&name, files, commands, cx);
             return;
         }
         let sources = dialog.form.importable_sources();
@@ -134,11 +137,13 @@ impl AppView {
     }
 
     /// Create a Remote Log Space with files on Servers, given as
-    /// `(server id, server name, path)`, and open it.
+    /// `(server id, server name, path)`, and commands, given as `(server id,
+    /// server name, command, preset)`, and open it.
     pub fn create_remote_log_space(
         &mut self,
         name: &str,
         files: Vec<(String, String, String)>,
+        commands: Vec<(String, String, String, Option<crate::remote::PresetFields>)>,
         cx: &mut Context<Self>,
     ) -> Option<String> {
         self.persist_active_session();
@@ -153,6 +158,7 @@ impl AppView {
                 }
             };
             let _ = space.add_remote_files(&files);
+            let _ = space.add_remote_commands(&commands);
             space.id.clone()
         };
         self.expanded_spaces.insert(space_id.clone());
@@ -602,6 +608,48 @@ impl AppView {
         if shown {
             self.column_layout
                 .auto_fit(crate::column::PinnableColumn::Source, self.density);
+        }
+        self.schedule_session_save(cx);
+        cx.notify();
+    }
+
+    /// Whether the open Log Space has a Remote Command (so its lines have a
+    /// Stream and the Stream Column can be shown).
+    pub fn active_space_has_command(&self) -> bool {
+        self.active_space().is_some_and(|s| s.files.iter().any(|f| f.is_remote_command()))
+    }
+
+    /// Whether the Stream Column is on in Settings (it shows only in a Log
+    /// Space with a Remote Command).
+    pub fn stream_column_setting(&self) -> bool {
+        self.workspace_state.show_stream
+    }
+
+    /// Whether the Stream Column is laid out in the open view.
+    pub fn stream_column_visible(&self) -> bool {
+        self.workspace_state.show_stream && self.active_space_has_command()
+    }
+
+    /// Show or hide the Stream Column to match Settings and the open view.
+    pub(crate) fn sync_stream_column(&mut self) {
+        let visible = self.stream_column_visible();
+        if self.column_layout.stream_visible != visible {
+            self.column_layout.set_stream_visible(visible);
+            if visible {
+                self.column_layout.max_chars.stream = self.column_layout.max_chars.stream.max(6);
+                self.column_layout.auto_fit(crate::column::PinnableColumn::Stream, self.density);
+            }
+        }
+    }
+
+    /// The "Show stream" switch of Settings; one choice for every Log Space.
+    pub fn set_show_stream(&mut self, shown: bool, cx: &mut Context<Self>) {
+        self.workspace_state.show_stream = shown;
+        let visible = self.stream_column_visible();
+        self.column_layout.set_stream_visible(visible);
+        if visible {
+            self.column_layout.max_chars.stream = self.column_layout.max_chars.stream.max(6);
+            self.column_layout.auto_fit(crate::column::PinnableColumn::Stream, self.density);
         }
         self.schedule_session_save(cx);
         cx.notify();

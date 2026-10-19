@@ -49,7 +49,7 @@ impl TextCell {
             PinnableColumn::Timestamp => Some(TextCell::Timestamp),
             PinnableColumn::Level => Some(TextCell::Level),
             PinnableColumn::Module => Some(TextCell::Module),
-            PinnableColumn::Source => None,
+            PinnableColumn::Source | PinnableColumn::Stream => None,
         }
     }
 }

@@ -1,8 +1,22 @@
+use crate::model::Stream;
 use async_channel::{Receiver, Sender};
 use std::time::Duration;
 
 /// How often a local file is checked for new bytes.
 pub const LOCAL_POLL_INTERVAL: Duration = Duration::from_millis(250);
+
+/// Why a Remote Command runs again.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RestartKind {
+    /// The user pressed Restart.
+    Manual,
+    /// The command exited and Restart on exit is on.
+    OnExit,
+    /// The connection came back and the command is run again as typed.
+    AfterDisconnect,
+    /// Resuming by time failed: the command runs as it was written.
+    ResumeFailed,
+}
 
 /// Why the lines of a file stop being continuous.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -14,6 +28,18 @@ pub enum BreakKind {
     Reconnected,
     /// Older lines left the Live Window.
     LeftWindow,
+    /// A Remote Command exited with this code (`None`: killed by a signal).
+    Exited(Option<u32>),
+    /// A Remote Command runs again from its start: a new Generation.
+    Restarted(RestartKind),
+    /// The connection came back and the Remote Command went on from the time
+    /// of its last line (seconds into the day of the Server's own clock).
+    Resumed(u32),
+    /// The Server's clock went back while resuming: lines may repeat.
+    ClockWentBack,
+    /// This many lines of a Remote Command, output while Paused, did not fit
+    /// the Live Window and were dropped; their numbers are not reused.
+    Skipped(u32),
 }
 
 impl BreakKind {
@@ -25,13 +51,27 @@ impl BreakKind {
             BreakKind::Disconnected => "disconnected",
             BreakKind::Reconnected => "reconnected",
             BreakKind::LeftWindow => "older lines left the window",
+            BreakKind::Exited(_) => "exited",
+            BreakKind::Restarted(_) => "restarted",
+            BreakKind::Resumed(_) => "reconnected",
+            BreakKind::ClockWentBack => "server clock went back, lines may be repeated",
+            BreakKind::Skipped(_) => "older lines left the window",
         }
     }
 
     /// Whether the lines after the Break are a new Generation of the file.
     pub fn starts_generation(self) -> bool {
-        matches!(self, BreakKind::Rotated | BreakKind::Truncated | BreakKind::Deleted)
+        matches!(
+            self,
+            BreakKind::Rotated | BreakKind::Truncated | BreakKind::Deleted | BreakKind::Restarted(_)
+        )
     }
+}
+
+/// `10:02:03` for seconds into the day.
+pub fn clock_text(seconds_into_day: u32) -> String {
+    let s = seconds_into_day % 86_400;
+    format!("{:02}:{:02}:{:02}", s / 3600, (s / 60) % 60, s % 60)
 }
 
 /// What a source says about its file, worst first by `severity`.
@@ -42,6 +82,9 @@ pub enum SourceStatus {
     Reconnecting,
     Disconnected,
     WaitingForFile,
+    /// A Remote Command exited (its exit code, `None` when it was killed by
+    /// a signal) and has not been run again.
+    Exited(Option<u32>),
     /// A password or passphrase is needed: waits for the user to Connect.
     NeedsSecret,
     Error(String),
@@ -54,10 +97,20 @@ impl SourceStatus {
             SourceStatus::Live => 0,
             SourceStatus::Connecting => 1,
             SourceStatus::WaitingForFile => 2,
-            SourceStatus::NeedsSecret => 3,
-            SourceStatus::Reconnecting => 3,
-            SourceStatus::Disconnected => 4,
-            SourceStatus::Error(_) => 5,
+            SourceStatus::Exited(_) => 3,
+            SourceStatus::NeedsSecret => 4,
+            SourceStatus::Reconnecting => 4,
+            SourceStatus::Disconnected => 5,
+            SourceStatus::Error(_) => 6,
+        }
+    }
+
+    /// The word the status bar shows (no exit code: "Exited (1 of 3)" counts
+    /// the members, so the code stays in the lists).
+    pub fn bar_label(&self) -> String {
+        match self {
+            SourceStatus::Exited(_) => "Exited".into(),
+            other => other.label(),
         }
     }
 
@@ -68,9 +121,59 @@ impl SourceStatus {
             SourceStatus::Reconnecting => "Reconnecting".into(),
             SourceStatus::Disconnected => "Disconnected".into(),
             SourceStatus::WaitingForFile => "Waiting for file".into(),
+            SourceStatus::Exited(Some(code)) => format!("Exited (code {code})"),
+            SourceStatus::Exited(None) => "Exited".into(),
             SourceStatus::NeedsSecret => "Waiting to connect".into(),
             SourceStatus::Error(message) => message.clone(),
         }
+    }
+}
+
+/// Which output each line of an `Append` came from: one bit per line, set
+/// for stderr. Only Remote Commands have one.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct StreamMask {
+    bits: Vec<u64>,
+    len: usize,
+}
+
+impl StreamMask {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn push(&mut self, stream: Stream) {
+        if self.len % 64 == 0 {
+            self.bits.push(0);
+        }
+        if stream == Stream::Stderr {
+            self.bits[self.len / 64] |= 1 << (self.len % 64);
+        }
+        self.len += 1;
+    }
+
+    pub fn get(&self, index: usize) -> Option<Stream> {
+        (index < self.len).then(|| {
+            if self.bits[index / 64] >> (index % 64) & 1 == 1 { Stream::Stderr } else { Stream::Stdout }
+        })
+    }
+
+    pub fn len(&self) -> usize {
+        self.len
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+}
+
+impl FromIterator<Stream> for StreamMask {
+    fn from_iter<I: IntoIterator<Item = Stream>>(iter: I) -> Self {
+        let mut mask = Self::new();
+        for stream in iter {
+            mask.push(stream);
+        }
+        mask
     }
 }
 
@@ -81,13 +184,21 @@ pub enum SourceEvent {
     Tail { lines: Vec<String>, generation: u32 },
     /// Lines older than everything received so far, inserted above.
     Backfill { lines: Vec<String>, generation: u32 },
-    /// New lines, each ended by a newline in the file.
-    Append { lines: Vec<String> },
+    /// New lines, each ended by a newline in the file. A Remote Command also
+    /// says which output each line came from (`streams` is as long as
+    /// `lines`); a file has none.
+    Append { lines: Vec<String>, streams: Option<StreamMask> },
     /// The real number of complete lines before the first `Append`, once known
     /// (`None` when it could not be counted).
     TotalLines(Option<usize>),
     Break { kind: BreakKind },
     Status(SourceStatus),
+    /// A Remote Command started a Run: the command line as sent to the Server
+    /// (the `--since` form when resumed).
+    Run { command: String },
+    /// Something went wrong that the status does not say (kept as the last
+    /// error of the source).
+    Problem(String),
 }
 
 /// What the app tells a source.
@@ -98,6 +209,10 @@ pub enum SourceCommand {
     SetWindow(usize),
     /// Try again now (after Disconnected or an error the user has fixed).
     Reconnect,
+    /// Run a Remote Command again from its start, ending the Run in progress.
+    Restart,
+    /// Turn Restart on exit on or off for a Remote Command.
+    SetRestartOnExit(bool),
     Close,
 }
 

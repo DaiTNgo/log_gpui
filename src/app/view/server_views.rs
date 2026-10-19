@@ -1,6 +1,7 @@
 //! UI: the Servers dialog and the remote file picker.
 
 use super::AppView;
+use crate::app::remote_picker::PickerTab;
 use crate::remote::browse::join;
 use gpui::prelude::FluentBuilder as _;
 use gpui::{ElementId, InteractiveElement, IntoElement, ParentElement, SharedString, Styled, div, px};
@@ -193,6 +194,8 @@ impl AppView {
             .child(row("Address", &fields.host))
             .child(row("Port", &fields.port))
             .child(row("User", &fields.user))
+            .child(row("Keepalive (s)", &fields.keepalive_secs))
+            .child(row("Missed allowed", &fields.keepalive_missed))
             .child(
                 h_flex().gap_2().items_center().child(label("Login")).child(
                     ButtonGroup::new("server-auth")
@@ -396,6 +399,13 @@ impl AppView {
         let dir_label = picker.dir.clone();
         let error = picker.error.clone();
         let input = picker.input.clone();
+        let tab = picker.tab;
+        let on_files = tab == PickerTab::Files;
+        let can_add_command = !on_files
+            && self.command_server().is_some()
+            && !self.command_text(cx).is_empty()
+            && self.command_form_error(cx).is_none();
+        let command_body = if on_files { None } else { Some(self.render_command_tab(cx)) };
 
         Self::modal_backdrop()
             .child(
@@ -408,9 +418,33 @@ impl AppView {
                     .border_color(border)
                     .rounded_lg()
                     .shadow_2xl()
-                    .child(div().text_base().font_weight(gpui::FontWeight::SEMIBOLD).child("Add remote files"))
-                    .child(servers)
                     .child(
+                        div()
+                            .text_base()
+                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                            .child(if on_files { "Add remote files" } else { "Add remote command" }),
+                    )
+                    .child(
+                        h_flex()
+                            .gap_1()
+                            .child(
+                                Button::new("picker-tab-files")
+                                    .xsmall()
+                                    .label("Files")
+                                    .selected(on_files)
+                                    .on_click(cx.listener(|this, _, _, cx| this.picker_set_tab(PickerTab::Files, cx))),
+                            )
+                            .child(
+                                Button::new("picker-tab-command")
+                                    .xsmall()
+                                    .label("Command")
+                                    .selected(!on_files)
+                                    .on_click(cx.listener(|this, _, _, cx| this.picker_set_tab(PickerTab::Command, cx))),
+                            ),
+                    )
+                    .child(servers)
+                    .when_some(command_body, |this, body| this.child(body))
+                    .when(on_files, |this| this.child(
                         h_flex()
                             .gap_2()
                             .items_center()
@@ -430,9 +464,9 @@ impl AppView {
                                     })),
                             )
                             .child(div().flex_1().truncate().text_sm().text_color(muted).child(dir_label)),
-                    )
-                    .child(list)
-                    .child(
+                    ))
+                    .when(on_files, |this| this.child(list))
+                    .when(on_files, |this| this.child(
                         h_flex()
                             .gap_2()
                             .items_center()
@@ -443,9 +477,9 @@ impl AppView {
                                     .label("Add path")
                                     .on_click(cx.listener(|this, _, _, cx| this.picker_add_typed(cx))),
                             ),
-                    )
-                    .when_some(error, |this, e| this.child(div().text_xs().text_color(danger).child(e)))
-                    .when(count > 0, |this| this.child(staged))
+                    ))
+                    .when(on_files, |this| this.when_some(error, |this, e| this.child(div().text_xs().text_color(danger).child(e))))
+                    .when(on_files && count > 0, |this| this.child(staged))
                     .child(
                         h_flex()
                             .justify_end()
@@ -455,13 +489,20 @@ impl AppView {
                                     .label("Cancel")
                                     .on_click(cx.listener(|this, _, _, cx| this.close_remote_picker(cx))),
                             )
-                            .child(
+                            .when(on_files, |this| this.child(
                                 Button::new("picker-done")
                                     .primary()
                                     .label(if count == 1 { "Add 1 file".to_string() } else { format!("Add {count} files") })
                                     .disabled(count == 0)
                                     .on_click(cx.listener(|this, _, _, cx| this.picker_confirm(cx))),
-                            ),
+                            ))
+                            .when(!on_files, |this| this.child(
+                                Button::new("command-add")
+                                    .primary()
+                                    .label("Add")
+                                    .disabled(!can_add_command)
+                                    .on_click(cx.listener(|this, _, _, cx| this.command_add(cx))),
+                            )),
                     ),
             )
             .into_any_element()

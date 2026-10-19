@@ -14,7 +14,18 @@ pub enum PickerTarget {
     AddTo(String),
 }
 
+/// What the picker adds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PickerTab {
+    #[default]
+    Files,
+    Command,
+}
+
 pub struct RemotePicker {
+    pub tab: PickerTab,
+    /// The Command tab.
+    pub command: super::remote_command::CommandForm,
     pub target: PickerTarget,
     pub server_id: Option<String>,
     pub dir: String,
@@ -57,6 +68,8 @@ impl AppView {
         }
         let first = self.remote.servers.servers[0].id.clone();
         self.remote.picker = Some(RemotePicker {
+            tab: PickerTab::Files,
+            command: Default::default(),
             target,
             server_id: None,
             dir: "/".into(),
@@ -78,6 +91,7 @@ impl AppView {
 
     /// Create the path field of a freshly opened picker.
     pub fn sync_remote_picker(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.sync_command_form(window, cx);
         let Some(picker) = self.remote.picker.as_mut() else { return };
         if picker.clear_input {
             picker.clear_input = false;
@@ -99,12 +113,22 @@ impl AppView {
     }
 
     pub fn picker_select_server(&mut self, server_id: &str, cx: &mut Context<Self>) {
-        if let Some(picker) = self.remote.picker.as_mut() {
+        let on_files = if let Some(picker) = self.remote.picker.as_mut() {
             picker.server_id = Some(server_id.to_string());
             picker.entries.clear();
             picker.error = None;
+            picker.command.suggestions.clear();
+            picker.command.suggestions_error = None;
+            picker.tab == PickerTab::Files
+        } else {
+            false
+        };
+        if on_files {
+            self.picker_load(None, cx);
+        } else {
+            self.command_load_suggestions(cx);
+            cx.notify();
         }
-        self.picker_load(None, cx);
     }
 
     /// List `dir` (the Server's home folder when `None`).

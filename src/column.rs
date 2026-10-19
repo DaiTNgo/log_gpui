@@ -10,11 +10,13 @@ pub const DEFAULT_TIMESTAMP_WIDTH: Pixels = px(120.0);
 pub const DEFAULT_LEVEL_WIDTH: Pixels = px(68.0);
 pub const DEFAULT_MODULE_WIDTH: Pixels = px(100.0);
 pub const DEFAULT_SOURCE_WIDTH: Pixels = px(120.0);
+pub const DEFAULT_STREAM_WIDTH: Pixels = px(72.0);
 
 pub const MIN_TIMESTAMP_WIDTH: Pixels = px(48.0);
 pub const MIN_LEVEL_WIDTH: Pixels = px(36.0);
 pub const MIN_MODULE_WIDTH: Pixels = px(48.0);
 pub const MIN_SOURCE_WIDTH: Pixels = px(48.0);
+pub const MIN_STREAM_WIDTH: Pixels = px(48.0);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum PinnableColumn {
@@ -24,15 +26,25 @@ pub enum PinnableColumn {
     /// The Source Column of a Log Space: the name of each row's Source File.
     /// Shown only when the Log Space turns it on.
     Source,
+    /// The Stream Column of a Log Space with a Remote Command: `stdout` or
+    /// `stderr`. Hidden unless turned on; it is never pinned.
+    Stream,
 }
 
 impl PinnableColumn {
-    pub const ALL: [PinnableColumn; 4] = [
+    pub const ALL: [PinnableColumn; 5] = [
         PinnableColumn::Timestamp,
         PinnableColumn::Level,
         PinnableColumn::Module,
         PinnableColumn::Source,
+        PinnableColumn::Stream,
     ];
+
+    /// Whether the user can pin the column (the Stream Column cannot).
+    #[inline]
+    pub fn can_pin(self) -> bool {
+        self != PinnableColumn::Stream
+    }
 
     #[inline]
     pub fn is_pinnable(name: &str) -> bool {
@@ -46,6 +58,7 @@ impl PinnableColumn {
             PinnableColumn::Level => "LEVEL",
             PinnableColumn::Module => "MODULE",
             PinnableColumn::Source => "SOURCE",
+            PinnableColumn::Stream => "STREAM",
         }
     }
 
@@ -62,6 +75,7 @@ impl PinnableColumn {
             PinnableColumn::Level => 5,     // "LEVEL"
             PinnableColumn::Module => 6,    // "MODULE"
             PinnableColumn::Source => 6,    // "SOURCE"
+            PinnableColumn::Stream => 6,    // "STREAM", and "stdout" / "stderr"
         }
     }
 }
@@ -104,6 +118,8 @@ pub struct FieldMaxChars {
     pub module: usize,
     #[serde(default)]
     pub source: usize,
+    #[serde(default)]
+    pub stream: usize,
 }
 
 impl FieldMaxChars {
@@ -113,6 +129,7 @@ impl FieldMaxChars {
             level: 0,
             module: 0,
             source: 0,
+            stream: 0,
         }
     }
 
@@ -124,6 +141,9 @@ impl FieldMaxChars {
         self.module = self.module.max(entry.tag.chars().count());
         if let Some(source) = &entry.source {
             self.source = self.source.max(source.chars().count());
+        }
+        if let Some(stream) = entry.stream {
+            self.stream = self.stream.max(stream.as_str().len());
         }
     }
 
@@ -157,6 +177,7 @@ pub fn compute_column_width(
         PinnableColumn::Level => 24.0,
         PinnableColumn::Module => 16.0,
         PinnableColumn::Source => 16.0,
+        PinnableColumn::Stream => 16.0,
     };
     let content_width = (effective_chars as f32) * char_width + padding;
     px(content_width).max(min_width)
@@ -174,6 +195,9 @@ pub struct ColumnLayoutState {
     /// hidden keeps its pin and is simply not laid out).
     #[serde(default)]
     pub source_visible: bool,
+    /// Whether the Stream Column is shown.
+    #[serde(default)]
+    pub stream_visible: bool,
     pub is_resizing: Option<(PinnableColumn, Pixels)>,
     pub resize_start_x: Option<Pixels>,
     pub hovered_header: Option<PinnableColumn>,
@@ -193,12 +217,14 @@ impl ColumnLayoutState {
         widths.insert(PinnableColumn::Level, DEFAULT_LEVEL_WIDTH);
         widths.insert(PinnableColumn::Module, DEFAULT_MODULE_WIDTH);
         widths.insert(PinnableColumn::Source, DEFAULT_SOURCE_WIDTH);
+        widths.insert(PinnableColumn::Stream, DEFAULT_STREAM_WIDTH);
 
         let mut min_widths = HashMap::new();
         min_widths.insert(PinnableColumn::Timestamp, MIN_TIMESTAMP_WIDTH);
         min_widths.insert(PinnableColumn::Level, MIN_LEVEL_WIDTH);
         min_widths.insert(PinnableColumn::Module, MIN_MODULE_WIDTH);
         min_widths.insert(PinnableColumn::Source, MIN_SOURCE_WIDTH);
+        min_widths.insert(PinnableColumn::Stream, MIN_STREAM_WIDTH);
 
         Self {
             pinned_columns: BTreeSet::new(),
@@ -208,6 +234,7 @@ impl ColumnLayoutState {
             max_chars: FieldMaxChars::new(),
             gutter_width: DEFAULT_GUTTER_WIDTH,
             source_visible: false,
+            stream_visible: false,
             is_resizing: None,
             resize_start_x: None,
             hovered_header: None,
@@ -232,6 +259,9 @@ impl ColumnLayoutState {
     }
 
     pub fn pin(&mut self, col: PinnableColumn) -> bool {
+        if !col.can_pin() {
+            return false;
+        }
         let inserted = self.pinned_columns.insert(col);
         if inserted {
             self.sync_ordered_pinned();
@@ -248,6 +278,9 @@ impl ColumnLayoutState {
     }
 
     pub fn toggle_pin(&mut self, col: PinnableColumn) -> bool {
+        if !col.can_pin() {
+            return false;
+        }
         if self.pinned_columns.contains(&col) {
             self.pinned_columns.remove(&col);
             self.sync_ordered_pinned();
@@ -274,10 +307,20 @@ impl ColumnLayoutState {
     }
 
     /// Whether the column takes part in the layout (every column but a
-    /// hidden Source Column).
+    /// hidden Source Column or Stream Column).
     #[inline]
     pub fn is_laid_out(&self, col: PinnableColumn) -> bool {
-        col != PinnableColumn::Source || self.source_visible
+        match col {
+            PinnableColumn::Source => self.source_visible,
+            PinnableColumn::Stream => self.stream_visible,
+            _ => true,
+        }
+    }
+
+    /// Show or hide the Stream Column.
+    pub fn set_stream_visible(&mut self, visible: bool) {
+        self.stream_visible = visible;
+        self.sync_ordered_pinned();
     }
 
     /// Show or hide the Source Column.
@@ -306,6 +349,7 @@ impl ColumnLayoutState {
         self.widths.insert(PinnableColumn::Level, DEFAULT_LEVEL_WIDTH);
         self.widths.insert(PinnableColumn::Module, DEFAULT_MODULE_WIDTH);
         self.widths.insert(PinnableColumn::Source, DEFAULT_SOURCE_WIDTH);
+        self.widths.insert(PinnableColumn::Stream, DEFAULT_STREAM_WIDTH);
     }
 
     /// Returns unpinned columns in natural schema order.
@@ -430,6 +474,9 @@ impl ColumnLayoutState {
         header_hovered: bool,
         toggle_hovered: bool,
     ) -> PinToggleState {
+        if !col.can_pin() {
+            return PinToggleState::UnpinnedIdle;
+        }
         if self.is_pinned(col) {
             if toggle_hovered {
                 PinToggleState::PinnedHover
@@ -452,6 +499,7 @@ impl ColumnLayoutState {
             PinnableColumn::Level => DEFAULT_LEVEL_WIDTH,
             PinnableColumn::Module => DEFAULT_MODULE_WIDTH,
             PinnableColumn::Source => DEFAULT_SOURCE_WIDTH,
+            PinnableColumn::Stream => DEFAULT_STREAM_WIDTH,
         })
     }
 
@@ -462,6 +510,7 @@ impl ColumnLayoutState {
             PinnableColumn::Level => MIN_LEVEL_WIDTH,
             PinnableColumn::Module => MIN_MODULE_WIDTH,
             PinnableColumn::Source => MIN_SOURCE_WIDTH,
+            PinnableColumn::Stream => MIN_STREAM_WIDTH,
         })
     }
 
@@ -522,6 +571,7 @@ impl ColumnLayoutState {
             PinnableColumn::Level => self.max_chars.level,
             PinnableColumn::Module => self.max_chars.module,
             PinnableColumn::Source => self.max_chars.source,
+            PinnableColumn::Stream => self.max_chars.stream,
         };
         let min = self.min_width(col);
         let calculated = compute_column_width(col, count, density.font_size(), min);

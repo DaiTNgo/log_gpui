@@ -24,6 +24,15 @@ impl LineSplitter {
         lines
     }
 
+    /// The unfinished last line, when no more bytes will come (a command
+    /// that ended without a newline).
+    pub fn finish(&mut self) -> Option<String> {
+        if self.pending.is_empty() {
+            return None;
+        }
+        Some(decode_line(&std::mem::take(&mut self.pending)))
+    }
+
     /// Bytes of the unfinished line.
     pub fn pending_len(&self) -> usize {
         self.pending.len()

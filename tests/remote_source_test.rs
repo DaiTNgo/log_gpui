@@ -112,7 +112,7 @@ fn small_file_shows_every_line_and_new_lines_arrive_without_partial_ones() {
         assert!(!matches!(e, SourceEvent::Append { .. }), "partial line shown: {e:?}");
     }
     f.write_all(b" down\nnext\n").unwrap();
-    let SourceEvent::Append { lines } = next(&h, |e| matches!(e, SourceEvent::Append { .. })) else { unreachable!() };
+    let SourceEvent::Append { lines, .. } = next(&h, |e| matches!(e, SourceEvent::Append { .. })) else { unreachable!() };
     assert_eq!(lines, vec!["ERROR db down", "next"]);
     h.close();
 }
@@ -136,7 +136,7 @@ fn pause_loses_nothing_and_rotation_truncation_and_deletion_are_breaks() {
     h.send(SourceCommand::Resume);
     let mut got = 0;
     while got < 5_000 {
-        let SourceEvent::Append { lines } = next(&h, |e| matches!(e, SourceEvent::Append { .. })) else { unreachable!() };
+        let SourceEvent::Append { lines, .. } = next(&h, |e| matches!(e, SourceEvent::Append { .. })) else { unreachable!() };
         got += lines.len();
     }
     assert_eq!(got, 5_000);
@@ -147,7 +147,7 @@ fn pause_loses_nothing_and_rotation_truncation_and_deletion_are_breaks() {
     std::fs::write(&path, "after truncate\n").unwrap();
     assert_eq!(
         next(&h, |e| matches!(e, SourceEvent::Append { .. })),
-        SourceEvent::Append { lines: vec!["after truncate".into()] }
+        SourceEvent::Append { lines: vec!["after truncate".into()], streams: None }
     );
 
     // Rotate: the old tail is read first, then the Break, then the new file.
@@ -158,7 +158,7 @@ fn pause_loses_nothing_and_rotation_truncation_and_deletion_are_breaks() {
     let mut seen = Vec::new();
     while seen.len() < 3 {
         match next(&h, |e| matches!(e, SourceEvent::Append { .. } | SourceEvent::Break { .. })) {
-            SourceEvent::Append { lines } => seen.push(lines.join(",")),
+            SourceEvent::Append { lines, .. } => seen.push(lines.join(",")),
             SourceEvent::Break { kind } => seen.push(format!("{kind:?}")),
             _ => {}
         }
@@ -172,7 +172,7 @@ fn pause_loses_nothing_and_rotation_truncation_and_deletion_are_breaks() {
     std::fs::write(&path, "reborn\n").unwrap();
     assert_eq!(
         next(&h, |e| matches!(e, SourceEvent::Append { .. })),
-        SourceEvent::Append { lines: vec!["reborn".into()] }
+        SourceEvent::Append { lines: vec!["reborn".into()], streams: None }
     );
     h.close();
 }
@@ -219,7 +219,7 @@ fn a_dropped_connection_comes_back_and_continues_from_the_same_byte() {
     let mut got = 0;
     let mut first = None;
     while got < 300 {
-        let SourceEvent::Append { lines } = next(&h, |e| matches!(e, SourceEvent::Append { .. })) else { unreachable!() };
+        let SourceEvent::Append { lines, .. } = next(&h, |e| matches!(e, SourceEvent::Append { .. })) else { unreachable!() };
         first.get_or_insert(lines[0].clone());
         got += lines.len();
     }

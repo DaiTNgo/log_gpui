@@ -44,12 +44,18 @@ impl AppView {
         let can_create = dialog.form.can_create(project);
         let name_message = dialog.form.name_message(project);
         let remote_files = self.remote.new_space_files.clone();
-        let create_label = if remote_files.is_empty() {
+        let remote_commands = self.remote.new_space_commands.clone();
+        let remote_count = remote_files.len() + remote_commands.len();
+        let create_label = if remote_count == 0 {
             dialog.form.create_label()
-        } else if remote_files.len() == 1 {
+        } else if remote_commands.is_empty() && remote_files.len() == 1 {
             "Create remote with 1 file".to_string()
-        } else {
+        } else if remote_commands.is_empty() {
             format!("Create remote with {} files", remote_files.len())
+        } else if remote_count == 1 {
+            "Create remote with 1 command".to_string()
+        } else {
+            format!("Create remote with {remote_count} members")
         };
         let files = dialog.form.files.clone();
         let size_message = dialog.form.size_limit_message();
@@ -152,8 +158,8 @@ impl AppView {
                         v_flex()
                             .gap_1()
                             .child(div().text_sm().child("Files"))
-                            .when(remote_files.is_empty(), |this| this.child(drop_zone))
-                            .when(!files.is_empty() && remote_files.is_empty(), |this| this.child(file_list))
+                            .when(remote_count == 0, |this| this.child(drop_zone))
+                            .when(!files.is_empty() && remote_count == 0, |this| this.child(file_list))
                             .when_some(size_message, |this, message| {
                                 this.child(div().text_xs().text_color(danger).child(message))
                             }),
@@ -161,7 +167,29 @@ impl AppView {
                     .child(
                         v_flex()
                             .gap_1()
-                            .child(div().text_sm().child("Remote files"))
+                            .child(div().text_sm().child("Remote files and commands"))
+                            .children(remote_commands.iter().enumerate().map(|(ix, (_, server, command, _))| {
+                                h_flex()
+                                    .gap_2()
+                                    .items_center()
+                                    .px_2()
+                                    .py_1()
+                                    .rounded_md()
+                                    .border_1()
+                                    .border_color(border)
+                                    .text_sm()
+                                    .child(Icon::new(IconName::Globe).size_4())
+                                    .child(div().flex_1().truncate().child(format!("{server}$ {command}")))
+                                    .child(
+                                        Button::new(("new-space-remove-command", ix))
+                                            .ghost()
+                                            .xsmall()
+                                            .icon(IconName::Close)
+                                            .on_click(cx.listener(move |this, _, _, cx| {
+                                                this.new_space_remove_command(ix, cx)
+                                            })),
+                                    )
+                            }))
                             .children(remote_files.iter().enumerate().map(|(ix, (_, server, path))| {
                                 h_flex()
                                     .gap_2()
@@ -192,6 +220,18 @@ impl AppView {
                                     .disabled(!files.is_empty())
                                     .on_click(cx.listener(|this, _, _, cx| {
                                         this.open_remote_picker(crate::app::remote_picker::PickerTarget::NewSpace, cx)
+                                    })),
+                            )
+                            .child(
+                                Button::new("new-space-add-command")
+                                    .small()
+                                    .label("Add remote command…")
+                                    .disabled(!files.is_empty())
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.open_remote_command_picker(
+                                            crate::app::remote_picker::PickerTarget::NewSpace,
+                                            cx,
+                                        )
                                     })),
                             ),
                     )

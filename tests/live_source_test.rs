@@ -140,7 +140,7 @@ fn source(path: &std::path::Path, offset: u64) -> SourceHandle {
 }
 
 fn appended(lines: &[&str]) -> SourceEvent {
-    SourceEvent::Append { lines: lines.iter().map(|s| s.to_string()).collect() }
+    SourceEvent::Append { lines: lines.iter().map(|s| s.to_string()).collect(), streams: None }
 }
 
 #[test]
@@ -205,7 +205,7 @@ fn local_source_rotation_reads_the_old_tail_then_the_new_file() {
     let deadline = Instant::now() + Duration::from_secs(5);
     while seen.len() < 3 && Instant::now() < deadline {
         match h.events.try_recv() {
-            Ok(SourceEvent::Append { lines }) => seen.push(format!("lines:{}", lines.join(","))),
+            Ok(SourceEvent::Append { lines, .. }) => seen.push(format!("lines:{}", lines.join(","))),
             Ok(SourceEvent::Break { kind: BreakKind::Rotated }) => seen.push("break".into()),
             _ => std::thread::sleep(Duration::from_millis(5)),
         }

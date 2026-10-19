@@ -79,6 +79,9 @@ struct Row {
 struct Values {
     live_window: usize,
     shown: bool,
+    /// The Stream Column is on, and whether the open Log Space has a command.
+    stream: bool,
+    has_command: bool,
     minimap: bool,
     in_space: bool,
     wrap: bool,
@@ -94,6 +97,8 @@ pub fn open_settings_dialog(view: Entity<AppView>, window: &mut Window, cx: &mut
                 Values {
                     live_window: v.live.window,
                     shown: v.source_column_shown(),
+                    stream: v.stream_column_setting(),
+                    has_command: v.active_space_has_command(),
                     minimap: v.show_minimap,
                     in_space: v.active_is_log_space(),
                     wrap: v.raw.soft_wrap,
@@ -249,6 +254,7 @@ fn rows_of(section: SettingsSection, view: &Entity<AppView>, v: &Values, cx: &Ap
         }
         SettingsSection::Appearance => {
             let (v_source, v_density, v_minimap) = (view.clone(), view.clone(), view.clone());
+            let v_stream = view.clone();
             let densities = [
                 (Density::Comfortable, "Comfortable"),
                 (Density::Compact, "Compact"),
@@ -295,6 +301,19 @@ fn rows_of(section: SettingsSection, view: &Entity<AppView>, v: &Values, cx: &Ap
                         .on_click(move |checked: &bool, window, app| {
                             let on = *checked;
                             v_source.update(app, |this, cx| this.set_show_source(on, cx));
+                            window.refresh();
+                        })
+                        .into_any_element(),
+                },
+                Row {
+                    title: "Show stream",
+                    description: "Add a column saying whether each line of a remote command came from its standard output or its standard error. Shows in a Log Space that has a remote command.",
+                    control: Switch::new("show-stream")
+                        .checked(v.stream)
+                        .disabled(!v.in_space || !v.has_command)
+                        .on_click(move |checked: &bool, window, app| {
+                            let on = *checked;
+                            v_stream.update(app, |this, cx| this.set_show_stream(on, cx));
                             window.refresh();
                         })
                         .into_any_element(),

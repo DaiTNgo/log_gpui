@@ -13,6 +13,8 @@ pub struct ServerFields {
     pub user: Entity<InputState>,
     pub key_path: Entity<InputState>,
     pub secret: Entity<InputState>,
+    pub keepalive_secs: Entity<InputState>,
+    pub keepalive_missed: Entity<InputState>,
 }
 
 /// A Jump Server typed in the same form as the Server that goes through it.
@@ -150,6 +152,8 @@ impl AppView {
                 user: field("deploy", "", window, cx),
                 key_path: field("~/.ssh/id_ed25519", "~/.ssh/id_ed25519", window, cx),
                 secret,
+                keepalive_secs: field("30", "30", window, cx),
+                keepalive_missed: field("3", "3", window, cx),
             };
             if let Some(jump) = self.server_dialog.as_mut().and_then(|d| d.form.as_mut()).and_then(|f| f.new_jump.as_mut()) {
                 jump.fields = Some(fields);
@@ -177,6 +181,8 @@ impl AppView {
             user: field("deploy", initial.user.clone(), window, cx),
             key_path: field("~/.ssh/id_ed25519", key_path, window, cx),
             secret,
+            keepalive_secs: field("30", initial.keepalive_interval_secs.to_string(), window, cx),
+            keepalive_missed: field("3", initial.keepalive_max_missed.to_string(), window, cx),
         };
         fields.name.update(cx, |state, cx| state.focus(window, cx));
         if let Some(form) = self.server_dialog.as_mut().and_then(|d| d.form.as_mut()) {
@@ -200,6 +206,8 @@ impl AppView {
         server.host = text(&fields.host);
         server.port = text(&fields.port).parse().unwrap_or(22);
         server.user = text(&fields.user);
+        server.keepalive_interval_secs = text(&fields.keepalive_secs).parse().unwrap_or(0);
+        server.keepalive_max_missed = text(&fields.keepalive_missed).parse().unwrap_or(0);
         server.auth = if form.use_key { AuthMethod::Key { path: key } } else { AuthMethod::Password };
         server.jump_server_id = form.jump.clone();
         server.remember_secret = form.remember;

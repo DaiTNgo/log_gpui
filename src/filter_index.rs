@@ -19,6 +19,9 @@ pub const MISSING: u16 = u16::MAX;
 enum Source {
     /// The Source File of a row in a Log Space (the Source Column).
     SourceFile,
+    /// Which output of a Remote Command the line came from. A line's own:
+    /// a Continuation Line does not take its Parent Line's.
+    Stream,
     Level,
     Module,
     RequestId,
@@ -30,6 +33,7 @@ impl Source {
     fn key(&self) -> String {
         match self {
             Source::SourceFile => "source".to_string(),
+            Source::Stream => "stream".to_string(),
             Source::Level => "level".to_string(),
             Source::Module => "module".to_string(),
             Source::RequestId => "request_id".to_string(),
@@ -41,6 +45,7 @@ impl Source {
     fn label(&self) -> String {
         match self {
             Source::SourceFile => "Source".to_string(),
+            Source::Stream => "Stream".to_string(),
             Source::Level => "Level".to_string(),
             Source::Module => "Module".to_string(),
             Source::RequestId => "Request ID".to_string(),
@@ -49,9 +54,15 @@ impl Source {
         }
     }
 
+    /// Whether a Continuation Line takes its Parent Line's value.
+    fn inherits(&self) -> bool {
+        !matches!(self, Source::Stream)
+    }
+
     fn value<'a>(&self, entry: &'a LogEntry) -> Option<&'a str> {
         let v = match self {
             Source::SourceFile => entry.source.as_deref().unwrap_or(""),
+            Source::Stream => entry.stream.map_or("", |s| s.as_str()),
             Source::Level => entry.level_text.as_str(),
             Source::Module => entry.tag.as_str(),
             Source::RequestId => entry.request_id.as_deref().unwrap_or(""),
@@ -69,8 +80,12 @@ impl Source {
 
 /// The value of the row `row` in the column `key`. A Continuation Line has
 /// no value of its own: it reads its Parent Line's, found by walking up to the
-/// nearest row that is not a continuation.
+/// nearest row that is not a continuation. Its Stream is the exception: that
+/// is always the line's own.
 pub fn value_of<'a>(entries: &'a [LogEntry], row: usize, key: &str) -> Option<&'a str> {
+    if key == "stream" {
+        return entries.get(row).and_then(|e| column_value(e, key));
+    }
     let mut r = row;
     while r > 0 && entries.get(r).is_some_and(|e| e.parent.is_some()) {
         r -= 1;
@@ -83,6 +98,7 @@ pub fn column_value<'a>(entry: &'a LogEntry, key: &str) -> Option<&'a str> {
     // Called once per row by Filter and Highlight Rules: no allocation here.
     let v = match key {
         "source" => entry.source.as_deref().unwrap_or(""),
+        "stream" => entry.stream.map_or("", |s| s.as_str()),
         "message" => entry.payload.as_str(),
         "level" => entry.level_text.as_str(),
         "module" => entry.tag.as_str(),
@@ -174,7 +190,7 @@ impl ColumnIndex {
             return;
         }
         for (i, entry) in removed.iter().enumerate() {
-            if entry.parent.is_some() {
+            if entry.parent.is_some() && self.source.inherits() {
                 continue;
             }
             let Some(&id) = self.row_ids.get(keep + i) else { continue };
@@ -194,7 +210,7 @@ impl ColumnIndex {
         if self.overflow {
             return;
         }
-        if entry.parent.is_some() {
+        if entry.parent.is_some() && self.source.inherits() {
             // A Continuation Line holds its Parent Line's value, uncounted.
             let id = self.row_ids.get(parent_row).copied().unwrap_or(MISSING);
             self.row_ids.push(id);
@@ -320,6 +336,7 @@ impl FilterIndex {
         // at the end of `columns_in_use`.
         for source in [
             Source::SourceFile,
+            Source::Stream,
             Source::Level,
             Source::Module,
             Source::RequestId,

@@ -1,0 +1,67 @@
+#!/usr/bin/env python3
+# A stand-in for `docker logs -f --timestamps [--tail N | --since TS] NAME`,
+# for the Remote Command tests (scripts/ssh-test-env.sh puts it on the PATH of
+# the test sshd). The "container log" is $FAKE_DIR/docker-NAME.log, one line
+# per entry: `2026-10-19T03:02:03.123456789Z text`. A line that starts with
+# `!` after the time is written to stderr instead of stdout.
+import os
+import sys
+import time
+
+args = sys.argv[1:]
+if not args or args[0] != "logs":
+    sys.stderr.write("fake docker: only `logs`\n")
+    sys.exit(2)
+since = tail = name = None
+i = 1
+while i < len(args):
+    a = args[i]
+    if a == "--since":
+        since = args[i + 1]
+        i += 1
+    elif a == "--tail":
+        tail = int(args[i + 1])
+        i += 1
+    elif a in ("-f", "--timestamps"):
+        pass
+    else:
+        name = a
+    i += 1
+path = os.path.join(os.environ["FAKE_DIR"], "docker-%s.log" % name)
+if not os.path.exists(path):
+    sys.stderr.write("Error: No such container: %s\n" % name)
+    sys.exit(1)
+
+
+def emit(line):
+    stamp, _, text = line.partition(" ")
+    if text.startswith("!"):
+        sys.stderr.write("%s %s\n" % (stamp, text[1:]))
+        sys.stderr.flush()
+    else:
+        sys.stdout.write(line + "\n")
+        sys.stdout.flush()
+
+
+with open(path) as f:
+    lines = f.read().splitlines()
+    pos = f.tell()
+if since is not None:
+    lines = [l for l in lines if l.split(" ", 1)[0] >= since]
+elif tail is not None:
+    lines = lines[-tail:] if tail else []
+for l in lines:
+    emit(l)
+buf = ""
+while True:
+    if os.getppid() == 1:
+        sys.exit(0)
+    with open(path) as f:
+        f.seek(pos)
+        chunk = f.read()
+        pos = f.tell()
+    buf += chunk
+    while "\n" in buf:
+        l, buf = buf.split("\n", 1)
+        emit(l)
+    time.sleep(0.1)

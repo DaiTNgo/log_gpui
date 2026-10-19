@@ -139,6 +139,23 @@ fn default_true() -> bool {
     true
 }
 
+/// Which output of a Remote Command a line came from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum Stream {
+    Stdout,
+    Stderr,
+}
+
+impl Stream {
+    /// The Filter Value and Stream Column text.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Stream::Stdout => "stdout",
+            Stream::Stderr => "stderr",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LogEntry {
     /// 1-based sequential line index in the log file
@@ -149,6 +166,10 @@ pub struct LogEntry {
     /// line without a time has only a pseudo timestamp).
     #[serde(default = "default_true")]
     pub has_time: bool,
+    /// The output of a Remote Command the line came from (`None` for the
+    /// lines of files). A line's own: a Continuation Line never inherits it.
+    #[serde(default)]
+    pub stream: Option<Stream>,
     /// Formatted time string (e.g. 10:32:02.441)
     pub time_str: SharedString,
     /// Time delta from previous displayed log entry in milliseconds
@@ -211,6 +232,7 @@ impl LogEntry {
             index,
             timestamp,
             has_time: timestamp.is_finite() && timestamp > 0.0,
+            stream: None,
             time_str: time_str.into(),
             delta_time_ms: None,
             tag: tag.into(),

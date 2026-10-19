@@ -9,6 +9,7 @@ use crate::filter::FilterState;
 use crate::marker::{TextMarker, add_marker, recolor_marker_at, remove_marker_at};
 use crate::model::LogEntry;
 use crate::palette::HighlightColor;
+use crate::remote::command::{Elevation, PresetFields, check_elevation, unedited_preset};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::ops::Range;
@@ -45,6 +46,24 @@ fn read_markers<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Vec<StoredMark
         .collect())
 }
 
+/// Read the members of a Log Space, skipping one that cannot be read (written
+/// by a newer version) instead of failing the whole session. The lines of a
+/// Remote Command differ from one Run to the next, so its Markers are not
+/// brought back.
+fn read_files<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Vec<LogFile>, D::Error> {
+    let values: Vec<serde_json::Value> = Vec::deserialize(d)?;
+    Ok(values
+        .into_iter()
+        .filter_map(|v| serde_json::from_value::<LogFile>(v).ok())
+        .map(|mut file| {
+            if file.is_remote_command() {
+                file.markers.clear();
+            }
+            file
+        })
+        .collect())
+}
+
 /// Stable hash of a line's content.
 pub fn line_hash(text: &str) -> u64 {
     // FNV-1a: deterministic across runs, unlike `DefaultHasher`.
@@ -56,12 +75,70 @@ pub fn line_hash(text: &str) -> u64 {
     hash
 }
 
-/// A file on a Server.
+/// What a member of a Remote Log Space is on its Server.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum RemoteTarget {
+    /// A file, by absolute path on the Server.
+    File { path: String },
+    /// A command whose output is read live.
+    Command {
+        command: String,
+        /// The Command Preset it was written from, kept only while the command
+        /// is exactly what the preset writes.
+        #[serde(default)]
+        preset: Option<PresetFields>,
+        #[serde(default)]
+        restart_on_exit: bool,
+    },
+}
+
+/// A file or a command on a Server.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "RemoteRefRepr")]
 pub struct RemoteRef {
     pub server_id: String,
-    /// Absolute path on the Server.
-    pub path: String,
+    pub target: RemoteTarget,
+}
+
+/// `RemoteRef` as stored: the older form has a `path` and no `target`.
+#[derive(Deserialize)]
+struct RemoteRefRepr {
+    server_id: String,
+    #[serde(default)]
+    path: Option<String>,
+    #[serde(default)]
+    target: Option<RemoteTarget>,
+}
+
+impl TryFrom<RemoteRefRepr> for RemoteRef {
+    type Error = String;
+
+    fn try_from(repr: RemoteRefRepr) -> Result<Self, String> {
+        let target = match (repr.target, repr.path) {
+            (Some(target), _) => target,
+            (None, Some(path)) => RemoteTarget::File { path },
+            (None, None) => return Err("a remote member has neither a path nor a target".into()),
+        };
+        Ok(RemoteRef { server_id: repr.server_id, target })
+    }
+}
+
+impl RemoteRef {
+    pub fn file(server_id: &str, path: &str) -> Self {
+        Self { server_id: server_id.to_string(), target: RemoteTarget::File { path: path.to_string() } }
+    }
+
+    /// The path of a Remote File.
+    pub fn path(&self) -> Option<&str> {
+        match &self.target {
+            RemoteTarget::File { path } => Some(path),
+            RemoteTarget::Command { .. } => None,
+        }
+    }
+
+    pub fn is_command(&self) -> bool {
+        matches!(self.target, RemoteTarget::Command { .. })
+    }
 }
 
 /// A log file belonging to a Log Space. For an Imported space the file on
@@ -116,10 +193,42 @@ impl LogFile {
             path: None,
             added_seq: 0,
             markers: Vec::new(),
-            remote: Some(RemoteRef { server_id: server_id.to_string(), path: path.to_string() }),
+            remote: Some(RemoteRef::file(server_id, path)),
             entry: None,
             generation: 0,
         }
+    }
+
+    /// A command run on a Server. Its identity is the Server and the command;
+    /// it is shown as `<server>$ <command>`.
+    pub fn remote_command(
+        server_id: &str,
+        server_name: &str,
+        command: &str,
+        preset: Option<&PresetFields>,
+    ) -> Self {
+        Self {
+            file_id: format!("remote-cmd:{server_id}:{:016x}", line_hash(command)),
+            display_name: format!("{server_name}$ {command}"),
+            path: None,
+            added_seq: 0,
+            markers: Vec::new(),
+            remote: Some(RemoteRef {
+                server_id: server_id.to_string(),
+                target: RemoteTarget::Command {
+                    command: command.to_string(),
+                    preset: unedited_preset(command, preset),
+                    restart_on_exit: false,
+                },
+            }),
+            entry: None,
+            generation: 0,
+        }
+    }
+
+    /// Whether the file is a Remote Command.
+    pub fn is_remote_command(&self) -> bool {
+        self.remote.as_ref().is_some_and(RemoteRef::is_command)
     }
 
     /// Build a file from a filesystem path: id and display name come from it.
@@ -392,6 +501,15 @@ impl ImportSource {
     }
 }
 
+/// Why a Remote Command could not be added.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AddCommandError {
+    /// Only a Remote Log Space takes Remote Commands.
+    WrongKind,
+    /// The command starts with `sudo`, `su`, …
+    Elevation(Elevation),
+}
+
 /// Outcome of importing files into an Imported Log Space.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ImportOutcome {
@@ -408,6 +526,7 @@ pub struct LogSpace {
     pub kind: LogSpaceKind,
     #[serde(default)]
     pub file_order: FileOrder,
+    #[serde(deserialize_with = "read_files")]
     pub files: Vec<LogFile>,
     /// The Filter shared by every file in the Log Space's Parsed View.
     #[serde(default)]
@@ -550,6 +669,31 @@ impl LogSpace {
             .iter()
             .filter(|f| f.remote.as_ref().is_some_and(|r| r.server_id == server_id))
             .collect()
+    }
+
+    /// Add Remote Commands, given as `(server id, server name, command,
+    /// preset)`. One the space already has (same Server and command) is
+    /// skipped and reported by its name; one that elevates is refused.
+    pub fn add_remote_commands(
+        &mut self,
+        commands: &[(String, String, String, Option<PresetFields>)],
+    ) -> Result<ImportOutcome, AddCommandError> {
+        if self.kind != LogSpaceKind::Remote {
+            return Err(AddCommandError::WrongKind);
+        }
+        let mut outcome = ImportOutcome::default();
+        for (server_id, server_name, command, preset) in commands {
+            check_elevation(command).map_err(AddCommandError::Elevation)?;
+            let mut file = LogFile::remote_command(server_id, server_name, command, preset.as_ref());
+            if self.has_file(&file.file_id) {
+                outcome.skipped.push(file.display_name.clone());
+                continue;
+            }
+            file.added_seq = self.take_seq();
+            outcome.added.push(file.file_id.clone());
+            self.files.push(file);
+        }
+        Ok(outcome)
     }
 
     /// The name of the next scratch file: `untitled.log`, then

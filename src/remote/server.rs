@@ -34,10 +34,30 @@ pub struct Server {
     /// Whether the password or passphrase is kept in the Keychain.
     #[serde(default)]
     pub remember_secret: bool,
+    /// Seconds between keepalives (`KEEPALIVE_SECS_RANGE`).
+    #[serde(default = "default_keepalive_secs")]
+    pub keepalive_interval_secs: u32,
+    /// Unanswered keepalives before the connection counts as lost
+    /// (`KEEPALIVE_MISSED_RANGE`).
+    #[serde(default = "default_keepalive_missed")]
+    pub keepalive_max_missed: u32,
 }
+
+/// Allowed keepalive intervals, in seconds.
+pub const KEEPALIVE_SECS_RANGE: std::ops::RangeInclusive<u32> = 5..=300;
+/// Allowed numbers of missed keepalives.
+pub const KEEPALIVE_MISSED_RANGE: std::ops::RangeInclusive<u32> = 1..=10;
 
 fn default_port() -> u16 {
     22
+}
+
+fn default_keepalive_secs() -> u32 {
+    30
+}
+
+fn default_keepalive_missed() -> u32 {
+    3
 }
 
 impl Server {
@@ -51,6 +71,8 @@ impl Server {
             auth,
             jump_server_id: None,
             remember_secret: false,
+            keepalive_interval_secs: default_keepalive_secs(),
+            keepalive_max_missed: default_keepalive_missed(),
         }
     }
 
@@ -75,6 +97,8 @@ pub enum ServerError {
     DuplicateName,
     BlankHost,
     BlankUser,
+    KeepaliveInterval,
+    KeepaliveMissed,
     UnknownJumpServer,
     JumpLoop,
     TooManyJumps,
@@ -90,6 +114,12 @@ impl ServerError {
             ServerError::DuplicateName => "A Server with this name already exists".into(),
             ServerError::BlankHost => "Enter an address".into(),
             ServerError::BlankUser => "Enter a user".into(),
+            ServerError::KeepaliveInterval => {
+                format!("Keepalive interval must be {} to {} seconds", KEEPALIVE_SECS_RANGE.start(), KEEPALIVE_SECS_RANGE.end())
+            }
+            ServerError::KeepaliveMissed => {
+                format!("Missed keepalives must be {} to {}", KEEPALIVE_MISSED_RANGE.start(), KEEPALIVE_MISSED_RANGE.end())
+            }
             ServerError::UnknownJumpServer => "The Jump Server does not exist".into(),
             ServerError::JumpLoop => "The Jump Server chain loops back on itself".into(),
             ServerError::TooManyJumps => format!("A chain may have at most {MAX_JUMPS} Jump Servers"),
@@ -147,6 +177,12 @@ impl ServerStore {
         }
         if server.user.trim().is_empty() {
             return Err(ServerError::BlankUser);
+        }
+        if !KEEPALIVE_SECS_RANGE.contains(&server.keepalive_interval_secs) {
+            return Err(ServerError::KeepaliveInterval);
+        }
+        if !KEEPALIVE_MISSED_RANGE.contains(&server.keepalive_max_missed) {
+            return Err(ServerError::KeepaliveMissed);
         }
         // Walk the chain as it would be after saving.
         let mut seen = vec![server.id.as_str()];

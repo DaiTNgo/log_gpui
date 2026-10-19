@@ -1,9 +1,9 @@
 //! UI: status bar built from the gpui-kit `StatusBar`.
 
 use super::AppView;
-use crate::live::SourceStatus;
 use gpui::{Context, IntoElement};
 use gpui_component::button::{Button, ButtonVariants as _};
+use gpui_component::popover::Popover;
 use gpui_component::status_bar::StatusBar;
 use gpui_component::{Selectable as _, Sizable as _};
 
@@ -12,11 +12,7 @@ impl AppView {
     /// its files with how many have it, and the list of every file.
     fn live_status_label(&self) -> Option<(String, String)> {
         let (worst, count, total) = self.worst_live_status()?;
-        let label = match &worst {
-            SourceStatus::Live => "Live".to_string(),
-            other if total > 1 => format!("{} ({count} of {total})", other.label()),
-            other => other.label(),
-        };
+        let label = crate::live::connection_label(&worst, count, total, self.slowest_server_latency());
         let list = self
             .live_file_statuses()
             .into_iter()
@@ -44,7 +40,19 @@ impl AppView {
         }
 
         if let Some((label, list)) = self.live_status_label() {
-            bar = bar.right(Button::new("status-live").ghost().xsmall().label(label).tooltip(list));
+            let trigger = Button::new("status-live").ghost().xsmall().label(label);
+            bar = match self.connection_snapshot() {
+                // Connection Details opens from here (L7).
+                Some(snapshot) => {
+                    let view = cx.entity();
+                    bar.right(
+                        Popover::new("connection-details")
+                            .trigger(trigger)
+                            .content(move |_, _, cx| super::connection_view::connection_details(&snapshot, &view, cx)),
+                    )
+                }
+                None => bar.right(trigger.tooltip(list)),
+            };
         }
         if let Some((label, action)) = self.connect_button() {
             bar = bar.right(

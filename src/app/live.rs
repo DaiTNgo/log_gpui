@@ -10,7 +10,7 @@ use crate::live::{
     SourceStatus, Trimmed,
 };
 use crate::model::LogEntry;
-use crate::workspace::log_space::LogSpaceKind;
+use crate::workspace::log_space::{LogSpaceKind, RemoteTarget};
 use crate::workspace::working_set::{TabTarget, ViewMode};
 use gpui::{Context, Pixels, point};
 use std::collections::{HashMap, HashSet};
@@ -34,6 +34,9 @@ pub struct LiveSourceState {
     pub remote: bool,
     /// Where a remote source's real line numbers could not be counted.
     pub numbers_unavailable: bool,
+    /// Reconnects or Runs, last error and last line: shown in Connection
+    /// Details only, and not remembered.
+    pub health: crate::live::SourceHealth,
 }
 
 /// Live state of the app: not remembered when the app closes.
@@ -197,7 +200,15 @@ impl AppView {
             let local_offset = buffer.local_offset;
             let handle = match (&file.remote, &file.path) {
                 (Some(remote), _) => {
-                    match self.spawn_remote_source(&remote.server_id, &remote.path, &file.name, cx) {
+                    let spawned = match &remote.target {
+                        RemoteTarget::File { path } => {
+                            self.spawn_remote_source(&remote.server_id, path, &file.name, cx)
+                        }
+                        RemoteTarget::Command { .. } => {
+                            self.spawn_command_source(&remote.server_id, &remote.target, &file.name, cx)
+                        }
+                    };
+                    match spawned {
                         Some(handle) => handle,
                         None => continue,
                     }
@@ -210,6 +221,11 @@ impl AppView {
                 for space in &mut project.log_spaces {
                     if let Some(f) = space.file_mut(&file_id) {
                         f.markers.retain(|m| m.generations_ago == 0);
+                        // Another Run prints other lines: the Markers of a
+                        // Remote Command do not come back.
+                        if f.is_remote_command() {
+                            f.markers.clear();
+                        }
                         f.generation = 0;
                     }
                 }
@@ -225,6 +241,7 @@ impl AppView {
                     name: file.name,
                     remote: file.remote.is_some(),
                     numbers_unavailable: false,
+                    health: Default::default(),
                 },
             );
         }
@@ -352,7 +369,7 @@ impl AppView {
                         budget = budget.saturating_sub(match &event {
                             SourceEvent::Tail { lines, .. }
                             | SourceEvent::Backfill { lines, .. }
-                            | SourceEvent::Append { lines } => lines.len().max(1),
+                            | SourceEvent::Append { lines, .. } => lines.len().max(1),
                             _ => 1,
                         });
                         events.push(event);
@@ -418,6 +435,9 @@ impl AppView {
             return delta;
         };
         for event in events {
+            if let Some(source) = self.live.sources.get_mut(file_id) {
+                source.health.observe(&event, std::time::SystemTime::now());
+            }
             match event {
                 SourceEvent::Tail { lines, generation } => {
                     buffer.apply_tail(&mut parsed, &lines, generation);
@@ -427,11 +447,11 @@ impl AppView {
                     buffer.apply_backfill(&mut parsed, &lines);
                     delta.structural = true;
                 }
-                SourceEvent::Append { lines } => {
+                SourceEvent::Append { lines, streams } => {
                     if buffer.replaces_last_line() && !lines.is_empty() {
                         delta.replaced_last = true;
                     }
-                    let range = buffer.apply_append(&mut parsed, &lines);
+                    let range = buffer.apply_append(&mut parsed, &lines, streams.as_ref());
                     delta.appended = Some(match delta.appended.take() {
                         Some(old) => old.start..range.end,
                         None => range,
@@ -460,6 +480,7 @@ impl AppView {
                         // Only the label changes; rows do not.
                     }
                 }
+                SourceEvent::Run { .. } | SourceEvent::Problem(_) => {}
                 SourceEvent::Status(status) => {
                     if std::env::var_os("LOG_GPUI_LIVE_TRACE").is_some() {
                         eprintln!("live status: {file_id}: {}", status.label());
@@ -847,7 +868,8 @@ impl AppView {
     pub fn worst_live_status(&self) -> Option<(SourceStatus, usize, usize)> {
         let statuses = self.live_file_statuses();
         let worst = statuses.iter().map(|(_, s)| s).max_by_key(|s| s.severity())?.clone();
-        let count = statuses.iter().filter(|(_, s)| *s == worst).count();
+        // An Exited member counts whatever its exit code.
+        let count = statuses.iter().filter(|(_, s)| s.bar_label() == worst.bar_label()).count();
         Some((worst, count, statuses.len()))
     }
 }

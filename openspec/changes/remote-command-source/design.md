@@ -171,6 +171,12 @@ Mỗi dòng của Remote Command có `stream: Stdout | Stderr` lưu trong `LogEn
 - `Server` thêm hai trường keepalive với `serde(default)`.
 - Rollback: gỡ change; session có Remote Command lưu bởi bản mới sẽ bị bản cũ bỏ qua (cần serde bỏ qua thành viên không đọc được thay vì lỗi cả session — kiểm tra trong task).
 
+## Spike results (task 1.1, `examples/exec_spike.rs`, russh 0.64.1 against macOS OpenSSH)
+
+- Exec channel: `exec(true, cmd)` then `eof()` works. `ChannelMsg::Data` is stdout, `ChannelMsg::ExtendedData { ext: 1 }` is stderr; they arrive as separate messages, so one `LineSplitter` per stream is enough. Order after the command: `Eof`, `ExitStatus`, `Close`. A command that reads stdin (`cat`) sees EOF at once and ends.
+- `channel.signal(Sig::TERM)` stops `sleep 30` within 2 ms: the channel reports `ExitSignal { TERM }` then `Close`, and `pgrep` finds no leftover process.
+- Latency: `Handle::send_global_request("keepalive@openssh.com", &[], true)` waits for the reply. OpenSSH answers `REQUEST_FAILURE`, which russh returns as `Err(Error::RequestDenied)`; that is still one round trip, so both `Ok` and `RequestDenied` count as a measurement and any other error means the session is lost. `Handle::send_ping()` also exists but cannot tell a lost session from a reply, so the global request is used. Fallback (open and close a session channel) is not needed.
+
 ## Open Questions
 
 - Màu `stderr` của Gutter: dùng một màu mới trong theme hay tái dùng màu cảnh báo nhạt? Chốt khi làm UI.

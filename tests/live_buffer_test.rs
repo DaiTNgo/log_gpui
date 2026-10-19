@@ -9,7 +9,7 @@ fn lines(range: std::ops::RangeInclusive<usize>) -> Vec<String> {
 fn local_file_keeps_real_numbers_as_lines_are_appended() {
     let mut parsed = ParsedFile::from_text("2026-09-05 10:00:00 INFO a\n2026-09-05 10:00:01 INFO b\n");
     let mut buf = LiveBuffer::loaded("app.log", parsed.entries.len());
-    let range = buf.apply_append(&mut parsed, &lines(3..=4));
+    let range = buf.apply_append(&mut parsed, &lines(3..=4), None);
     assert_eq!(range, 2..4);
     assert_eq!(parsed.entries[2].index, 3);
     assert_eq!(parsed.entries[3].index, 4);
@@ -24,7 +24,7 @@ fn remote_tail_gets_real_numbers_when_the_total_arrives() {
     assert!(!is_real_line_number(parsed.entries[0].index));
     assert_eq!(parsed.entries[0].index, PROVISIONAL_BASE);
     // Three lines written after the tail was read.
-    buf.apply_append(&mut parsed, &lines(4..=5));
+    buf.apply_append(&mut parsed, &lines(4..=5), None);
     // The server had 1_999_100 lines up to the end of the tail.
     let delta = buf.apply_total(&mut parsed, Some(1_999_100));
     assert!(delta.is_some());
@@ -32,7 +32,7 @@ fn remote_tail_gets_real_numbers_when_the_total_arrives() {
     assert_eq!(numbers, vec![1_999_098, 1_999_099, 1_999_100, 1_999_101, 1_999_102]);
     assert!(buf.numbers_known);
     // The next line continues the numbering.
-    buf.apply_append(&mut parsed, &lines(6..=6));
+    buf.apply_append(&mut parsed, &lines(6..=6), None);
     assert_eq!(parsed.entries.last().unwrap().index, 1_999_103);
 }
 
@@ -82,7 +82,7 @@ fn rotation_starts_a_generation_and_draws_a_break_above_the_next_line() {
     let mut buf = LiveBuffer::loaded("app.log", 3);
     buf.apply_break(BreakKind::Rotated, "10:02:11");
     assert_eq!(buf.generation, 1);
-    buf.apply_append(&mut parsed, &lines(1..=2));
+    buf.apply_append(&mut parsed, &lines(1..=2), None);
     assert_eq!(parsed.entries[3].index, 1);
     assert_eq!(parsed.entries[3].generation, 1);
     assert_eq!(parsed.entries[0].generation, 0);
@@ -100,7 +100,7 @@ fn disconnection_makes_one_break_with_both_times_and_no_new_generation() {
     buf.apply_break(BreakKind::Disconnected, "10:02");
     assert!(parsed.entries.iter().all(|e| e.break_before.is_none()));
     buf.apply_break(BreakKind::Reconnected, "10:03");
-    buf.apply_append(&mut parsed, &lines(3..=3));
+    buf.apply_append(&mut parsed, &lines(3..=3), None);
     assert_eq!(buf.generation, 0);
     assert_eq!(
         parsed.entries[2].break_before.as_ref().unwrap().label,
@@ -112,10 +112,10 @@ fn disconnection_makes_one_break_with_both_times_and_no_new_generation() {
 fn live_window_drops_the_oldest_lines_in_batches_with_a_break() {
     let mut parsed = ParsedFile::from_text("");
     let mut buf = LiveBuffer::loaded("app.log", 0);
-    buf.apply_append(&mut parsed, &lines(1..=105));
+    buf.apply_append(&mut parsed, &lines(1..=105), None);
     // Within 10% over the window nothing is dropped.
     assert!(buf.trim_to_window(&mut parsed, 100).is_none());
-    buf.apply_append(&mut parsed, &lines(106..=115));
+    buf.apply_append(&mut parsed, &lines(106..=115), None);
     let trimmed = buf.trim_to_window(&mut parsed, 100).expect("over the margin");
     assert_eq!(trimmed.removed, 15);
     assert_eq!(trimmed.first_kept, 16);
@@ -139,6 +139,7 @@ fn a_line_loaded_without_its_newline_is_replaced_by_the_whole_line() {
     let range = buf.apply_append(
         &mut parsed,
         &["2026-09-05 10:00:01 ERROR db down".to_string(), "2026-09-05 10:00:02 INFO c".to_string()],
+        None,
     );
     assert_eq!(range, 1..3);
     assert_eq!(parsed.entries.len(), 3);
@@ -159,7 +160,7 @@ fn filter_counts_follow_the_lines_the_window_keeps() {
     for i in 61..=120 {
         text.push(format!("2026-09-05 10:01:{:02} INFO [db] query {i}", i % 60));
     }
-    buf.apply_append(&mut parsed, &text);
+    buf.apply_append(&mut parsed, &text, None);
     let count = |p: &ParsedFile, v: &str| {
         let idx = FilterIndex::build(&p.entries);
         idx.column("module")

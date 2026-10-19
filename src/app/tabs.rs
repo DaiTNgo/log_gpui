@@ -225,13 +225,14 @@ impl AppView {
         }
     }
 
-    /// A Remote File starts empty: its lines come from its source.
-    pub(crate) fn ensure_remote_file_loaded(&mut self, file_id: &str, name: &str) {
+    /// A Remote File or Remote Command starts empty: its lines come from its
+    /// source. The lines of a command are numbered from 1 as it prints them.
+    pub(crate) fn ensure_remote_file_loaded(&mut self, file_id: &str, name: &str, is_command: bool) {
         if self.parsed_files.contains_key(file_id) {
             return;
         }
         let mut parsed = ParsedFile::empty();
-        parsed.live = Some(LiveBuffer::remote(name));
+        parsed.live = Some(if is_command { LiveBuffer::command(name) } else { LiveBuffer::remote(name) });
         self.parsed_files.insert(file_id.to_string(), parsed);
     }
 
@@ -244,6 +245,7 @@ impl AppView {
         self.filter_index = built.index;
         self.column_layout.max_chars = built.max_chars;
         self.column_layout.set_source_visible(source_visible);
+        self.sync_stream_column();
     }
 
     /// Load every file of the Log Space into the cache and re-parse the
@@ -253,7 +255,9 @@ impl AppView {
         for file in &space.files {
             match space.kind {
                 LogSpaceKind::Scratch => self.ensure_file_loaded(file),
-                LogSpaceKind::Remote => self.ensure_remote_file_loaded(&file.file_id, &file.display_name),
+                LogSpaceKind::Remote => {
+                    self.ensure_remote_file_loaded(&file.file_id, &file.display_name, file.is_remote_command())
+                }
                 _ => self.ensure_live_file_loaded(file),
             }
         }
@@ -372,6 +376,7 @@ impl AppView {
         self.filter_ui.inputs_dirty = true;
         self.column_layout.max_chars = built.max_chars;
         self.column_layout.set_source_visible(source_visible);
+        self.sync_stream_column();
         if fresh {
             self.column_layout.update_from_entries(&self.all_entries, self.density);
         }

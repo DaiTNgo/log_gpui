@@ -11,7 +11,7 @@ use super::source::{
     BreakKind, LineSource, SourceCommand, SourceEvent, SourceHandle, SourceStatus,
 };
 use super::splitter::LineSplitter;
-use crate::remote::{ConnectError, RemoteHub, RemoteSession, ServerStore};
+use crate::remote::{ConnectError, RemoteHub, RemoteSession, ServerStore, shell_quote};
 use async_channel::{Receiver, Sender};
 use russh_sftp::client::SftpSession;
 use russh_sftp::client::error::Error as SftpError;
@@ -105,10 +105,6 @@ enum Kind {
     Other(String),
 }
 
-fn shell_quote(path: &str) -> String {
-    format!("'{}'", path.replace('\'', "'\\''"))
-}
-
 impl RemoteFileSource {
     async fn run(self, events: Sender<SourceEvent>, commands: Receiver<SourceCommand>) {
         let mut mem = Memory::default();
@@ -193,6 +189,7 @@ impl RemoteFileSource {
         loop {
             match commands.recv().await {
                 Ok(SourceCommand::Reconnect) => return true,
+                Ok(SourceCommand::Restart | SourceCommand::SetRestartOnExit(_)) => {}
                 Ok(SourceCommand::Close) | Err(_) => return false,
                 Ok(SourceCommand::Pause) => *paused = true,
                 Ok(SourceCommand::Resume) => *paused = false,
@@ -217,6 +214,7 @@ impl RemoteFileSource {
                 cmd = commands.recv() => match cmd {
                     Ok(SourceCommand::Close) | Err(_) => return false,
                     Ok(SourceCommand::Reconnect) => return true,
+                    Ok(SourceCommand::Restart | SourceCommand::SetRestartOnExit(_)) => {}
                     Ok(SourceCommand::Pause) => *paused = true,
                     Ok(SourceCommand::Resume) => *paused = false,
                     Ok(SourceCommand::SetWindow(n)) => *window = n,
@@ -292,7 +290,7 @@ impl RemoteFileSource {
                     Ok(SourceCommand::Pause) => *paused = true,
                     Ok(SourceCommand::Resume) => *paused = false,
                     Ok(SourceCommand::SetWindow(n)) => *window = n,
-                    Ok(SourceCommand::Reconnect) => {}
+                    Ok(SourceCommand::Reconnect | SourceCommand::Restart | SourceCommand::SetRestartOnExit(_)) => {}
                     Err(async_channel::TryRecvError::Empty) => break,
                     Err(async_channel::TryRecvError::Closed) => return Served::Closed,
                 }
@@ -503,7 +501,7 @@ impl RemoteFileSource {
         }
         mem.loaded += lines.len();
         if !lines.is_empty() {
-            let _ = events.try_send(SourceEvent::Append { lines });
+            let _ = events.try_send(SourceEvent::Append { lines, streams: None });
         }
         Ok(())
     }

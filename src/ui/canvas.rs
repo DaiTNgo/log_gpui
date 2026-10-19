@@ -51,10 +51,18 @@ pub struct CanvasColors {
     pub danger: gpui::Hsla,
     pub warning: gpui::Hsla,
     pub info: gpui::Hsla,
+    /// Color of the line number of a stderr line (not the color of a level).
+    pub stderr: gpui::Hsla,
     /// Paint of the selected text.
     pub text_selection: gpui::Hsla,
     /// Whether the dark theme is active (picks the palette's dark values).
     pub dark: bool,
+}
+
+/// The color the line number of a stderr line is drawn in: a soft red that is
+/// not the red of the Level Marker.
+pub fn stderr_color(dark: bool) -> gpui::Hsla {
+    if dark { gpui::hsla(8.0 / 360.0, 0.78, 0.72, 1.0) } else { gpui::hsla(8.0 / 360.0, 0.62, 0.46, 1.0) }
 }
 
 impl CanvasColors {
@@ -781,15 +789,23 @@ impl RowEnv {
                             .w(anchored_width)
                             .border_l_2()
                             .map(|d| apply_partition_divider_style(d, is_divider_active))
-                            // Gutter: Line Number
-                            .child(
+                            // Gutter: Line Number, in the stderr color for a line
+                            // that came out of a command's standard error.
+                            .child({
+                                let stderr = entry.stream == Some(crate::model::Stream::Stderr);
                                 div()
+                                    .id(ElementId::from(("line-number", vis_pos)))
                                     .flex_shrink_0()
                                     .w(px(64.0))
                                     .px_2()
                                     .text_right()
-                                    .child(crate::live::line_number_text(entry.index)),
-                            )
+                                    .when(stderr, |d| {
+                                        d.text_color(colors.stderr).tooltip(|window, cx| {
+                                            gpui_component::tooltip::Tooltip::new("stderr").build(window, cx)
+                                        })
+                                    })
+                                    .child(crate::live::line_number_text(entry.index))
+                            })
                             // Gutter: Level Marker
                             .child(
                                 div()
@@ -1014,6 +1030,17 @@ fn render_source_cell(ctx: &CellCtx, width: Pixels) -> impl IntoElement {
     cell.child(source.to_string())
 }
 
+fn render_stream_cell(ctx: &CellCtx, width: Pixels) -> impl IntoElement {
+    let text = ctx.entry.stream.map_or("", |s| s.as_str());
+    let mut cell = div().flex_shrink_0().w(width).px_2().text_color(ctx.colors.muted).truncate();
+    if let (Some(p), Some(bg)) = (ctx.paint, ctx.rule_cell) {
+        if p.column == "stream" {
+            cell = cell.bg(bg);
+        }
+    }
+    cell.child(text.to_string())
+}
+
 fn apply_partition_divider_style<T: gpui::Styled>(element: T, is_active: bool) -> T {
     if is_active {
         element.border_r_1().shadow_sm()
@@ -1033,6 +1060,7 @@ fn render_column_cell(
         PinnableColumn::Level => render_level_cell(ctx, width).into_any_element(),
         PinnableColumn::Module => render_module_cell(ctx, width).into_any_element(),
         PinnableColumn::Source => render_source_cell(ctx, width).into_any_element(),
+        PinnableColumn::Stream => render_stream_cell(ctx, width).into_any_element(),
     }
 }
 

@@ -7,7 +7,7 @@
 //! provisional numbers from `PROVISIONAL_BASE` up; the Gutter shows none for
 //! them.
 
-use super::source::BreakKind;
+use super::source::{BreakKind, RestartKind, StreamMask, clock_text};
 use crate::parser::LineParser;
 use crate::space_view::ParsedFile;
 use std::sync::Arc;
@@ -100,6 +100,12 @@ impl LiveBuffer {
         buf
     }
 
+    /// For a Remote Command: its lines are numbered from 1 in the order the
+    /// command printed them, so the numbers are real from the start.
+    pub fn command(name: impl Into<String>) -> Self {
+        Self::loaded(name, 0)
+    }
+
     /// For a remote file that has nothing yet.
     pub fn remote(name: impl Into<String>) -> Self {
         Self {
@@ -134,7 +140,7 @@ impl LiveBuffer {
     pub fn apply_tail(&mut self, parsed: &mut ParsedFile, lines: &[String], generation: u32) {
         let _ = generation;
         let start = self.next_index;
-        self.push_lines(parsed, lines);
+        self.push_lines(parsed, lines, None);
         self.first_index = start;
         if !lines.is_empty() {
             self.tail_last_index = Some(self.next_index - 1);
@@ -188,7 +194,13 @@ impl LiveBuffer {
     }
 
     /// New lines at the end. Returns the positions of the new entries.
-    pub fn apply_append(&mut self, parsed: &mut ParsedFile, lines: &[String]) -> std::ops::Range<usize> {
+    /// `streams` says which output of a Remote Command each line is from.
+    pub fn apply_append(
+        &mut self,
+        parsed: &mut ParsedFile,
+        lines: &[String],
+        streams: Option<&StreamMask>,
+    ) -> std::ops::Range<usize> {
         if self.replace_last && !lines.is_empty() {
             self.replace_last = false;
             if parsed.entries.pop().is_some() {
@@ -197,14 +209,21 @@ impl LiveBuffer {
                 self.next_index -= 1;
             }
         }
-        self.push_lines(parsed, lines)
+        self.push_lines(parsed, lines, streams)
     }
 
-    fn push_lines(&mut self, parsed: &mut ParsedFile, lines: &[String]) -> std::ops::Range<usize> {
+    fn push_lines(
+        &mut self,
+        parsed: &mut ParsedFile,
+        lines: &[String],
+        streams: Option<&StreamMask>,
+    ) -> std::ops::Range<usize> {
         let from = parsed.entries.len();
-        for line in lines {
+        for (i, line) in lines.iter().enumerate() {
             let mut entry = self.parser.parse(self.next_index, line);
             entry.generation = self.generation;
+            // The Stream is the line's own: a Continuation Line keeps its own.
+            entry.stream = streams.and_then(|s| s.get(i));
             if let Some(mark) = self.pending.take() {
                 let mark = Arc::new(mark);
                 entry.break_before = Some(mark.clone());
@@ -235,17 +254,78 @@ impl LiveBuffer {
                 });
                 return;
             }
+            BreakKind::Resumed(seconds) => {
+                let since = self.disconnected_at.take().unwrap_or_else(|| time.to_string());
+                self.add_pending(BreakMark {
+                    kind,
+                    label: format!(
+                        "{} disconnected {since} – reconnected {time}, resumed from {}",
+                        self.name,
+                        clock_text(seconds)
+                    ),
+                });
+                return;
+            }
+            BreakKind::Exited(code) => {
+                let how = match code {
+                    Some(code) => format!("exited ({code})"),
+                    None => "exited (killed)".to_string(),
+                };
+                self.add_pending(BreakMark { kind, label: format!("{} {how} {time}", self.name) });
+                return;
+            }
+            BreakKind::Skipped(count) => {
+                // The numbers of the dropped lines are not given again.
+                self.next_index += count as usize;
+                self.add_pending(BreakMark {
+                    kind,
+                    label: format!("{} {} {time}", self.name, kind.label()),
+                });
+                return;
+            }
+            BreakKind::ClockWentBack => {
+                self.add_pending(BreakMark {
+                    kind,
+                    label: format!("{} {} {time}", self.name, kind.label()),
+                });
+                return;
+            }
+            BreakKind::Restarted(why) => {
+                let label = match why {
+                    RestartKind::Manual | RestartKind::OnExit => {
+                        format!("{} restarted {time}", self.name)
+                    }
+                    RestartKind::AfterDisconnect => {
+                        let since = self.disconnected_at.take().unwrap_or_else(|| time.to_string());
+                        format!(
+                            "{} disconnected {since} – reconnected {time}, command restarted, lines may be missing or repeated",
+                            self.name
+                        )
+                    }
+                    RestartKind::ResumeFailed => format!(
+                        "{} restarted {time}, resume not supported, lines may be missing or repeated",
+                        self.name
+                    ),
+                };
+                self.begin_generation_state();
+                self.add_pending(BreakMark { kind, label });
+                return;
+            }
             _ => {}
         }
         if kind.starts_generation() {
-            self.generation += 1;
-            self.parser.reset();
-            self.first_index = 1;
-            self.next_index = 1;
-            self.numbers_known = true;
-            self.tail_last_index = None;
+            self.begin_generation_state();
         }
         self.add_pending(BreakMark { kind, label: format!("{} {} {time}", self.name, kind.label()) });
+    }
+
+    fn begin_generation_state(&mut self) {
+        self.generation += 1;
+        self.parser.reset();
+        self.first_index = 1;
+        self.next_index = 1;
+        self.numbers_known = true;
+        self.tail_last_index = None;
     }
 
     fn add_pending(&mut self, mark: BreakMark) {

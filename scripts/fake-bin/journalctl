@@ -1,0 +1,82 @@
+#!/usr/bin/env python3
+# A stand-in for `journalctl --no-pager -o short-iso-precise -f [-n N |
+# --since @EPOCH] [-u UNIT]`, for the Remote Command tests. The "journal" is
+# $FAKE_DIR/journal-UNIT.log (journal-all.log without -u): lines as
+# `2026-10-19T10:02:03.123456+0700 host unit[1]: text`; a line without a time
+# belongs to the line before it. --since works in whole seconds, like the real
+# one.
+import datetime
+import os
+import sys
+import time
+
+args = sys.argv[1:]
+since = tail = unit = None
+i = 0
+while i < len(args):
+    a = args[i]
+    if a == "--since":
+        since = int(args[i + 1].lstrip("@"))
+        i += 1
+    elif a == "-n":
+        tail = int(args[i + 1])
+        i += 1
+    elif a == "-u":
+        unit = args[i + 1]
+        i += 1
+    i += 1
+path = os.path.join(os.environ["FAKE_DIR"], "journal-%s.log" % (unit or "all"))
+if not os.path.exists(path):
+    sys.stdout.write("-- No entries --\n")
+    sys.stdout.flush()
+
+
+def epoch(line):
+    token = line.split(" ", 1)[0]
+    try:
+        return datetime.datetime.strptime(token, "%Y-%m-%dT%H:%M:%S.%f%z").timestamp()
+    except ValueError:
+        return None
+
+
+def select(lines):
+    if since is None and tail is None:
+        return lines
+    if since is not None:
+        out, keep = [], False
+        for l in lines:
+            t = epoch(l)
+            if t is not None:
+                keep = int(t) >= since
+            if keep:
+                out.append(l)
+        return out
+    return lines[-tail:] if tail else []
+
+
+def emit(line):
+    sys.stdout.write(line + "\n")
+    sys.stdout.flush()
+
+
+lines, pos = [], 0
+if os.path.exists(path):
+    with open(path) as f:
+        lines = f.read().splitlines()
+        pos = f.tell()
+for l in select(lines):
+    emit(l)
+buf = ""
+while True:
+    if os.getppid() == 1:
+        sys.exit(0)
+    if os.path.exists(path):
+        with open(path) as f:
+            f.seek(pos)
+            chunk = f.read()
+            pos = f.tell()
+        buf += chunk
+        while "\n" in buf:
+            l, buf = buf.split("\n", 1)
+            emit(l)
+    time.sleep(0.1)
