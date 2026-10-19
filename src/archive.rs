@@ -129,6 +129,17 @@ fn read_up_to(reader: &mut impl Read, n: usize) -> io::Result<Vec<u8>> {
     Ok(buf)
 }
 
+/// Whether the first bytes of a file say it is an Archive or a compressed
+/// file (zip, gzip, bzip2, xz, zstd or tar), not a log to read.
+pub fn looks_like_archive(head: &[u8]) -> bool {
+    ZIP_MAGIC.iter().any(|m| head.starts_with(m))
+        || head.starts_with(&[0x1f, 0x8b])
+        || head.starts_with(b"BZh")
+        || head.starts_with(&[0xfd, b'7', b'z', b'X', b'Z', 0x00])
+        || head.starts_with(&[0x28, 0xb5, 0x2f, 0xfd])
+        || has_ustar(head)
+}
+
 /// What kind of Archive `path` is, by its first bytes; `None` for anything
 /// else (including an unreadable or empty file).
 pub fn detect(path: &Path) -> Option<ArchiveKind> {

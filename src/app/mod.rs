@@ -8,6 +8,7 @@ mod commands;
 mod filter;
 mod focus;
 mod focus_window;
+pub mod globs;
 mod highlights;
 mod keyboard;
 pub mod live;
@@ -446,6 +447,8 @@ impl AppView {
         });
         this.live.window = this.workspace_state.live_window.max(1_000);
         this.live.load_more_step = this.workspace_state.load_more_step.clamp(1_000, 1_000_000);
+        this.live.glob_limit = this.workspace_state.live_glob_limit.clamp(1, 500);
+        this.live.glob_interval = this.workspace_state.live_glob_interval.clamp(2, 300);
         this.density = this.workspace_state.density;
         this.column_layout.update_density(this.density);
         this.show_minimap = this.workspace_state.show_minimap;

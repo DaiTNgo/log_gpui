@@ -55,6 +55,16 @@ impl AppView {
         if let Some((label, list)) = self.live_status_label() {
             bar = bar.right(Button::new("status-live").ghost().xsmall().label(label).tooltip(list));
         }
+        let pending = self.glob_pending_notes();
+        if !pending.is_empty() {
+            bar = bar.right(
+                Button::new("status-glob-pending")
+                    .ghost()
+                    .xsmall()
+                    .label(pending[0].clone())
+                    .tooltip(pending.join("\n")),
+            );
+        }
         if let Some((label, action)) = self.connect_button() {
             bar = bar.right(
                 Button::new("status-connect")

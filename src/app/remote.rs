@@ -48,6 +48,12 @@ pub struct RemoteUi {
     /// Remote Files chosen for the New Log Space being made, as
     /// `(server id, server name, path)`.
     pub new_space_files: Vec<(String, String, String)>,
+    /// Live Globs chosen for the New Log Space, as `(server id, server name,
+    /// folder, pattern)`.
+    pub new_space_globs: Vec<(String, String, String, String)>,
+    /// What the file picker remembers, and where it is written.
+    pub picker_state: crate::remote::picker_state::PickerState,
+    pub picker_state_path: PathBuf,
     pub secrets: Arc<dyn SecretStore>,
 }
 
@@ -58,6 +64,8 @@ impl RemoteUi {
 
     pub fn with_paths(servers: &std::path::Path, known: &std::path::Path, secrets: Arc<dyn SecretStore>) -> Self {
         let store = ServerStore::load(servers);
+        // Next to `servers.json`.
+        let picker_state_path = servers.with_file_name("picker_state.json");
         Self {
             shared_servers: Arc::new(Mutex::new(store.clone())),
             servers: store,
@@ -68,6 +76,9 @@ impl RemoteUi {
             picker: None,
             download: None,
             new_space_files: Vec::new(),
+            new_space_globs: Vec::new(),
+            picker_state: crate::remote::picker_state::PickerState::load(&picker_state_path),
+            picker_state_path,
             secrets,
         }
     }
@@ -244,6 +255,8 @@ impl AppView {
         let _ = self.remote.servers.save_to(&servers_path());
         *self.remote.shared_servers.lock().unwrap() = self.remote.servers.clone();
         self.remote.secrets.delete(&removed.secret_account());
+        self.remote.picker_state.forget_server(server_id);
+        self.save_picker_state();
         cx.notify();
         Ok(())
     }
@@ -299,10 +312,12 @@ impl AppView {
         server_id: &str,
         path: &str,
         name: &str,
+        from_glob: Option<&str>,
         cx: &mut Context<Self>,
     ) -> Option<crate::live::SourceHandle> {
         self.remote.servers.get(server_id)?;
         let hub = self.remote_hub(cx);
+        let glob_inodes = from_glob.map(|id| self.live.globs.inodes_of(id));
         Some(
             RemoteFileSource {
                 hub,
@@ -311,6 +326,7 @@ impl AppView {
                 path: path.to_string(),
                 name: name.to_string(),
                 window: self.live.window,
+                glob_inodes,
             }
             .spawn(),
         )
@@ -335,8 +351,11 @@ impl AppView {
 impl AppView {
     /// Drop a remote file chosen for the New Log Space.
     pub fn new_space_remove_remote(&mut self, index: usize, cx: &mut Context<Self>) {
-        if index < self.remote.new_space_files.len() {
+        let files = self.remote.new_space_files.len();
+        if index < files {
             self.remote.new_space_files.remove(index);
+        } else if index - files < self.remote.new_space_globs.len() {
+            self.remote.new_space_globs.remove(index - files);
         }
         cx.notify();
     }
@@ -363,7 +382,15 @@ impl AppView {
 
     pub fn download_space(&mut self, space_id: &str, cx: &mut Context<Self>) {
         let Some(space) = self.active_project().and_then(|p| p.log_space(space_id)).cloned() else { return };
-        let files = space.files.clone();
+        // A file that is Gone from its Server cannot be downloaded.
+        let files: Vec<_> = space
+            .files
+            .iter()
+            .filter(|f| {
+                self.live.sources.get(&f.file_id).is_none_or(|s| s.status != crate::live::SourceStatus::Gone)
+            })
+            .cloned()
+            .collect();
         self.pick_folder_and_download(space.name, files, cx);
     }
 

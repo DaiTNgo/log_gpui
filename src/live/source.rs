@@ -51,6 +51,8 @@ pub enum SourceStatus {
     Reconnecting,
     Disconnected,
     WaitingForFile,
+    /// A file of a Live Glob that no longer exists on its Server.
+    Gone,
     /// A password or passphrase is needed: waits for the user to Connect.
     NeedsSecret,
     Error(String),
@@ -61,6 +63,7 @@ impl SourceStatus {
     pub fn severity(&self) -> u8 {
         match self {
             SourceStatus::Live => 0,
+            SourceStatus::Gone => 0,
             SourceStatus::Connecting => 1,
             SourceStatus::WaitingForFile => 2,
             SourceStatus::NeedsSecret => 3,
@@ -77,6 +80,7 @@ impl SourceStatus {
             SourceStatus::Reconnecting => "Reconnecting".into(),
             SourceStatus::Disconnected => "Disconnected".into(),
             SourceStatus::WaitingForFile => "Waiting for file".into(),
+            SourceStatus::Gone => "Gone".into(),
             SourceStatus::NeedsSecret => "Waiting to connect".into(),
             SourceStatus::Error(message) => message.clone(),
         }

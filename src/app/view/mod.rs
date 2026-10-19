@@ -124,6 +124,7 @@ impl Render for AppView {
             self.renaming.as_ref(),
             &self.expanded_spaces,
             &self.no_timestamp_files,
+            &self.sidebar_globs(),
             cx,
         );
 

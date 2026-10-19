@@ -34,6 +34,7 @@ impl Env {
     fn source(&self, name: &str, window: usize) -> (SourceHandle, String) {
         let path = self.dir.path().join(name).to_string_lossy().to_string();
         let handle = RemoteFileSource {
+            glob_inodes: None,
             hub: self.hub.clone(),
             servers: Arc::new(Mutex::new(self.store.clone())),
             server_id: self.server_id.clone(),

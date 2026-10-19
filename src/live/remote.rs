@@ -17,12 +17,15 @@ use async_channel::{Receiver, Sender};
 use russh_sftp::client::SftpSession;
 use russh_sftp::client::error::Error as SftpError;
 use russh_sftp::protocol::StatusCode;
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio::io::{AsyncReadExt, AsyncSeekExt};
 
 /// How often the file is checked for new bytes.
 pub const REMOTE_POLL_INTERVAL: Duration = Duration::from_millis(500);
+/// How often a Gone file's path is looked at again.
+const GONE_POLL_INTERVAL: Duration = Duration::from_secs(5);
 /// Lines shown at once when a file opens.
 pub const TAIL_LINES: usize = 1_000;
 /// Lines of one batch of older lines.
@@ -44,7 +47,14 @@ pub struct RemoteFileSource {
     /// `<server>:<path>`.
     pub name: String,
     pub window: usize,
+    /// For a file brought by a Live Glob: the inodes that glob has read. The
+    /// file goes Gone when it is deleted, and when its path comes to hold a
+    /// file the glob already read under another name.
+    pub glob_inodes: Option<GlobInodes>,
 }
+
+/// The inodes a Live Glob has read, each with the path it was read at.
+pub type GlobInodes = Arc<Mutex<HashMap<u64, String>>>;
 
 impl LineSource for RemoteFileSource {
     fn spawn(self) -> SourceHandle {
@@ -143,6 +153,9 @@ struct Memory {
     generation: u32,
     /// The user cleared the file: older lines are never read on their own.
     no_refill: bool,
+    /// Inode of a file at the path that a Live Glob read already: the path
+    /// stays Gone while it holds it.
+    gone_ino: Option<u64>,
 }
 
 fn classify(e: &SftpError) -> Kind {
@@ -276,6 +289,13 @@ impl RemoteFileSource {
                     Err(_) => return false,
                 },
             }
+        }
+    }
+
+    /// Tell the Live Glob this file's inode has been read.
+    fn remember_inode(&self, ino: Option<u64>) {
+        if let (Some(known), Some(ino)) = (&self.glob_inodes, ino) {
+            known.lock().unwrap().entry(ino).or_insert_with(|| self.path.clone());
         }
     }
 
@@ -424,12 +444,49 @@ impl RemoteFileSource {
                     mem.loaded = 0;
                 }
                 announced_live = false;
-                let _ = events.try_send(SourceEvent::Status(SourceStatus::WaitingForFile));
-                if !self.sleep_with_commands(REMOTE_POLL_INTERVAL, commands, ctl).await {
+                let (status, wait) = if self.glob_inodes.is_some() {
+                    (SourceStatus::Gone, GONE_POLL_INTERVAL)
+                } else {
+                    (SourceStatus::WaitingForFile, REMOTE_POLL_INTERVAL)
+                };
+                let _ = events.try_send(SourceEvent::Status(status));
+                if !self.sleep_with_commands(wait, commands, ctl).await {
                     return Served::Closed;
                 }
                 continue;
             };
+
+            // A file of a Live Glob whose path holds a file the glob read
+            // under another name is Gone: it is not read again.
+            if let (Some(known), Some(ino)) = (&self.glob_inodes, stat.ino) {
+                let others = known.lock().unwrap().get(&ino).is_some_and(|path| *path != self.path);
+                if others || mem.gone_ino == Some(ino) {
+                    if mem.opened && mem.gone_ino != Some(ino) {
+                        // The rest of the old file, then the cut.
+                        if let Some(old) = file.as_mut() {
+                            if let Err(Kind::Lost) = self.read_new(old, u64::MAX, mem, events).await {
+                                return Served::Lost;
+                            }
+                        }
+                        file = None;
+                        let _ = events.try_send(SourceEvent::Break { kind: BreakKind::Deleted });
+                        mem.generation += 1;
+                        mem.ino = None;
+                        mem.offset = 0;
+                        mem.splitter.clear();
+                        mem.backward = None;
+                        mem.loaded = 0;
+                    }
+                    mem.gone_ino = Some(ino);
+                    announced_live = false;
+                    let _ = events.try_send(SourceEvent::Status(SourceStatus::Gone));
+                    if !self.sleep_with_commands(GONE_POLL_INTERVAL, commands, ctl).await {
+                        return Served::Closed;
+                    }
+                    continue;
+                }
+            }
+            mem.gone_ino = None;
 
             // First sight of the file in this run: show its end at once.
             if !mem.opened {
@@ -445,6 +502,7 @@ impl RemoteFileSource {
                     }
                 }
                 mem.ino = stat.ino;
+                self.remember_inode(stat.ino);
                 let _ = events.try_send(SourceEvent::Inode(stat.ino));
                 mem.opened = true;
                 backfill_ready = true;
@@ -494,6 +552,7 @@ impl RemoteFileSource {
                         },
                     }
                     mem.ino = stat.ino;
+                    self.remember_inode(stat.ino);
                     let _ = events.try_send(SourceEvent::Inode(stat.ino));
                 }
             }

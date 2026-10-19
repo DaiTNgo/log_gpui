@@ -28,6 +28,12 @@ pub struct WorkspaceState {
     /// Lines one Load More reads: an app setting.
     #[serde(default = "default_load_more_step")]
     pub load_more_step: usize,
+    /// Most files one Live Glob reads at once: an app setting.
+    #[serde(default = "default_glob_limit")]
+    pub live_glob_limit: usize,
+    /// Seconds between two checks of a Live Glob's folder: an app setting.
+    #[serde(default = "default_glob_interval")]
+    pub live_glob_interval: u64,
     /// Row density of the log table: an app setting.
     #[serde(default)]
     pub density: crate::density::Density,
@@ -48,6 +54,16 @@ pub fn default_live_window() -> usize {
     100_000
 }
 
+/// Default Live Glob file limit.
+pub fn default_glob_limit() -> usize {
+    50
+}
+
+/// Default Live Glob scan interval, in seconds.
+pub fn default_glob_interval() -> u64 {
+    5
+}
+
 /// Default Load More Step.
 pub fn default_load_more_step() -> usize {
     10_000
@@ -62,6 +78,8 @@ impl Default for WorkspaceState {
             match_colors: Default::default(),
             live_window: default_live_window(),
             load_more_step: default_load_more_step(),
+            live_glob_limit: default_glob_limit(),
+            live_glob_interval: default_glob_interval(),
             density: Default::default(),
             show_minimap: true,
             raw_soft_wrap: true,

@@ -53,8 +53,14 @@ pub struct LiveRuntime {
     pub window: usize,
     /// Lines one Load More reads when the user gives no number.
     pub load_more_step: usize,
+    /// Most files one Live Glob reads at once.
+    pub glob_limit: usize,
+    /// Seconds between two checks of a Live Glob's folder.
+    pub glob_interval: u64,
     /// Files with a Load More being read.
     pub loading_more: HashSet<String>,
+    /// The Live Globs' watchers and what they found.
+    pub globs: super::globs::GlobRuntime,
     pub pump_started: bool,
     /// Batches applied since the allocator's cache was last given back.
     batches_since_release: usize,
@@ -69,7 +75,10 @@ impl LiveRuntime {
             unseen: 0,
             window: DEFAULT_LIVE_WINDOW,
             load_more_step: 10_000,
+            glob_limit: 50,
+            glob_interval: 5,
             loading_more: HashSet::new(),
+            globs: super::globs::GlobRuntime::new(),
             pump_started: false,
             batches_since_release: 0,
         }
@@ -87,6 +96,8 @@ struct NeededFile {
     path: Option<String>,
     name: String,
     remote: Option<crate::workspace::log_space::RemoteRef>,
+    /// The Live Glob that brought the file, if any.
+    from_glob: Option<String>,
     spaces: Vec<String>,
 }
 
@@ -122,7 +133,7 @@ impl AppView {
     // ── Which Log Space is live ─────────────────────────────────────────────
 
     /// Log Spaces of the active project that have a tab open.
-    fn open_space_ids(&self) -> Vec<String> {
+    pub(crate) fn open_space_ids(&self) -> Vec<String> {
         let Some(project) = self.active_project() else { return Vec::new() };
         let mut ids: Vec<String> = Vec::new();
         for tab in project.working_set.tabs() {
@@ -163,6 +174,7 @@ impl AppView {
                         path: file.path.clone(),
                         name: file.display_name.clone(),
                         remote: file.remote.clone(),
+                        from_glob: file.from_glob.clone(),
                         spaces: Vec::new(),
                     });
                     entry.spaces.push(space.id.clone());
@@ -194,6 +206,7 @@ impl AppView {
         }
         self.live.paused_spaces.retain(|id| open.contains(id));
         self.start_missing_sources(cx);
+        self.sync_glob_watchers(cx);
     }
 
     /// Start a source for every needed file that has none.
@@ -207,7 +220,7 @@ impl AppView {
             let local_offset = buffer.local_offset;
             let handle = match (&file.remote, &file.path) {
                 (Some(remote), _) => {
-                    match self.spawn_remote_source(&remote.server_id, &remote.path, &file.name, cx) {
+                    match self.spawn_remote_source(&remote.server_id, &remote.path, &file.name, file.from_glob.as_deref(), cx) {
                         Some(handle) => handle,
                         None => continue,
                     }
@@ -304,6 +317,8 @@ impl AppView {
                 source.handle.send(if pause { SourceCommand::Pause } else { SourceCommand::Resume });
             }
         }
+        // Paused, a Live Glob adds nothing; resumed, its folder is listed at once.
+        self.sync_glob_watchers(cx);
         cx.notify();
     }
 
@@ -921,8 +936,15 @@ impl AppView {
     /// have it: `("Reconnecting", 1, 3)` is "Reconnecting (1 of 3)".
     pub fn worst_live_status(&self) -> Option<(SourceStatus, usize, usize)> {
         let statuses = self.live_file_statuses();
-        let worst = statuses.iter().map(|(_, s)| s).max_by_key(|s| s.severity())?.clone();
-        let count = statuses.iter().filter(|(_, s)| *s == worst).count();
+        // A Gone file is not an error: it only counts when every file is Gone.
+        let counted: Vec<&SourceStatus> =
+            statuses.iter().map(|(_, s)| s).filter(|s| **s != SourceStatus::Gone).collect();
+        if counted.is_empty() {
+            let any = statuses.first()?.1.clone();
+            return Some((any, statuses.len(), statuses.len()));
+        }
+        let worst = (*counted.iter().max_by_key(|s| s.severity())?).clone();
+        let count = counted.iter().filter(|s| ***s == worst).count();
         Some((worst, count, statuses.len()))
     }
 }

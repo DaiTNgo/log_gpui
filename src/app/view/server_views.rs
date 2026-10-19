@@ -1,11 +1,13 @@
 //! UI: the Servers dialog and the remote file picker.
 
 use super::AppView;
-use crate::remote::browse::join;
+use crate::app::remote_picker::MAX_PICKER_ROWS;
+use crate::remote::browse::{SortKey, join};
 use gpui::prelude::FluentBuilder as _;
 use gpui::{ElementId, InteractiveElement, IntoElement, ParentElement, SharedString, Styled, div, px};
 use gpui_component::button::{Button, ButtonGroup, ButtonVariants as _};
 use gpui_component::checkbox::Checkbox;
+use gpui_kit::assets::IconName;
 use gpui_component::input::Input;
 use gpui_component::{ActiveTheme as _, Disableable as _, Selectable as _, Sizable as _, h_flex, v_flex};
 use gpui::StatefulInteractiveElement as _;
@@ -329,11 +331,48 @@ impl AppView {
                 .on_click(cx.listener(|this, _, _, cx| this.open_servers_dialog(cx))),
         );
 
-        let mut list = v_flex().id("picker-list").h(px(240.0)).overflow_y_scroll().border_1().border_color(border).rounded_md();
+        let sort = picker.sort;
+        let visible = picker.visible_entries();
+        let hidden_rows = visible.len().saturating_sub(MAX_PICKER_ROWS);
+        let arrow = |key: SortKey| {
+            if sort.key == key { if sort.descending { " ▼" } else { " ▲" } } else { "" }
+        };
+        let header_cell = |id: &'static str, label: &'static str, key: SortKey, cx: &mut gpui::Context<Self>| {
+            div()
+                .id(id)
+                .cursor_pointer()
+                .text_xs()
+                .text_color(muted)
+                .on_click(cx.listener(move |this, _, _, cx| this.picker_sort_by(key, cx)))
+                .child(format!("{label}{}", arrow(key)))
+        };
+        let header = h_flex()
+            .gap_2()
+            .px_2()
+            .py_0p5()
+            .border_b_1()
+            .border_color(border)
+            .child(div().flex_1().child(header_cell("picker-sort-name", "Name", SortKey::Name, cx)))
+            .child(div().w(px(72.0)).child(header_cell("picker-sort-size", "Size", SortKey::Size, cx)))
+            .child(div().w(px(120.0)).child(header_cell("picker-sort-modified", "Modified", SortKey::Modified, cx)));
+
+        let mut list = v_flex().id("picker-list").h(px(240.0)).overflow_y_scroll();
         if picker.loading {
             list = list.child(div().p_2().text_sm().text_color(muted).child("Loading…"));
         }
-        for (ix, entry) in picker.entries.iter().enumerate() {
+        list = list.child(
+            h_flex()
+                .id("picker-entry-up")
+                .gap_2()
+                .px_2()
+                .py_0p5()
+                .text_sm()
+                .cursor_pointer()
+                .hover(|s| s.bg(border.opacity(0.4)))
+                .on_click(cx.listener(|this, _, _, cx| this.picker_up(cx)))
+                .child(".."),
+        );
+        for (ix, entry) in visible.iter().take(MAX_PICKER_ROWS).enumerate() {
             let name = entry.name.clone();
             if entry.is_dir {
                 let open = name.clone();
@@ -349,7 +388,8 @@ impl AppView {
                         .hover(|s| s.bg(border.opacity(0.4)))
                         .on_click(cx.listener(move |this, _, _, cx| this.picker_open_dir(&open, cx)))
                         .child(div().flex_1().child(format!("{name}/")))
-                        .child(div().text_xs().text_color(muted).child(format_time(entry.modified))),
+                        .child(div().w(px(72.0)))
+                        .child(div().text_xs().text_color(muted).w(px(120.0)).child(format_time(entry.modified))),
                 );
             } else {
                 let path = server_id.as_deref().map(|_| join(&picker.dir, &name)).unwrap_or_default();
@@ -368,21 +408,33 @@ impl AppView {
                                 .on_click(cx.listener(move |this, _, _, cx| this.picker_toggle_file(&toggle, cx))),
                         )
                         .child(div().flex_1().child(name))
-                        .child(div().text_xs().text_color(muted).child(format_size(entry.size)))
+                        .child(div().text_xs().text_color(muted).w(px(72.0)).child(format_size(entry.size)))
                         .child(div().text_xs().text_color(muted).w(px(120.0)).child(format_time(entry.modified))),
                 );
             }
         }
+        if hidden_rows > 0 {
+            list = list.child(
+                div().p_2().text_xs().text_color(muted).child(format!("{hidden_rows} more: type in the filter to narrow the list")),
+            );
+        }
+        let list = v_flex()
+            .border_1()
+            .border_color(border)
+            .rounded_md()
+            .child(header)
+            .child(list);
 
         let mut staged = v_flex().id("picker-staged").gap_0p5().max_h(px(96.0)).overflow_y_scroll();
-        for (ix, (sid, path)) in picker.staged.iter().enumerate() {
-            let name = self.remote.servers.get(sid).map(|s| s.name.clone()).unwrap_or_default();
+        for (ix, item) in picker.staged.iter().enumerate() {
+            let name = self.remote.servers.get(item.server_id()).map(|s| s.name.clone()).unwrap_or_default();
             staged = staged.child(
                 h_flex()
                     .gap_2()
                     .items_center()
                     .text_xs()
-                    .child(div().flex_1().truncate().child(format!("{name}:{path}")))
+                    .when(item.is_glob(), |this| this.child(div().text_color(muted).child("Live Glob")))
+                    .child(div().flex_1().truncate().child(format!("{name}:{}", item.path())))
                     .child(
                         Button::new(("picker-unstage", ix))
                             .ghost()
@@ -393,9 +445,73 @@ impl AppView {
             );
         }
         let count = picker.staged.len();
+        let globs = picker.staged.iter().filter(|s| s.is_glob()).count();
         let dir_label = picker.dir.clone();
         let error = picker.error.clone();
         let input = picker.input.clone();
+        let filter_input = picker.filter_input.clone();
+
+        // Servers to add the typed path on, the selected one always ticked.
+        let mut ticks = h_flex().gap_2().flex_wrap().items_center();
+        if self.remote.servers.servers.len() > 1 {
+            ticks = ticks.child(div().text_xs().text_color(muted).child("Add on:"));
+            for server in &self.remote.servers.servers {
+                let id = server.id.clone();
+                let ticked = picker.is_ticked(&id);
+                ticks = ticks.child(
+                    Checkbox::new(SharedString::from(format!("picker-tick-{id}")))
+                        .label(server.name.clone())
+                        .checked(ticked)
+                        .on_click(cx.listener(move |this, _, _, cx| this.picker_toggle_server(&id, cx))),
+                );
+            }
+        }
+
+        // Recent Paths of the selected Server.
+        let recent: Vec<crate::remote::picker_state::RecentPath> = server_id
+            .as_deref()
+            .map(|s| self.remote.picker_state.recent(s).to_vec())
+            .unwrap_or_default();
+        let mut recent_block = v_flex().gap_0p5();
+        if !recent.is_empty() {
+            recent_block = recent_block.child(
+                h_flex()
+                    .items_center()
+                    .child(div().flex_1().text_xs().text_color(muted).child("Recent paths"))
+                    .child(
+                        Button::new("picker-recent-clear")
+                            .ghost()
+                            .xsmall()
+                            .label("Clear")
+                            .on_click(cx.listener(|this, _, _, cx| this.picker_clear_recent(cx))),
+                    ),
+            );
+            for (ix, r) in recent.iter().enumerate() {
+                recent_block = recent_block.child(
+                    h_flex()
+                        .gap_1()
+                        .items_center()
+                        .text_xs()
+                        .child(
+                            div()
+                                .id(ElementId::from(("picker-recent", ix)))
+                                .flex_1()
+                                .truncate()
+                                .cursor_pointer()
+                                .hover(|s| s.bg(border.opacity(0.4)))
+                                .on_click(cx.listener(move |this, _, _, cx| this.picker_add_recent(ix, cx)))
+                                .child(r.path.clone()),
+                        )
+                        .child(
+                            Button::new(("picker-recent-remove", ix))
+                                .ghost()
+                                .xsmall()
+                                .icon(IconName::Close)
+                                .on_click(cx.listener(move |this, _, _, cx| this.picker_remove_recent(ix, cx))),
+                        ),
+                );
+            }
+        }
 
         Self::modal_backdrop()
             .child(
@@ -429,9 +545,24 @@ impl AppView {
                                         this.picker_load(dir, cx);
                                     })),
                             )
+                            .child(
+                                Button::new("picker-home")
+                                    .xsmall()
+                                    .label("Home")
+                                    .on_click(cx.listener(|this, _, _, cx| this.picker_go_home(cx))),
+                            )
+                            .child(
+                                Button::new("picker-var-log")
+                                    .xsmall()
+                                    .label("/var/log")
+                                    .on_click(cx.listener(|this, _, _, cx| this.picker_go_var_log(cx))),
+                            )
                             .child(div().flex_1().truncate().text_sm().text_color(muted).child(dir_label)),
                     )
+                    .child(div().child(filter_input.map(|i| Input::new(&i)).map(|i| i.into_any_element()).unwrap_or_else(|| div().into_any_element())))
                     .child(list)
+                    .child(recent_block)
+                    .child(ticks)
                     .child(
                         h_flex()
                             .gap_2()
@@ -458,7 +589,11 @@ impl AppView {
                             .child(
                                 Button::new("picker-done")
                                     .primary()
-                                    .label(if count == 1 { "Add 1 file".to_string() } else { format!("Add {count} files") })
+                                    .label(match (count, globs) {
+                                        (1, 0) => "Add 1 file".to_string(),
+                                        (n, 0) => format!("Add {n} files"),
+                                        (n, g) => format!("Add {n} items ({g} Live Glob{})", if g == 1 { "" } else { "s" }),
+                                    })
                                     .disabled(count == 0)
                                     .on_click(cx.listener(|this, _, _, cx| this.picker_confirm(cx))),
                             ),

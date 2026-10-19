@@ -79,6 +79,8 @@ struct Row {
 struct Values {
     live_window: usize,
     load_more_step: usize,
+    glob_limit: usize,
+    glob_interval: u64,
     shown: bool,
     minimap: bool,
     in_space: bool,
@@ -95,6 +97,8 @@ pub fn open_settings_dialog(view: Entity<AppView>, window: &mut Window, cx: &mut
                 Values {
                     live_window: v.live.window,
                     load_more_step: v.live.load_more_step,
+                    glob_limit: v.live.glob_limit,
+                    glob_interval: v.live.glob_interval,
                     shown: v.source_column_shown(),
                     minimap: v.show_minimap,
                     in_space: v.active_is_log_space(),
@@ -233,6 +237,10 @@ fn rows_of(section: SettingsSection, view: &Entity<AppView>, v: &Values, cx: &Ap
             let steps = [1_000usize, 10_000, 100_000, 1_000_000];
             let current = v.live_window;
             let current_step = v.load_more_step;
+            let (limit_view, interval_view) = (view.clone(), view.clone());
+            let limits = [10usize, 25, 50, 100, 200, 500];
+            let intervals = [2u64, 5, 10, 30, 60, 300];
+            let (current_limit, current_interval) = (v.glob_limit, v.glob_interval);
             vec![Row {
                 title: "Live Window",
                 description: "How many of the newest lines each Remote File keeps. Older lines leave the view as new ones arrive.",
@@ -264,6 +272,42 @@ fn rows_of(section: SettingsSection, view: &Entity<AppView>, v: &Values, cx: &Ap
                     .on_click(move |ix: &Vec<usize>, window, app| {
                         if let Some(&i) = ix.first() {
                             step_view.update(app, |this, cx| this.set_load_more_step(steps[i], cx));
+                            window.refresh();
+                        }
+                    })
+                    .into_any_element(),
+            },
+            Row {
+                title: "Live Glob file limit",
+                description: "The most files one Live Glob reads at once. When more files match, the most recently modified are read and the status bar says how many are not.",
+                control: ButtonGroup::new("settings-glob-limit")
+                    .small()
+                    .children(limits.map(|n| {
+                        Button::new(SharedString::from(format!("glob-limit-{n}")))
+                            .label(format!("{n}"))
+                            .selected(current_limit == n)
+                    }))
+                    .on_click(move |ix: &Vec<usize>, window, app| {
+                        if let Some(&i) = ix.first() {
+                            limit_view.update(app, |this, cx| this.set_glob_limit(limits[i], cx));
+                            window.refresh();
+                        }
+                    })
+                    .into_any_element(),
+            },
+            Row {
+                title: "Live Glob scan interval",
+                description: "Seconds between two checks of a Live Glob's folder for new files (at least 30 for a folder of more than 10,000 entries).",
+                control: ButtonGroup::new("settings-glob-interval")
+                    .small()
+                    .children(intervals.map(|n| {
+                        Button::new(SharedString::from(format!("glob-interval-{n}")))
+                            .label(format!("{n} s"))
+                            .selected(current_interval == n)
+                    }))
+                    .on_click(move |ix: &Vec<usize>, window, app| {
+                        if let Some(&i) = ix.first() {
+                            interval_view.update(app, |this, cx| this.set_glob_interval(intervals[i], cx));
                             window.refresh();
                         }
                     })

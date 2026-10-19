@@ -23,6 +23,7 @@ impl AppView {
 
     pub fn open_new_space_dialog(&mut self, cx: &mut Context<Self>) {
         self.remote.new_space_files.clear();
+        self.remote.new_space_globs.clear();
         self.new_space = Some(NewSpaceDialog {
             form: NewLogSpaceForm::new(),
             name_input: None,
@@ -62,6 +63,7 @@ impl AppView {
     pub fn new_space_cancel(&mut self, cx: &mut Context<Self>) {
         self.new_space = None;
         self.remote.new_space_files.clear();
+        self.remote.new_space_globs.clear();
         cx.notify();
     }
 
@@ -121,10 +123,11 @@ impl AppView {
             return;
         }
         let name = dialog.form.name.clone();
-        if !self.remote.new_space_files.is_empty() {
+        if !self.remote.new_space_files.is_empty() || !self.remote.new_space_globs.is_empty() {
             let files = std::mem::take(&mut self.remote.new_space_files);
+            let globs = std::mem::take(&mut self.remote.new_space_globs);
             self.new_space = None;
-            self.create_remote_log_space(&name, files, cx);
+            self.create_remote_log_space(&name, files, globs, cx);
             return;
         }
         let sources = dialog.form.importable_sources();
@@ -134,11 +137,13 @@ impl AppView {
     }
 
     /// Create a Remote Log Space with files on Servers, given as
-    /// `(server id, server name, path)`, and open it.
+    /// `(server id, server name, path)`, and Live Globs, given as `(server
+    /// id, server name, folder, pattern)`, and open it.
     pub fn create_remote_log_space(
         &mut self,
         name: &str,
         files: Vec<(String, String, String)>,
+        globs: Vec<(String, String, String, String)>,
         cx: &mut Context<Self>,
     ) -> Option<String> {
         self.persist_active_session();
@@ -153,10 +158,14 @@ impl AppView {
                 }
             };
             let _ = space.add_remote_files(&files);
+            for (server_id, _, dir, pattern) in &globs {
+                let _ = space.add_live_glob(server_id, dir, pattern);
+            }
             space.id.clone()
         };
         self.expanded_spaces.insert(space_id.clone());
         self.open_log_space_tab(&space_id, cx);
+        self.sync_glob_watchers(cx);
         Some(space_id)
     }
 

@@ -43,7 +43,19 @@ impl AppView {
             (theme.popover, theme.border, theme.muted_foreground, theme.danger, theme.warning);
         let can_create = dialog.form.can_create(project);
         let name_message = dialog.form.name_message(project);
-        let remote_files = self.remote.new_space_files.clone();
+        // Files first, then Live Globs, as `(server, path or glob)`.
+        let mut remote_files: Vec<(String, String)> = self
+            .remote
+            .new_space_files
+            .iter()
+            .map(|(_, server, path)| (server.clone(), path.clone()))
+            .collect();
+        remote_files.extend(
+            self.remote
+                .new_space_globs
+                .iter()
+                .map(|(_, server, dir, pattern)| (server.clone(), crate::remote::browse::join(dir, pattern))),
+        );
         let create_label = if remote_files.is_empty() {
             dialog.form.create_label()
         } else if remote_files.len() == 1 {
@@ -162,7 +174,7 @@ impl AppView {
                         v_flex()
                             .gap_1()
                             .child(div().text_sm().child("Remote files"))
-                            .children(remote_files.iter().enumerate().map(|(ix, (_, server, path))| {
+                            .children(remote_files.iter().enumerate().map(|(ix, (server, path))| {
                                 h_flex()
                                     .gap_2()
                                     .items_center()

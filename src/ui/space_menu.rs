@@ -35,6 +35,19 @@ pub struct SpaceRef {
     pub rename_input: Option<Entity<InputState>>,
 }
 
+/// A Live Glob group row of the sidebar.
+#[derive(Clone)]
+pub struct GlobRef {
+    pub view: Entity<AppView>,
+    pub space_id: String,
+    pub glob_id: String,
+    /// `<server>:<path>`.
+    pub label: String,
+    pub stopped: bool,
+    pub collapsed: bool,
+    pub waiting_for_folder: bool,
+}
+
 /// Identity and state of the file a row acts on.
 #[derive(Clone)]
 pub struct FileRef {
@@ -48,6 +61,10 @@ pub struct FileRef {
     /// More than one file in the space (a scratch space keeps its last file).
     pub can_delete: bool,
     pub no_timestamps: bool,
+    /// The file is a Live Glob's and no longer exists on its Server.
+    pub gone: bool,
+    /// Shown under a Live Glob row.
+    pub in_glob: bool,
     pub rename_input: Option<Entity<InputState>>,
 }
 
@@ -385,6 +402,72 @@ fn space_row(space: SpaceRef, cx: &mut App) -> gpui::AnyElement {
         .into_any_element()
 }
 
+/// Append a Live Glob row: a group that can be collapsed, with its files
+/// listed under it.
+pub fn push_glob(list: MenuList, glob: GlobRef) -> MenuList {
+    list.custom(move |_, cx| glob_row(glob.clone(), cx))
+}
+
+fn glob_row(glob: GlobRef, cx: &mut App) -> gpui::AnyElement {
+    let theme = cx.theme();
+    let (accent, accent_fg, radius, muted) =
+        (theme.tokens.sidebar_accent, theme.sidebar_accent_foreground, theme.radius, theme.muted_foreground);
+    let toggle_view = glob.view.clone();
+    let toggle_id = glob.glob_id.clone();
+    let menu_glob = glob.clone();
+    h_flex()
+        .id(SharedString::from(format!("glob-row-{}", glob.glob_id)))
+        .h(px(ROW_HEIGHT))
+        .w_full()
+        .flex_shrink_0()
+        .pl_5()
+        .pr_2()
+        .gap_1p5()
+        .items_center()
+        .rounded(radius)
+        .text_sm()
+        .cursor_pointer()
+        .hover(move |s| s.bg(accent.opacity(0.8)).text_color(accent_fg))
+        .on_click(move |_, _, app| {
+            let id = toggle_id.clone();
+            toggle_view.update(app, |this, cx| this.toggle_glob_collapsed(&id, cx));
+        })
+        .child(
+            Icon::new(if glob.collapsed { IconName::ChevronRight } else { IconName::ChevronDown }).size_3(),
+        )
+        .child(Icon::new(IconName::Globe).size_4())
+        .child(div().flex_1().truncate().child(glob.label.clone()))
+        .when(glob.waiting_for_folder, |this| {
+            this.child(div().text_xs().text_color(muted).child("waiting for folder"))
+        })
+        .when(glob.stopped, |this| this.child(div().text_xs().text_color(muted).child("stopped")))
+        .context_menu(move |menu, _, _| glob_menu(menu, &menu_glob))
+        .into_any_element()
+}
+
+/// The right-click menu of a Live Glob.
+fn glob_menu(menu: PopupMenu, glob: &GlobRef) -> PopupMenu {
+    let toggle = glob.clone();
+    let remove = glob.clone();
+    let label = if glob.stopped { "Resume watching" } else { "Stop watching" };
+    menu.item(PopupMenuItem::new(label).on_click(move |_, _, app| {
+        let (space, id) = (toggle.space_id.clone(), toggle.glob_id.clone());
+        let stopped = toggle.stopped;
+        toggle.view.update(app, |this, cx| {
+            if stopped {
+                this.resume_watching_glob(&space, &id, cx)
+            } else {
+                this.stop_watching_glob(&space, &id, cx)
+            }
+        });
+    }))
+    .item(PopupMenuItem::separator())
+    .item(PopupMenuItem::new("Remove Live Glob").on_click(move |_, _, app| {
+        let (space, id) = (remove.space_id.clone(), remove.glob_id.clone());
+        remove.view.update(app, |this, cx| this.remove_live_glob(&space, &id, cx));
+    }))
+}
+
 /// Append a file row (indented under its Log Space) to `list`.
 pub fn push_file(list: MenuList, file: FileRef, active: bool) -> MenuList {
     if let Some(input) = file.rename_input.clone() {
@@ -453,7 +536,7 @@ pub fn push_file(list: MenuList, file: FileRef, active: bool) -> MenuList {
             }
         })
         .context_menu(move |menu, _, cx| file_menu(menu, &context, cx));
-    list.nested_child(item)
+    if file.in_glob { list.grouped_child(item, file.gone) } else { list.nested_child(item) }
 }
 
 /// The ElementId for rows keyed by Log Space.

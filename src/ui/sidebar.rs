@@ -2,7 +2,7 @@
 //! components.
 
 use crate::app::rename::{RenameState, RenameTarget};
-use crate::ui::space_menu::{FileRef, SpaceRef, push_file, push_space, rename_field};
+use crate::ui::space_menu::{FileRef, GlobRef, SpaceRef, push_file, push_glob, push_space, rename_field};
 use crate::ui::menu_list::MenuList;
 use crate::ui::project_node::ProjectNode;
 use crate::ui::sidebar_group::ActionGroup;
@@ -69,6 +69,52 @@ fn project_rename_input(
     })
 }
 
+/// What the sidebar shows of Live Globs and their files.
+#[derive(Default)]
+pub struct SidebarGlobs {
+    /// Files of a Live Glob that no longer exist on their Server.
+    pub gone_files: std::collections::HashSet<String>,
+    pub collapsed: std::collections::HashSet<String>,
+    /// `<server>:<path>` of each Live Glob, by id.
+    pub labels: std::collections::HashMap<String, String>,
+    /// Live Globs whose folder does not exist.
+    pub waiting: std::collections::HashSet<String>,
+}
+
+fn is_file_active(target: &Option<TabTarget>, space_id: &str, file_id: &str) -> bool {
+    matches!(
+        target,
+        Some(TabTarget::FileView { space_id: s, file_id: f }) if s == space_id && f == file_id
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn file_ref(
+    view: &gpui::Entity<crate::app::AppView>,
+    project: &crate::workspace::project::Project,
+    space: &crate::workspace::log_space::LogSpace,
+    file: &crate::workspace::log_space::LogFile,
+    in_glob: bool,
+    renaming: Option<&RenameState>,
+    no_timestamp_files: &std::collections::HashSet<String>,
+    globs: &SidebarGlobs,
+) -> FileRef {
+    FileRef {
+        view: view.clone(),
+        project_id: project.id.clone(),
+        space_id: space.id.clone(),
+        file_id: file.file_id.clone(),
+        display_name: file.display_name.clone(),
+        path: file.path.clone(),
+        kind: space.kind,
+        can_delete: space.files.len() > 1,
+        no_timestamps: no_timestamp_files.contains(&file.file_id),
+        gone: globs.gone_files.contains(&file.file_id),
+        in_glob,
+        rename_input: file_rename_input(renaming, &project.id, &space.id, &file.file_id),
+    }
+}
+
 pub struct SidebarView;
 
 impl SidebarView {
@@ -78,6 +124,7 @@ impl SidebarView {
         renaming: Option<&RenameState>,
         expanded_spaces: &std::collections::HashSet<String>,
         no_timestamp_files: &std::collections::HashSet<String>,
+        globs: &SidebarGlobs,
         cx: &mut gpui::Context<crate::app::AppView>,
     ) -> gpui::AnyElement {
         if !sidebar.visible {
@@ -119,32 +166,39 @@ impl SidebarView {
                 if !expanded {
                     continue;
                 }
-                for file in space.ordered_files() {
-                    let file_active = matches!(
-                        &active_target,
-                        Some(TabTarget::FileView { space_id, file_id })
-                            if *space_id == space.id && *file_id == file.file_id
+                // Live Globs first, each with its files; then the files added
+                // by path.
+                let ordered = space.ordered_files();
+                for glob in &space.globs {
+                    let collapsed = globs.collapsed.contains(&glob.glob_id);
+                    files = push_glob(
+                        files,
+                        GlobRef {
+                            view: view.clone(),
+                            space_id: space.id.clone(),
+                            glob_id: glob.glob_id.clone(),
+                            label: globs.labels.get(&glob.glob_id).cloned().unwrap_or_else(|| glob.full_pattern()),
+                            stopped: glob.stopped,
+                            collapsed,
+                            waiting_for_folder: globs.waiting.contains(&glob.glob_id),
+                        },
                     );
+                    if collapsed {
+                        continue;
+                    }
+                    for file in ordered.iter().filter(|f| f.from_glob.as_deref() == Some(glob.glob_id.as_str())) {
+                        files = push_file(
+                            files,
+                            file_ref(&view, project, space, file, true, renaming, no_timestamp_files, globs),
+                            is_file_active(&active_target, &space.id, &file.file_id),
+                        );
+                    }
+                }
+                for file in ordered.iter().filter(|f| f.from_glob.is_none()) {
                     files = push_file(
                         files,
-                        FileRef {
-                            view: view.clone(),
-                            project_id: project.id.clone(),
-                            space_id: space.id.clone(),
-                            file_id: file.file_id.clone(),
-                            display_name: file.display_name.clone(),
-                            path: file.path.clone(),
-                            kind: space.kind,
-                            can_delete: space.files.len() > 1,
-                            no_timestamps: no_timestamp_files.contains(&file.file_id),
-                            rename_input: file_rename_input(
-                                renaming,
-                                &project.id,
-                                &space.id,
-                                &file.file_id,
-                            ),
-                        },
-                        file_active,
+                        file_ref(&view, project, space, file, false, renaming, no_timestamp_files, globs),
+                        is_file_active(&active_target, &space.id, &file.file_id),
                     );
                 }
             }
