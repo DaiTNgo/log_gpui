@@ -53,6 +53,19 @@ use std::collections::{HashMap, HashSet};
 use gpui_component::input::{InputEvent, InputState};
 use std::sync::Arc;
 
+/// `n` with a comma between each group of three digits: 12345 -> "12,345".
+pub fn format_count(n: usize) -> String {
+    let digits = n.to_string();
+    let mut out = String::with_capacity(digits.len() + digits.len() / 3);
+    for (i, c) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i) % 3 == 0 {
+            out.push(',');
+        }
+        out.push(c);
+    }
+    out
+}
+
 /// A destructive action waiting for the user's confirmation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ConfirmAction {
@@ -192,6 +205,18 @@ impl AppView {
 
     pub fn with_persistence(
         persistence: Option<crate::workspace::SessionPersistence>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        Self::with_services(persistence, remote::RemoteUi::load(), window, cx)
+    }
+
+    /// Like `with_persistence`, with the Servers, known hosts and secret
+    /// store given. Tests use it to keep the app off the user's config and
+    /// the OS keychain (see `remote::RemoteUi::with_paths`).
+    pub fn with_services(
+        persistence: Option<crate::workspace::SessionPersistence>,
+        remote: remote::RemoteUi,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -375,7 +400,7 @@ impl AppView {
             show_minimap: true,
             column_layout,
             live: live::LiveRuntime::new(),
-            remote: remote::RemoteUi::load(),
+            remote,
             server_dialog: None,
             workspace_state,
             parsed_files: HashMap::new(),
