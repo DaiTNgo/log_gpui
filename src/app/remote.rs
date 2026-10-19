@@ -45,6 +45,8 @@ pub struct RemoteUi {
     pub secret_prompt: Option<SecretPrompt>,
     pub picker: Option<super::remote_picker::RemotePicker>,
     pub download: Option<DownloadState>,
+    /// The Open in full dialog.
+    pub full_dialog: Option<super::open_in_full::OpenInFull>,
     /// Remote Files chosen for the New Log Space being made, as
     /// `(server id, server name, path)`.
     pub new_space_files: Vec<(String, String, String)>,
@@ -81,6 +83,7 @@ impl RemoteUi {
             secret_prompt: None,
             picker: None,
             download: None,
+            full_dialog: None,
             new_space_files: Vec::new(),
             new_space_globs: Vec::new(),
             new_space_start: None,

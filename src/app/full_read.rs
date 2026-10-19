@@ -38,6 +38,10 @@ pub struct FullReadRequest {
     pub start_text: Option<String>,
     pub to_text: Option<String>,
     pub destination: Destination,
+    /// The Full Read Limit of this read.
+    pub limit_lines: usize,
+    /// Read again: the file whose copy this read replaces when it ends.
+    pub replace: Option<String>,
 }
 
 /// A Remote Copy being read.
@@ -47,6 +51,10 @@ pub struct CopyRead {
     /// The Imported Log Space that holds the file.
     pub space_id: String,
     pub progress: Option<(String, u64, u64)>,
+    /// The folder this read writes.
+    pub dir: PathBuf,
+    /// Read again: the folder of the copy this read replaces.
+    pub replaces: Option<PathBuf>,
     /// The first line numbers could not be counted.
     pub numbers_unavailable: bool,
     /// Where reading the Generation of this file started in.
@@ -100,39 +108,54 @@ impl AppView {
                 return None;
             }
         };
-        let mut file = LogFile::remote_copy(&dir.to_string_lossy(), &request.server_name, &request.path);
-        let file_id = file.file_id.clone();
-        let display = file.display_name.clone();
         self.persist_active_session();
-        let space_id = match &request.destination {
-            Destination::NewSpace(name) => {
-                let project = self.active_project_mut()?;
-                match project.create_log_space(name, LogSpaceKind::Imported) {
-                    Ok(space) => {
-                        let _ = space.add_remote_copy(file);
-                        space.id.clone()
+        let (file_id, display, space_id, replaces) = if let Some(file_id) = request.replace.clone() {
+            // Read again: the file and its Log Space stay, the content is
+            // replaced when the new read ends.
+            let found = self.active_project().and_then(|p| {
+                p.log_spaces.iter().find_map(|s| {
+                    s.file(&file_id).filter(|f| f.is_remote_copy()).map(|f| (s.id.clone(), f.display_name.clone(), f.copy.clone()))
+                })
+            });
+            let Some((space_id, display, old)) = found else {
+                let _ = copy::remove(&dir);
+                return None;
+            };
+            (file_id, display, space_id, old.map(PathBuf::from))
+        } else {
+            let file = LogFile::remote_copy(&dir.to_string_lossy(), &request.server_name, &request.path);
+            let (file_id, display) = (file.file_id.clone(), file.display_name.clone());
+            let space_id = match &request.destination {
+                Destination::NewSpace(name) => {
+                    let project = self.active_project_mut()?;
+                    match project.create_log_space(name, LogSpaceKind::Imported) {
+                        Ok(space) => {
+                            let _ = space.add_remote_copy(file);
+                            space.id.clone()
+                        }
+                        Err(e) => {
+                            let _ = copy::remove(&dir);
+                            self.notice = Some(e.message().to_string());
+                            cx.notify();
+                            return None;
+                        }
                     }
-                    Err(e) => {
+                }
+                Destination::Existing(id) => {
+                    let added = self
+                        .active_project_mut()
+                        .and_then(|p| p.log_space_mut(id))
+                        .filter(|s| s.kind == LogSpaceKind::Imported)
+                        .map(|space| space.add_remote_copy(file).is_ok())
+                        .unwrap_or(false);
+                    if !added {
                         let _ = copy::remove(&dir);
-                        self.notice = Some(e.message().to_string());
-                        cx.notify();
                         return None;
                     }
+                    id.clone()
                 }
-            }
-            Destination::Existing(id) => {
-                let added = self
-                    .active_project_mut()
-                    .and_then(|p| p.log_space_mut(id))
-                    .filter(|s| s.kind == LogSpaceKind::Imported)
-                    .map(|space| space.add_remote_copy(file).is_ok())
-                    .unwrap_or(false);
-                if !added {
-                    let _ = copy::remove(&dir);
-                    return None;
-                }
-                id.clone()
-            }
+            };
+            (file_id, display, space_id, None)
         };
         let mut parsed = ParsedFile::empty();
         parsed.live = Some(crate::live::LiveBuffer::command(&display));
@@ -158,8 +181,8 @@ impl AppView {
             to: request.to,
             start_text: request.start_text,
             to_text: request.to_text,
-            limit_lines: self.live.full_read_limit,
-            dir,
+            limit_lines: request.limit_lines,
+            dir: dir.clone(),
         };
         let hub = self.remote_hub(cx);
         let (tx, rx) = async_channel::unbounded();
@@ -172,7 +195,7 @@ impl AppView {
         hub.spawn(async move { run(run_hub, servers, plan, tx, run_ctl).await });
         self.live.copy_reads.insert(
             file_id.clone(),
-            CopyRead { rx, ctl, space_id, progress: None, numbers_unavailable: false, finished: false },
+            CopyRead { rx, ctl, space_id, progress: None, dir, replaces, numbers_unavailable: false, finished: false },
         );
         self.schedule_session_save(cx);
         cx.notify();
@@ -225,6 +248,8 @@ impl AppView {
             return delta;
         };
         let limit = self.live.full_read_limit;
+        // Read again ended: whether its copy replaces the old one.
+        let mut replaced: Option<bool> = None;
         for event in events {
             match event {
                 ReadEvent::GenerationStart { index, first_line_no, .. } => {
@@ -279,6 +304,7 @@ impl AppView {
                         read.finished = true;
                         read.progress = None;
                     }
+                    replaced = Some(true);
                 }
                 ReadEvent::Failed { message, .. } => {
                     self.notice = Some(format!("Open in full: {message}"));
@@ -286,13 +312,175 @@ impl AppView {
                         read.finished = true;
                         read.progress = None;
                     }
+                    replaced = Some(false);
                 }
             }
         }
         let _ = now_label;
+        let generation = buffer.generation;
+        if replaced == Some(true) {
+            self.restore_markers_after_read_again(file_id, &parsed, generation);
+        }
         parsed.live = Some(buffer);
         self.parsed_files.insert(file_id.to_string(), parsed);
+        if let Some(done) = replaced {
+            self.finish_read_again(file_id, done);
+            delta.structural = true;
+        }
         delta
+    }
+
+    /// "Read again": read the same Generations again from the Server, with the
+    /// same Starting Time and To, and replace the copy when it ends.
+    pub fn read_again(&mut self, file_id: &str, cx: &mut Context<Self>) {
+        if self.live.copy_reads.contains_key(file_id) {
+            return;
+        }
+        let found = self.active_project().and_then(|p| {
+            p.log_spaces.iter().find_map(|s| s.file(file_id).filter(|f| f.is_remote_copy()).map(|f| (s.id.clone(), f.clone())))
+        });
+        let Some((space_id, file)) = found else { return };
+        let Some(dir) = file.copy.clone() else { return };
+        let meta = match copy::read_meta(Path::new(&dir)) {
+            Ok(meta) if !meta.server_id.is_empty() => meta,
+            _ => {
+                self.notice = Some(format!("{}: nothing saved says where it came from", file.display_name));
+                cx.notify();
+                return;
+            }
+        };
+        if self.remote.servers.get(&meta.server_id).is_none() {
+            self.notice = Some(format!("Server {} is no longer in the list", meta.server_name));
+            cx.notify();
+            return;
+        }
+        let hub = self.remote_hub(cx);
+        let store = self.remote.servers.clone();
+        let job_meta = meta.clone();
+        let task = hub.spawn({
+            let hub = hub.clone();
+            async move {
+                let session = hub.session(&store, &job_meta.server_id).await.map_err(|e| e.message())?;
+                let sftp = session.open_sftp().await?;
+                let folder = crate::remote::browse::dirname(&job_meta.path);
+                let mut plans = Vec::new();
+                let mut gone = Vec::new();
+                for g in &job_meta.generations {
+                    let path = if g.distance == 0 {
+                        job_meta.path.clone()
+                    } else {
+                        crate::remote::browse::join(&folder, &g.source_name)
+                    };
+                    let Ok(attrs) = sftp.metadata(path.clone()).await else {
+                        gone.push(g.source_name.clone());
+                        continue;
+                    };
+                    let compression = crate::remote::rotated::sniff(&sftp, &path).await?;
+                    plans.push(GenerationPlan {
+                        distance: g.distance,
+                        name: g.source_name.clone(),
+                        path,
+                        size: attrs.len(),
+                        modified: None,
+                        compression,
+                        start_byte: None,
+                        skip_lines: 0,
+                        older_dropped: g.older_not_read && plans.is_empty(),
+                    });
+                }
+                let newest = match plans.last() {
+                    Some(last) => super::open_in_full::end_time(&sftp, &last.path, last.size, last.compression).await?,
+                    None => None,
+                };
+                Ok::<_, String>((plans, newest, gone))
+            }
+        });
+        cx.spawn(async move |this, cx| {
+            let result = task.await;
+            this.update(cx, |this, cx| {
+                let (plans, newest, gone) = match result {
+                    Ok(Ok(found)) => found,
+                    Ok(Err(message)) => {
+                        this.notice = Some(format!("Read again: {message}"));
+                        cx.notify();
+                        return;
+                    }
+                    Err(e) => {
+                        this.notice = Some(format!("Read again: could not reach the server ({e})"));
+                        cx.notify();
+                        return;
+                    }
+                };
+                if plans.is_empty() {
+                    this.notice = Some("Read again: the files are no longer on the Server".into());
+                    cx.notify();
+                    return;
+                }
+                if !gone.is_empty() {
+                    this.notice = Some(format!("No longer on the Server: {}", gone.join(", ")));
+                }
+                let resolve = |text: &Option<String>| {
+                    text.as_deref().and_then(|t| crate::remote::starting_time::resolve_start(t, newest).ok().flatten())
+                };
+                let request = FullReadRequest {
+                    server_id: meta.server_id.clone(),
+                    server_name: meta.server_name.clone(),
+                    path: meta.path.clone(),
+                    generations: plans,
+                    start: resolve(&meta.start_text),
+                    to: resolve(&meta.to_text),
+                    start_text: meta.start_text.clone(),
+                    to_text: meta.to_text.clone(),
+                    destination: Destination::Existing(space_id),
+                    limit_lines: meta.limit_lines.max(1),
+                    replace: Some(file.file_id.clone()),
+                };
+                this.start_full_read(request, cx);
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Read again ended: the file takes the new folder and the old one goes
+    /// (or, when it failed, the new one goes and the old one stays).
+    fn finish_read_again(&mut self, file_id: &str, done: bool) {
+        let Some(read) = self.live.copy_reads.get(file_id) else { return };
+        let (new_dir, old_dir) = (read.dir.clone(), read.replaces.clone());
+        let Some(old_dir) = old_dir else { return };
+        if done {
+            if let Some(project) = self.active_project_mut() {
+                for space in &mut project.log_spaces {
+                    if let Some(f) = space.file_mut(file_id) {
+                        f.copy = Some(new_dir.to_string_lossy().to_string());
+                    }
+                }
+            }
+            let _ = copy::remove(&old_dir);
+        } else {
+            // What the old folder holds is shown again.
+            let _ = copy::remove(&new_dir);
+            self.parsed_files.remove(file_id);
+        }
+    }
+
+    /// The Markers of the file go on lines that are the same (by Generation
+    /// distance, number and content) in the new copy, and are dropped on the
+    /// others.
+    fn restore_markers_after_read_again(&mut self, file_id: &str, parsed: &ParsedFile, generation: u32) {
+        let hash_at = |ago: u32, line: usize| -> Option<u64> {
+            let wanted = generation.checked_sub(ago)?;
+            let pos = parsed.entries.iter().position(|e| e.generation == wanted && e.index == line)?;
+            parsed.lines.get(pos).map(|l| crate::workspace::log_space::line_hash(l))
+        };
+        if let Some(project) = self.active_project_mut() {
+            for space in &mut project.log_spaces {
+                if let Some(f) = space.file_mut(file_id) {
+                    f.generation = generation;
+                    f.markers.retain(|m| m.line_hash.is_none() || hash_at(m.generations_ago, m.line) == m.line_hash);
+                }
+            }
+        }
     }
 
     /// Stop reading a Remote Copy; what was read stays.

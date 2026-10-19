@@ -41,6 +41,7 @@ impl AppView {
             PaletteAction::ClearFile => self.request_clear_current_file(cx),
             PaletteAction::LoadMore => self.load_more_current_file(cx),
             PaletteAction::BackToLiveWindow => self.back_to_live_window_current_file(cx),
+            PaletteAction::OpenInFull => self.open_in_full_current(cx),
             PaletteAction::ToggleInspector => {
                 self.toggle_or_reveal_context_section(crate::workspace::state::ContextSection::Inspector, cx);
             }

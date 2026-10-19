@@ -6,6 +6,7 @@ mod command_views;
 mod connection_view;
 mod dialogs;
 mod filter_panel;
+mod full_dialog;
 mod focus_pane;
 mod highlights_panel;
 mod raw_view;
@@ -45,6 +46,7 @@ impl Render for AppView {
         self.sync_secret_prompt(window, cx);
         self.sync_server_dialog(window, cx);
         self.sync_remote_picker(window, cx);
+        self.sync_open_in_full(window, cx);
 
         let window_chrome = self.render_window_chrome(window, cx);
         let editor_toolbar = self.render_editor_toolbar(cx);
@@ -106,6 +108,7 @@ impl Render for AppView {
         let servers_dialog = self.render_servers_dialog(cx);
         let remote_picker = self.render_remote_picker(cx);
         let download_panel = self.render_download(cx);
+        let full_dialog = self.render_open_in_full(cx);
         let color_bar = self.render_color_bar(cx);
         let notice = self.render_notice(cx);
 
@@ -204,6 +207,7 @@ impl Render for AppView {
             .child(servers_dialog)
             .child(remote_picker)
             .child(download_panel)
+            .child(full_dialog)
             .child(secret_dialog)
             .child(host_key_dialog)
             .children(color_bar)

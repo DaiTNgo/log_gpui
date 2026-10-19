@@ -57,6 +57,7 @@ pub enum PaletteAction {
     ClearFile,
     LoadMore,
     BackToLiveWindow,
+    OpenInFull,
 }
 
 impl CommandPalette {
@@ -141,6 +142,11 @@ impl CommandPalette {
                 name: "Live: Load More Older Lines",
                 shortcut: "⌘⇧↑",
                 action: PaletteAction::LoadMore,
+            },
+            PaletteCommand {
+                name: "Live: Open in Full…",
+                shortcut: "",
+                action: PaletteAction::OpenInFull,
             },
             PaletteCommand {
                 name: "Live: Back to Live Window",

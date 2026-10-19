@@ -15,6 +15,7 @@ mod highlights;
 mod keyboard;
 pub mod live;
 pub mod live_more;
+pub mod open_in_full;
 mod marking;
 mod persist;
 pub mod remote;

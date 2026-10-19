@@ -300,12 +300,6 @@ impl AppView {
         cx.notify();
     }
 
-    /// Read the file and its Rotated Files whole into a Remote Copy.
-    pub fn request_open_in_full(&mut self, _file_id: &str, cx: &mut Context<Self>) {
-        self.notice = Some("Open in full is not available yet".into());
-        cx.notify();
-    }
-
     /// Drop a Load More that has not started reading.
     pub fn cancel_load_more(&mut self, file_id: &str) {
         if let Some(source) = self.live.sources.get(file_id) {
