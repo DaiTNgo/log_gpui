@@ -24,11 +24,7 @@ impl AppView {
             }
         });
 
-        let (match_cur, match_total) = if raw_mode {
-            self.raw.match_display()
-        } else {
-            self.focus.search().current_match_display()
-        };
+        let match_label = self.match_counter_label();
 
         h_flex()
             .w_full()
@@ -124,7 +120,7 @@ impl AppView {
                                 div()
                                     .min_w(px(48.0))
                                     .text_sm()
-                                    .child(format!("{}/{}", match_cur, match_total)),
+                                    .child(match_label),
                             ),
                     ),
             )

@@ -8,7 +8,6 @@ pub mod floating_panel;
 pub mod focus_pane;
 pub mod inspector;
 pub mod main_view;
-pub mod match_navigator;
 pub mod menu_list;
 pub mod mono;
 pub mod platform;
