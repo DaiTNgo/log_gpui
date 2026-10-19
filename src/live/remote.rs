@@ -182,6 +182,8 @@ struct Memory {
     stop_reached: bool,
     /// The Starting Time, resolved on the clock of the file.
     stop_before: Option<f64>,
+    /// The app was told the lines since the Starting Time do not fit.
+    overflow_told: bool,
 }
 
 fn classify(e: &SftpError) -> Kind {
@@ -654,6 +656,16 @@ impl RemoteFileSource {
                 }
             }
 
+            // The Live Window filled before the Starting Time was reached.
+            if let (Some(time), true) = (mem.stop_before, mem.opened) {
+                if !mem.overflow_told && mem.loaded >= ctl.window && !mem.stop_reached && mem.backward.is_none() {
+                    mem.overflow_told = true;
+                    let lines = self.count_since(&sftp, session, stat.size, time).await;
+                    let since = self.start_time.clone().unwrap_or_default();
+                    let _ = events.try_send(SourceEvent::StartTimeOverflow { lines, since: since.trim().to_string() });
+                }
+            }
+
             // The file is held up to its first byte: offer the Rotated Files,
             // and read into the newest one when it is plain and there is room.
             if mem.opened && mem.current_exhausted && !mem.auto_checked && !mem.no_refill && !mem.stop_reached {
@@ -682,6 +694,30 @@ impl RemoteFileSource {
                 return Served::Closed;
             }
         }
+    }
+
+    /// How many lines the file has since `time`: the byte where it starts is
+    /// searched by timestamp, then the lines after it are counted on the
+    /// Server. `None` when either fails or takes too long.
+    async fn count_since(
+        &self,
+        sftp: &SftpSession,
+        session: &Arc<RemoteSession>,
+        size: u64,
+        time: f64,
+    ) -> Option<usize> {
+        let file = sftp.open(self.path.clone()).await.ok()?;
+        let handle = tokio::runtime::Handle::current();
+        let offset = tokio::task::spawn_blocking(move || {
+            let mut src = crate::remote::full_read::SftpReadAt { handle, file };
+            crate::remote::full_read::find_start_offset(&mut src, size, time)
+        })
+        .await
+        .ok()?
+        .ok()?;
+        let command = format!("tail -c +{} -- {} | wc -l", offset + 1, shell_quote(&self.path));
+        let out = tokio::time::timeout(WC_TIMEOUT, session.exec(&command)).await.ok()?.ok()?;
+        String::from_utf8_lossy(&out.stdout).trim().parse().ok()
     }
 
     /// Tell the app which Rotated File would be loaded next, if any.

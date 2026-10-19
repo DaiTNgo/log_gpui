@@ -238,6 +238,7 @@ impl AppView {
                             path,
                             &file.name,
                             file.from_glob.as_deref(),
+                            remote.start_time.clone(),
                             cx,
                         ),
                         RemoteTarget::Command { .. } => {
@@ -514,6 +515,10 @@ impl AppView {
                     };
                     delta.structural = true;
                 }
+                SourceEvent::StartTimeOverflow { lines, since } => {
+                    buffer.set_start_overflow(&mut parsed, lines, &since);
+                    delta.structural = true;
+                }
                 SourceEvent::Progress(progress) => {
                     match progress {
                         Some(p) => self.live.progress.insert(file_id.to_string(), p),
@@ -559,7 +564,8 @@ impl AppView {
                         // Only the label changes; rows do not.
                     }
                 }
-                SourceEvent::Run { .. } | SourceEvent::Problem(_) => {}
+                SourceEvent::Problem(message) => self.notice = Some(message),
+                SourceEvent::Run { .. } => {}
                 SourceEvent::Status(status) => {
                     if std::env::var_os("LOG_GPUI_LIVE_TRACE").is_some() {
                         eprintln!("live status: {file_id}: {}", status.label());

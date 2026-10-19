@@ -25,6 +25,7 @@ impl AppView {
         self.remote.new_space_files.clear();
         self.remote.new_space_globs.clear();
         self.remote.new_space_commands.clear();
+        self.remote.new_space_start = None;
         self.new_space = Some(NewSpaceDialog {
             form: NewLogSpaceForm::new(),
             name_input: None,
@@ -66,6 +67,7 @@ impl AppView {
         self.remote.new_space_files.clear();
         self.remote.new_space_globs.clear();
         self.remote.new_space_commands.clear();
+        self.remote.new_space_start = None;
         cx.notify();
     }
 
@@ -132,8 +134,12 @@ impl AppView {
             let files = std::mem::take(&mut self.remote.new_space_files);
             let globs = std::mem::take(&mut self.remote.new_space_globs);
             let commands = std::mem::take(&mut self.remote.new_space_commands);
+            let start = self.remote.new_space_start.take();
             self.new_space = None;
             self.create_remote_log_space(&name, files, globs, commands, cx);
+            if let Some(start) = start {
+                self.set_start_time_in_active_space(&start, cx);
+            }
             return;
         }
         let sources = dialog.form.importable_sources();

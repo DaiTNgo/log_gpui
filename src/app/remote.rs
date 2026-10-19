@@ -51,6 +51,9 @@ pub struct RemoteUi {
     /// Live Globs chosen for the New Log Space, as `(server id, server name,
     /// folder, pattern)`.
     pub new_space_globs: Vec<(String, String, String, String)>,
+    /// Starting Time typed in the picker for the Remote Files of the New Log
+    /// Space.
+    pub new_space_start: Option<String>,
     /// What the file picker remembers, and where it is written.
     pub picker_state: crate::remote::picker_state::PickerState,
     pub picker_state_path: PathBuf,
@@ -80,6 +83,7 @@ impl RemoteUi {
             download: None,
             new_space_files: Vec::new(),
             new_space_globs: Vec::new(),
+            new_space_start: None,
             picker_state: crate::remote::picker_state::PickerState::load(&picker_state_path),
             picker_state_path,
             new_space_commands: Vec::new(),
@@ -376,6 +380,7 @@ impl AppView {
         path: &str,
         name: &str,
         from_glob: Option<&str>,
+        start_time: Option<String>,
         cx: &mut Context<Self>,
     ) -> Option<crate::live::SourceHandle> {
         self.remote.servers.get(server_id)?;
@@ -389,7 +394,7 @@ impl AppView {
                 path: path.to_string(),
                 name: name.to_string(),
                 window: self.live.window,
-                start_time: None,
+                start_time,
                 glob_inodes,
             }
             .spawn(),

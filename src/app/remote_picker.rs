@@ -75,6 +75,9 @@ pub struct RemotePicker {
     /// The path field, created while rendering.
     pub input: Option<Entity<InputState>>,
     pub filter_input: Option<Entity<InputState>>,
+    /// Starting Time for the files added, as typed (empty: the last lines).
+    pub start_time: String,
+    pub start_input: Option<Entity<InputState>>,
     /// The fields are emptied at the next render (it needs a window).
     pub clear_input: bool,
     pub clear_filter: bool,
@@ -157,6 +160,8 @@ impl AppView {
             filter: String::new(),
             input: None,
             filter_input: None,
+            start_time: String::new(),
+            start_input: None,
             clear_input: false,
             clear_filter: false,
             request: 0,
@@ -210,6 +215,43 @@ impl AppView {
             .detach();
             picker.filter_input = Some(input);
         }
+        if picker.start_input.is_none() {
+            let input = cx.new(|cx| {
+                InputState::new(window, cx).placeholder("Start from (optional): 1h, 30m, 2d, 10:42, 2026-10-19 10:00")
+            });
+            cx.subscribe_in(&input, window, |this: &mut Self, input, event: &InputEvent, _window, cx| {
+                if let InputEvent::Change = event {
+                    let text = input.read(cx).value().to_string();
+                    if let Some(picker) = this.remote.picker.as_mut() {
+                        picker.start_time = text;
+                    }
+                    cx.notify();
+                }
+            })
+            .detach();
+            picker.start_input = Some(input);
+        }
+    }
+
+    /// Whether the Starting Time typed in the picker can be read.
+    pub fn picker_start_error(&self) -> Option<String> {
+        let picker = self.remote.picker.as_ref()?;
+        let text = picker.start_time.trim();
+        if text.is_empty() || crate::remote::starting_time::is_readable(text) {
+            return None;
+        }
+        Some(crate::remote::starting_time::StartError::Invalid.to_string())
+    }
+
+    /// Give every Remote File of the open Log Space the Starting Time.
+    pub(crate) fn set_start_time_in_active_space(&mut self, start: &str, cx: &mut Context<Self>) {
+        let Some(space_id) = self.active_space().map(|s| s.id.clone()) else { return };
+        if let Some(space) = self.active_project_mut().and_then(|p| p.log_space_mut(&space_id)) {
+            for file in space.files.iter_mut().filter(|f| f.remote.as_ref().is_some_and(|r| r.path().is_some())) {
+                file.set_start_time(Some(start.to_string()));
+            }
+        }
+        cx.notify();
     }
 
     pub fn picker_select_server(&mut self, server_id: &str, cx: &mut Context<Self>) {
@@ -526,7 +568,11 @@ impl AppView {
     /// Done: the chosen files and Live Globs go to the New Log Space or the
     /// Remote Log Space, and each Server remembers what was really added.
     pub fn picker_confirm(&mut self, cx: &mut Context<Self>) {
+        if self.picker_start_error().is_some() {
+            return;
+        }
         let Some(picker) = self.remote.picker.take() else { return };
+        let start = picker.start_time.trim().to_string();
         let server_name = |sid: &str| self.remote.servers.get(sid).map(|s| s.name.clone());
         let mut files: Vec<(String, String, String)> = Vec::new();
         let mut globs: Vec<(String, String, String, String)> = Vec::new();
@@ -542,6 +588,9 @@ impl AppView {
         let mut remembered: Vec<(String, String, bool)> = Vec::new();
         match picker.target {
             PickerTarget::NewSpace => {
+                if !start.is_empty() {
+                    self.remote.new_space_start = Some(start.clone());
+                }
                 for file in files {
                     if !self.remote.new_space_files.contains(&file) {
                         remembered.push((file.0.clone(), file.2.clone(), false));
@@ -557,6 +606,9 @@ impl AppView {
             }
             PickerTarget::AddTo(space_id) => {
                 remembered = self.add_remote_items_to_space(&space_id, files, globs, cx);
+                if !start.is_empty() {
+                    self.set_start_time_for_added(&space_id, &remembered, &start);
+                }
             }
         }
         for (server_id, path, is_glob) in remembered {
@@ -564,6 +616,20 @@ impl AppView {
         }
         self.save_picker_state();
         cx.notify();
+    }
+
+    /// Give the Remote Files just added (`(server id, path, is glob)`) the
+    /// Starting Time. Files of a Live Glob are left as they are.
+    fn set_start_time_for_added(&mut self, space_id: &str, added: &[(String, String, bool)], start: &str) {
+        if let Some(space) = self.active_project_mut().and_then(|p| p.log_space_mut(space_id)) {
+            for (server_id, path, is_glob) in added.iter().filter(|a| !a.2) {
+                let _ = is_glob;
+                let id = crate::workspace::log_space::LogFile::remote(server_id, "", path).file_id;
+                if let Some(file) = space.file_mut(&id) {
+                    file.set_start_time(Some(start.to_string()));
+                }
+            }
+        }
     }
 
     /// Add Remote Files to a Remote Log Space; files it already has are

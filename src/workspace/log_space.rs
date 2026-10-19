@@ -98,6 +98,10 @@ pub enum RemoteTarget {
 pub struct RemoteRef {
     pub server_id: String,
     pub target: RemoteTarget,
+    /// Starting Time of a Remote File as typed (a span or a time): older
+    /// lines are not read. Empty: read the last lines as usual.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start_time: Option<String>,
 }
 
 /// `RemoteRef` as stored: the older form has a `path` and no `target`.
@@ -108,6 +112,8 @@ struct RemoteRefRepr {
     path: Option<String>,
     #[serde(default)]
     target: Option<RemoteTarget>,
+    #[serde(default)]
+    start_time: Option<String>,
 }
 
 impl TryFrom<RemoteRefRepr> for RemoteRef {
@@ -119,13 +125,13 @@ impl TryFrom<RemoteRefRepr> for RemoteRef {
             (None, Some(path)) => RemoteTarget::File { path },
             (None, None) => return Err("a remote member has neither a path nor a target".into()),
         };
-        Ok(RemoteRef { server_id: repr.server_id, target })
+        Ok(RemoteRef { server_id: repr.server_id, target, start_time: repr.start_time })
     }
 }
 
 impl RemoteRef {
     pub fn file(server_id: &str, path: &str) -> Self {
-        Self { server_id: server_id.to_string(), target: RemoteTarget::File { path: path.to_string() } }
+        Self { server_id: server_id.to_string(), target: RemoteTarget::File { path: path.to_string() }, start_time: None }
     }
 
     /// The path of a Remote File.
@@ -226,6 +232,7 @@ impl LogFile {
                     preset: unedited_preset(command, preset),
                     restart_on_exit: false,
                 },
+                start_time: None,
             }),
             entry: None,
             from_glob: None,
@@ -306,6 +313,13 @@ impl LogFile {
         self.generation += 1;
         for m in &mut self.markers {
             m.generations_ago += 1;
+        }
+    }
+
+    /// Set the Starting Time of a Remote File (`None`: read as usual).
+    pub fn set_start_time(&mut self, start: Option<String>) {
+        if let Some(remote) = self.remote.as_mut() {
+            remote.start_time = start.filter(|s| !s.trim().is_empty());
         }
     }
 

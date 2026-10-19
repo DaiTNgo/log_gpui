@@ -878,6 +878,7 @@ fn break_has_actions(kind: crate::live::BreakKind) -> bool {
             | BreakKind::StartOfLoaded
             | BreakKind::EarlierAvailable
             | BreakKind::EarlierWindowFull
+            | BreakKind::StartTimeOverflow
     )
 }
 
@@ -916,9 +917,9 @@ pub(crate) fn render_break(
     let buttons: Vec<gpui::AnyElement> = actions
         .map(|a| {
             use crate::live::BreakKind;
-            if matches!(a.kind, BreakKind::EarlierAvailable | BreakKind::EarlierWindowFull) {
+            if matches!(a.kind, BreakKind::EarlierAvailable | BreakKind::EarlierWindowFull | BreakKind::StartTimeOverflow) {
                 let (view, file) = (a.view.clone(), a.file_id.clone());
-                let full = a.kind == BreakKind::EarlierWindowFull;
+                let full = a.kind != BreakKind::EarlierAvailable;
                 return vec![break_button(
                     ElementId::from(gpui::SharedString::from(format!("break-earlier-{}-{}", a.file_id, a.id))),
                     if full { "Open in full…" } else { "Load" },

@@ -52,6 +52,8 @@ pub enum BreakKind {
     /// Like `EarlierAvailable`, but the Live Window is full: only Open in
     /// full can read it.
     EarlierWindowFull,
+    /// The lines since the Starting Time do not fit the Live Window.
+    StartTimeOverflow,
 }
 
 impl BreakKind {
@@ -72,6 +74,7 @@ impl BreakKind {
             BreakKind::StartOfLoaded => "start of loaded lines",
             BreakKind::Changed => "earlier lines of this generation are no longer on the Server",
             BreakKind::EarlierAvailable | BreakKind::EarlierWindowFull => "earlier generation",
+            BreakKind::StartTimeOverflow => "lines since the Starting Time do not fit the Live Window",
         }
     }
 
@@ -247,6 +250,9 @@ pub enum SourceEvent {
     /// The next Rotated File that could be loaded, or none (told whenever the
     /// lines held reach the start of the oldest Generation held).
     EarlierAvailable(Option<EarlierFile>),
+    /// The Live Window filled before the Starting Time was reached: how many
+    /// lines there are since it (`None`: not counted), and the time as typed.
+    StartTimeOverflow { lines: Option<usize>, since: String },
     /// A long read is under way (`None`: it ended).
     Progress(Option<ReadProgress>),
     /// The last lines of the file, shown at once. `bytes` is the length of

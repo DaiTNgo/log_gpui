@@ -10,6 +10,32 @@ use crate::live::backward::{ReadAt, START_SLACK_SECS};
 use crate::live::line_time::line_timestamp;
 use crate::live::splitter::decode_line;
 use std::io;
+use tokio::io::{AsyncReadExt, AsyncSeekExt};
+
+/// `ReadAt` over an SFTP file, for use on a blocking thread (it waits for each
+/// read on the runtime).
+pub struct SftpReadAt {
+    pub handle: tokio::runtime::Handle,
+    pub file: russh_sftp::client::fs::File,
+}
+
+impl ReadAt for SftpReadAt {
+    fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> io::Result<usize> {
+        let file = &mut self.file;
+        self.handle.block_on(async {
+            file.seek(io::SeekFrom::Start(offset)).await?;
+            let mut done = 0;
+            while done < buf.len() {
+                let n = file.read(&mut buf[done..]).await?;
+                if n == 0 {
+                    break;
+                }
+                done += n;
+            }
+            Ok(done)
+        })
+    }
+}
 
 /// Size of one read while searching.
 pub const PROBE_BLOCK: usize = 64 * 1024;

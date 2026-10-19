@@ -374,3 +374,20 @@ fn markers_keep_their_distance_when_a_rotated_file_is_loaded_above() {
     assert_eq!(file.markers_on_line_in(120, 2).len(), 1);
     assert!(file.markers_on_line_in(120, 0).is_empty());
 }
+
+#[test]
+fn a_starting_time_is_remembered_with_the_remote_file_and_old_sessions_have_none() {
+    use log_gpui::workspace::log_space::LogFile;
+    let mut file = LogFile::remote("s1", "web1", "/app/app.log");
+    assert!(file.remote.as_ref().unwrap().start_time.is_none());
+    file.set_start_time(Some("1h".into()));
+    let json = serde_json::to_string(&file).unwrap();
+    let back: LogFile = serde_json::from_str(&json).unwrap();
+    assert_eq!(back.remote.unwrap().start_time.as_deref(), Some("1h"));
+    // A blank one is no Starting Time, and the old form has none.
+    file.set_start_time(Some("  ".into()));
+    assert!(file.remote.as_ref().unwrap().start_time.is_none());
+    let old = r#"{"server_id":"s1","path":"/app/app.log"}"#;
+    let remote: log_gpui::workspace::log_space::RemoteRef = serde_json::from_str(old).unwrap();
+    assert!(remote.start_time.is_none());
+}

@@ -281,3 +281,42 @@ fn a_starting_time_stops_the_backward_read_and_the_rotated_file() {
     assert!(matches!(events.last().unwrap(), SourceEvent::EarlierAvailable(None)));
     handle.close();
 }
+
+#[test]
+fn lines_since_the_starting_time_that_do_not_fit_the_window_are_counted() {
+    let Some(env) = env() else { return };
+    let d = env.dir.path();
+    let stamp = |i: u32| format!("2026-10-19 {:02}:{:02}:{:02} INFO line {i}\n", i / 3600, i / 60 % 60, i % 60);
+    std::fs::write(d.join("app.log"), (0..5_000).map(stamp).collect::<String>()).unwrap();
+    let path = d.join("app.log").to_string_lossy().to_string();
+    let spawn = |start: &str| {
+        RemoteFileSource {
+            glob_inodes: None,
+            hub: env.hub.clone(),
+            servers: Arc::new(Mutex::new(env.store.clone())),
+            server_id: env.server_id.clone(),
+            path: path.clone(),
+            name: format!("web1:{path}"),
+            window: 1_200,
+            start_time: Some(start.into()),
+        }
+        .spawn()
+    };
+    // From 00:10:00 (line 600) on there are 4,400 lines; the window holds 1,200.
+    let h = spawn("2026-10-19 00:10:00");
+    let SourceEvent::StartTimeOverflow { lines, since } = next(&h, |e| matches!(e, SourceEvent::StartTimeOverflow { .. }))
+    else {
+        unreachable!()
+    };
+    // One second of slack lets the line at 00:09:59 in too.
+    assert_eq!(lines, Some(4_401));
+    assert_eq!(since, "2026-10-19 00:10:00");
+    h.close();
+    // A Starting Time that fits says nothing.
+    let h = spawn("2026-10-19 01:10:00");
+    std::thread::sleep(Duration::from_millis(2_500));
+    while let Ok(e) = h.events.try_recv() {
+        assert!(!matches!(e, SourceEvent::StartTimeOverflow { .. }), "{e:?}");
+    }
+    h.close();
+}

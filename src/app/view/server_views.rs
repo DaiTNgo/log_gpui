@@ -479,6 +479,8 @@ impl AppView {
         let error = picker.error.clone();
         let input = picker.input.clone();
         let filter_input = picker.filter_input.clone();
+        let start_input = picker.start_input.clone();
+        let start_error = self.picker_start_error();
         let tab = picker.tab;
         let on_files = tab == PickerTab::Files;
         let can_add_command = !on_files
@@ -635,6 +637,12 @@ impl AppView {
                                     .on_click(cx.listener(|this, _, _, cx| this.picker_add_typed(cx))),
                             ),
                     ))
+                    .when(on_files, |this| {
+                        this.child(div().child(
+                            start_input.map(|i| Input::new(&i).into_any_element()).unwrap_or_else(|| div().into_any_element()),
+                        ))
+                        .when_some(start_error.clone(), |this, e| this.child(div().text_xs().text_color(danger).child(e)))
+                    })
                     .when(on_files, |this| this.when_some(error, |this, e| this.child(div().text_xs().text_color(danger).child(e))))
                     .when(on_files && count > 0, |this| this.child(staged))
                     .child(
@@ -654,7 +662,7 @@ impl AppView {
                                         (n, 0) => format!("Add {n} files"),
                                         (n, g) => format!("Add {n} items ({g} Live Glob{})", if g == 1 { "" } else { "s" }),
                                     })
-                                    .disabled(count == 0)
+                                    .disabled(count == 0 || start_error.is_some())
                                     .on_click(cx.listener(|this, _, _, cx| this.picker_confirm(cx))),
                             ))
                             .when(!on_files, |this| this.child(
