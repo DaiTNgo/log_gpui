@@ -23,6 +23,7 @@ impl AppView {
 
     pub fn open_new_space_dialog(&mut self, cx: &mut Context<Self>) {
         self.remote.new_space_files.clear();
+        self.remote.new_space_globs.clear();
         self.remote.new_space_commands.clear();
         self.new_space = Some(NewSpaceDialog {
             form: NewLogSpaceForm::new(),
@@ -63,6 +64,7 @@ impl AppView {
     pub fn new_space_cancel(&mut self, cx: &mut Context<Self>) {
         self.new_space = None;
         self.remote.new_space_files.clear();
+        self.remote.new_space_globs.clear();
         self.remote.new_space_commands.clear();
         cx.notify();
     }
@@ -123,11 +125,15 @@ impl AppView {
             return;
         }
         let name = dialog.form.name.clone();
-        if !self.remote.new_space_files.is_empty() || !self.remote.new_space_commands.is_empty() {
+        if !self.remote.new_space_files.is_empty()
+            || !self.remote.new_space_globs.is_empty()
+            || !self.remote.new_space_commands.is_empty()
+        {
             let files = std::mem::take(&mut self.remote.new_space_files);
+            let globs = std::mem::take(&mut self.remote.new_space_globs);
             let commands = std::mem::take(&mut self.remote.new_space_commands);
             self.new_space = None;
-            self.create_remote_log_space(&name, files, commands, cx);
+            self.create_remote_log_space(&name, files, globs, commands, cx);
             return;
         }
         let sources = dialog.form.importable_sources();
@@ -137,12 +143,14 @@ impl AppView {
     }
 
     /// Create a Remote Log Space with files on Servers, given as
-    /// `(server id, server name, path)`, and commands, given as `(server id,
+    /// `(server id, server name, path)`, Live Globs, given as `(server id,
+    /// server name, folder, pattern)`, and commands, given as `(server id,
     /// server name, command, preset)`, and open it.
     pub fn create_remote_log_space(
         &mut self,
         name: &str,
         files: Vec<(String, String, String)>,
+        globs: Vec<(String, String, String, String)>,
         commands: Vec<(String, String, String, Option<crate::remote::PresetFields>)>,
         cx: &mut Context<Self>,
     ) -> Option<String> {
@@ -158,11 +166,15 @@ impl AppView {
                 }
             };
             let _ = space.add_remote_files(&files);
+            for (server_id, _, dir, pattern) in &globs {
+                let _ = space.add_live_glob(server_id, dir, pattern);
+            }
             let _ = space.add_remote_commands(&commands);
             space.id.clone()
         };
         self.expanded_spaces.insert(space_id.clone());
         self.open_log_space_tab(&space_id, cx);
+        self.sync_glob_watchers(cx);
         Some(space_id)
     }
 
@@ -546,8 +558,13 @@ impl AppView {
     /// Carry out the confirmed deletion.
     pub fn accept_confirm(&mut self, cx: &mut Context<Self>) {
         let Some(action) = self.confirm.take() else { return };
+        if let ConfirmAction::ClearFiles { file_ids, .. } = &action {
+            self.clear_files_now(file_ids, cx);
+            return;
+        }
         self.persist_active_session();
         match action {
+            ConfirmAction::ClearFiles { .. } => {}
             ConfirmAction::DeleteLogSpace { space_id } => {
                 let removed = self
                     .active_project_mut()

@@ -6,7 +6,7 @@
 use crate::app::AppView;
 use crate::app::raw::RawSection;
 use crate::density::Density;
-use crate::focus::{FocusFind, FocusRow};
+use crate::focus::{FocusFind, FocusPaneNotice, FocusRow};
 use crate::highlight::RowPaint;
 use crate::marker::{TextMarker, level_marker};
 use crate::model::{LogEntry, LogLevel};
@@ -25,7 +25,7 @@ use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::input::{Input, InputState};
 use gpui_component::scroll::ScrollableElement as _;
 use gpui_component::tag::Tag;
-use gpui_component::{ActiveTheme as _, Icon, Sizable as _, h_flex};
+use gpui_component::{ActiveTheme as _, Icon, Sizable as _, h_flex, v_flex};
 use gpui_kit::assets::IconName;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -87,7 +87,7 @@ pub struct PaneState<'a> {
     /// Source File names are shown (a Log Space of several files).
     pub show_source: bool,
     /// Text of the empty pane, when there is nothing to list.
-    pub hint: Option<&'static str>,
+    pub notice: Option<FocusPaneNotice>,
     pub density: Density,
     pub colors: CanvasColors,
     pub scroll_handle: &'a UniformListScrollHandle,
@@ -163,7 +163,7 @@ impl FocusPane {
                 }),
         );
 
-        let (find_cur, find_total) = state.find.display();
+        let find_label = state.find.label();
         let find_error = state.find.parse_error.is_some();
         let (v_prev, v_next, v_hide) = (state.view.clone(), state.view.clone(), state.view.clone());
         let v_detach = state.view.clone();
@@ -208,7 +208,7 @@ impl FocusPane {
                     .icon(IconName::ChevronDown)
                     .on_click(move |_, _w, cx| v_next.update(cx, |this, cx| this.focus_find_next(cx))),
             )
-            .child(div().min_w(px(40.0)).text_xs().text_color(muted).child(format!("{find_cur}/{find_total}")))
+            .child(div().min_w(px(40.0)).text_xs().text_color(muted).child(find_label))
             .map(|this| match state.mode {
                 PaneMode::Docked => this
                     .child(
@@ -278,16 +278,34 @@ impl FocusPane {
         let body = if !expanded {
             div().into_any_element()
         } else if state.rows.is_empty() {
-            match state.hint {
-                Some(hint) => div()
-                    .flex_1()
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .text_sm()
-                    .text_color(muted)
-                    .child(hint)
-                    .into_any_element(),
+            match &state.notice {
+                Some(notice) => {
+                    let v_clear = state.view.clone();
+                    v_flex()
+                        .flex_1()
+                        .items_center()
+                        .justify_center()
+                        .gap_1()
+                        .child(div().text_sm().text_color(if *notice == FocusPaneNotice::Hint {
+                            muted
+                        } else {
+                            cx.theme().foreground
+                        }).child(notice.title()))
+                        .when_some(notice.detail(), |this, detail| {
+                            this.child(div().text_xs().text_color(muted).child(detail))
+                        })
+                        .when(notice.offers_clear_filter(), |this| {
+                            this.child(
+                                Button::new("focus-pane-clear-filter")
+                                    .small()
+                                    .label("Clear Filter")
+                                    .on_click(move |_, _w, cx| {
+                                        v_clear.update(cx, |this, cx| this.filter_clear_all(cx))
+                                    }),
+                            )
+                        })
+                        .into_any_element()
+                }
                 None => div().flex_1().into_any_element(),
             }
         } else {
@@ -566,7 +584,7 @@ impl PaneRows {
                     )
                 })
                 .when_some(break_label, |row, label| {
-                    row.child(crate::ui::canvas::render_break(label, px(NUMBER_WIDTH + 8.0), &colors))
+                    row.child(crate::ui::canvas::render_break(label, px(NUMBER_WIDTH + 8.0), &colors, None))
                 }),
         )
     }

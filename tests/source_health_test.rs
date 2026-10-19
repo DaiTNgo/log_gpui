@@ -6,7 +6,7 @@ fn at(secs: u64) -> SystemTime {
 }
 
 fn append() -> SourceEvent {
-    SourceEvent::Append { lines: vec!["x".into()], streams: None }
+    SourceEvent::Append { lines: vec!["x".into()], bytes: vec![], streams: None }
 }
 
 #[test]
@@ -24,7 +24,7 @@ fn a_remote_file_counts_its_reconnects_and_remembers_when_the_last_line_came() {
 #[test]
 fn an_empty_batch_is_not_a_line() {
     let mut h = SourceHealth::default();
-    h.observe(&SourceEvent::Append { lines: vec![], streams: None }, at(5));
+    h.observe(&SourceEvent::Append { lines: vec![], bytes: vec![], streams: None }, at(5));
     assert_eq!(h.last_line_at, None);
 }
 

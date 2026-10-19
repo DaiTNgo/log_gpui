@@ -3,9 +3,13 @@
 pub mod browse;
 pub mod command;
 pub mod download;
+pub mod glob_plan;
+pub mod glob_watcher;
 pub mod health;
 pub mod hub;
 pub mod known_hosts;
+pub mod picker_state;
+pub mod rotated;
 pub mod secrets;
 pub mod server;
 

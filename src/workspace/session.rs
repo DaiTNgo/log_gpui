@@ -21,6 +21,13 @@ pub struct SessionManifest {
     /// Newest lines kept for each Remote File.
     #[serde(default = "crate::workspace::state::default_live_window")]
     pub live_window: usize,
+    /// Lines one Load More reads.
+    #[serde(default = "crate::workspace::state::default_load_more_step")]
+    pub load_more_step: usize,
+    #[serde(default = "crate::workspace::state::default_glob_limit")]
+    pub live_glob_limit: usize,
+    #[serde(default = "crate::workspace::state::default_glob_interval")]
+    pub live_glob_interval: u64,
     #[serde(default)]
     pub density: crate::density::Density,
     #[serde(default = "crate::workspace::state::default_true")]
@@ -84,6 +91,9 @@ impl SessionManifest {
             focus_pane: ws.focus_pane.clone(),
             match_colors: ws.match_colors,
             live_window: ws.live_window,
+            load_more_step: ws.load_more_step,
+            live_glob_limit: ws.live_glob_limit,
+            live_glob_interval: ws.live_glob_interval,
             density: ws.density,
             show_minimap: ws.show_minimap,
             raw_soft_wrap: ws.raw_soft_wrap,
@@ -111,6 +121,9 @@ impl SessionManifest {
         ws.focus_pane = self.focus_pane;
         ws.match_colors = self.match_colors;
         ws.live_window = self.live_window;
+        ws.load_more_step = self.load_more_step;
+        ws.live_glob_limit = self.live_glob_limit;
+        ws.live_glob_interval = self.live_glob_interval;
         ws.density = self.density;
         ws.show_minimap = self.show_minimap;
         ws.raw_soft_wrap = self.raw_soft_wrap;

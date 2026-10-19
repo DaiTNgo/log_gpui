@@ -144,6 +144,12 @@ impl State {
             SourceCommand::Close => return Wake::Closed,
             SourceCommand::Restart => return Wake::Restart,
             SourceCommand::Reconnect => return Wake::Reconnect,
+            // The app drops the lines it holds; the command goes on, numbers
+            // keep counting. A command has no older lines to load.
+            SourceCommand::Clear | SourceCommand::CancelLoadMore => {}
+            SourceCommand::LoadMore { .. } => {
+                let _ = events.try_send(SourceEvent::OlderUnavailable);
+            }
             SourceCommand::Pause => self.paused = true,
             SourceCommand::Resume => {
                 self.paused = false;
@@ -198,7 +204,7 @@ impl State {
 fn send_lines(events: &Sender<SourceEvent>, batch: Vec<(Stream, String)>) {
     let streams: StreamMask = batch.iter().map(|(s, _)| *s).collect();
     let lines: Vec<String> = batch.into_iter().map(|(_, l)| l).collect();
-    let _ = events.try_send(SourceEvent::Append { lines, streams: Some(streams) });
+    let _ = events.try_send(SourceEvent::Append { lines, bytes: Vec::new(), streams: Some(streams) });
 }
 
 impl RemoteCommandSource {

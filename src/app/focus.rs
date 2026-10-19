@@ -3,7 +3,7 @@
 
 use super::AppView;
 use crate::app::raw::RawSection;
-use crate::focus::{FocusRow, LineRef, compute_focus_rows, nearest_row_before};
+use crate::focus::{FocusPaneNotice, FocusRow, LineRef, compute_focus_rows, nearest_row_before};
 use crate::search::SearchState;
 use crate::workspace::state::FocusPaneState;
 use crate::workspace::working_set::ViewMode;
@@ -374,6 +374,28 @@ impl AppView {
     /// there is something to list.
     /// Whether there is anything to list: a Filter (Parsed View) or a Search
     /// Expression in any Focus Tab. The pane is not shown without it.
+    /// What the Focus Pane says while it lists no lines; `None` when it
+    /// lists some.
+    pub fn focus_pane_notice(&self) -> Option<FocusPaneNotice> {
+        if !self.focus_rows.is_empty() {
+            return None;
+        }
+        let filtering = self.view_mode == ViewMode::Parsed && self.filter_state.active_count() > 0;
+        let search = self.focus.search();
+        let expression = search.matcher.is_some().then_some(search.query.as_str());
+        Some(FocusPaneNotice::for_empty_pane(expression, filtering, self.filter_pass.is_empty()))
+    }
+
+    /// The Match counter beside the Search field.
+    pub fn match_counter_label(&self) -> String {
+        let display = if self.view_mode == ViewMode::Raw {
+            self.raw.match_display()
+        } else {
+            self.focus.search().current_match_display()
+        };
+        SearchState::counter_label(self.focus.search().matcher.is_some(), display)
+    }
+
     pub fn focus_pane_has_content(&self) -> bool {
         let filtering = self.view_mode == ViewMode::Parsed && self.filter_state.active_count() > 0;
         filtering || self.focus.tabs.iter().any(|t| t.search.matcher.is_some())

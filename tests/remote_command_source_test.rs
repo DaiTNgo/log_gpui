@@ -105,7 +105,7 @@ fn lines_until(h: &SourceHandle, mut stop: impl FnMut(&SourceEvent) -> bool) -> 
     let deadline = Instant::now() + Duration::from_secs(15);
     loop {
         match h.events.try_recv() {
-            Ok(SourceEvent::Append { lines, streams }) => {
+            Ok(SourceEvent::Append { lines, streams, .. }) => {
                 let streams = streams.expect("a command says its streams");
                 assert_eq!(streams.len(), lines.len());
                 for (i, line) in lines.into_iter().enumerate() {

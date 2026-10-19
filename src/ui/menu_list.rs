@@ -4,6 +4,7 @@
 //! inside it without inheriting the item's padding and gaps. Custom entries let the
 //! renaming row render an input that fills the row exactly.
 
+use gpui::prelude::FluentBuilder as _;
 use gpui::{App, IntoElement, ParentElement, Styled, Window, div, px};
 use gpui_component::sidebar::{SidebarItem, SidebarMenu, SidebarMenuItem};
 use gpui_component::{Collapsible, v_flex};
@@ -20,6 +21,8 @@ enum Entry {
     Item(SidebarMenuItem),
     /// A menu item indented under the row above it (a file under its Log Space).
     Nested(SidebarMenuItem),
+    /// A file under a Live Glob row: indented one more level, dimmed when gone.
+    Grouped { item: SidebarMenuItem, dim: bool },
     Custom(CustomRow),
 }
 
@@ -41,6 +44,12 @@ impl MenuList {
 
     pub fn nested_child(mut self, item: SidebarMenuItem) -> Self {
         self.entries.push(Entry::Nested(item));
+        self
+    }
+
+    /// An item inside a group row (a Live Glob), dimmed when `dim`.
+    pub fn grouped_child(mut self, item: SidebarMenuItem, dim: bool) -> Self {
+        self.entries.push(Entry::Grouped { item, dim });
         self
     }
 
@@ -93,6 +102,17 @@ impl SidebarItem for MenuList {
                         .h(px(ROW_HEIGHT))
                         .flex_shrink_0()
                         .pl_5()
+                        .child(SidebarMenu::new().child(item).collapsed(collapsed).render(
+                            format!("{}-{}", id, ix),
+                            window,
+                            cx,
+                        ))
+                        .into_any_element(),
+                    Entry::Grouped { item, dim } => div()
+                        .h(px(ROW_HEIGHT))
+                        .flex_shrink_0()
+                        .pl_10()
+                        .when(dim, |d| d.opacity(0.5))
                         .child(SidebarMenu::new().child(item).collapsed(collapsed).render(
                             format!("{}-{}", id, ix),
                             window,

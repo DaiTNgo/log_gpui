@@ -71,10 +71,7 @@ impl AppView {
                 PaneSource::Raw { sections: Arc::new(sections), markers: Arc::new(markers) }
             }
         };
-        let filtering = self.view_mode == ViewMode::Parsed && self.filter_state.active_count() > 0;
-        let hint = (self.focus.search().matcher.is_none() && !filtering).then_some(
-            "Type a Search Expression, or pick a Filter, to list lines here",
-        );
+        let notice = self.focus_pane_notice();
         let longest = self.focus_longest;
         PaneState {
             view,
@@ -97,7 +94,7 @@ impl AppView {
             source,
             selected: self.pane_selected_index(),
             show_source: self.pane_shows_source(),
-            hint,
+            notice,
             density: self.density,
             colors,
             scroll_handle: &self.focus_scroll,

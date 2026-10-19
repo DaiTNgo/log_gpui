@@ -54,6 +54,9 @@ pub enum PaletteAction {
     ShowHighlights,
     ToggleFocusPane,
     MoveFocusToWindow,
+    ClearFile,
+    LoadMore,
+    BackToLiveWindow,
 }
 
 impl CommandPalette {
@@ -128,6 +131,21 @@ impl CommandPalette {
                 name: "Live: Toggle Pause",
                 shortcut: "",
                 action: PaletteAction::TogglePause,
+            },
+            PaletteCommand {
+                name: "Live: Clear File",
+                shortcut: "⌘⇧K",
+                action: PaletteAction::ClearFile,
+            },
+            PaletteCommand {
+                name: "Live: Load More Older Lines",
+                shortcut: "⌘⇧↑",
+                action: PaletteAction::LoadMore,
+            },
+            PaletteCommand {
+                name: "Live: Back to Live Window",
+                shortcut: "",
+                action: PaletteAction::BackToLiveWindow,
             },
             PaletteCommand {
                 name: "Inspector: Toggle Slide-out Inspector",

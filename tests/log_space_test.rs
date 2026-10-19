@@ -264,3 +264,90 @@ fn a_line_with_several_markers_loses_them_all_when_edited() {
     assert_eq!(file.markers.len(), 2);
     assert_eq!(file.prune_markers(&["alpha beta!"]), 2);
 }
+
+
+// ─── Live Globs ──────────────────────────────────────────────────────────────
+
+fn remote_space() -> LogSpace {
+    LogSpace::new("r".into(), "Prod".into(), LogSpaceKind::Remote)
+}
+
+fn remote(sid: &str, path: &str) -> (String, String, String) {
+    (sid.to_string(), "web1".to_string(), path.to_string())
+}
+
+#[test]
+fn a_live_glob_is_added_once_per_server_and_pattern() {
+    use log_gpui::workspace::log_space::AddGlobError;
+    let mut space = remote_space();
+    let id = space.add_live_glob("s1", "/var/log/app", "*.log").unwrap();
+    assert_eq!(space.glob(&id).unwrap().full_pattern(), "/var/log/app/*.log");
+    assert_eq!(space.add_live_glob("s1", "/var/log/app", "*.log"), Err(AddGlobError::Duplicate));
+    assert!(space.add_live_glob("s2", "/var/log/app", "*.log").is_ok());
+    assert!(space.add_live_glob("s1", "/var/log/app", "*.txt").is_ok());
+    let mut imported = imported(&[]);
+    assert_eq!(imported.add_live_glob("s1", "/x", "*"), Err(AddGlobError::WrongKind));
+}
+
+#[test]
+fn files_a_glob_found_keep_their_first_origin() {
+    let mut space = remote_space();
+    space.add_remote_files(&[remote("s1", "/var/log/app/a.log")]).unwrap();
+    let id = space.add_live_glob("s1", "/var/log/app", "*.log").unwrap();
+    let paths = vec!["/var/log/app/a.log".to_string(), "/var/log/app/b.log".to_string()];
+    let added = space.add_glob_files(&id, "web1", &paths);
+    assert_eq!(added.added, vec!["remote:s1:/var/log/app/b.log".to_string()]);
+    let a = space.file("remote:s1:/var/log/app/a.log").unwrap();
+    assert_eq!(a.from_glob, None);
+    assert_eq!(space.file("remote:s1:/var/log/app/b.log").unwrap().from_glob.as_deref(), Some(id.as_str()));
+}
+
+#[test]
+fn removing_a_glob_file_excludes_its_path_and_adding_it_again_restores_it() {
+    let mut space = remote_space();
+    let id = space.add_live_glob("s1", "/var/log/app", "*.log").unwrap();
+    space.add_glob_files(&id, "web1", &["/var/log/app/debug.log".to_string()]);
+    space.remove_file("remote:s1:/var/log/app/debug.log").unwrap();
+    assert_eq!(space.glob(&id).unwrap().excluded, vec!["/var/log/app/debug.log".to_string()]);
+    // The same path on another Server is not the glob's.
+    let outcome = space.add_remote_files(&[remote("s2", "/var/log/app/debug.log")]).unwrap();
+    assert_eq!(outcome.added.len(), 1);
+    assert_eq!(space.glob(&id).unwrap().excluded.len(), 1);
+    // The exact path on the same Server comes back into the group.
+    space.add_remote_files(&[remote("s1", "/var/log/app/debug.log")]).unwrap();
+    assert!(space.glob(&id).unwrap().excluded.is_empty());
+    assert_eq!(space.file("remote:s1:/var/log/app/debug.log").unwrap().from_glob.as_deref(), Some(id.as_str()));
+}
+
+#[test]
+fn removing_a_glob_keeps_files_added_by_path() {
+    let mut space = remote_space();
+    space.add_remote_files(&[remote("s1", "/var/log/app/a.log")]).unwrap();
+    let id = space.add_live_glob("s1", "/var/log/app", "*.log").unwrap();
+    space.add_glob_files(&id, "web1", &["/var/log/app/a.log".to_string(), "/var/log/app/b.log".to_string()]);
+    let removed = space.remove_live_glob(&id);
+    assert_eq!(removed.len(), 1);
+    assert!(space.has_file("remote:s1:/var/log/app/a.log"));
+    assert!(!space.has_file("remote:s1:/var/log/app/b.log"));
+    assert!(space.globs.is_empty());
+}
+
+#[test]
+fn stopping_a_glob_is_remembered_in_the_project_file() {
+    let mut space = remote_space();
+    let id = space.add_live_glob("s1", "/var/log/app", "*.log").unwrap();
+    space.add_glob_files(&id, "web1", &["/var/log/app/a.log".to_string()]);
+    space.set_glob_stopped(&id, true);
+    let json = serde_json::to_string(&space).unwrap();
+    let back: LogSpace = serde_json::from_str(&json).unwrap();
+    assert!(back.glob(&id).unwrap().stopped);
+    assert_eq!(back.glob_files(&id).len(), 1);
+}
+
+#[test]
+fn an_old_space_without_globs_still_loads() {
+    let old = r#"{"id":"r","name":"Prod","kind":"Remote","files":[{"file_id":"remote:s1:/a.log","display_name":"web1:/a.log","path":null,"remote":{"server_id":"s1","path":"/a.log"}}]}"#;
+    let space: LogSpace = serde_json::from_str(old).unwrap();
+    assert!(space.globs.is_empty());
+    assert_eq!(space.files[0].from_glob, None);
+}

@@ -54,7 +54,7 @@ impl Render for AppView {
         let has_files = self.active_space().is_some_and(|s| !s.files.is_empty());
         let colors = self.canvas_colors(cx);
         let parsed = self.active_tab_is_log_file() && has_files && self.view_mode == ViewMode::Parsed;
-        let log_canvas = if !self.active_tab_is_log_file() || !has_files {
+        let log_canvas = if self.empty_canvas().is_some() {
             self.render_empty_state(cx)
         } else if self.view_mode == ViewMode::Raw {
             self.render_raw_view(cx)
@@ -100,6 +100,7 @@ impl Render for AppView {
         let command_palette = CommandPalette::render(self.is_palette_open, cx);
         let new_space_dialog = self.render_new_space_dialog(cx);
         let confirm = self.render_confirm(cx);
+        let custom_load = self.render_custom_load(cx);
         let host_key_dialog = self.render_host_key_dialog(cx);
         let secret_dialog = self.render_secret_dialog(cx);
         let servers_dialog = self.render_servers_dialog(cx);
@@ -125,6 +126,7 @@ impl Render for AppView {
             self.renaming.as_ref(),
             &self.expanded_spaces,
             &self.no_timestamp_files,
+            &self.sidebar_globs(),
             cx,
         );
 
@@ -198,6 +200,7 @@ impl Render for AppView {
             .child(project_switcher)
             .child(new_space_dialog)
             .child(confirm)
+            .child(custom_load)
             .child(servers_dialog)
             .child(remote_picker)
             .child(download_panel)

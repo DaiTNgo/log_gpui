@@ -1,6 +1,8 @@
 //! UI: status bar built from the gpui-kit `StatusBar`.
 
 use super::AppView;
+use crate::app::format_count;
+use crate::live::SourceStatus;
 use gpui::{Context, IntoElement};
 use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::popover::Popover;
@@ -22,18 +24,26 @@ impl AppView {
         Some((label, list))
     }
 
+    /// The plain labels on the left of the status bar, in order.
+    pub fn status_bar_labels(&self) -> Vec<String> {
+        let total_count = self.all_entries.len();
+        let current_line_num = self.current_line().map(|l| l.line).unwrap_or(0);
+        vec![
+            format!("Ln {current_line_num}"),
+            format!("{} lines", format_count(total_count)),
+            // How many lines the open Focus Tab lists, out of every line.
+            format!("Focus {} of {}", self.focus_rows.len(), total_count),
+            "UTF-8".to_string(),
+        ]
+    }
+
     /// Status bar: line number, event counts, filter ratio, focus tag, and the
     /// live state (Follow, Pause and the connection) of the open Log Space.
     pub(super) fn render_status_bar(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
-        let total_count = self.all_entries.len();
-        let current_line_num = self.current_line().map(|l| l.line).unwrap_or(0);
-        // How many lines the open Focus Tab lists, out of every line.
-        let focus_label = format!("Focus {} of {}", self.focus_rows.len(), total_count);
-        let mut bar = StatusBar::new()
-            .left(format!("Ln {}", current_line_num))
-            .left(format!("{},{:03} events", total_count / 1000, total_count % 1000))
-            .left(focus_label)
-            .left("UTF-8");
+        let mut bar = StatusBar::new();
+        for label in self.status_bar_labels() {
+            bar = bar.left(label);
+        }
 
         if !self.active_space_is_live() {
             return bar.into_any_element();
@@ -53,6 +63,16 @@ impl AppView {
                 }
                 None => bar.right(trigger.tooltip(list)),
             };
+        }
+        let pending = self.glob_pending_notes();
+        if !pending.is_empty() {
+            bar = bar.right(
+                Button::new("status-glob-pending")
+                    .ghost()
+                    .xsmall()
+                    .label(pending[0].clone())
+                    .tooltip(pending.join("\n")),
+            );
         }
         if let Some((label, action)) = self.connect_button() {
             bar = bar.right(

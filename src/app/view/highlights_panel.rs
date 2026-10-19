@@ -168,7 +168,8 @@ impl AppView {
                 card = card.child(div().text_xs().text_color(muted).child("Rows whose message contains the added text."));
             } else if let Some(col) = self.filter_index.column(key) {
                 let view = cx.entity();
-                let mut list = v_flex().w_full().max_h(px(160.0)).overflow_y_hidden().gap_0p5();
+                // No height cap: the panel scrolls, like the Filter value list.
+                let mut list = v_flex().w_full().gap_0p5();
                 for (vix, value) in col.values.iter().enumerate() {
                     let display = value.display.clone();
                     let checked = form.values.iter().any(|v| *v == value.display);

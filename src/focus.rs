@@ -53,6 +53,59 @@ impl From<LineRef> for LineRefRepr {
     }
 }
 
+/// What the Focus Pane says when it lists no lines.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FocusPaneNotice {
+    /// Nothing narrows the pane yet.
+    Hint,
+    /// The Search Expression matches none of the lines that pass Filter.
+    NoMatches { expression: String, filtering: bool },
+    /// Filter alone leaves no line (only in the Parsed View).
+    FilterExcludesAll,
+}
+
+impl FocusPaneNotice {
+    /// The notice for an empty pane. `expression` is the Search Expression
+    /// in use, if any; `filtering` whether Filter narrows the pane (Parsed
+    /// View with an active Filter); `filter_passes_none` whether no line
+    /// passes that Filter.
+    pub fn for_empty_pane(expression: Option<&str>, filtering: bool, filter_passes_none: bool) -> Self {
+        if filtering && filter_passes_none {
+            return Self::FilterExcludesAll;
+        }
+        match expression {
+            Some(expression) => Self::NoMatches { expression: expression.trim().to_string(), filtering },
+            None if filtering => Self::FilterExcludesAll,
+            None => Self::Hint,
+        }
+    }
+
+    pub fn title(&self) -> String {
+        match self {
+            Self::Hint => "Type a Search Expression, or pick a Filter, to list lines here".into(),
+            Self::NoMatches { expression, .. } => format!("No lines match \u{201c}{expression}\u{201d}"),
+            Self::FilterExcludesAll => "The Filter excludes every line".into(),
+        }
+    }
+
+    /// What to try next, under the title.
+    pub fn detail(&self) -> Option<&'static str> {
+        match self {
+            Self::Hint => None,
+            Self::NoMatches { filtering: false, .. } => Some("Check the Search Expression for a typo."),
+            Self::NoMatches { filtering: true, .. } => {
+                Some("Check the Search Expression for a typo, or loosen the Filter.")
+            }
+            Self::FilterExcludesAll => Some("Loosen the Filter, or clear it to list every line."),
+        }
+    }
+
+    /// Whether the notice offers Clear Filter.
+    pub fn offers_clear_filter(&self) -> bool {
+        matches!(self, Self::FilterExcludesAll | Self::NoMatches { filtering: true, .. })
+    }
+}
+
 /// One line a Focus Tab lists. Rows of one list are all `Entry` (Parsed View)
 /// or all `Raw` (Raw View), and are kept in view order, which is also the
 /// derived ordering.
@@ -132,6 +185,21 @@ impl FocusFind {
     /// `(selected, total)`, `(0, 0)` without hits.
     pub fn display(&self) -> (usize, usize) {
         if self.hits.is_empty() { (0, 0) } else { (self.current + 1, self.hits.len()) }
+    }
+
+    /// Whether an expression is in use (typed and parsed at least once).
+    pub fn is_active(&self) -> bool {
+        self.matcher.is_some()
+    }
+
+    /// The counter beside the Focus Find field: "–" with nothing to find,
+    /// "No matches" when the expression finds nothing, else "3/12".
+    pub fn label(&self) -> String {
+        match (self.is_active(), self.display()) {
+            (false, _) => "–".into(),
+            (true, (_, 0)) => "No matches".into(),
+            (true, (cur, total)) => format!("{cur}/{total}"),
+        }
     }
 
     /// Row position of the selected hit.

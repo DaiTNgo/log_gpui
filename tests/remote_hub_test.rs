@@ -124,17 +124,34 @@ fn browsing_and_resolving_what_the_user_typed() {
         let list = list_dir(&sftp, &root).await?;
         let names: Vec<(String, bool)> = list.iter().map(|e| (e.name.clone(), e.is_dir)).collect();
         assert_eq!(names, vec![("sub".into(), true), ("a.log".into(), false), ("b.log".into(), false), ("c.txt".into(), false)]);
-        let globbed = resolve_input(&sftp, &format!("{root}/*.log")).await?;
-        assert_eq!(globbed, vec![format!("{root}/a.log"), format!("{root}/b.log")]);
-        // A file made after the glob is not added by it: matching is once.
-        assert_eq!(resolve_input(&sftp, &format!("{root}/a.log")).await?, vec![format!("{root}/a.log")]);
+        // A glob is a Live Glob: it only needs its folder, not a match.
+        assert_eq!(
+            resolve_input(&sftp, &format!("{root}/*.log")).await?,
+            Resolved::Glob { dir: root.clone(), pattern: "*.log".into() }
+        );
+        assert_eq!(
+            resolve_input(&sftp, &format!("{root}/*.nothing")).await?,
+            Resolved::Glob { dir: root.clone(), pattern: "*.nothing".into() }
+        );
+        assert_eq!(
+            resolve_input(&sftp, &format!("{root}/a.log")).await?,
+            Resolved::Files(vec![format!("{root}/a.log")])
+        );
         // Not there yet, folder there: accepted.
-        assert_eq!(resolve_input(&sftp, &format!("{root}/today.log")).await?, vec![format!("{root}/today.log")]);
+        assert_eq!(
+            resolve_input(&sftp, &format!("{root}/today.log")).await?,
+            Resolved::Files(vec![format!("{root}/today.log")])
+        );
         // Folder missing: refused.
         let err = resolve_input(&sftp, &format!("{root}/no/such/app.log")).await.unwrap_err();
         assert!(err.contains("does not exist"), "{err}");
-        assert!(resolve_input(&sftp, &format!("{root}/sub")).await.is_err());
-        assert!(resolve_input(&sftp, &format!("{root}/*.nothing")).await.is_err());
+        let err = resolve_input(&sftp, &format!("{root}/no/such/*.log")).await.unwrap_err();
+        assert!(err.contains("does not exist"), "{err}");
+        // A folder is opened, not refused.
+        assert_eq!(resolve_input(&sftp, &format!("{root}/sub")).await?, Resolved::Dir(format!("{root}/sub")));
+        assert_eq!(resolve_input(&sftp, &format!("{root}/sub/")).await?, Resolved::Dir(format!("{root}/sub")));
+        // A glob in the folder part is refused.
+        assert!(resolve_input(&sftp, &format!("{root}/*/app.log")).await.is_err());
         assert!(resolve_input(&sftp, "relative.log").await.is_err());
         Ok::<_, String>(())
     });

@@ -140,7 +140,7 @@ fn source(path: &std::path::Path, offset: u64) -> SourceHandle {
 }
 
 fn appended(lines: &[&str]) -> SourceEvent {
-    SourceEvent::Append { lines: lines.iter().map(|s| s.to_string()).collect(), streams: None }
+    SourceEvent::Append { lines: lines.iter().map(|s| s.to_string()).collect(), bytes: Vec::new(), streams: None }
 }
 
 #[test]

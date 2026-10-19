@@ -40,6 +40,12 @@ pub enum BreakKind {
     /// This many lines of a Remote Command, output while Paused, did not fit
     /// the Live Window and were dropped; their numbers are not reused.
     Skipped(u32),
+    /// The user cleared the file.
+    Cleared,
+    /// The first line held is not the first line of its Generation.
+    StartOfLoaded,
+    /// Load More found the file on the Server changed under the held lines.
+    Changed,
 }
 
 impl BreakKind {
@@ -56,6 +62,9 @@ impl BreakKind {
             BreakKind::Resumed(_) => "reconnected",
             BreakKind::ClockWentBack => "server clock went back, lines may be repeated",
             BreakKind::Skipped(_) => "older lines left the window",
+            BreakKind::Cleared => "cleared",
+            BreakKind::StartOfLoaded => "start of loaded lines",
+            BreakKind::Changed => "earlier lines of this generation are no longer on the Server",
         }
     }
 
@@ -85,6 +94,8 @@ pub enum SourceStatus {
     /// A Remote Command exited (its exit code, `None` when it was killed by
     /// a signal) and has not been run again.
     Exited(Option<u32>),
+    /// A file of a Live Glob that no longer exists on its Server.
+    Gone,
     /// A password or passphrase is needed: waits for the user to Connect.
     NeedsSecret,
     Error(String),
@@ -95,6 +106,7 @@ impl SourceStatus {
     pub fn severity(&self) -> u8 {
         match self {
             SourceStatus::Live => 0,
+            SourceStatus::Gone => 0,
             SourceStatus::Connecting => 1,
             SourceStatus::WaitingForFile => 2,
             SourceStatus::Exited(_) => 3,
@@ -123,6 +135,7 @@ impl SourceStatus {
             SourceStatus::WaitingForFile => "Waiting for file".into(),
             SourceStatus::Exited(Some(code)) => format!("Exited (code {code})"),
             SourceStatus::Exited(None) => "Exited".into(),
+            SourceStatus::Gone => "Gone".into(),
             SourceStatus::NeedsSecret => "Waiting to connect".into(),
             SourceStatus::Error(message) => message.clone(),
         }
@@ -180,14 +193,25 @@ impl FromIterator<Stream> for StreamMask {
 /// What a source sends to the app.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SourceEvent {
-    /// The last lines of the file, shown at once.
-    Tail { lines: Vec<String>, generation: u32 },
+    /// The last lines of the file, shown at once. `bytes` is the length of
+    /// each line in the file, line end included (empty when not known), and
+    /// `end_offset` the offset just after the last of them.
+    Tail { lines: Vec<String>, generation: u32, bytes: Vec<u32>, end_offset: u64 },
     /// Lines older than everything received so far, inserted above.
-    Backfill { lines: Vec<String>, generation: u32 },
+    Backfill { lines: Vec<String>, generation: u32, bytes: Vec<u32> },
     /// New lines, each ended by a newline in the file. A Remote Command also
     /// says which output each line came from (`streams` is as long as
-    /// `lines`); a file has none.
-    Append { lines: Vec<String>, streams: Option<StreamMask> },
+    /// `lines`; a file has none) and has no `bytes`.
+    Append { lines: Vec<String>, bytes: Vec<u32>, streams: Option<StreamMask> },
+    /// Lines older than what is held, read because the user asked for more
+    /// (`LoadMore`), to go above the oldest held line, whose number is
+    /// `first_line_no`.
+    Older { generation: u32, lines: Vec<String>, bytes: Vec<u32>, reached_start: bool },
+    /// Load More could not read the lines above (the file changed, or the
+    /// Generation is not the one being read).
+    OlderUnavailable,
+    /// The inode of the file the lines now come from.
+    Inode(Option<u64>),
     /// The real number of complete lines before the first `Append`, once known
     /// (`None` when it could not be counted).
     TotalLines(Option<usize>),
@@ -207,6 +231,15 @@ pub enum SourceCommand {
     Pause,
     Resume,
     SetWindow(usize),
+    /// Stop reading older lines and never refill: the app dropped what it held.
+    Clear,
+    /// Read `lines` lines above `end_offset` of `generation`. `first_hash` is
+    /// the hash of the line that starts at `end_offset` (`None` when no line
+    /// is held there).
+    LoadMore { generation: u32, end_offset: u64, lines: usize, first_hash: Option<u64> },
+    /// Drop a Load More that was not started yet (a batch being read is
+    /// kept: it arrives as `Older`).
+    CancelLoadMore,
     /// Try again now (after Disconnected or an error the user has fixed).
     Reconnect,
     /// Run a Remote Command again from its start, ending the Run in progress.

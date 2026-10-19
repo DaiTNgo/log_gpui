@@ -40,6 +40,12 @@ impl SearchState {
         self.matched_visible_indices.len()
     }
 
+    /// The Match counter: "–" with no Search Expression in use, else
+    /// "cur/total" ("0/0" when it matched nothing).
+    pub fn counter_label(active: bool, (cur, total): (usize, usize)) -> String {
+        if active { format!("{cur}/{total}") } else { "–".into() }
+    }
+
     pub fn current_match_display(&self) -> (usize, usize) {
         let total = self.total_matches();
         if total == 0 {

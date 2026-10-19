@@ -51,8 +51,24 @@ A Log Space whose files live on servers reached over SSH. Its files are read-onl
 _Avoid_: SSH space, server space, remote tab.
 
 **Remote File**:
-A file of a Remote Log Space, named by its server and its path on that server.
+A file of a Remote Log Space, named by its server and its path on that server. A Remote File is either added by its path or brought in by a Live Glob.
 _Avoid_: SSH file, server log.
+
+**Live Glob**:
+A glob on one Server, kept by a Remote Log Space, whose matching files are the space's Remote Files, including files that appear after it was added. The glob may only be in the file name.
+_Avoid_: Wildcard, watch, pattern, auto-add.
+
+**Stopped Live Glob**:
+A Live Glob the user has stopped watching: the files it already brought keep reading live, but it adds no new matching files until the user resumes it. Stopping is not Pause: lines keep arriving.
+_Avoid_: Paused glob, frozen glob, disabled glob.
+
+**Gone**:
+The state of a Remote File that came from a Live Glob and no longer exists on its Server. Its lines stay until the Log Space is closed; it is not brought back when the Project is reopened.
+_Avoid_: Deleted, missing, stale.
+
+**Recent Paths**:
+The paths and Live Globs last added from one Server, offered again in the file picker. Kept per Server for the whole app.
+_Avoid_: History, bookmarks, favorites.
 
 **Live Window**:
 The newest lines a Remote Log Space holds, up to a set number of lines. Lines older than the window are no longer shown.
@@ -252,11 +268,15 @@ L7. **Live Status In The Status Bar**: The connection state of a Remote Log Spac
 L8. **Remote Clocks Are Not Adjusted**: Rule 19 holds across Servers: times from different Servers are compared as written, with no timezone or clock-skew correction.
 L9. **Readable Without Elevation**: A Remote File is read with the Server's own user. A file that user cannot read shows a permission error; the app never asks for elevated rights.
 L10. **Live Is A Window, Not An Archive**: A Remote Log Space may stay connected for as long as the user likes, but holds only its Live Window; the oldest lines leave as new ones arrive. Nothing received is kept after the Log Space is closed. To read a Remote File in full, the user downloads it and opens it as an Imported Log Space.
-L11. **Paths May Not Exist Yet**: A Remote File may be added before the file exists; it waits and starts reading when the file appears. A Server that cannot be reached or a folder that does not exist is refused when adding.
+L11. **Paths May Not Exist Yet**: A Remote File or Live Glob may be added before any file exists; it waits and starts reading when a file appears. A Server that cannot be reached or a folder that does not exist is refused when adding.
 L12. **Leaving The Window**: A line that leaves the Live Window loses its Marker, stops counting toward Filter Values, and a Break at the top of the view says older lines have left. A Filter Value with no lines left disappears unless it is ticked. A Focus Tab whose current line left moves to the oldest line still held.
 L13. **Window Per Remote File**: The Live Window size is one app-wide setting applied to each Remote File separately, so a busy file never pushes a quiet file's lines out. Imported Log Spaces have no Live Window, even while their files grow.
 L14. **Download For Full Reading**: A Remote File, or every file of a Remote Log Space at once, can be downloaded to a chosen folder and then opened as a new Imported Log Space. Only the current file is downloaded, not its rotated predecessors.
 L15. **Servers In Use Stay**: A Server cannot be deleted while a Remote Log Space or another Server's Jump Server uses it; the app lists what uses it instead.
+L20. **Globs Stay Live**: A Live Glob keeps adding the files that come to match it while the Log Space is open and when it is reopened. A matching file is never added twice; a Rotated File is never added as its own Remote File, since it is an earlier Generation of the file it belongs to (see Rotated File); a file already read under another name is never read again; and a file removed by the user is not added again by its Live Glob unless the user adds that exact path again. How many files one Live Glob reads at once and how often its folder is checked are app-wide settings. Each file it brings has its own Live Window (L13).
+L21. **Gone Is Not An Error**: A file of a Live Glob that disappears from its Server becomes Gone: its lines stay, a Break is drawn, and it does not count toward the worst state in the status bar. If a file appears again at the same path it continues as a new Generation (L5).
+L22. **One Pick, Many Servers**: A path or Live Glob picked once can be added on several Servers at once; each Server gets its own Remote File or Live Glob, named `<server>:<path>`.
+L23. **Stopping A Glob Keeps Its Files**: A Live Glob can be stopped and resumed. While stopped, its files keep reading live and can still become Gone, but no new matching file is added. Resuming checks the folder at once and reads files that appeared meanwhile from their start, within the Live Window. A stopped Live Glob stays stopped when the Project is reopened, and reopens only the files it already had that still exist.
 
 **Canvas, Search and Filter**
 

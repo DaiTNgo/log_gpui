@@ -1,6 +1,6 @@
 use gpui::px;
 use log_gpui::column::{
-    compute_column_width, ColumnLayoutState, FieldMaxChars, PinToggleState, PinnableColumn,
+    compute_column_width, header_width, ColumnLayoutState, FieldMaxChars, PinToggleState, PinnableColumn,
 };
 use log_gpui::model::{LogEntry, LogLevel};
 use log_gpui::density::Density;
@@ -131,16 +131,31 @@ fn test_dynamic_column_width_formula() {
     // Expected: 38 * 7.2 + 16.0 = 273.6 + 16.0 = 289.6 px
     let mod_width = compute_column_width(PinnableColumn::Module, 38, font_size, px(48.0));
     assert_eq!(mod_width, px(38.0 * char_width + 16.0));
-    // 3. Safety floor and title floor enforcement:
-    // 0 chars floored by title length so column headers never truncate
-    let floored_ts = compute_column_width(PinnableColumn::Timestamp, 0, font_size, px(48.0));
-    assert_eq!(floored_ts, px(9.0 * char_width + 16.0)); // 80.8px >= 48.0px
+    // 3. Safety floor and header floor: a column with no values is still
+    // wide enough for its whole Column Header label.
+    for (col, min) in [
+        (PinnableColumn::Timestamp, px(48.0)),
+        (PinnableColumn::Level, px(36.0)),
+        (PinnableColumn::Module, px(48.0)),
+    ] {
+        assert_eq!(compute_column_width(col, 0, font_size, min), px(header_width(col)), "{col:?}");
+    }
+}
 
-    let floored_lvl = compute_column_width(PinnableColumn::Level, 0, font_size, px(36.0));
-    assert_eq!(floored_lvl, px(5.0 * char_width + 24.0)); // 60.0px >= 36.0px
-
-    let floored_mod = compute_column_width(PinnableColumn::Module, 0, font_size, px(48.0));
-    assert_eq!(floored_mod, px(6.0 * char_width + 16.0)); // 59.2px >= 48.0px
+#[test]
+fn column_header_never_truncates() {
+    let font_size = Density::Compact.font_size();
+    for col in PinnableColumn::ALL {
+        let label = log_gpui::ui::mono::header_label_width(col);
+        // Empty column, and values shorter than the header.
+        for chars in [0, 2] {
+            let width = compute_column_width(col, chars, font_size, px(0.0));
+            assert!(f32::from(width) >= label + 8.0, "{col:?} with {chars} chars: {width:?}");
+        }
+    }
+    // Long values still widen the column past the header.
+    let wide = compute_column_width(PinnableColumn::Module, 40, font_size, px(0.0));
+    assert!(f32::from(wide) > header_width(PinnableColumn::Module));
 }
 
 #[test]
@@ -173,10 +188,11 @@ fn test_dynamic_width_across_densities() {
     assert_eq!(width_compact, px(25.0 * (0.6 * 12.0) + 16.0)); // 196.0px
     assert_eq!(width_ultra, px(25.0 * (0.6 * 11.0) + 16.0)); // 181.0px
 
-    // LEVEL column width also properly scales with density
-    let lvl_comfortable = compute_column_width(PinnableColumn::Level, 1, Density::Comfortable.font_size(), px(36.0));
-    let lvl_compact = compute_column_width(PinnableColumn::Level, 1, Density::Compact.font_size(), px(36.0));
-    let lvl_ultra = compute_column_width(PinnableColumn::Level, 1, Density::UltraCompact.font_size(), px(36.0));
+    // LEVEL column width also properly scales with density ("ERROR": 5
+    // chars, wider than the header, which keeps one size)
+    let lvl_comfortable = compute_column_width(PinnableColumn::Level, 5, Density::Comfortable.font_size(), px(36.0));
+    let lvl_compact = compute_column_width(PinnableColumn::Level, 5, Density::Compact.font_size(), px(36.0));
+    let lvl_ultra = compute_column_width(PinnableColumn::Level, 5, Density::UltraCompact.font_size(), px(36.0));
     assert!(lvl_comfortable > lvl_compact);
     assert!(lvl_compact > lvl_ultra);
     assert_eq!(lvl_comfortable, px(5.0 * (0.6 * 13.0) + 24.0)); // 63.0px

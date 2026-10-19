@@ -164,6 +164,10 @@ pub struct LogFile {
     /// For an Archive Entry, its path inside the Archive at `path`.
     #[serde(default)]
     pub entry: Option<String>,
+    /// The Live Glob that brought a Remote File in (`None` when it was added
+    /// by its path).
+    #[serde(default)]
+    pub from_glob: Option<String>,
     /// The file's current Generation, counted from 0 each time it is opened
     /// and raised on every rotation, truncation or deletion.
     #[serde(skip)]
@@ -180,6 +184,7 @@ impl LogFile {
             markers: Vec::new(),
             remote: None,
             entry: None,
+            from_glob: None,
             generation: 0,
         }
     }
@@ -195,6 +200,7 @@ impl LogFile {
             markers: Vec::new(),
             remote: Some(RemoteRef::file(server_id, path)),
             entry: None,
+            from_glob: None,
             generation: 0,
         }
     }
@@ -222,6 +228,7 @@ impl LogFile {
                 },
             }),
             entry: None,
+            from_glob: None,
             generation: 0,
         }
     }
@@ -245,6 +252,7 @@ impl LogFile {
             markers: Vec::new(),
             remote: None,
             entry: None,
+            from_glob: None,
             generation: 0,
         }
     }
@@ -267,6 +275,7 @@ impl LogFile {
             markers: Vec::new(),
             remote: None,
             entry: Some(entry.to_string()),
+            from_glob: None,
             generation: 0,
         }
     }
@@ -519,6 +528,54 @@ pub struct ImportOutcome {
     pub skipped: Vec<String>,
 }
 
+/// What a Live Glob brought into a space.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct GlobAdded {
+    /// `file_id`s of the new Remote Files.
+    pub added: Vec<String>,
+}
+
+/// A glob on one Server, kept by a Remote Log Space: the files matching it,
+/// including those that appear later, are the space's Remote Files.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LiveGlob {
+    pub glob_id: String,
+    pub server_id: String,
+    /// Absolute folder; the glob is only in the file name.
+    pub dir: String,
+    pub pattern: String,
+    /// Paths the user removed from the glob: it does not add them again.
+    #[serde(default)]
+    pub excluded: Vec<String>,
+    /// The user stopped watching: no new file is added.
+    #[serde(default)]
+    pub stopped: bool,
+}
+
+impl LiveGlob {
+    /// The glob as typed: `<dir>/<pattern>`.
+    pub fn full_pattern(&self) -> String {
+        crate::remote::browse::join(&self.dir, &self.pattern)
+    }
+
+    /// Shown as `<server>:<path>`.
+    pub fn label(&self, server_name: &str) -> String {
+        format!("{server_name}:{}", self.full_pattern())
+    }
+
+    pub fn path_of(&self, name: &str) -> String {
+        crate::remote::browse::join(&self.dir, name)
+    }
+}
+
+/// Why a Live Glob was not added.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AddGlobError {
+    WrongKind,
+    /// The space already has a Live Glob with this Server and pattern.
+    Duplicate,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LogSpace {
     pub id: String,
@@ -528,6 +585,9 @@ pub struct LogSpace {
     pub file_order: FileOrder,
     #[serde(deserialize_with = "read_files")]
     pub files: Vec<LogFile>,
+    /// The Live Globs of a Remote Log Space.
+    #[serde(default)]
+    pub globs: Vec<LiveGlob>,
     /// The Filter shared by every file in the Log Space's Parsed View.
     #[serde(default)]
     pub filter: FilterState,
@@ -560,6 +620,7 @@ impl LogSpace {
             kind,
             file_order: FileOrder::Added,
             files: Vec::new(),
+            globs: Vec::new(),
             filter: FilterState::default(),
             file_filters: HashMap::new(),
             focus: Default::default(),
@@ -644,7 +705,8 @@ impl LogSpace {
 
     /// Add Remote Files, given as `(server id, server name, path)`. A file
     /// already in the space (same Server and path) is skipped and reported by
-    /// its name.
+    /// its name. A path a Live Glob of the same Server had excluded is taken
+    /// off its exclusions and comes back as one of that glob's files.
     pub fn add_remote_files(&mut self, files: &[(String, String, String)]) -> Result<ImportOutcome, WrongKind> {
         if self.kind != LogSpaceKind::Remote {
             return Err(WrongKind);
@@ -656,11 +718,113 @@ impl LogSpace {
                 outcome.skipped.push(file.display_name.clone());
                 continue;
             }
+            if let Some(glob) = self
+                .globs
+                .iter_mut()
+                .find(|g| g.server_id == *server_id && g.excluded.iter().any(|e| e == path))
+            {
+                glob.excluded.retain(|e| e != path);
+                file.from_glob = Some(glob.glob_id.clone());
+            }
             file.added_seq = self.take_seq();
             outcome.added.push(file.file_id.clone());
             self.files.push(file);
         }
         Ok(outcome)
+    }
+
+    /// Add a Live Glob on a Server: `dir` is an existing folder and `pattern`
+    /// has the glob characters. Returns its id.
+    pub fn add_live_glob(&mut self, server_id: &str, dir: &str, pattern: &str) -> Result<String, AddGlobError> {
+        if self.kind != LogSpaceKind::Remote {
+            return Err(AddGlobError::WrongKind);
+        }
+        if self.globs.iter().any(|g| g.server_id == server_id && g.dir == dir && g.pattern == pattern) {
+            return Err(AddGlobError::Duplicate);
+        }
+        let glob_id = format!("glob-{}", self.take_seq());
+        self.globs.push(LiveGlob {
+            glob_id: glob_id.clone(),
+            server_id: server_id.to_string(),
+            dir: dir.to_string(),
+            pattern: pattern.to_string(),
+            excluded: Vec::new(),
+            stopped: false,
+        });
+        Ok(glob_id)
+    }
+
+    pub fn glob(&self, glob_id: &str) -> Option<&LiveGlob> {
+        self.globs.iter().find(|g| g.glob_id == glob_id)
+    }
+
+    pub fn glob_mut(&mut self, glob_id: &str) -> Option<&mut LiveGlob> {
+        self.globs.iter_mut().find(|g| g.glob_id == glob_id)
+    }
+
+    /// The files a Live Glob brought.
+    pub fn glob_files(&self, glob_id: &str) -> Vec<&LogFile> {
+        self.files.iter().filter(|f| f.from_glob.as_deref() == Some(glob_id)).collect()
+    }
+
+    /// Add the files a Live Glob found, as `(server name, path)`. A path the
+    /// space already holds keeps its first origin.
+    pub fn add_glob_files(&mut self, glob_id: &str, server_name: &str, paths: &[String]) -> GlobAdded {
+        let mut out = GlobAdded::default();
+        let Some(glob) = self.glob(glob_id) else { return out };
+        let server_id = glob.server_id.clone();
+        for path in paths {
+            let mut file = LogFile::remote(&server_id, server_name, path);
+            if self.has_file(&file.file_id) {
+                continue;
+            }
+            file.from_glob = Some(glob_id.to_string());
+            file.added_seq = self.take_seq();
+            out.added.push(file.file_id.clone());
+            self.files.push(file);
+        }
+        out
+    }
+
+    /// Stop or resume watching. Returns whether the glob exists.
+    pub fn set_glob_stopped(&mut self, glob_id: &str, stopped: bool) -> bool {
+        match self.glob_mut(glob_id) {
+            Some(glob) => {
+                glob.stopped = stopped;
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Remove a Live Glob and every file it brought; files added by path
+    /// stay. Returns the removed files.
+    pub fn remove_live_glob(&mut self, glob_id: &str) -> Vec<LogFile> {
+        let Some(pos) = self.globs.iter().position(|g| g.glob_id == glob_id) else { return Vec::new() };
+        self.globs.remove(pos);
+        let mut removed = Vec::new();
+        let mut kept = Vec::new();
+        for file in std::mem::take(&mut self.files) {
+            if file.from_glob.as_deref() == Some(glob_id) {
+                self.file_filters.remove(&file.file_id);
+                self.file_focus.remove(&file.file_id);
+                removed.push(file);
+            } else {
+                kept.push(file);
+            }
+        }
+        self.files = kept;
+        removed
+    }
+
+    /// Drop files of a Live Glob without excluding them (they are gone from
+    /// its folder when the space is reopened).
+    pub fn drop_glob_files(&mut self, file_ids: &[String]) {
+        for id in file_ids {
+            self.file_filters.remove(id);
+            self.file_focus.remove(id);
+        }
+        self.files.retain(|f| !(f.from_glob.is_some() && file_ids.contains(&f.file_id)));
     }
 
     /// Names of the Remote Files on a Server.
@@ -735,7 +899,18 @@ impl LogSpace {
         }
         self.file_filters.remove(file_id);
         self.file_focus.remove(file_id);
-        Ok(self.files.remove(pos))
+        let file = self.files.remove(pos);
+        // A file the user takes out of a Live Glob is not added again by it.
+        if let (Some(glob_id), Some(path)) =
+            (file.from_glob.as_deref(), file.remote.as_ref().and_then(|r| r.path()))
+        {
+            if let Some(glob) = self.glob_mut(glob_id) {
+                if !glob.excluded.iter().any(|p| p == path) {
+                    glob.excluded.push(path.to_string());
+                }
+            }
+        }
+        Ok(file)
     }
 
     /// Rename a file's display name. Refuses blank names and names another

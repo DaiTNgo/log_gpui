@@ -15,7 +15,7 @@ fn lines_are_numbered_from_one_and_keep_their_stream() {
     let mut parsed = ParsedFile::empty();
     let mut buf = LiveBuffer::command(NAME);
     let streams: StreamMask = [Stream::Stdout, Stream::Stderr, Stream::Stdout].into_iter().collect();
-    let range = buf.apply_append(&mut parsed, &text(&["a", "boom", "c"]), Some(&streams));
+    let range = buf.apply_append_streams(&mut parsed, &text(&["a", "boom", "c"]), &[], Some(&streams));
     assert_eq!(range, 0..3);
     assert_eq!(parsed.entries.iter().map(|e| e.index).collect::<Vec<_>>(), vec![1, 2, 3]);
     assert_eq!(
@@ -28,7 +28,7 @@ fn lines_are_numbered_from_one_and_keep_their_stream() {
 fn lines_of_a_file_have_no_stream() {
     let mut parsed = ParsedFile::empty();
     let mut buf = LiveBuffer::loaded("app.log", 0);
-    buf.apply_append(&mut parsed, &text(&["a"]), None);
+    buf.apply_append_streams(&mut parsed, &text(&["a"]), &[], None);
     assert_eq!(parsed.entries[0].stream, None);
 }
 
@@ -37,9 +37,10 @@ fn a_continuation_line_has_the_stream_of_its_own_output() {
     let mut parsed = ParsedFile::empty();
     let mut buf = LiveBuffer::command(NAME);
     let streams: StreamMask = [Stream::Stdout, Stream::Stderr].into_iter().collect();
-    buf.apply_append(
+    buf.apply_append_streams(
         &mut parsed,
         &text(&["2026-10-19T10:02:03Z GET /a 500", "  at handler (a.js:3)"]),
+        &[],
         Some(&streams),
     );
     assert!(parsed.entries[1].is_continuation());
@@ -61,12 +62,12 @@ fn the_stream_mask_holds_more_than_one_word_of_bits() {
 fn exit_then_restart_draw_one_break_and_start_a_new_generation() {
     let mut parsed = ParsedFile::empty();
     let mut buf = LiveBuffer::command(NAME);
-    buf.apply_append(&mut parsed, &text(&["a", "b"]), None);
+    buf.apply_append_streams(&mut parsed, &text(&["a", "b"]), &[], None);
     buf.apply_break(BreakKind::Exited(Some(0)), "10:02");
     assert_eq!(buf.generation, 0, "an exit alone does not start a Generation");
     buf.apply_break(BreakKind::Restarted(RestartKind::Manual), "10:03");
     assert_eq!(buf.generation, 1);
-    buf.apply_append(&mut parsed, &text(&["c"]), None);
+    buf.apply_append_streams(&mut parsed, &text(&["c"]), &[], None);
     assert_eq!(parsed.entries[2].index, 1, "numbers start again");
     assert_eq!(parsed.entries[2].generation, 1);
     assert_eq!(
@@ -79,10 +80,10 @@ fn exit_then_restart_draw_one_break_and_start_a_new_generation() {
 fn a_resumed_run_keeps_its_generation_and_numbers() {
     let mut parsed = ParsedFile::empty();
     let mut buf = LiveBuffer::command(NAME);
-    buf.apply_append(&mut parsed, &text(&["a", "b"]), None);
+    buf.apply_append_streams(&mut parsed, &text(&["a", "b"]), &[], None);
     buf.apply_break(BreakKind::Disconnected, "10:02");
     buf.apply_break(BreakKind::Resumed(10 * 3600 + 2 * 60 + 3), "10:03");
-    buf.apply_append(&mut parsed, &text(&["c"]), None);
+    buf.apply_append_streams(&mut parsed, &text(&["c"]), &[], None);
     assert_eq!(buf.generation, 0);
     assert_eq!(parsed.entries[2].index, 3);
     assert_eq!(
@@ -95,10 +96,10 @@ fn a_resumed_run_keeps_its_generation_and_numbers() {
 fn a_typed_command_run_again_after_a_disconnection_says_lines_may_be_missing() {
     let mut parsed = ParsedFile::empty();
     let mut buf = LiveBuffer::command("web1$ tail -F /tmp/x.log");
-    buf.apply_append(&mut parsed, &text(&["a"]), None);
+    buf.apply_append_streams(&mut parsed, &text(&["a"]), &[], None);
     buf.apply_break(BreakKind::Disconnected, "10:02");
     buf.apply_break(BreakKind::Restarted(RestartKind::AfterDisconnect), "10:03");
-    buf.apply_append(&mut parsed, &text(&["b"]), None);
+    buf.apply_append_streams(&mut parsed, &text(&["b"]), &[], None);
     assert_eq!(buf.generation, 1);
     assert_eq!(parsed.entries[1].index, 1);
     assert_eq!(
