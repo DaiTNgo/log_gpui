@@ -31,7 +31,7 @@ The toolbar popover holding display switches for the open view, such as showing 
 _Avoid_: View panel, view options.
 
 **Imported Log Space**:
-A Log Space whose files were dropped or picked when it was created. Its files are read-only.
+A Log Space whose files were dropped or picked when it was created, or Archive Entries, or Remote Copies. Its files are read-only.
 _Avoid_: Read-only space.
 
 **Archive**:
@@ -53,6 +53,14 @@ _Avoid_: SSH space, server space, remote tab.
 **Remote File**:
 A file of a Remote Log Space, named by its server and its path on that server. A Remote File is either added by its path or brought in by a Live Glob.
 _Avoid_: SSH file, server log.
+
+**Rotated File**:
+A file on a Server that holds an earlier Generation of a Remote File: it sits in the same folder and is recognised by its name (`<name>.<N>`, `<name>-<YYYYMMDD>`, `<name>-<YYYY-MM-DD>`, with or without a `.gz`, `.bz2`, `.xz` or `.zst` suffix). A Rotated File is not a Remote File of its own: it shows as the Generations above the current file.
+_Avoid_: Backup file, old log, archive log.
+
+**Remote Copy**:
+The content of a Remote File and the Rotated Files chosen, read whole once into the app's data folder and added to an Imported Log Space as `<server>:<path>`. A Remote Copy is static and read-only: it does not follow the file on the Server.
+_Avoid_: Download, snapshot, cached file.
 
 **Live Glob**:
 A glob on one Server, kept by a Remote Log Space, whose matching files are the space's Remote Files, including files that appear after it was added. The glob may only be in the file name.
@@ -97,8 +105,16 @@ A labelled divider drawn between two rows where a file's lines stop being contin
 _Avoid_: Gap row, separator line, marker.
 
 **Generation**:
-The stretch of a live file's lines between two rotation or truncation Breaks. Line numbers start again at 1 in each Generation, matching the file on disk or on its Server, and a line is known by its Generation and line number.
+The stretch of a live file's lines between two rotation or truncation Breaks. Line numbers start again at 1 in each Generation, matching the file on disk or on its Server, and a line is known by its Generation and line number. The older Generations of a Remote File can also be read from its Rotated Files on the Server; the Generation just before the current file is the newest Rotated File.
 _Avoid_: Segment, epoch, rotation.
+
+**Starting Time**:
+Where reading a Remote File begins, instead of its last lines: a time on the clock of the file, or a span such as `1h` counted back from the newest line of the file.
+_Avoid_: Since, offset, time filter (a Time Range is a Filter; the Starting Time decides which lines are read at all).
+
+**Full Read Limit**:
+The most lines one Open in full reads, one value for the whole app.
+_Avoid_: Max lines, cap.
 
 ### Views
 
@@ -260,23 +276,27 @@ _Avoid_: Date filter, time slider.
 
 L1. **Pause Is Per Log Space**: Pause stops every file of the Log Space at once; there is no per-file pause. Resuming takes in every line written while paused, so nothing is skipped.
 L2. **Follow Tracks The Scroll**: Scrolling away from the newest line turns Follow off; scrolling back to it turns Follow on.
-L3. **Live Starts Fresh**: A Remote or Imported Log Space always opens following and not paused; Follow and Pause are not remembered. A Scratch Log Space has neither.
-L4. **Remote Opens At The End**: A Remote File first shows its last lines at once, then fills its Live Window with older lines in the background while it stays readable and live. There is no loading of lines beyond the Live Window. Line numbers are always the line's real number in its Generation on its Server.
+L3. **Live Starts Fresh**: A Remote or Imported Log Space always opens following and not paused; Follow and Pause are not remembered. A Scratch Log Space has neither. An Imported Log Space made by Open in full opens with Follow off and the view at the first line read.
+L4. **Remote Opens At The End**: A Remote File first shows its last lines at once, or the lines from its Starting Time when the user chose one, then fills its Live Window with older lines in the background while it stays readable and live, until the Live Window is full, the Starting Time is reached or the file ends. When there is room left, the newest Rotated File is read on if it is not compressed (L24); other Rotated Files are read only when the user chooses. Every load stays inside the Live Window. Line numbers are always the line's real number in its Generation on its Server.
 L5. **Rotation Keeps History**: When a file is rotated, truncated or deleted, the lines already read stay, a Break is drawn, and reading continues in the new file as a new Generation, waiting for it to appear if needed. A Marker belongs to one line of one Generation.
 L6. **Reconnect Without Loss**: A lost connection is retried by itself and reading resumes where it stopped, with a Break marking the outage. After a long outage the app stops retrying and waits for the user.
 L7. **Live Status In The Status Bar**: The connection state of a Remote Log Space, and the Follow and Pause switches, are shown in the status bar only.
 L8. **Remote Clocks Are Not Adjusted**: Rule 19 holds across Servers: times from different Servers are compared as written, with no timezone or clock-skew correction.
 L9. **Readable Without Elevation**: A Remote File is read with the Server's own user. A file that user cannot read shows a permission error; the app never asks for elevated rights.
-L10. **Live Is A Window, Not An Archive**: A Remote Log Space may stay connected for as long as the user likes, but holds only its Live Window; the oldest lines leave as new ones arrive. Nothing received is kept after the Log Space is closed. To read a Remote File in full, the user downloads it and opens it as an Imported Log Space.
+L10. **Live Is A Window, Not An Archive**: A Remote Log Space may stay connected for as long as the user likes, but holds only its Live Window; the oldest lines leave as new ones arrive. Nothing received is kept after the Log Space is closed. To read a Remote File in full, the user uses Open in full to make a Remote Copy, or downloads the file to keep it in a folder of their own.
 L11. **Paths May Not Exist Yet**: A Remote File or Live Glob may be added before any file exists; it waits and starts reading when a file appears. A Server that cannot be reached or a folder that does not exist is refused when adding.
 L12. **Leaving The Window**: A line that leaves the Live Window loses its Marker, stops counting toward Filter Values, and a Break at the top of the view says older lines have left. A Filter Value with no lines left disappears unless it is ticked. A Focus Tab whose current line left moves to the oldest line still held.
 L13. **Window Per Remote File**: The Live Window size is one app-wide setting applied to each Remote File separately, so a busy file never pushes a quiet file's lines out. Imported Log Spaces have no Live Window, even while their files grow.
-L14. **Download For Full Reading**: A Remote File, or every file of a Remote Log Space at once, can be downloaded to a chosen folder and then opened as a new Imported Log Space. Only the current file is downloaded, not its rotated predecessors.
+L14. **Download To Keep**: A Remote File, or every file of a Remote Log Space at once, can be downloaded to a chosen folder and then opened as a new Imported Log Space. By default only the current file is downloaded; the user may tick Rotated Files to take along, and they are kept as they are, compressed ones included.
 L15. **Servers In Use Stay**: A Server cannot be deleted while a Remote Log Space or another Server's Jump Server uses it; the app lists what uses it instead.
 L20. **Globs Stay Live**: A Live Glob keeps adding the files that come to match it while the Log Space is open and when it is reopened. A matching file is never added twice; a Rotated File is never added as its own Remote File, since it is an earlier Generation of the file it belongs to (see Rotated File); a file already read under another name is never read again; and a file removed by the user is not added again by its Live Glob unless the user adds that exact path again. How many files one Live Glob reads at once and how often its folder is checked are app-wide settings. Each file it brings has its own Live Window (L13).
 L21. **Gone Is Not An Error**: A file of a Live Glob that disappears from its Server becomes Gone: its lines stay, a Break is drawn, and it does not count toward the worst state in the status bar. If a file appears again at the same path it continues as a new Generation (L5).
 L22. **One Pick, Many Servers**: A path or Live Glob picked once can be added on several Servers at once; each Server gets its own Remote File or Live Glob, named `<server>:<path>`.
 L23. **Stopping A Glob Keeps Its Files**: A Live Glob can be stopped and resumed. While stopped, its files keep reading live and can still become Gone, but no new matching file is added. Resuming checks the folder at once and reads files that appeared meanwhile from their start, within the Live Window. A stopped Live Glob stays stopped when the Project is reopened, and reopens only the files it already had that still exist.
+
+L24. **Rotated Files Are Earlier Generations**: The Rotated Files of a Remote File show as Generations above the current file, never as Source Files of their own. Their order is by time of last write, the newest nearest the current file. When a Remote File has been read to its first line and the Live Window has room, the newest Rotated File is read on automatically if it is not compressed; an older one, or a compressed one, is read only when the user chooses. Open in full reads no Rotated File the user did not tick.
+L25. **Starting Time Uses The File's Clock**: A Starting Time is compared with the times as written in the file. A span such as `1h` is counted back from the newest line of the file, not from the clock of this machine or of the Server (L8).
+L26. **Full Read Never Cuts Silently**: Open in full reads no more than the Full Read Limit. When the estimate is above it the app asks before reading; when the real count reaches it during the read the app stops and draws a Break "stopped at Full Read Limit".
 
 **Canvas, Search and Filter**
 
@@ -305,8 +325,8 @@ L23. **Stopping A Glob Keeps Its Files**: A Live Glob can be stopped and resumed
 21. **No Quick Filter Menu**: There is no quick menu for filtering by a cell value; filtering is done from the Filter section only. A cell's context menu may offer "Highlight rows where…", which creates an ordinary Highlight Rule managed with all the others.
 22. **Interleave By Timestamp**: A Log Space's rows are ordered by timestamp across files. Equal timestamps keep the order of files in the Log Space, then line order. Continuation lines stay with their parent row. Lines before a file's first timestamp take that first timestamp. A file with no timestamps goes after all other rows and is flagged.
 23. **Columns Are United By Name**: A Log Space's columns are the union of columns detected in its files, matched by name.
-24. **Space Kinds Never Mix**: An Imported Log Space only gains files and Archive Entries by import; a Scratch Log Space only gains new empty scratch files; a Remote Log Space only gains Remote Files.
-25. **Imported And Remote Files Are Read-Only**: The app never changes an imported file, an Archive Entry (or its Archive) or a Remote File. Removing it from a Log Space leaves it untouched on disk or on its server. An Archive Entry is static: it does not follow the Archive if it changes.
+24. **Space Kinds Never Mix**: An Imported Log Space only gains files and Archive Entries by import, and Remote Copies by Open in full; a Scratch Log Space only gains new empty scratch files; a Remote Log Space only gains Remote Files.
+25. **Imported And Remote Files Are Read-Only**: The app never changes an imported file, an Archive Entry (or its Archive) or a Remote File. Removing it from a Log Space leaves it untouched on disk or on its server. An Archive Entry is static: it does not follow the Archive if it changes. A Remote Copy is static too: it does not follow the Remote File when it changes, until the user chooses Read again. Removing a Remote Copy from a Log Space deletes its content from the app's data folder.
 26. **Scratch Edits Happen In Raw View**: The Parsed View of a scratch file is read-only and is re-parsed when switching from Raw View. Editing a line drops that line's Marker; the Filter keeps its conditions while its values are re-detected.
 27. **Save As Copies**: Save As on a scratch file writes a copy to the chosen place; the scratch file stays in the app's data folder.
 28. **Log Space Names Are Unique Per Project**: A Log Space needs a non-blank name not used by another Log Space in the same Project.
