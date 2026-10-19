@@ -1,9 +1,10 @@
 //! Logic: the Servers dialog: the list, and the form that adds or edits one.
 
 use super::AppView;
-use crate::remote::{AuthMethod, Server};
-use gpui::{AppContext as _, Context, Entity, Window};
-use gpui_component::input::InputState;
+use crate::remote::{AuthMethod, Server, ServerError, ServerField, parse_port};
+use gpui::{AppContext as _, Context, Entity, Subscription, Window};
+use gpui_component::input::{InputEvent, InputState};
+use std::collections::HashSet;
 
 /// The fields of the form, created while rendering where a window exists.
 pub struct ServerFields {
@@ -33,6 +34,12 @@ pub struct ServerForm {
     pub fields: Option<ServerFields>,
     /// A Jump Server being made together with this Server.
     pub new_jump: Option<NewJump>,
+    /// Fields the user has left at least once: their errors show.
+    pub touched: HashSet<ServerField>,
+    /// Save was pressed: every field's error shows.
+    pub save_attempted: bool,
+    /// Blur listeners of the fields.
+    pub subscriptions: Vec<Subscription>,
 }
 
 #[derive(Default)]
@@ -75,6 +82,9 @@ impl AppView {
             initial,
             fields: None,
             new_jump: None,
+            touched: HashSet::new(),
+            save_attempted: false,
+            subscriptions: Vec::new(),
         });
         cx.notify();
     }
@@ -155,8 +165,15 @@ impl AppView {
                 keepalive_secs: field("30", "30", window, cx),
                 keepalive_missed: field("3", "3", window, cx),
             };
-            if let Some(jump) = self.server_dialog.as_mut().and_then(|d| d.form.as_mut()).and_then(|f| f.new_jump.as_mut()) {
-                jump.fields = Some(fields);
+            let subs = [&fields.name, &fields.host, &fields.port, &fields.user]
+                .into_iter()
+                .map(|input| self.touch_on_blur(input, ServerField::JumpServer, window, cx))
+                .collect::<Vec<_>>();
+            if let Some(form) = self.server_dialog.as_mut().and_then(|d| d.form.as_mut()) {
+                form.subscriptions.extend(subs);
+                if let Some(jump) = form.new_jump.as_mut() {
+                    jump.fields = Some(fields);
+                }
             }
         }
         let Some(form) = self.server_dialog.as_mut().and_then(|d| d.form.as_mut()) else { return };
@@ -185,8 +202,43 @@ impl AppView {
             keepalive_missed: field("3", initial.keepalive_max_missed.to_string(), window, cx),
         };
         fields.name.update(cx, |state, cx| state.focus(window, cx));
+        let subs = [
+            (&fields.name, ServerField::Name),
+            (&fields.host, ServerField::Host),
+            (&fields.port, ServerField::Port),
+            (&fields.user, ServerField::User),
+            (&fields.keepalive_secs, ServerField::KeepaliveInterval),
+            (&fields.keepalive_missed, ServerField::KeepaliveMissed),
+        ]
+        .into_iter()
+        .map(|(input, field)| self.touch_on_blur(input, field, window, cx))
+        .collect::<Vec<_>>();
         if let Some(form) = self.server_dialog.as_mut().and_then(|d| d.form.as_mut()) {
             form.fields = Some(fields);
+            form.subscriptions = subs;
+        }
+    }
+
+    fn touch_on_blur(
+        &mut self,
+        input: &Entity<InputState>,
+        field: ServerField,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Subscription {
+        cx.subscribe_in(input, window, move |this, _, event: &InputEvent, _, cx| {
+            if matches!(event, InputEvent::Blur) {
+                this.touch_server_field(field, cx);
+            }
+        })
+    }
+
+    /// The user left `field`: its error, if any, shows from now on.
+    pub fn touch_server_field(&mut self, field: ServerField, cx: &mut Context<Self>) {
+        if let Some(form) = self.server_dialog.as_mut().and_then(|d| d.form.as_mut()) {
+            if form.touched.insert(field) {
+                cx.notify();
+            }
         }
     }
 
@@ -204,7 +256,7 @@ impl AppView {
         server.id = form.id.clone().unwrap_or_default();
         server.name = text(&fields.name);
         server.host = text(&fields.host);
-        server.port = text(&fields.port).parse().unwrap_or(22);
+        server.port = parse_port(&text(&fields.port)).unwrap_or(22);
         server.user = text(&fields.user);
         server.keepalive_interval_secs = text(&fields.keepalive_secs).parse().unwrap_or(0);
         server.keepalive_max_missed = text(&fields.keepalive_missed).parse().unwrap_or(0);
@@ -227,32 +279,64 @@ impl AppView {
             None => key,
         };
         let mut server = Server::new(&text(&fields.name), &text(&fields.host), &text(&fields.user), AuthMethod::Password);
-        server.port = text(&fields.port).parse().unwrap_or(22);
+        server.port = parse_port(&text(&fields.port)).unwrap_or(22);
         server.auth = if jump.use_key { AuthMethod::Key { path: key } } else { AuthMethod::Password };
         server.remember_secret = form.remember;
         let secret = fields.secret.read(cx).value().to_string();
         Some((server, (!secret.is_empty()).then_some(secret)))
     }
 
-    /// Why the form cannot be saved as typed, if it cannot.
-    pub fn server_form_error(&self, cx: &gpui::App) -> Option<String> {
-        let (server, _) = self.server_from_form(cx)?;
+    /// Every reason the form cannot be saved as typed, by field, from the
+    /// values typed now. Errors about a typed Jump Server are on its field.
+    pub fn server_form_errors(&self, cx: &gpui::App) -> Vec<(ServerField, String)> {
+        let Some((server, _)) = self.server_from_form(cx) else { return Vec::new() };
+        let fields = self.server_dialog.as_ref().and_then(|d| d.form.as_ref()).and_then(|f| f.fields.as_ref());
+        let port_text = fields.map(|f| f.port.read(cx).value().to_string()).unwrap_or_default();
+        let mut errors: Vec<ServerError> = Vec::new();
+        let mut jump_errors: Vec<String> = Vec::new();
         if let Some((jump, _)) = self.new_jump_from_form(cx) {
-            if let Err(e) = self.remote.servers.validate(&jump) {
-                return Some(format!("Jump Server: {}", e.message()));
-            }
-            if jump.name == server.name {
-                return Some("The Jump Server needs a different name".into());
+            jump_errors.extend(self.remote.servers.validate_all(&jump).iter().map(|e| format!("Jump Server: {}", e.message())));
+            if jump.name == server.name && !jump.name.is_empty() {
+                jump_errors.push("The Jump Server needs a different name".into());
             }
             // The Server itself, once the Jump Server exists.
             let mut target = server;
             target.jump_server_id = None;
-            return self.remote.servers.validate(&target).err().map(|e| e.message());
+            errors.extend(self.remote.servers.validate_all(&target));
+        } else {
+            errors.extend(self.remote.servers.validate_all(&server));
         }
-        self.remote.servers.validate(&server).err().map(|e| e.message())
+        if let Err(e) = parse_port(&port_text) {
+            let at = errors.iter().position(|e| e.field() == Some(ServerField::User)).unwrap_or(errors.len());
+            errors.insert(at, e);
+        }
+        let mut out: Vec<(ServerField, String)> =
+            errors.iter().filter_map(|e| Some((e.field()?, e.message()))).collect();
+        out.extend(jump_errors.into_iter().map(|m| (ServerField::JumpServer, m)));
+        out
+    }
+
+    /// The errors to show now: of the fields the user has left, or all of
+    /// them once Save was pressed.
+    pub fn visible_server_form_errors(&self, cx: &gpui::App) -> Vec<(ServerField, String)> {
+        let Some(form) = self.server_dialog.as_ref().and_then(|d| d.form.as_ref()) else { return Vec::new() };
+        self.server_form_errors(cx)
+            .into_iter()
+            .filter(|(field, _)| form.save_attempted || form.touched.contains(field))
+            .collect()
     }
 
     pub fn save_server_form(&mut self, cx: &mut Context<Self>) {
+        if let Some(form) = self.server_dialog.as_mut().and_then(|d| d.form.as_mut()) {
+            form.save_attempted = true;
+        }
+        if let Some(dialog) = self.server_dialog.as_mut() {
+            dialog.error = None;
+        }
+        if !self.server_form_errors(cx).is_empty() {
+            cx.notify();
+            return;
+        }
         let Some((mut server, secret)) = self.server_from_form(cx) else { return };
         let mut created_jump: Option<String> = None;
         if let Some((jump, jump_secret)) = self.new_jump_from_form(cx) {

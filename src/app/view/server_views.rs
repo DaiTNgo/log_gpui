@@ -9,6 +9,7 @@ use gpui_component::button::{Button, ButtonGroup, ButtonVariants as _};
 use gpui_component::checkbox::Checkbox;
 use gpui_kit::assets::IconName;
 use gpui_component::input::Input;
+use crate::remote::ServerField;
 use gpui_component::{ActiveTheme as _, Disableable as _, Selectable as _, Sizable as _, h_flex, v_flex};
 use gpui::StatefulInteractiveElement as _;
 
@@ -145,12 +146,26 @@ impl AppView {
         let Some(fields) = form.fields.as_ref() else { return div().into_any_element() };
         let (use_key, remember, current_jump, editing) = (form.use_key, form.remember, form.jump.clone(), form.id.clone());
         let new_jump = form.new_jump.as_ref().map(|j| (j.use_key, j.fields.is_some()));
-        let error = dialog.error.clone().or_else(|| self.server_form_error(cx));
-        let valid = self.server_form_error(cx).is_none();
-        let label = |text: &'static str| div().w(px(110.0)).text_sm().text_color(muted).child(text);
-        let row = |text: &'static str, input: &gpui::Entity<gpui_component::input::InputState>| {
-            h_flex().gap_2().items_center().child(label(text)).child(div().flex_1().child(Input::new(input)))
+        // Errors about the Server as a whole (a failed save); field errors
+        // show under their field.
+        let error = dialog.error.clone();
+        let field_errors = self.visible_server_form_errors(cx);
+        let error_of = |field: ServerField| field_errors.iter().find(|(f, _)| *f == field).map(|(_, m)| m.clone());
+        let label = |text: &'static str| div().w(px(110.0)).flex_shrink_0().text_sm().text_color(muted).child(text);
+        let field_error = |message: String| div().pl(px(118.0)).child(Self::field_error_row(message, danger));
+        let row = |text: &'static str, input: &gpui::Entity<gpui_component::input::InputState>, field: ServerField| {
+            let error = error_of(field);
+            v_flex()
+                .gap_1()
+                .child(
+                    h_flex().gap_2().items_center().child(label(text)).child(
+                        div().flex_1().child(Input::new(input).when(error.is_some(), |i| i.border_color(danger))),
+                    ),
+                )
+                .when_some(error, |this, e| this.child(field_error(e)))
         };
+        let jump_errors: Vec<String> =
+            field_errors.iter().filter(|(f, _)| *f == ServerField::JumpServer).map(|(_, m)| m.clone()).collect();
 
         // Jump Server: none, or one of the other Servers.
         let others: Vec<(String, String)> = self
@@ -191,12 +206,12 @@ impl AppView {
 
         v_flex()
             .gap_2()
-            .child(row("Name", &fields.name))
-            .child(row("Address", &fields.host))
-            .child(row("Port", &fields.port))
-            .child(row("User", &fields.user))
-            .child(row("Keepalive (s)", &fields.keepalive_secs))
-            .child(row("Missed allowed", &fields.keepalive_missed))
+            .child(row("Name", &fields.name, ServerField::Name))
+            .child(row("Address", &fields.host, ServerField::Host))
+            .child(row("Port", &fields.port, ServerField::Port))
+            .child(row("User", &fields.user, ServerField::User))
+            .child(row("Keepalive (s)", &fields.keepalive_secs, ServerField::KeepaliveInterval))
+            .child(row("Missed allowed", &fields.keepalive_missed, ServerField::KeepaliveMissed))
             .child(
                 h_flex().gap_2().items_center().child(label("Login")).child(
                     ButtonGroup::new("server-auth")
@@ -216,8 +231,16 @@ impl AppView {
                         })),
                 ),
             )
-            .when(use_key, |this| this.child(row("Key file", &fields.key_path)))
-            .child(row(if use_key { "Passphrase" } else { "Password" }, &fields.secret))
+            .when(use_key, |this| {
+                this.child(h_flex().gap_2().items_center().child(label("Key file")).child(div().flex_1().child(Input::new(&fields.key_path))))
+            })
+            .child(
+                h_flex()
+                    .gap_2()
+                    .items_center()
+                    .child(label(if use_key { "Passphrase" } else { "Password" }))
+                    .child(div().flex_1().child(Input::new(&fields.secret))),
+            )
             .child(
                 h_flex().gap_2().child(label("")).child(
                     Checkbox::new("server-remember")
@@ -227,6 +250,7 @@ impl AppView {
                 ),
             )
             .child(h_flex().gap_2().items_start().child(label("Jump Server")).child(div().flex_1().child(jump_choices)))
+            .children(jump_errors.into_iter().map(field_error))
             .when_some(self.render_new_jump_form(new_jump, cx), |this, block| this.child(block))
             .when_some(error, |this, e| this.child(div().text_xs().text_color(danger).child(e)))
             .child(
@@ -242,7 +266,6 @@ impl AppView {
                         Button::new("server-save")
                             .primary()
                             .label("Save")
-                            .disabled(!valid)
                             .on_click(cx.listener(|this, _, _, cx| this.save_server_form(cx))),
                     ),
             )

@@ -19,5 +19,6 @@ pub use hub::{ConnectError, ExecEvent, ExecOutput, ExecStream, HostKeyRequest, R
 pub use known_hosts::{HostKeyStatus, KnownHosts};
 pub use secrets::{Keychain, MemorySecrets, SecretStore};
 pub use server::{
-    AuthMethod, KEEPALIVE_MISSED_RANGE, KEEPALIVE_SECS_RANGE, MAX_JUMPS, Server, ServerError, ServerStore,
+    AuthMethod, KEEPALIVE_MISSED_RANGE, KEEPALIVE_SECS_RANGE, MAX_JUMPS, Server, ServerError, ServerField, ServerStore,
+    parse_port,
 };

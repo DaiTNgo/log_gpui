@@ -17,6 +17,18 @@ use gpui_component::{
 use gpui_kit::assets::IconName;
 
 impl AppView {
+    /// The error shown under a form field: an error icon and the message,
+    /// in the danger color, so it does not rest on color alone.
+    pub(super) fn field_error_row(message: impl Into<gpui::SharedString>, danger: gpui::Hsla) -> gpui::Div {
+        h_flex()
+            .gap_1()
+            .items_center()
+            .text_xs()
+            .text_color(danger)
+            .child(gpui_component::Icon::new(IconName::TriangleAlert).size_3())
+            .child(message.into())
+    }
+
     pub(super) fn modal_backdrop() -> gpui::Div {
         div()
             .absolute()
@@ -160,10 +172,11 @@ impl AppView {
                             .gap_1()
                             .child(div().text_sm().child("Name"))
                             .when_some(name_input, |this, input| {
-                                this.child(Input::new(&input))
+                                let failed = name_message.is_some();
+                                this.child(Input::new(&input).when(failed, |i| i.border_color(danger)))
                             })
                             .when_some(name_message, |this, message| {
-                                this.child(div().text_xs().text_color(danger).child(message))
+                                this.child(Self::field_error_row(message, danger))
                             }),
                     )
                     .child(

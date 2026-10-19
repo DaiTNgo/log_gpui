@@ -102,6 +102,8 @@ pub enum ServerError {
     UnknownJumpServer,
     JumpLoop,
     TooManyJumps,
+    /// The typed port is not a number from 1 to 65535.
+    InvalidPort,
     /// The Server is used by something and cannot be deleted; lists what.
     InUse(Vec<String>),
     NotFound,
@@ -125,7 +127,49 @@ impl ServerError {
             ServerError::TooManyJumps => format!("A chain may have at most {MAX_JUMPS} Jump Servers"),
             ServerError::InUse(users) => format!("Used by: {}", users.join(", ")),
             ServerError::NotFound => "Server not found".into(),
+            ServerError::InvalidPort => "Port must be 1\u{2013}65535".into(),
         }
+    }
+
+    /// The field of the Server form the error is about; `None` for errors
+    /// about the Server as a whole (in use, not found).
+    pub fn field(&self) -> Option<ServerField> {
+        match self {
+            ServerError::BlankName | ServerError::DuplicateName => Some(ServerField::Name),
+            ServerError::BlankHost => Some(ServerField::Host),
+            ServerError::InvalidPort => Some(ServerField::Port),
+            ServerError::BlankUser => Some(ServerField::User),
+            ServerError::KeepaliveInterval => Some(ServerField::KeepaliveInterval),
+            ServerError::KeepaliveMissed => Some(ServerField::KeepaliveMissed),
+            ServerError::UnknownJumpServer | ServerError::JumpLoop | ServerError::TooManyJumps => {
+                Some(ServerField::JumpServer)
+            }
+            ServerError::InUse(_) | ServerError::NotFound => None,
+        }
+    }
+}
+
+/// A field of the Server form, for showing an error next to it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ServerField {
+    Name,
+    Host,
+    Port,
+    User,
+    KeepaliveInterval,
+    KeepaliveMissed,
+    JumpServer,
+}
+
+/// The port typed in the Server form: empty means 22.
+pub fn parse_port(text: &str) -> Result<u16, ServerError> {
+    let text = text.trim();
+    if text.is_empty() {
+        return Ok(22);
+    }
+    match text.parse::<u16>() {
+        Ok(port) if port > 0 => Ok(port),
+        _ => Err(ServerError::InvalidPort),
     }
 }
 
@@ -166,24 +210,42 @@ impl ServerStore {
 
     /// Check `server` as it would be saved, replacing `server.id` if it exists.
     pub fn validate(&self, server: &Server) -> Result<(), ServerError> {
-        if server.name.trim().is_empty() {
-            return Err(ServerError::BlankName);
+        match self.validate_all(server).into_iter().next() {
+            Some(e) => Err(e),
+            None => Ok(()),
         }
-        if self.servers.iter().any(|s| s.name == server.name && s.id != server.id) {
-            return Err(ServerError::DuplicateName);
+    }
+
+    /// Every reason `server` cannot be saved, at most one per field, in
+    /// form order.
+    pub fn validate_all(&self, server: &Server) -> Vec<ServerError> {
+        let mut errors = Vec::new();
+        if server.name.trim().is_empty() {
+            errors.push(ServerError::BlankName);
+        } else if self.servers.iter().any(|s| s.name == server.name && s.id != server.id) {
+            errors.push(ServerError::DuplicateName);
         }
         if server.host.trim().is_empty() {
-            return Err(ServerError::BlankHost);
+            errors.push(ServerError::BlankHost);
         }
         if server.user.trim().is_empty() {
-            return Err(ServerError::BlankUser);
+            errors.push(ServerError::BlankUser);
         }
         if !KEEPALIVE_SECS_RANGE.contains(&server.keepalive_interval_secs) {
-            return Err(ServerError::KeepaliveInterval);
+            errors.push(ServerError::KeepaliveInterval);
         }
         if !KEEPALIVE_MISSED_RANGE.contains(&server.keepalive_max_missed) {
-            return Err(ServerError::KeepaliveMissed);
+            errors.push(ServerError::KeepaliveMissed);
         }
+        if let Err(e) = self.validate_chain(server) {
+            errors.push(e);
+        }
+        errors
+    }
+
+    /// The Jump Server chain of `server` as it would be after saving, and
+    /// of the Servers that go through it.
+    fn validate_chain(&self, server: &Server) -> Result<(), ServerError> {
         // Walk the chain as it would be after saving.
         let mut seen = vec![server.id.as_str()];
         let mut depth = 0;
