@@ -56,6 +56,9 @@ pub struct LiveRuntime {
     pub window: usize,
     /// Lines one Load More reads when the user gives no number.
     pub load_more_step: usize,
+    /// Most lines one Open in full reads, and the most a Remote File holds
+    /// once Load More made its window longer.
+    pub full_read_limit: usize,
     /// Most files one Live Glob reads at once.
     pub glob_limit: usize,
     /// Seconds between two checks of a Live Glob's folder.
@@ -68,6 +71,8 @@ pub struct LiveRuntime {
     pub loading_earlier: HashSet<String>,
     /// Long reads under way, by file.
     pub progress: HashMap<String, crate::live::source::ReadProgress>,
+    /// Remote Copies being read, by file.
+    pub copy_reads: HashMap<String, super::full_read::CopyRead>,
     /// The Live Globs' watchers and what they found.
     pub globs: super::globs::GlobRuntime,
     pub pump_started: bool,
@@ -84,12 +89,14 @@ impl LiveRuntime {
             unseen: 0,
             window: DEFAULT_LIVE_WINDOW,
             load_more_step: 10_000,
+            full_read_limit: FULL_READ_LIMIT,
             glob_limit: 50,
             glob_interval: 5,
             loading_more: HashSet::new(),
             earlier: HashMap::new(),
             loading_earlier: HashSet::new(),
             progress: HashMap::new(),
+            copy_reads: HashMap::new(),
             globs: super::globs::GlobRuntime::new(),
             pump_started: false,
             batches_since_release: 0,
@@ -125,16 +132,16 @@ struct TopAnchor {
 
 /// What a batch did to one file.
 #[derive(Default)]
-struct FileDelta {
+pub(crate) struct FileDelta {
     /// Positions in the file's entries of the lines appended at the end.
-    appended: Option<Range<usize>>,
+    pub(crate) appended: Option<Range<usize>>,
     /// Lines were inserted above, dropped, or renumbered.
-    structural: bool,
-    trimmed: Option<Trimmed>,
-    renumbered: Option<isize>,
-    generation: u32,
+    pub(crate) structural: bool,
+    pub(crate) trimmed: Option<Trimmed>,
+    pub(crate) renumbered: Option<isize>,
+    pub(crate) generation: u32,
     /// The last line already shown was replaced by its finished version.
-    replaced_last: bool,
+    pub(crate) replaced_last: bool,
 }
 
 pub(crate) fn now_label() -> String {
@@ -348,6 +355,7 @@ impl AppView {
                 source.handle.send(if pause { SourceCommand::Pause } else { SourceCommand::Resume });
             }
         }
+        self.set_copy_reads_paused(&space.id, pause);
         // Paused, a Live Glob adds nothing; resumed, its folder is listed at once.
         self.sync_glob_watchers(cx);
         cx.notify();
@@ -394,6 +402,7 @@ impl AppView {
 
     /// Drain every source and apply what arrived, once.
     pub fn pump_live(&mut self, cx: &mut Context<Self>) {
+        self.pump_copy_reads(cx);
         if self.live.sources.is_empty() {
             return;
         }
@@ -626,7 +635,7 @@ impl AppView {
     }
 
     /// Show a batch in the open view.
-    fn apply_deltas(&mut self, deltas: Vec<(String, FileDelta)>, cx: &mut Context<Self>) {
+    pub(crate) fn apply_deltas(&mut self, deltas: Vec<(String, FileDelta)>, cx: &mut Context<Self>) {
         // Numbers that moved: stored Markers and current lines follow them.
         for (file_id, delta) in &deltas {
             if let Some(by) = delta.renumbered {

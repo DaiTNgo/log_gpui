@@ -717,6 +717,18 @@ impl LogSpace {
         self.show_source.unwrap_or(self.files.len() >= 2)
     }
 
+    /// Add a Remote Copy (from `LogFile::remote_copy`) to an Imported Log
+    /// Space. It comes only through Open in full.
+    pub fn add_remote_copy(&mut self, mut file: LogFile) -> Result<String, WrongKind> {
+        if self.kind != LogSpaceKind::Imported || !file.is_remote_copy() {
+            return Err(WrongKind);
+        }
+        file.added_seq = self.take_seq();
+        let id = file.file_id.clone();
+        self.files.push(file);
+        Ok(id)
+    }
+
     /// Import files by path into an Imported Log Space. Paths the space
     /// already holds are skipped and reported.
     pub fn add_imported_files(&mut self, paths: &[String]) -> Result<ImportOutcome, WrongKind> {

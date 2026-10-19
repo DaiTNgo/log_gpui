@@ -9,6 +9,7 @@ mod commands;
 mod filter;
 mod focus;
 mod focus_window;
+pub mod full_read;
 pub mod globs;
 mod highlights;
 mod keyboard;
