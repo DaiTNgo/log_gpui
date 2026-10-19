@@ -540,8 +540,13 @@ impl AppView {
     /// Carry out the confirmed deletion.
     pub fn accept_confirm(&mut self, cx: &mut Context<Self>) {
         let Some(action) = self.confirm.take() else { return };
+        if let ConfirmAction::ClearFiles { file_ids, .. } = &action {
+            self.clear_files_now(file_ids, cx);
+            return;
+        }
         self.persist_active_session();
         match action {
+            ConfirmAction::ClearFiles { .. } => {}
             ConfirmAction::DeleteLogSpace { space_id } => {
                 let removed = self
                     .active_project_mut()

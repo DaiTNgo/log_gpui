@@ -14,6 +14,12 @@ pub enum BreakKind {
     Reconnected,
     /// Older lines left the Live Window.
     LeftWindow,
+    /// The user cleared the file.
+    Cleared,
+    /// The first line held is not the first line of its Generation.
+    StartOfLoaded,
+    /// Load More found the file on the Server changed under the held lines.
+    Changed,
 }
 
 impl BreakKind {
@@ -25,6 +31,9 @@ impl BreakKind {
             BreakKind::Disconnected => "disconnected",
             BreakKind::Reconnected => "reconnected",
             BreakKind::LeftWindow => "older lines left the window",
+            BreakKind::Cleared => "cleared",
+            BreakKind::StartOfLoaded => "start of loaded lines",
+            BreakKind::Changed => "earlier lines of this generation are no longer on the Server",
         }
     }
 
@@ -77,12 +86,23 @@ impl SourceStatus {
 /// What a source sends to the app.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SourceEvent {
-    /// The last lines of the file, shown at once.
-    Tail { lines: Vec<String>, generation: u32 },
+    /// The last lines of the file, shown at once. `bytes` is the length of
+    /// each line in the file, line end included (empty when not known), and
+    /// `end_offset` the offset just after the last of them.
+    Tail { lines: Vec<String>, generation: u32, bytes: Vec<u32>, end_offset: u64 },
     /// Lines older than everything received so far, inserted above.
-    Backfill { lines: Vec<String>, generation: u32 },
+    Backfill { lines: Vec<String>, generation: u32, bytes: Vec<u32> },
     /// New lines, each ended by a newline in the file.
-    Append { lines: Vec<String> },
+    Append { lines: Vec<String>, bytes: Vec<u32> },
+    /// Lines older than what is held, read because the user asked for more
+    /// (`LoadMore`), to go above the oldest held line, whose number is
+    /// `first_line_no`.
+    Older { generation: u32, lines: Vec<String>, bytes: Vec<u32>, reached_start: bool },
+    /// Load More could not read the lines above (the file changed, or the
+    /// Generation is not the one being read).
+    OlderUnavailable,
+    /// The inode of the file the lines now come from.
+    Inode(Option<u64>),
     /// The real number of complete lines before the first `Append`, once known
     /// (`None` when it could not be counted).
     TotalLines(Option<usize>),
@@ -96,6 +116,15 @@ pub enum SourceCommand {
     Pause,
     Resume,
     SetWindow(usize),
+    /// Stop reading older lines and never refill: the app dropped what it held.
+    Clear,
+    /// Read `lines` lines above `end_offset` of `generation`. `first_hash` is
+    /// the hash of the line that starts at `end_offset` (`None` when no line
+    /// is held there).
+    LoadMore { generation: u32, end_offset: u64, lines: usize, first_hash: Option<u64> },
+    /// Drop a Load More that was not started yet (a batch being read is
+    /// kept: it arrives as `Older`).
+    CancelLoadMore,
     /// Try again now (after Disconnected or an error the user has fixed).
     Reconnect,
     Close,

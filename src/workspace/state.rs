@@ -25,6 +25,9 @@ pub struct WorkspaceState {
     /// Newest lines kept for each Remote File: an app setting.
     #[serde(default = "default_live_window")]
     pub live_window: usize,
+    /// Lines one Load More reads: an app setting.
+    #[serde(default = "default_load_more_step")]
+    pub load_more_step: usize,
     /// Row density of the log table: an app setting.
     #[serde(default)]
     pub density: crate::density::Density,
@@ -45,6 +48,11 @@ pub fn default_live_window() -> usize {
     100_000
 }
 
+/// Default Load More Step.
+pub fn default_load_more_step() -> usize {
+    10_000
+}
+
 impl Default for WorkspaceState {
     fn default() -> Self {
         Self {
@@ -53,6 +61,7 @@ impl Default for WorkspaceState {
             focus_pane: FocusPaneState::default(),
             match_colors: Default::default(),
             live_window: default_live_window(),
+            load_more_step: default_load_more_step(),
             density: Default::default(),
             show_minimap: true,
             raw_soft_wrap: true,

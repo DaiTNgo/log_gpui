@@ -89,7 +89,11 @@ impl LocalFileSource {
                     Ok(SourceCommand::Close) => return,
                     Ok(SourceCommand::Pause) => paused = true,
                     Ok(SourceCommand::Resume) => paused = false,
-                    Ok(SourceCommand::SetWindow(_)) | Ok(SourceCommand::Reconnect) => {}
+                    Ok(SourceCommand::SetWindow(_))
+                | Ok(SourceCommand::Reconnect)
+                | Ok(SourceCommand::Clear)
+                | Ok(SourceCommand::CancelLoadMore)
+                | Ok(SourceCommand::LoadMore { .. }) => {}
                     Err(async_channel::TryRecvError::Empty) => break,
                     Err(async_channel::TryRecvError::Closed) => return,
                 }
@@ -183,6 +187,6 @@ fn drain(current: &mut Open, splitter: &mut LineSplitter, events: &Sender<Source
     current.offset += buf.len() as u64;
     let lines = splitter.push(&buf);
     if !lines.is_empty() {
-        let _ = events.try_send(SourceEvent::Append { lines });
+        let _ = events.try_send(SourceEvent::Append { lines, bytes: Vec::new() });
     }
 }

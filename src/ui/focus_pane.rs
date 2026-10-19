@@ -559,7 +559,7 @@ impl PaneRows {
                     )
                 })
                 .when_some(break_label, |row, label| {
-                    row.child(crate::ui::canvas::render_break(label, px(NUMBER_WIDTH + 8.0), &colors))
+                    row.child(crate::ui::canvas::render_break(label, px(NUMBER_WIDTH + 8.0), &colors, None))
                 }),
         )
     }

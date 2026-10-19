@@ -24,6 +24,10 @@ pub const LIVE_BATCH_INTERVAL: Duration = Duration::from_millis(100);
 /// Default Live Window: the newest lines kept for each Remote File.
 pub const DEFAULT_LIVE_WINDOW: usize = 100_000;
 
+/// The most lines a Remote File holds once Load More made its window longer
+/// (the Full Read Limit; `remote-full-read` will make it a setting).
+pub const FULL_READ_LIMIT: usize = 2_000_000;
+
 /// A running source and what it last said.
 pub struct LiveSourceState {
     pub handle: SourceHandle,
@@ -47,6 +51,10 @@ pub struct LiveRuntime {
     pub unseen: usize,
     /// Live Window: newest lines kept per Remote File.
     pub window: usize,
+    /// Lines one Load More reads when the user gives no number.
+    pub load_more_step: usize,
+    /// Files with a Load More being read.
+    pub loading_more: HashSet<String>,
     pub pump_started: bool,
     /// Batches applied since the allocator's cache was last given back.
     batches_since_release: usize,
@@ -60,6 +68,8 @@ impl LiveRuntime {
             follow: true,
             unseen: 0,
             window: DEFAULT_LIVE_WINDOW,
+            load_more_step: 10_000,
+            loading_more: HashSet::new(),
             pump_started: false,
             batches_since_release: 0,
         }
@@ -104,7 +114,7 @@ struct FileDelta {
     replaced_last: bool,
 }
 
-fn now_label() -> String {
+pub(crate) fn now_label() -> String {
     chrono::Local::now().format("%H:%M:%S").to_string()
 }
 
@@ -265,7 +275,7 @@ impl AppView {
         cx.notify();
     }
 
-    fn scroll_to_newest(&mut self) {
+    pub(crate) fn scroll_to_newest(&mut self) {
         match self.view_mode {
             ViewMode::Parsed => self.scroll_handle.scroll_to_bottom(),
             ViewMode::Raw => self.raw.scroll.scroll_to_bottom(),
@@ -318,7 +328,8 @@ impl AppView {
             if let Some(parsed) = self.parsed_files.get_mut(&file_id) {
                 if let Some(mut buffer) = parsed.live.take() {
                     // A smaller window drops at once, not after 10% more.
-                    let trimmed = buffer.trim_to_window(parsed, window);
+                    let limit = buffer.limit(window, FULL_READ_LIMIT);
+                    let trimmed = buffer.trim_to_window(parsed, limit);
                     parsed.live = Some(buffer);
                     if let Some(trimmed) = trimmed {
                         self.drop_markers_for(&file_id, &trimmed);
@@ -352,7 +363,8 @@ impl AppView {
                         budget = budget.saturating_sub(match &event {
                             SourceEvent::Tail { lines, .. }
                             | SourceEvent::Backfill { lines, .. }
-                            | SourceEvent::Append { lines } => lines.len().max(1),
+                            | SourceEvent::Older { lines, .. }
+                            | SourceEvent::Append { lines, .. } => lines.len().max(1),
                             _ => 1,
                         });
                         events.push(event);
@@ -419,19 +431,31 @@ impl AppView {
         };
         for event in events {
             match event {
-                SourceEvent::Tail { lines, generation } => {
-                    buffer.apply_tail(&mut parsed, &lines, generation);
+                SourceEvent::Tail { lines, generation, bytes, end_offset } => {
+                    buffer.apply_tail_with(&mut parsed, &lines, generation, &bytes, end_offset);
                     delta.structural = true;
                 }
-                SourceEvent::Backfill { lines, .. } => {
-                    buffer.apply_backfill(&mut parsed, &lines);
+                SourceEvent::Backfill { lines, bytes, .. } => {
+                    buffer.apply_backfill_with(&mut parsed, &lines, &bytes);
                     delta.structural = true;
                 }
-                SourceEvent::Append { lines } => {
+                SourceEvent::Older { lines, bytes, reached_start, .. } => {
+                    self.live.loading_more.remove(file_id);
+                    if buffer.apply_older(&mut parsed, &lines, &bytes, reached_start) && !lines.is_empty() {
+                        delta.structural = true;
+                    }
+                }
+                SourceEvent::OlderUnavailable => {
+                    self.live.loading_more.remove(file_id);
+                    buffer.mark_changed(&mut parsed);
+                    delta.structural = true;
+                }
+                SourceEvent::Inode(inode) => buffer.set_inode(inode),
+                SourceEvent::Append { lines, bytes } => {
                     if buffer.replaces_last_line() && !lines.is_empty() {
                         delta.replaced_last = true;
                     }
-                    let range = buffer.apply_append(&mut parsed, &lines);
+                    let range = buffer.apply_append_with(&mut parsed, &lines, &bytes);
                     delta.appended = Some(match delta.appended.take() {
                         Some(old) => old.start..range.end,
                         None => range,
@@ -471,7 +495,8 @@ impl AppView {
             }
         }
         if remote {
-            if let Some(trimmed) = buffer.trim_to_window(&mut parsed, window) {
+            let limit = buffer.limit(window, FULL_READ_LIMIT);
+            if let Some(trimmed) = buffer.trim_to_window(&mut parsed, limit) {
                 delta.structural = true;
                 delta.trimmed = Some(trimmed);
             }
@@ -485,7 +510,7 @@ impl AppView {
     }
 
     /// The file has a new Generation in every Log Space that holds it.
-    fn begin_generation_for(&mut self, file_id: &str) {
+    pub(crate) fn begin_generation_for(&mut self, file_id: &str) {
         if let Some(project) = self.active_project_mut() {
             for space in &mut project.log_spaces {
                 if let Some(file) = space.file_mut(file_id) {
@@ -496,7 +521,7 @@ impl AppView {
     }
 
     /// Lines left the Live Window: their Markers go with them.
-    fn drop_markers_for(&mut self, file_id: &str, trimmed: &Trimmed) {
+    pub(crate) fn drop_markers_for(&mut self, file_id: &str, trimmed: &Trimmed) {
         if let Some(project) = self.active_project_mut() {
             for space in &mut project.log_spaces {
                 if let Some(file) = space.file_mut(file_id) {
@@ -719,10 +744,55 @@ impl AppView {
     /// Build the rows again from the cache, keeping the reading position:
     /// the row at the top of the view stays at the top.
     pub(crate) fn rebuild_open_view_keeping_position(&mut self, cx: &mut Context<Self>) {
-        let anchor = self.top_row_anchor();
-        let selected = self
+        self.rebuild_open_view_without(&HashSet::new(), cx);
+    }
+
+    /// The first line after row `row` that is not of a file in `gone`, or
+    /// the last one before it when none follows.
+    fn next_surviving_line(&self, row: usize, gone: &HashSet<String>) -> Option<LineRef> {
+        let found = super::live_more::next_surviving_row(
+            self.all_entries.len(),
+            |ix| self.all_entries[ix].file_id.as_deref(),
+            row,
+            gone,
+        );
+        found.and_then(|ix| self.line_ref_of_entry(ix))
+    }
+
+    /// `rebuild_open_view_keeping_position` for rows of files that were
+    /// cleared: the top row, the selected line and the current line of every
+    /// Focus Tab that were in them move to the line right after them.
+    pub(crate) fn rebuild_open_view_without(&mut self, gone: &HashSet<String>, cx: &mut Context<Self>) {
+        let mut anchor = self.top_row_anchor();
+        let mut selected = self
             .selected_row_pos
             .and_then(|pos| self.line_ref_of_entry(pos));
+        let mut focus_current: Vec<Option<LineRef>> =
+            self.focus.tabs.iter().map(|t| t.current.clone()).collect();
+        if !gone.is_empty() {
+            let in_gone = |line: &LineRef| gone.contains(&*line.file_id);
+            if let Some(a) = anchor.as_mut() {
+                if in_gone(&a.line) {
+                    match self.next_surviving_line(a.row, gone) {
+                        Some(line) => {
+                            a.line = line;
+                            a.within = Pixels::ZERO;
+                        }
+                        None => anchor = None,
+                    }
+                }
+            }
+            if let Some(line) = selected.as_ref().filter(|l| in_gone(l)) {
+                let row = self.entry_of_line_ref(line);
+                selected = row.and_then(|row| self.next_surviving_line(row, gone));
+            }
+            for current in focus_current.iter_mut() {
+                if let Some(line) = current.as_ref().filter(|l| in_gone(l)) {
+                    let row = self.entry_of_line_ref(line);
+                    *current = row.and_then(|row| self.next_surviving_line(row, gone));
+                }
+            }
+        }
         let Some(target) = self.active_target() else { return };
         // The old rows go first: both lists at once would double the memory
         // for a moment.
@@ -733,6 +803,11 @@ impl AppView {
         self.apply_filters_and_refresh(cx);
         if let Some(line) = selected {
             self.selected_row_pos = self.entry_of_line_ref(&line);
+        }
+        if !gone.is_empty() {
+            for (tab, current) in self.focus.tabs.iter_mut().zip(focus_current) {
+                tab.current = current;
+            }
         }
         self.restore_top_anchor(anchor);
     }
@@ -807,7 +882,7 @@ impl AppView {
 
     /// The current line of a Focus Tab that left the Live Window becomes the
     /// oldest line still kept.
-    fn move_current_lines_off_dropped(&mut self, file_id: &str, trimmed: &Trimmed) {
+    pub(crate) fn move_current_lines_off_dropped(&mut self, file_id: &str, trimmed: &Trimmed) {
         let oldest = self
             .all_entries
             .first()
@@ -887,7 +962,7 @@ fn partition_rows(len: usize, before: impl Fn(usize) -> bool) -> usize {
 
 /// Return the memory the allocator keeps after large blocks were freed.
 #[cfg(target_os = "macos")]
-fn release_freed_memory() {
+pub(crate) fn release_freed_memory() {
     unsafe extern "C" {
         fn malloc_zone_pressure_relief(zone: *mut std::ffi::c_void, goal: usize) -> usize;
     }
@@ -899,4 +974,4 @@ fn release_freed_memory() {
 }
 
 #[cfg(not(target_os = "macos"))]
-fn release_freed_memory() {}
+pub(crate) fn release_freed_memory() {}

@@ -222,6 +222,10 @@ impl AppView {
             return div().into_any_element();
         };
         let (title, detail) = match &action {
+            ConfirmAction::ClearFiles { markers, .. } => (
+                format!("Clear will remove {markers} Marker{}", if *markers == 1 { "" } else { "s" }),
+                "Markers do not come back when the lines are loaded again.",
+            ),
             ConfirmAction::DeleteLogSpace { space_id } => {
                 let space = self.active_project().and_then(|p| p.log_space(space_id));
                 let name = space.map(|s| s.name.clone()).unwrap_or_default();
@@ -245,6 +249,7 @@ impl AppView {
                 (format!("Delete “{name}”?"), "The scratch file will be deleted.")
             }
         };
+        let confirm_label = if matches!(action, ConfirmAction::ClearFiles { .. }) { "Clear" } else { "Delete" };
         let theme = cx.theme();
         let (bg, border, muted) = (theme.popover, theme.border, theme.muted_foreground);
         Self::modal_backdrop()
@@ -272,8 +277,54 @@ impl AppView {
                             .child(
                                 Button::new("confirm-delete")
                                     .danger()
-                                    .label("Delete")
+                                    .label(confirm_label)
                                     .on_click(cx.listener(|this, _, _, cx| this.accept_confirm(cx))),
+                            ),
+                    ),
+            )
+            .into_any_element()
+    }
+
+    /// Load more with a number of lines the user types.
+    pub(super) fn render_custom_load(&mut self, cx: &mut gpui::Context<Self>) -> gpui::AnyElement {
+        let Some(custom) = self.custom_load.as_ref() else {
+            return div().into_any_element();
+        };
+        let input = custom.input.clone();
+        let remaining = self.hold_info(&custom.file_id).map_or(0, |i| i.remaining);
+        let theme = cx.theme();
+        let (bg, border, muted) = (theme.popover, theme.border, theme.muted_foreground);
+        Self::modal_backdrop()
+            .child(
+                v_flex()
+                    .w(px(400.0))
+                    .gap_3()
+                    .p_4()
+                    .bg(bg)
+                    .border_1()
+                    .border_color(border)
+                    .rounded_lg()
+                    .shadow_2xl()
+                    .child(div().text_base().font_weight(gpui::FontWeight::SEMIBOLD).child("Load more lines"))
+                    .child(div().text_sm().text_color(muted).child(format!(
+                        "How many older lines to read from the Server (up to {} more fit).",
+                        crate::app::live_more::group_digits(remaining)
+                    )))
+                    .child(Input::new(&input))
+                    .child(
+                        h_flex()
+                            .justify_end()
+                            .gap_2()
+                            .child(
+                                Button::new("custom-load-cancel")
+                                    .label("Cancel")
+                                    .on_click(cx.listener(|this, _, _, cx| this.cancel_custom_load(cx))),
+                            )
+                            .child(
+                                Button::new("custom-load-accept")
+                                    .primary()
+                                    .label("Load")
+                                    .on_click(cx.listener(|this, _, _, cx| this.accept_custom_load(cx))),
                             ),
                     ),
             )

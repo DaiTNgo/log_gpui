@@ -11,6 +11,7 @@ mod focus_window;
 mod highlights;
 mod keyboard;
 pub mod live;
+pub mod live_more;
 mod marking;
 mod persist;
 pub mod remote;
@@ -58,6 +59,8 @@ use std::sync::Arc;
 pub enum ConfirmAction {
     DeleteLogSpace { space_id: String },
     DeleteScratchFile { space_id: String, file_id: String },
+    /// Clear Remote Files whose lines carry `markers` Markers.
+    ClearFiles { file_ids: Vec<String>, markers: usize },
 }
 
 pub struct AppView {
@@ -169,6 +172,8 @@ pub struct AppView {
     pub raw: raw::RawViewState,
     pub new_space: Option<spaces::NewSpaceDialog>,
     pub confirm: Option<ConfirmAction>,
+    /// Load more with a number the user types.
+    pub custom_load: Option<live_more::CustomLoad>,
     /// A light message shown above the status bar until dismissed.
     pub notice: Option<String>,
     pub session_save_gen: u64,
@@ -402,6 +407,7 @@ impl AppView {
             raw: raw::RawViewState::new(),
             new_space: None,
             confirm: None,
+            custom_load: None,
             notice: None,
             session_save_gen: 0,
             persistence,
@@ -414,6 +420,7 @@ impl AppView {
             true
         });
         this.live.window = this.workspace_state.live_window.max(1_000);
+        this.live.load_more_step = this.workspace_state.load_more_step.clamp(1_000, 1_000_000);
         this.density = this.workspace_state.density;
         this.column_layout.update_density(this.density);
         this.show_minimap = this.workspace_state.show_minimap;

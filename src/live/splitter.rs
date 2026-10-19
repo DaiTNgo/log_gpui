@@ -13,15 +13,22 @@ impl LineSplitter {
 
     /// The lines completed by `bytes`, without their line ends.
     pub fn push(&mut self, bytes: &[u8]) -> Vec<String> {
+        self.push_with_lens(bytes).0
+    }
+
+    /// `push`, and the length of each line in the stream, line end included.
+    pub fn push_with_lens(&mut self, bytes: &[u8]) -> (Vec<String>, Vec<u32>) {
         let mut lines = Vec::new();
+        let mut lens = Vec::new();
         let mut rest = bytes;
         while let Some(pos) = rest.iter().position(|b| *b == b'\n') {
             self.pending.extend_from_slice(&rest[..pos]);
+            lens.push((self.pending.len() + 1) as u32);
             lines.push(decode_line(&std::mem::take(&mut self.pending)));
             rest = &rest[pos + 1..];
         }
         self.pending.extend_from_slice(rest);
-        lines
+        (lines, lens)
     }
 
     /// Bytes of the unfinished line.

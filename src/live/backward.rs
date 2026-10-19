@@ -105,6 +105,12 @@ impl BackwardLines {
     /// file order. Empty when there is nothing more. Call once `want_block`
     /// says nothing more is needed.
     pub fn take_batch(&mut self, max_lines: usize) -> Vec<String> {
+        self.take_batch_with_lens(max_lines).0
+    }
+
+    /// `take_batch`, and the length of each line in the file, line end
+    /// included.
+    pub fn take_batch_with_lens(&mut self, max_lines: usize) -> (Vec<String>, Vec<u32>) {
         let max_lines = max_lines.max(1);
         if self.first {
             // Only an empty file gets here.
@@ -112,7 +118,7 @@ impl BackwardLines {
             self.follow_offset = 0;
             self.data.clear();
             self.newlines = 0;
-            return Vec::new();
+            return (Vec::new(), Vec::new());
         }
         let data = std::mem::take(&mut self.data);
         let mut segments: Vec<&[u8]> = data.split_inclusive(|b| *b == b'\n').collect();
@@ -133,13 +139,23 @@ impl BackwardLines {
             .iter()
             .map(|s| decode_line(&s[..s.len() - 1]))
             .collect();
+        let lens: Vec<u32> = segments[keep_from..].iter().map(|s| s.len() as u32).collect();
         self.newlines = rest.iter().filter(|b| **b == b'\n').count();
         self.data = rest;
-        lines
+        (lines, lens)
     }
 
     /// Synchronous convenience over a `ReadAt`.
     pub fn next_batch<R: ReadAt>(&mut self, src: &mut R, max_lines: usize) -> std::io::Result<Vec<String>> {
+        Ok(self.next_batch_with_lens(src, max_lines)?.0)
+    }
+
+    /// `next_batch`, and the length of each line in the file.
+    pub fn next_batch_with_lens<R: ReadAt>(
+        &mut self,
+        src: &mut R,
+        max_lines: usize,
+    ) -> std::io::Result<(Vec<String>, Vec<u32>)> {
         while let Some((offset, len)) = self.want_block(max_lines) {
             let mut block = vec![0u8; len];
             let n = src.read_at(offset, &mut block)?;
@@ -152,6 +168,6 @@ impl BackwardLines {
             }
             self.absorb_block(block);
         }
-        Ok(self.take_batch(max_lines))
+        Ok(self.take_batch_with_lens(max_lines))
     }
 }

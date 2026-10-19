@@ -98,6 +98,7 @@ impl Render for AppView {
         let command_palette = CommandPalette::render(self.is_palette_open, cx);
         let new_space_dialog = self.render_new_space_dialog(cx);
         let confirm = self.render_confirm(cx);
+        let custom_load = self.render_custom_load(cx);
         let host_key_dialog = self.render_host_key_dialog(cx);
         let secret_dialog = self.render_secret_dialog(cx);
         let servers_dialog = self.render_servers_dialog(cx);
@@ -196,6 +197,7 @@ impl Render for AppView {
             .child(project_switcher)
             .child(new_space_dialog)
             .child(confirm)
+            .child(custom_load)
             .child(servers_dialog)
             .child(remote_picker)
             .child(download_panel)

@@ -36,6 +36,37 @@ pub struct BreakMark {
     pub label: String,
 }
 
+/// How many lines a Remote File keeps.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum HoldMode {
+    /// The newest lines, as many as the Live Window.
+    #[default]
+    Window,
+    /// Everything from the oldest line loaded by Load More, up to the Full
+    /// Read Limit.
+    Extended,
+}
+
+/// Where the oldest held line is in the file on the Server.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HeldStart {
+    pub generation: u32,
+    /// Number of the oldest held line (or of the next line when none is held).
+    pub line_no: usize,
+    /// Byte offset of its start in the file; `None` when it is in an older
+    /// Generation than the one being read.
+    pub offset: Option<u64>,
+}
+
+/// Where a Clear cut.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClearMark {
+    pub generation: u32,
+    pub line_no: usize,
+    pub offset: u64,
+    pub time: String,
+}
+
 /// The state a live file keeps next to its `ParsedFile`.
 #[derive(Debug, Clone)]
 pub struct LiveBuffer {
@@ -62,6 +93,17 @@ pub struct LiveBuffer {
     /// The last loaded line had no newline yet: the first appended line is
     /// that line again, whole, and replaces it.
     replace_last: bool,
+    /// Length in the file of each held line, line end included, parallel to
+    /// the entries of the cache (0 when not known: local files).
+    byte_lens: Vec<u32>,
+    /// Offset just after the last line of the current Generation held or
+    /// cleared.
+    next_offset: u64,
+    pub hold: HoldMode,
+    /// Where the file was last cleared.
+    pub clear_mark: Option<ClearMark>,
+    /// Inode of each Generation, as the source reported it.
+    inodes: Vec<(u32, Option<u64>)>,
 }
 
 /// What a trim of the Live Window removed.
@@ -89,6 +131,11 @@ impl LiveBuffer {
             tail_last_index: None,
             local_offset: 0,
             replace_last: false,
+            byte_lens: Vec::new(),
+            next_offset: 0,
+            hold: HoldMode::Window,
+            clear_mark: None,
+            inodes: Vec::new(),
         }
     }
 
@@ -114,6 +161,11 @@ impl LiveBuffer {
             tail_last_index: None,
             local_offset: 0,
             replace_last: false,
+            byte_lens: Vec::new(),
+            next_offset: 0,
+            hold: HoldMode::Window,
+            clear_mark: None,
+            inodes: Vec::new(),
         }
     }
 
@@ -132,10 +184,24 @@ impl LiveBuffer {
 
     /// The last lines of the file, at the end of the cache.
     pub fn apply_tail(&mut self, parsed: &mut ParsedFile, lines: &[String], generation: u32) {
+        self.apply_tail_with(parsed, lines, generation, &[], 0);
+    }
+
+    /// `apply_tail` with the length of each line in the file and the offset
+    /// just after the last of them.
+    pub fn apply_tail_with(
+        &mut self,
+        parsed: &mut ParsedFile,
+        lines: &[String],
+        generation: u32,
+        bytes: &[u32],
+        end_offset: u64,
+    ) {
         let _ = generation;
         let start = self.next_index;
-        self.push_lines(parsed, lines);
+        self.push_lines(parsed, lines, bytes);
         self.first_index = start;
+        self.next_offset = end_offset;
         if !lines.is_empty() {
             self.tail_last_index = Some(self.next_index - 1);
         }
@@ -143,6 +209,11 @@ impl LiveBuffer {
 
     /// Older lines, inserted above everything in the current Generation.
     pub fn apply_backfill(&mut self, parsed: &mut ParsedFile, lines: &[String]) {
+        self.apply_backfill_with(parsed, lines, &[]);
+    }
+
+    /// `apply_backfill` with the length of each line in the file.
+    pub fn apply_backfill_with(&mut self, parsed: &mut ParsedFile, lines: &[String], bytes: &[u32]) {
         if lines.is_empty() {
             return;
         }
@@ -183,25 +254,50 @@ impl LiveBuffer {
         }
         parsed.lines_mut().splice(at..at, lines.iter().cloned());
         parsed.entries.splice(at..at, entries.drain(..));
+        self.sync_byte_lens(parsed.entries.len() - count);
+        self.byte_lens.splice(at..at, (0..count).map(|i| bytes.get(i).copied().unwrap_or(0)));
         parsed.shift_breaks_from(at, count as isize);
         self.first_index = first;
     }
 
     /// New lines at the end. Returns the positions of the new entries.
     pub fn apply_append(&mut self, parsed: &mut ParsedFile, lines: &[String]) -> std::ops::Range<usize> {
+        self.apply_append_with(parsed, lines, &[])
+    }
+
+    /// `apply_append` with the length of each line in the file.
+    pub fn apply_append_with(
+        &mut self,
+        parsed: &mut ParsedFile,
+        lines: &[String],
+        bytes: &[u32],
+    ) -> std::ops::Range<usize> {
         if self.replace_last && !lines.is_empty() {
             self.replace_last = false;
             if parsed.entries.pop().is_some() {
                 parsed.lines_mut().pop();
                 parsed.raw_breaks.remove(&parsed.entries.len());
+                self.byte_lens.truncate(parsed.entries.len());
                 self.next_index -= 1;
             }
         }
-        self.push_lines(parsed, lines)
+        self.push_lines(parsed, lines, bytes)
     }
 
-    fn push_lines(&mut self, parsed: &mut ParsedFile, lines: &[String]) -> std::ops::Range<usize> {
+    /// Keep `byte_lens` as long as the entries were before an insertion of
+    /// lines (they are padded when a source gave no lengths).
+    fn sync_byte_lens(&mut self, len: usize) {
+        self.byte_lens.resize(len, 0);
+    }
+
+    fn push_lines(&mut self, parsed: &mut ParsedFile, lines: &[String], bytes: &[u32]) -> std::ops::Range<usize> {
         let from = parsed.entries.len();
+        self.sync_byte_lens(from);
+        for i in 0..lines.len() {
+            let len = bytes.get(i).copied().unwrap_or(0);
+            self.byte_lens.push(len);
+            self.next_offset += u64::from(len);
+        }
         for line in lines {
             let mut entry = self.parser.parse(self.next_index, line);
             entry.generation = self.generation;
@@ -242,6 +338,7 @@ impl LiveBuffer {
             self.parser.reset();
             self.first_index = 1;
             self.next_index = 1;
+            self.next_offset = 0;
             self.numbers_known = true;
             self.tail_last_index = None;
         }
@@ -277,6 +374,15 @@ impl LiveBuffer {
         Some(delta)
     }
 
+    /// How many lines the file may hold now: the Live Window, or the Full
+    /// Read Limit once Load More made it `Extended`.
+    pub fn limit(&self, window: usize, full_read_limit: usize) -> usize {
+        match self.hold {
+            HoldMode::Window => window,
+            HoldMode::Extended => full_read_limit,
+        }
+    }
+
     /// Keep at most `window` lines: the oldest ones leave, and the first line
     /// kept gets a Break saying so. Nothing happens within 10% over the
     /// window.
@@ -285,9 +391,28 @@ impl LiveBuffer {
         if window == 0 || len <= window + window / 10 {
             return None;
         }
-        let removed = len - window;
+        self.trim_to(parsed, window)
+    }
+
+    /// Back to the Live Window at once: only `window` lines stay and the
+    /// memory of the rest is given back.
+    pub fn back_to_window(&mut self, parsed: &mut ParsedFile, window: usize) -> Option<Trimmed> {
+        self.hold = HoldMode::Window;
+        let trimmed = if window > 0 && parsed.entries.len() > window {
+            self.trim_to(parsed, window)
+        } else {
+            None
+        };
+        self.shrink(parsed);
+        trimmed
+    }
+
+    fn trim_to(&mut self, parsed: &mut ParsedFile, keep: usize) -> Option<Trimmed> {
+        let removed = parsed.entries.len() - keep;
         parsed.entries.drain(..removed);
         parsed.lines_mut().drain(..removed);
+        self.sync_byte_lens(removed + keep);
+        self.byte_lens.drain(..removed);
         parsed.shift_breaks_from(0, -(removed as isize));
         let first = parsed.entries.first_mut()?;
         let (generation, first_kept) = (first.generation, first.index);
@@ -301,6 +426,139 @@ impl LiveBuffer {
             self.first_index = first_kept;
         }
         Some(Trimmed { removed, generation, first_kept })
+    }
+
+    /// Give back the memory the cache holds beyond its lines.
+    pub fn shrink(&mut self, parsed: &mut ParsedFile) {
+        parsed.entries.shrink_to_fit();
+        parsed.lines_mut().shrink_to_fit();
+        self.byte_lens.shrink_to_fit();
+    }
+
+    /// Drop every line held and draw a Break "cleared" above the next line.
+    /// What is dropped is given back; the file goes back to `Window`.
+    pub fn clear(&mut self, parsed: &mut ParsedFile, time: &str) -> Trimmed {
+        let removed = parsed.entries.len();
+        // A new vector, not `clear`: the old one's memory is freed.
+        parsed.entries = Vec::new();
+        parsed.lines = Arc::new(Vec::new());
+        parsed.raw_breaks.clear();
+        parsed.max_chars = crate::column::FieldMaxChars::new();
+        self.byte_lens = Vec::new();
+        self.parser.reset();
+        self.replace_last = false;
+        self.hold = HoldMode::Window;
+        self.first_index = self.next_index;
+        self.clear_mark = Some(ClearMark {
+            generation: self.generation,
+            line_no: self.next_index,
+            offset: self.next_offset,
+            time: time.to_string(),
+        });
+        self.add_pending(BreakMark {
+            kind: BreakKind::Cleared,
+            label: format!("{} {} {time}", self.name, BreakKind::Cleared.label()),
+        });
+        Trimmed { removed, generation: self.generation, first_kept: usize::MAX }
+    }
+
+    /// Where the oldest held line starts in the file on the Server.
+    pub fn held_start(&self, parsed: &ParsedFile) -> HeldStart {
+        let Some(first) = parsed.entries.first() else {
+            return HeldStart {
+                generation: self.generation,
+                line_no: self.next_index,
+                offset: Some(self.next_offset),
+            };
+        };
+        if first.generation != self.generation {
+            return HeldStart { generation: first.generation, line_no: first.index, offset: None };
+        }
+        // The lines of the current Generation are all the lines held, then
+        // the offset is the end of the last minus their lengths.
+        let held: u64 = self.byte_lens.iter().map(|b| u64::from(*b)).sum();
+        HeldStart {
+            generation: first.generation,
+            line_no: first.index,
+            offset: self.next_offset.checked_sub(held),
+        }
+    }
+
+    /// Older lines read by Load More, inserted above the oldest held line.
+    /// The file keeps them: it is `Extended` from now on. Returns false when
+    /// they do not belong above the lines held (another Generation).
+    pub fn apply_older(
+        &mut self,
+        parsed: &mut ParsedFile,
+        lines: &[String],
+        bytes: &[u32],
+        reached_start: bool,
+    ) -> bool {
+        if parsed.entries.first().is_some_and(|e| e.generation != self.generation) {
+            return false;
+        }
+        // The lines are continuous now: the Break that said older lines were
+        // left out above the oldest one goes.
+        if let Some(first) = parsed.entries.first_mut() {
+            if first.break_before.as_ref().is_some_and(|m| {
+                matches!(m.kind, BreakKind::LeftWindow | BreakKind::StartOfLoaded)
+            }) {
+                first.break_before = None;
+                parsed.raw_breaks.remove(&0);
+            }
+        }
+        self.apply_backfill_with(parsed, lines, bytes);
+        if !lines.is_empty() {
+            self.hold = HoldMode::Extended;
+        }
+        if !reached_start && !lines.is_empty() {
+            if let Some(first) = parsed.entries.get_mut(0) {
+                if first.break_before.is_none() && first.generation == self.generation {
+                    let mark = Arc::new(BreakMark {
+                        kind: BreakKind::StartOfLoaded,
+                        label: format!("{} {}", self.name, BreakKind::StartOfLoaded.label()),
+                    });
+                    first.break_before = Some(mark.clone());
+                    parsed.raw_breaks.insert(0, mark);
+                }
+            }
+        }
+        true
+    }
+
+    /// Load More found the file changed under the lines held: a Break above
+    /// the oldest one says so.
+    pub fn mark_changed(&mut self, parsed: &mut ParsedFile) {
+        let mark = Arc::new(BreakMark {
+            kind: BreakKind::Changed,
+            label: format!("{} {}", self.name, BreakKind::Changed.label()),
+        });
+        match parsed.entries.first_mut() {
+            Some(first) => {
+                first.break_before = Some(mark.clone());
+                parsed.raw_breaks.insert(0, mark);
+            }
+            None => self.add_pending(BreakMark { kind: BreakKind::Changed, label: mark.label.clone() }),
+        }
+    }
+
+    /// The source reported the inode of the file read now.
+    pub fn set_inode(&mut self, inode: Option<u64>) {
+        let generation = self.generation;
+        match self.inodes.iter_mut().find(|(g, _)| *g == generation) {
+            Some(slot) => slot.1 = inode,
+            None => self.inodes.push((generation, inode)),
+        }
+    }
+
+    /// The inode of a Generation, when the source told it.
+    pub fn inode_of(&self, generation: u32) -> Option<u64> {
+        self.inodes.iter().find(|(g, _)| *g == generation).and_then(|(_, i)| *i)
+    }
+
+    /// Whether the file holds up to the first line of its Generation.
+    pub fn at_generation_start(&self, parsed: &ParsedFile) -> bool {
+        self.numbers_known && self.held_start(parsed).line_no <= 1
     }
 }
 

@@ -9,7 +9,7 @@ pub mod source;
 pub mod splitter;
 
 pub use backward::BackwardLines;
-pub use buffer::{BreakMark, LiveBuffer, PROVISIONAL_BASE, Trimmed, is_real_line_number, line_number_text};
+pub use buffer::{BreakMark, ClearMark, HeldStart, HoldMode, LiveBuffer, PROVISIONAL_BASE, Trimmed, is_real_line_number, line_number_text};
 pub use local::LocalFileSource;
 pub use remote::RemoteFileSource;
 pub use source::{

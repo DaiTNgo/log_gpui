@@ -139,6 +139,7 @@ pub fn space_menu(
         )),
         LogSpaceKind::Remote => {
             let download = space.clone();
+            let clear_all = space.clone();
             menu.item(PopupMenuItem::new("Add remote files…").on_click(move |_, _, app| {
                 let id = add.space_id.clone();
                 add.view.update(app, |this, cx| this.add_remote_files_dialog(&id, cx));
@@ -146,6 +147,10 @@ pub fn space_menu(
             .item(PopupMenuItem::new("Download all").on_click(move |_, _, app| {
                 let id = download.space_id.clone();
                 download.view.update(app, |this, cx| this.download_space(&id, cx));
+            }))
+            .item(PopupMenuItem::new("Clear all files").on_click(move |_, _, app| {
+                let id = clear_all.space_id.clone();
+                clear_all.view.update(app, |this, cx| this.request_clear_all_files(&id, cx));
             }))
         }
     };
@@ -176,7 +181,7 @@ pub fn space_menu(
 }
 
 /// The right-click menu of a file.
-fn file_menu(menu: PopupMenu, file: &FileRef) -> PopupMenu {
+fn file_menu(menu: PopupMenu, file: &FileRef, cx: &mut App) -> PopupMenu {
     match file.kind {
         LogSpaceKind::Imported => {
             let remove = file.clone();
@@ -202,6 +207,7 @@ fn file_menu(menu: PopupMenu, file: &FileRef) -> PopupMenu {
         LogSpaceKind::Remote => {
             let remove = file.clone();
             let download = file.clone();
+            let menu = remote_file_live_items(menu, file, cx);
             menu.item(PopupMenuItem::new("Download").on_click(move |_, _, app| {
                 let (space, id) = (download.space_id.clone(), download.file_id.clone());
                 download.view.update(app, |this, cx| this.download_file(&space, &id, cx));
@@ -242,6 +248,71 @@ fn file_menu(menu: PopupMenu, file: &FileRef) -> PopupMenu {
             )
         }
     }
+}
+
+/// Clear, Load More and Back to Live Window of a Remote File, with what the
+/// file holds on top.
+fn remote_file_live_items(menu: PopupMenu, file: &FileRef, cx: &App) -> PopupMenu {
+    let (info, step) = {
+        let view = file.view.read(cx);
+        (view.hold_info(&file.file_id), view.live.load_more_step)
+    };
+    let Some(info) = info else { return menu };
+    let clear = file.clone();
+    let more = file.clone();
+    let back = file.clone();
+    let extended = info.extended;
+    let load_off = info.load_more_off.is_some() || info.loading;
+    let loading = info.loading;
+    let cancel = file.clone();
+    let custom = file.clone();
+    let menu = menu
+        .item(PopupMenuItem::new(info.tooltip()).disabled(true))
+        .item(PopupMenuItem::new("Clear").on_click(move |_, _, app| {
+            let id = clear.file_id.clone();
+            clear.view.update(app, |this, cx| this.request_clear_file(&id, cx));
+        }))
+        .item(
+            PopupMenuItem::new(format!("Load more ({})", info.amount_label(step)))
+                .disabled(load_off)
+                .on_click(move |_, _, app| {
+                    let id = more.file_id.clone();
+                    more.view.update(app, |this, cx| this.load_more(&id, None, cx));
+                }),
+        );
+    let mut menu = menu;
+    for lines in [1_000usize, 10_000, 100_000] {
+        let file = file.clone();
+        menu = menu.item(
+            PopupMenuItem::new(format!("Load more ({} lines)", info.amount_label(lines)))
+            .disabled(load_off)
+            .on_click(move |_, _, app| {
+                let id = file.file_id.clone();
+                file.view.update(app, |this, cx| this.load_more(&id, Some(lines), cx));
+            }),
+        );
+    }
+    let menu = menu.item(PopupMenuItem::new("Load more (custom number)…").disabled(load_off).on_click(
+        move |_, window, app| {
+            let id = custom.file_id.clone();
+            custom.view.update(app, |this, cx| this.open_custom_load(&id, window, cx));
+        },
+    ));
+    let menu = if loading {
+        menu.item(PopupMenuItem::new("Cancel loading").on_click(move |_, _, app| {
+            let id = cancel.file_id.clone();
+            cancel.view.update(app, |this, _| this.cancel_load_more(&id));
+        }))
+    } else {
+        menu
+    };
+    menu.item(PopupMenuItem::new("Back to Live Window").disabled(!extended).on_click(
+        move |_, _, app| {
+            let id = back.file_id.clone();
+            back.view.update(app, |this, cx| this.back_to_live_window(&id, cx));
+        },
+    ))
+    .item(PopupMenuItem::separator())
 }
 
 /// Append a Log Space row to `list`.
@@ -329,6 +400,9 @@ pub fn push_file(list: MenuList, file: FileRef, active: bool) -> MenuList {
     let open = file.clone();
     let context = file.clone();
     let no_timestamps = file.no_timestamps;
+    let hold_view = file.view.clone();
+    let hold_file = file.file_id.clone();
+    let remote = file.kind == LogSpaceKind::Remote;
     let item = SidebarMenuItem::new(file.display_name.clone())
         .icon(IconName::File)
         .when(no_timestamps, |item| {
@@ -339,6 +413,27 @@ pub fn push_file(list: MenuList, file: FileRef, active: bool) -> MenuList {
                     .text_color(cx.theme().muted_foreground)
                     .child(Icon::new(IconName::Flag).size(px(12.0)))
                     .child("No timestamps")
+            })
+        })
+        .when(remote && !no_timestamps, |item| {
+            item.suffix(move |_, cx| {
+                let info = hold_view.read(cx).hold_info(&hold_file);
+                let muted = cx.theme().muted_foreground;
+                let text = info.as_ref().map(|i| i.tooltip()).unwrap_or_default();
+                let short = info
+                    .as_ref()
+                    .map(|i| format!("{} MB{}", i.approx_mb(), if i.extended { " · Ext" } else { "" }))
+                    .unwrap_or_default();
+                div()
+                    .id(SharedString::from(format!("hold-{hold_file}")))
+                    .text_xs()
+                    .text_color(muted)
+                    .child(short)
+                    .when(!text.is_empty(), |d| {
+                        d.tooltip(move |window, cx| {
+                            gpui_component::tooltip::Tooltip::new(text.clone()).build(window, cx)
+                        })
+                    })
             })
         })
         .active(active)
@@ -357,7 +452,7 @@ pub fn push_file(list: MenuList, file: FileRef, active: bool) -> MenuList {
                 defer_rename(open.view.clone(), target, open.display_name.clone(), window, app);
             }
         })
-        .context_menu(move |menu, _, _| file_menu(menu, &context));
+        .context_menu(move |menu, _, cx| file_menu(menu, &context, cx));
     list.nested_child(item)
 }
 

@@ -144,6 +144,12 @@ impl AppView {
             (true, true, false, "F") => {
                 self.toggle_or_reveal_context_section(crate::workspace::state::ContextSection::Filter, cx);
             }
+            (true, true, false, "K") | (true, true, false, "k") => {
+                self.request_clear_current_file(cx);
+            }
+            (true, true, false, "up") | (true, true, false, "ArrowUp") => {
+                self.load_more_current_file(cx);
+            }
             (true, true, false, "M") => {
                 self.toggle_or_reveal_context_section(crate::workspace::state::ContextSection::Highlights, cx);
             }

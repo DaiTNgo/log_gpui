@@ -78,6 +78,7 @@ struct Row {
 /// What the rows read from the app, taken once per frame.
 struct Values {
     live_window: usize,
+    load_more_step: usize,
     shown: bool,
     minimap: bool,
     in_space: bool,
@@ -93,6 +94,7 @@ pub fn open_settings_dialog(view: Entity<AppView>, window: &mut Window, cx: &mut
             (
                 Values {
                     live_window: v.live.window,
+                    load_more_step: v.live.load_more_step,
                     shown: v.source_column_shown(),
                     minimap: v.show_minimap,
                     in_space: v.active_is_log_space(),
@@ -226,8 +228,11 @@ fn rows_of(section: SettingsSection, view: &Entity<AppView>, v: &Values, cx: &Ap
     match section {
         SettingsSection::General => {
             let view = view.clone();
+            let step_view = view.clone();
             let windows = [10_000usize, 50_000, 100_000, 500_000, 1_000_000];
+            let steps = [1_000usize, 10_000, 100_000, 1_000_000];
             let current = v.live_window;
+            let current_step = v.load_more_step;
             vec![Row {
                 title: "Live Window",
                 description: "How many of the newest lines each Remote File keeps. Older lines leave the view as new ones arrive.",
@@ -241,6 +246,24 @@ fn rows_of(section: SettingsSection, view: &Entity<AppView>, v: &Values, cx: &Ap
                     .on_click(move |ix: &Vec<usize>, window, app| {
                         if let Some(&i) = ix.first() {
                             view.update(app, |this, cx| this.set_live_window(windows[i], cx));
+                            window.refresh();
+                        }
+                    })
+                    .into_any_element(),
+            },
+            Row {
+                title: "Load more step",
+                description: "How many older lines Load more reads from the Server each time (about 13 MB of memory per 10,000 lines).",
+                control: ButtonGroup::new("settings-load-more-step")
+                    .small()
+                    .children(steps.map(|n| {
+                        Button::new(SharedString::from(format!("load-more-step-{n}")))
+                            .label(format!("{n}"))
+                            .selected(current_step == n)
+                    }))
+                    .on_click(move |ix: &Vec<usize>, window, app| {
+                        if let Some(&i) = ix.first() {
+                            step_view.update(app, |this, cx| this.set_load_more_step(steps[i], cx));
                             window.refresh();
                         }
                     })

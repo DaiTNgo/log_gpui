@@ -10,6 +10,7 @@ use super::backward::BackwardLines;
 use super::source::{
     BreakKind, LineSource, SourceCommand, SourceEvent, SourceHandle, SourceStatus,
 };
+use crate::workspace::log_space::line_hash;
 use super::splitter::LineSplitter;
 use crate::remote::{ConnectError, RemoteHub, RemoteSession, ServerStore};
 use async_channel::{Receiver, Sender};
@@ -71,6 +72,60 @@ enum Served {
     Stopped(SourceStatus),
 }
 
+/// A Load More the app asked for.
+#[derive(Debug, Clone)]
+struct LoadMoreRequest {
+    generation: u32,
+    end_offset: u64,
+    lines: usize,
+    first_hash: Option<u64>,
+}
+
+/// What the app asked for, kept until the source can act on it (it may be
+/// disconnected or sleeping).
+struct Ctl {
+    window: usize,
+    paused: bool,
+    /// The app dropped what it held: stop reading older lines for good.
+    clear: bool,
+    load_more: Option<LoadMoreRequest>,
+    /// A Load More was dropped before it started: the app is told so.
+    cancelled: bool,
+}
+
+/// What a command means for the loop that handles it.
+enum Flow {
+    Close,
+    Reconnect,
+    Go,
+}
+
+impl Ctl {
+    fn new(window: usize) -> Self {
+        Self { window, paused: false, clear: false, load_more: None, cancelled: false }
+    }
+
+    fn apply(&mut self, command: SourceCommand) -> Flow {
+        match command {
+            SourceCommand::Close => return Flow::Close,
+            SourceCommand::Reconnect => return Flow::Reconnect,
+            SourceCommand::Pause => self.paused = true,
+            SourceCommand::Resume => self.paused = false,
+            SourceCommand::SetWindow(n) => self.window = n,
+            SourceCommand::Clear => self.clear = true,
+            SourceCommand::CancelLoadMore => {
+                if self.load_more.take().is_some() {
+                    self.cancelled = true;
+                }
+            }
+            SourceCommand::LoadMore { generation, end_offset, lines, first_hash } => {
+                self.load_more = Some(LoadMoreRequest { generation, end_offset, lines, first_hash });
+            }
+        }
+        Flow::Go
+    }
+}
+
 /// What survives a lost connection.
 #[derive(Default)]
 struct Memory {
@@ -84,6 +139,10 @@ struct Memory {
     loaded: usize,
     /// Whether `stat` through exec works on this server.
     exec_stat: Option<bool>,
+    /// Generation being read, counted like the app counts them.
+    generation: u32,
+    /// The user cleared the file: older lines are never read on their own.
+    no_refill: bool,
 }
 
 fn classify(e: &SftpError) -> Kind {
@@ -112,8 +171,7 @@ fn shell_quote(path: &str) -> String {
 impl RemoteFileSource {
     async fn run(self, events: Sender<SourceEvent>, commands: Receiver<SourceCommand>) {
         let mut mem = Memory::default();
-        let mut window = self.window;
-        let mut paused = false;
+        let mut ctl = Ctl::new(self.window);
         let mut backoff = Duration::from_secs(1);
         let mut failing_since: Option<Instant> = None;
         let _ = events.try_send(SourceEvent::Status(SourceStatus::Connecting));
@@ -124,7 +182,7 @@ impl RemoteFileSource {
                     backoff = Duration::from_secs(1);
                     let was_down = failing_since.take().is_some();
                     match self
-                        .serve(&session, &mut mem, &events, &commands, &mut window, &mut paused, was_down)
+                        .serve(&session, &mut mem, &events, &commands, &mut ctl, was_down)
                         .await
                     {
                         Served::Closed => return,
@@ -138,7 +196,7 @@ impl RemoteFileSource {
                         }
                         Served::Stopped(status) => {
                             let _ = events.try_send(SourceEvent::Status(status));
-                            if !self.wait_for_reconnect(&commands, &mut window, &mut paused).await {
+                            if !self.wait_for_reconnect(&commands, &mut ctl).await {
                                 return;
                             }
                             let _ = events.try_send(SourceEvent::Status(SourceStatus::Connecting));
@@ -153,7 +211,7 @@ impl RemoteFileSource {
                     };
                     if let Some(status) = status {
                         let _ = events.try_send(SourceEvent::Status(status));
-                        if !self.wait_for_reconnect(&commands, &mut window, &mut paused).await {
+                        if !self.wait_for_reconnect(&commands, &mut ctl).await {
                             return;
                         }
                         let _ = events.try_send(SourceEvent::Status(SourceStatus::Connecting));
@@ -167,7 +225,7 @@ impl RemoteFileSource {
                         let _ = events.try_send(SourceEvent::Status(SourceStatus::Disconnected));
                         failing_since = None;
                         backoff = Duration::from_secs(1);
-                        if !self.wait_for_reconnect(&commands, &mut window, &mut paused).await {
+                        if !self.wait_for_reconnect(&commands, &mut ctl).await {
                             return;
                         }
                         let _ = events.try_send(SourceEvent::Status(SourceStatus::Connecting));
@@ -176,7 +234,7 @@ impl RemoteFileSource {
                 }
             }
             // Wait before the next try, still hearing the app.
-            if !self.sleep_with_commands(backoff, &commands, &mut window, &mut paused).await {
+            if !self.sleep_with_commands(backoff, &commands, &mut ctl).await {
                 return;
             }
             backoff = (backoff * 2).min(Duration::from_secs(30));
@@ -184,19 +242,15 @@ impl RemoteFileSource {
     }
 
     /// Wait until the app says Reconnect. `false` when it closed the source.
-    async fn wait_for_reconnect(
-        &self,
-        commands: &Receiver<SourceCommand>,
-        window: &mut usize,
-        paused: &mut bool,
-    ) -> bool {
+    async fn wait_for_reconnect(&self, commands: &Receiver<SourceCommand>, ctl: &mut Ctl) -> bool {
         loop {
             match commands.recv().await {
-                Ok(SourceCommand::Reconnect) => return true,
-                Ok(SourceCommand::Close) | Err(_) => return false,
-                Ok(SourceCommand::Pause) => *paused = true,
-                Ok(SourceCommand::Resume) => *paused = false,
-                Ok(SourceCommand::SetWindow(n)) => *window = n,
+                Ok(command) => match ctl.apply(command) {
+                    Flow::Reconnect => return true,
+                    Flow::Close => return false,
+                    Flow::Go => {}
+                },
+                Err(_) => return false,
             }
         }
     }
@@ -207,19 +261,19 @@ impl RemoteFileSource {
         &self,
         duration: Duration,
         commands: &Receiver<SourceCommand>,
-        window: &mut usize,
-        paused: &mut bool,
+        ctl: &mut Ctl,
     ) -> bool {
         let deadline = tokio::time::Instant::now() + duration;
         loop {
             tokio::select! {
                 _ = tokio::time::sleep_until(deadline) => return true,
                 cmd = commands.recv() => match cmd {
-                    Ok(SourceCommand::Close) | Err(_) => return false,
-                    Ok(SourceCommand::Reconnect) => return true,
-                    Ok(SourceCommand::Pause) => *paused = true,
-                    Ok(SourceCommand::Resume) => *paused = false,
-                    Ok(SourceCommand::SetWindow(n)) => *window = n,
+                    Ok(command) => match ctl.apply(command) {
+                        Flow::Reconnect => return true,
+                        Flow::Close => return false,
+                        Flow::Go => {}
+                    },
+                    Err(_) => return false,
                 },
             }
         }
@@ -266,8 +320,7 @@ impl RemoteFileSource {
         mem: &mut Memory,
         events: &Sender<SourceEvent>,
         commands: &Receiver<SourceCommand>,
-        window: &mut usize,
-        paused: &mut bool,
+        ctl: &mut Ctl,
         was_down: bool,
     ) -> Served {
         let sftp = match session.open_sftp().await {
@@ -288,11 +341,11 @@ impl RemoteFileSource {
             // Commands first.
             loop {
                 match commands.try_recv() {
-                    Ok(SourceCommand::Close) => return Served::Closed,
-                    Ok(SourceCommand::Pause) => *paused = true,
-                    Ok(SourceCommand::Resume) => *paused = false,
-                    Ok(SourceCommand::SetWindow(n)) => *window = n,
-                    Ok(SourceCommand::Reconnect) => {}
+                    Ok(command) => {
+                        if let Flow::Close = ctl.apply(command) {
+                            return Served::Closed;
+                        }
+                    }
                     Err(async_channel::TryRecvError::Empty) => break,
                     Err(async_channel::TryRecvError::Closed) => return Served::Closed,
                 }
@@ -300,8 +353,50 @@ impl RemoteFileSource {
             if events.is_closed() {
                 return Served::Closed;
             }
-            if *paused {
-                if !self.sleep_with_commands(REMOTE_POLL_INTERVAL, commands, window, paused).await {
+            if ctl.clear {
+                // What the app held is gone: no older line is read again
+                // unless it asks (Load More).
+                ctl.clear = false;
+                mem.backward = None;
+                mem.no_refill = true;
+                mem.loaded = 0;
+                backfill_ready = false;
+            }
+            if ctl.cancelled {
+                ctl.cancelled = false;
+                let _ = events.try_send(SourceEvent::Older {
+                    generation: mem.generation,
+                    lines: Vec::new(),
+                    bytes: Vec::new(),
+                    reached_start: false,
+                });
+            }
+            if let Some(request) = ctl.load_more.take() {
+                match file.as_mut() {
+                    Some(handle) => match self.load_older(handle, &request, mem, events).await {
+                        Ok(()) => {}
+                        Err(Kind::Lost) => {
+                            // Nothing was read: the app stops waiting and the
+                            // lines it holds stay as they are.
+                            let _ = events.try_send(SourceEvent::Older {
+                                generation: request.generation,
+                                lines: Vec::new(),
+                                bytes: Vec::new(),
+                                reached_start: false,
+                            });
+                            return Served::Lost;
+                        }
+                        Err(_) => {
+                            let _ = events.try_send(SourceEvent::OlderUnavailable);
+                        }
+                    },
+                    None => {
+                        let _ = events.try_send(SourceEvent::OlderUnavailable);
+                    }
+                }
+            }
+            if ctl.paused {
+                if !self.sleep_with_commands(REMOTE_POLL_INTERVAL, commands, ctl).await {
                     return Served::Closed;
                 }
                 continue;
@@ -321,6 +416,7 @@ impl RemoteFileSource {
                 // Not there: gone, or not created yet.
                 if file.take().is_some() || (mem.opened && mem.ino.is_some()) {
                     let _ = events.try_send(SourceEvent::Break { kind: BreakKind::Deleted });
+                    mem.generation += 1;
                     mem.ino = None;
                     mem.offset = 0;
                     mem.splitter.clear();
@@ -329,7 +425,7 @@ impl RemoteFileSource {
                 }
                 announced_live = false;
                 let _ = events.try_send(SourceEvent::Status(SourceStatus::WaitingForFile));
-                if !self.sleep_with_commands(REMOTE_POLL_INTERVAL, commands, window, paused).await {
+                if !self.sleep_with_commands(REMOTE_POLL_INTERVAL, commands, ctl).await {
                     return Served::Closed;
                 }
                 continue;
@@ -337,7 +433,7 @@ impl RemoteFileSource {
 
             // First sight of the file in this run: show its end at once.
             if !mem.opened {
-                match self.open_tail(&sftp, session, stat, mem, events, *window).await {
+                match self.open_tail(&sftp, session, stat, mem, events, ctl.window).await {
                     Ok(handle) => file = Some(handle),
                     Err(Kind::Denied) => {
                         return Served::Stopped(SourceStatus::Error(format!("Permission denied: {}", self.name)));
@@ -349,6 +445,7 @@ impl RemoteFileSource {
                     }
                 }
                 mem.ino = stat.ino;
+                let _ = events.try_send(SourceEvent::Inode(stat.ino));
                 mem.opened = true;
                 backfill_ready = true;
             } else {
@@ -365,12 +462,14 @@ impl RemoteFileSource {
                         }
                         mem.splitter.clear();
                         let _ = events.try_send(SourceEvent::Break { kind: BreakKind::Rotated });
+                        mem.generation += 1;
                         mem.offset = 0;
                         mem.backward = None;
                         mem.loaded = 0;
                     } else if truncated {
                         mem.splitter.clear();
                         let _ = events.try_send(SourceEvent::Break { kind: BreakKind::Truncated });
+                        mem.generation += 1;
                         mem.offset = 0;
                         mem.backward = None;
                         mem.loaded = 0;
@@ -395,6 +494,7 @@ impl RemoteFileSource {
                         },
                     }
                     mem.ino = stat.ino;
+                    let _ = events.try_send(SourceEvent::Inode(stat.ino));
                 }
             }
             if !announced_reconnect {
@@ -423,12 +523,12 @@ impl RemoteFileSource {
             // Older lines, a batch per turn, until the Live Window is full.
             if backfill_ready {
                 if let (Some(handle), Some(backward)) = (file.as_mut(), mem.backward.as_mut()) {
-                    if mem.loaded < *window && !backward.is_done() {
-                        let want = (*window - mem.loaded).min(BACKFILL_BATCH);
+                    if mem.loaded < ctl.window && !backward.is_done() {
+                        let want = (ctl.window - mem.loaded).min(BACKFILL_BATCH);
                         match read_backward(handle, backward, want).await {
-                            Ok(lines) if !lines.is_empty() => {
+                            Ok((lines, bytes)) if !lines.is_empty() => {
                                 mem.loaded += lines.len();
-                                let _ = events.try_send(SourceEvent::Backfill { lines, generation: 0 });
+                                let _ = events.try_send(SourceEvent::Backfill { lines, generation: 0, bytes });
                                 // Keep going without waiting for the next poll.
                                 tokio::task::yield_now().await;
                                 continue;
@@ -437,13 +537,13 @@ impl RemoteFileSource {
                             Err(Kind::Lost) => return Served::Lost,
                             Err(_) => mem.backward = None,
                         }
-                    } else if mem.loaded >= *window || backward.is_done() {
+                    } else if mem.loaded >= ctl.window || backward.is_done() {
                         mem.backward = None;
                     }
                 }
             }
 
-            if !self.sleep_with_commands(REMOTE_POLL_INTERVAL, commands, window, paused).await {
+            if !self.sleep_with_commands(REMOTE_POLL_INTERVAL, commands, ctl).await {
                 return Served::Closed;
             }
         }
@@ -461,12 +561,18 @@ impl RemoteFileSource {
     ) -> Result<russh_sftp::client::fs::File, Kind> {
         let mut file = sftp.open(self.path.clone()).await.map_err(|e| classify(&e))?;
         let mut backward = BackwardLines::new(stat.size, BLOCK);
-        let first = read_backward(&mut file, &mut backward, TAIL_LINES.min(window)).await?;
+        let (first, bytes) = read_backward(&mut file, &mut backward, TAIL_LINES.min(window)).await?;
         mem.offset = backward.follow_offset();
         mem.loaded = first.len();
         mem.splitter.clear();
-        let _ = events.try_send(SourceEvent::Tail { lines: first, generation: 0 });
-        mem.backward = Some(backward);
+        let _ = events.try_send(SourceEvent::Tail {
+            lines: first,
+            generation: 0,
+            bytes,
+            end_offset: mem.offset,
+        });
+        // A cleared file never reads older lines on its own.
+        mem.backward = if mem.no_refill { None } else { Some(backward) };
         // The real number of lines, in the background.
         let (session, path, follow, events) = (session.clone(), self.path.clone(), mem.offset, events.clone());
         tokio::spawn(async move {
@@ -491,6 +597,7 @@ impl RemoteFileSource {
     ) -> Result<(), Kind> {
         file.seek(std::io::SeekFrom::Start(mem.offset)).await.map_err(|_| Kind::Lost)?;
         let mut lines = Vec::new();
+        let mut bytes = Vec::new();
         let mut buf = vec![0u8; READ_CHUNK];
         while mem.offset < limit {
             let want = READ_CHUNK.min((limit - mem.offset).min(READ_CHUNK as u64) as usize);
@@ -499,14 +606,67 @@ impl RemoteFileSource {
                 break;
             }
             mem.offset += n as u64;
-            lines.extend(mem.splitter.push(&buf[..n]));
+            let (new_lines, new_bytes) = mem.splitter.push_with_lens(&buf[..n]);
+            lines.extend(new_lines);
+            bytes.extend(new_bytes);
         }
         mem.loaded += lines.len();
         if !lines.is_empty() {
-            let _ = events.try_send(SourceEvent::Append { lines });
+            let _ = events.try_send(SourceEvent::Append { lines, bytes });
         }
         Ok(())
     }
+
+    /// Load More: the lines above `end_offset`, read backwards. The line at
+    /// `end_offset` has to be the one the app holds, or the file changed.
+    async fn load_older(
+        &self,
+        file: &mut russh_sftp::client::fs::File,
+        request: &LoadMoreRequest,
+        mem: &Memory,
+        events: &Sender<SourceEvent>,
+    ) -> Result<(), Kind> {
+        if request.generation != mem.generation {
+            let _ = events.try_send(SourceEvent::OlderUnavailable);
+            return Ok(());
+        }
+        if let Some(expected) = request.first_hash {
+            let found = read_line_at(file, request.end_offset).await?;
+            if found.map(|l| line_hash(&l)) != Some(expected) {
+                let _ = events.try_send(SourceEvent::OlderUnavailable);
+                return Ok(());
+            }
+        }
+        let mut backward = BackwardLines::new(request.end_offset, BLOCK);
+        let (lines, bytes) = read_backward(file, &mut backward, request.lines).await?;
+        let reached_start = backward.is_done();
+        let _ = events.try_send(SourceEvent::Older {
+            generation: request.generation,
+            lines,
+            bytes,
+            reached_start,
+        });
+        Ok(())
+    }
+}
+
+/// The line that starts at `offset` (without its line end), when it is whole.
+async fn read_line_at(file: &mut russh_sftp::client::fs::File, offset: u64) -> Result<Option<String>, Kind> {
+    const CAP: usize = 4 * 1024 * 1024;
+    file.seek(std::io::SeekFrom::Start(offset)).await.map_err(|_| Kind::Lost)?;
+    let mut data = Vec::new();
+    let mut block = vec![0u8; BLOCK];
+    while data.len() < CAP {
+        let n = file.read(&mut block).await.map_err(|_| Kind::Lost)?;
+        if n == 0 {
+            return Ok(None);
+        }
+        data.extend_from_slice(&block[..n]);
+        if let Some(end) = data.iter().position(|b| *b == b'\n') {
+            return Ok(Some(super::splitter::decode_line(&data[..end])));
+        }
+    }
+    Ok(None)
 }
 
 /// `max_lines` lines older than what `backward` gave before.
@@ -514,7 +674,7 @@ async fn read_backward(
     file: &mut russh_sftp::client::fs::File,
     backward: &mut BackwardLines,
     max_lines: usize,
-) -> Result<Vec<String>, Kind> {
+) -> Result<(Vec<String>, Vec<u32>), Kind> {
     while let Some((offset, len)) = backward.want_block(max_lines) {
         file.seek(std::io::SeekFrom::Start(offset)).await.map_err(|_| Kind::Lost)?;
         let mut block = vec![0u8; len];
@@ -533,5 +693,5 @@ async fn read_backward(
             break;
         }
     }
-    Ok(backward.take_batch(max_lines))
+    Ok(backward.take_batch_with_lens(max_lines))
 }

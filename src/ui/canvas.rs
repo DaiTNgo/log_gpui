@@ -811,6 +811,15 @@ impl RowEnv {
                     })
             });
         let break_label = entry.break_before.as_ref().map(|mark| mark.label.clone());
+        let break_actions = entry.break_before.as_ref().and_then(|mark| {
+            let file_id = entry.file_id.as_deref()?.to_string();
+            break_has_actions(mark.kind).then(|| BreakActions {
+                view: self.view.clone(),
+                file_id,
+                kind: mark.kind,
+                id: vis_pos,
+            })
+        });
         let label_left = scroll_x + anchored_width + px(8.0);
         Some(
             row_element
@@ -827,10 +836,49 @@ impl RowEnv {
                     )
                 })
                 .when_some(break_label, |row, label| {
-                    row.child(render_break(label, label_left, &colors))
+                    row.child(render_break(label, label_left, &colors, break_actions))
                 }),
         )
     }
+}
+
+/// What a Break of a Remote File lets the user do about the lines above it.
+pub(crate) struct BreakActions {
+    pub view: gpui::Entity<crate::app::AppView>,
+    pub file_id: String,
+    pub kind: crate::live::BreakKind,
+    /// Tells the buttons of two Breaks apart.
+    pub id: usize,
+}
+
+/// Whether a Break of this kind sits where lines above are still on the
+/// Server.
+fn break_has_actions(kind: crate::live::BreakKind) -> bool {
+    use crate::live::BreakKind;
+    matches!(kind, BreakKind::LeftWindow | BreakKind::Cleared | BreakKind::StartOfLoaded)
+}
+
+/// A small text button on a Break.
+fn break_button(
+    id: ElementId,
+    label: &'static str,
+    colors: &CanvasColors,
+    on_click: impl Fn(&mut gpui::App) + 'static,
+) -> gpui::AnyElement {
+    div()
+        .id(id)
+        .cursor_pointer()
+        .px_1()
+        .rounded_sm()
+        .border_1()
+        .border_color(colors.warning.opacity(0.7))
+        .hover(|s| s.bg(colors.warning.opacity(0.2)))
+        .child(label)
+        .on_click(move |_event, _window, cx| {
+            cx.stop_propagation();
+            on_click(cx);
+        })
+        .into_any_element()
 }
 
 /// A Break drawn on the line between two rows: a rule with a label. It is
@@ -840,7 +888,36 @@ pub(crate) fn render_break(
     label: String,
     label_left: Pixels,
     colors: &CanvasColors,
+    actions: Option<BreakActions>,
 ) -> gpui::AnyElement {
+    let buttons: Vec<gpui::AnyElement> = actions
+        .map(|a| {
+            let more_view = a.view.clone();
+            let more_file = a.file_id.clone();
+            let mut buttons = vec![break_button(
+                ElementId::from(gpui::SharedString::from(format!("break-more-{}-{}", a.file_id, a.id))),
+                "Load more",
+                colors,
+                move |cx| {
+                    let id = more_file.clone();
+                    more_view.update(cx, |this, cx| this.load_more(&id, None, cx));
+                },
+            )];
+            if a.kind == crate::live::BreakKind::StartOfLoaded {
+                let (view, file) = (a.view.clone(), a.file_id.clone());
+                buttons.push(break_button(
+                    ElementId::from(gpui::SharedString::from(format!("break-back-{}-{}", a.file_id, a.id))),
+                    "Back to Live Window",
+                    colors,
+                    move |cx| {
+                        let id = file.clone();
+                        view.update(cx, |this, cx| this.back_to_live_window(&id, cx));
+                    },
+                ));
+            }
+            buttons
+        })
+        .unwrap_or_default();
     div()
         .absolute()
         .top(px(-7.0))
@@ -872,7 +949,9 @@ pub(crate) fn render_break(
                 .text_color(colors.warning)
                 .text_size(px(10.0))
                 .whitespace_nowrap()
-                .child(label),
+                .gap_2()
+                .child(label)
+                .children(buttons),
         )
         .into_any_element()
 }

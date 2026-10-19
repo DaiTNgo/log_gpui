@@ -38,6 +38,9 @@ impl AppView {
             PaletteAction::ManageServers => self.open_servers_dialog(cx),
             PaletteAction::ToggleFollow => self.toggle_follow(cx),
             PaletteAction::TogglePause => self.toggle_pause(cx),
+            PaletteAction::ClearFile => self.request_clear_current_file(cx),
+            PaletteAction::LoadMore => self.load_more_current_file(cx),
+            PaletteAction::BackToLiveWindow => self.back_to_live_window_current_file(cx),
             PaletteAction::ToggleInspector => {
                 self.toggle_or_reveal_context_section(crate::workspace::state::ContextSection::Inspector, cx);
             }
