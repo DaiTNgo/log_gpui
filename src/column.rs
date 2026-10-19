@@ -54,7 +54,8 @@ impl PinnableColumn {
         matches!(self, PinnableColumn::Level)
     }
 
-    /// Returns the character length of the column header title to prevent title truncation.
+    /// Character length of the Column Header label, for estimating its width
+    /// before the UI font is measured.
     #[inline]
     pub const fn title_chars(&self) -> usize {
         match self {
@@ -138,11 +139,11 @@ impl FieldMaxChars {
 }
 
 /// Computes dynamic column width based on ADR 0003:
-/// Width = max(min_width, (max_chars * W_char) + padding)
+/// Width = max(min_width, (max_chars * W_char) + padding, header width)
 /// where W_char is the measured advance of the monospace font (0.6 * font_size
-/// until measured, see `ui::mono`).
-/// Also ensures effective character length is at least the column title length
-/// so column headers never truncate and widths scale consistently with font size.
+/// until measured, see `ui::mono`). The header width is the Column Header
+/// label in the UI font plus the header's own padding, so headers never
+/// truncate, even over a column with no values.
 #[inline]
 pub fn compute_column_width(
     col: PinnableColumn,
@@ -151,15 +152,23 @@ pub fn compute_column_width(
     min_width: Pixels,
 ) -> Pixels {
     let char_width = crate::ui::mono::char_width(font_size);
-    let effective_chars = max_chars.max(col.title_chars());
     let padding = match col {
         PinnableColumn::Timestamp => 16.0,
         PinnableColumn::Level => 24.0,
         PinnableColumn::Module => 16.0,
         PinnableColumn::Source => 16.0,
     };
-    let content_width = (effective_chars as f32) * char_width + padding;
-    px(content_width).max(min_width)
+    let content_width = (max_chars as f32) * char_width + padding;
+    px(content_width.max(header_width(col))).max(min_width)
+}
+
+/// The narrowest a column shows its whole Column Header label: the label,
+/// the header's side padding (`px_1` compact, else `px_2`) and a little room
+/// for rounding.
+#[inline]
+pub fn header_width(col: PinnableColumn) -> f32 {
+    let side_padding = if col.is_compact() { 8.0 } else { 16.0 };
+    crate::ui::mono::header_label_width(col) + side_padding + 2.0
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

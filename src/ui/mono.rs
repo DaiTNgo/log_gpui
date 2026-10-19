@@ -1,5 +1,6 @@
 //! Text in the theme's monospace font: where a pointer lands in a line, and
-//! how wide a column of characters is.
+//! how wide a column of characters is. Also the width of each Column Header
+//! label, which is drawn in the UI font and sets the narrowest a column fits.
 //!
 //! The font differs by platform (Menlo on macOS, Consolas on Windows, DejaVu
 //! Sans Mono on Linux), and a line may hold glyphs the font lacks (CJK, emoji)
@@ -9,8 +10,10 @@
 
 use std::sync::atomic::{AtomicU32, Ordering};
 
-use gpui::{App, Hsla, TextRun, Window, px};
+use gpui::{App, FontWeight, Hsla, TextRun, Window, px};
 use gpui_component::ActiveTheme as _;
+
+use crate::column::PinnableColumn;
 
 /// Used until measured (and in tests): the advance of Menlo / SF Mono.
 const DEFAULT_RATIO: f32 = 0.6;
@@ -24,9 +27,40 @@ pub fn char_width(font_size: f32) -> f32 {
     f32::from_bits(CHAR_RATIO.load(Ordering::Relaxed)) * font_size
 }
 
-/// Measure the theme's monospace font. Call after the theme is set.
+/// Font size of the Column Header labels (`text_xs`: 0.75rem at 16px).
+pub const HEADER_FONT_SIZE: f32 = 12.0;
+
+/// Used until measured (and in tests): uppercase semibold UI text runs wider
+/// than a monospace character.
+const DEFAULT_HEADER_RATIO: f32 = 0.72;
+
+/// Width of each Column Header label as a fraction of the font size, as
+/// `f32` bits, indexed like `PinnableColumn::ALL`. Zero until measured.
+static HEADER_RATIOS: [AtomicU32; 4] = [const { AtomicU32::new(0) }; 4];
+
+/// Width in pixels of the label of `col`'s Column Header.
+pub fn header_label_width(col: PinnableColumn) -> f32 {
+    let measured = f32::from_bits(HEADER_RATIOS[col as usize].load(Ordering::Relaxed));
+    let ratio = if measured > 0.0 { measured } else { col.title_chars() as f32 * DEFAULT_HEADER_RATIO };
+    ratio * HEADER_FONT_SIZE
+}
+
+/// Measure the theme's monospace font and the Column Header labels. Call
+/// after the theme is set.
 pub fn measure(cx: &App) {
     let text_system = cx.text_system();
+    let header_font = gpui::Font { weight: FontWeight::SEMIBOLD, ..gpui::font(cx.theme().font_family.clone()) };
+    let header_id = text_system.resolve_font(&header_font);
+    for col in PinnableColumn::ALL {
+        let width: Option<f32> = col
+            .label()
+            .chars()
+            .map(|ch| text_system.advance(header_id, px(100.0), ch).ok().map(|s| f32::from(s.width)))
+            .sum();
+        if let Some(ratio) = width.map(|w| w / 100.0).filter(|r| r.is_finite() && *r > 0.0) {
+            HEADER_RATIOS[col as usize].store(ratio.to_bits(), Ordering::Relaxed);
+        }
+    }
     let font_id = text_system.resolve_font(&gpui::font(cx.theme().mono_font_family.clone()));
     // Measured at a large size so the ratio keeps its precision.
     let ratio = text_system
