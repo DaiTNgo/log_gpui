@@ -5,6 +5,7 @@ pub mod command;
 pub mod compress;
 pub mod copy;
 pub mod download;
+pub mod estimate;
 pub mod full_read;
 pub mod glob_plan;
 pub mod glob_watcher;

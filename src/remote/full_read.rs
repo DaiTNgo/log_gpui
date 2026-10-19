@@ -8,6 +8,7 @@
 
 use super::compress::{AsyncBridge, Compression, decoder};
 use super::copy::{self, CopyMeta, GenerationMeta, StopReason};
+use super::estimate;
 use super::{ConnectError, RemoteHub, RemoteSession, ServerStore, shell_quote};
 use crate::live::backward::{ReadAt, START_SLACK_SECS};
 use crate::live::line_time::line_timestamp;
@@ -139,6 +140,27 @@ fn scan_forward<R: ReadAt>(src: &mut R, from: u64, size: u64, past: impl Fn(f64)
     Ok(size)
 }
 
+/// The offset of the first line that starts at or after `offset`: `offset`
+/// itself when a line starts there, else just after the next newline.
+pub fn align_to_line<R: ReadAt>(src: &mut R, offset: u64, size: u64) -> io::Result<u64> {
+    if offset == 0 || offset >= size {
+        return Ok(offset.min(size));
+    }
+    // A line starts at `offset` when the byte before it is a newline.
+    let mut block = vec![0u8; PROBE_BLOCK + 1];
+    let mut at = offset - 1;
+    loop {
+        let n = src.read_at(at, &mut block)?;
+        if let Some(i) = block[..n].iter().position(|b| *b == b'\n') {
+            return Ok(at + i as u64 + 1);
+        }
+        if n == 0 || at + n as u64 >= size {
+            return Ok(size);
+        }
+        at += n as u64;
+    }
+}
+
 /// Where reading starts for the Starting Time `start`: the offset of the
 /// first Parent Line not older than it (less a second of slack).
 pub fn find_start_offset<R: ReadAt>(src: &mut R, size: u64, start: f64) -> io::Result<u64> {
@@ -149,6 +171,134 @@ pub fn find_start_offset<R: ReadAt>(src: &mut R, size: u64, start: f64) -> io::R
 /// later than it, so the last line kept keeps its Continuation Lines.
 pub fn find_end_offset<R: ReadAt>(src: &mut R, size: u64, to: f64) -> io::Result<u64> {
     find_boundary(src, size, |t| t > to)
+}
+
+// ── Estimating and fitting ───────────────────────────────────────────────────
+
+/// What reading one Generation would take.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GenerationEstimate {
+    pub distance: u32,
+    pub lines: u64,
+    pub bytes: u64,
+    pub approximate: bool,
+    /// Average bytes of a line, for fitting.
+    pub average_line: u64,
+}
+
+/// Estimate each Generation of `generations` for the time range, reading a
+/// few blocks of each file (no more than the search and the sizes need).
+pub async fn estimate_generations(
+    sftp: &russh_sftp::client::SftpSession,
+    generations: &[GenerationPlan],
+    start: Option<f64>,
+    to: Option<f64>,
+) -> Result<Vec<GenerationEstimate>, String> {
+    let mut out = Vec::new();
+    for gp in generations {
+        let mut file = sftp.open(gp.path.clone()).await.map_err(|e| format!("{}: {e}", gp.name))?;
+        let size = gp.size;
+        if gp.compression.is_compressed() {
+            let tail_len = size.min(8 * 1024) as usize;
+            let mut head = vec![0u8; size.min(64) as usize];
+            let mut tail = vec![0u8; tail_len];
+            read_exact_at(&mut file, 0, &mut head).await.map_err(|e| e.to_string())?;
+            read_exact_at(&mut file, size - tail_len as u64, &mut tail).await.map_err(|e| e.to_string())?;
+            let unpacked = estimate::unpacked_size(gp.compression, size, &head, &tail);
+            // The line length of compressed text is not known without
+            // unpacking: 100 bytes a line is taken.
+            let lines = unpacked.bytes / 100;
+            out.push(GenerationEstimate {
+                distance: gp.distance,
+                lines,
+                bytes: unpacked.bytes,
+                approximate: true,
+                average_line: 100,
+            });
+            continue;
+        }
+        let handle = tokio::runtime::Handle::current();
+        let (s, t) = (start, to);
+        let (from, until, sample) = tokio::task::spawn_blocking(move || -> io::Result<(u64, u64, Vec<u8>)> {
+            let mut src = SftpReadAt { handle, file };
+            let from = match s {
+                Some(t) => find_start_offset(&mut src, size, t)?,
+                None => 0,
+            };
+            let until = match t {
+                Some(t) => find_end_offset(&mut src, size, t)?.max(from),
+                None => size,
+            };
+            let take = (until - from).min(PROBE_BLOCK as u64) as usize;
+            let mut sample = vec![0u8; take];
+            let n = src.read_at(until - take as u64, &mut sample)?;
+            sample.truncate(n);
+            Ok((from, until, sample))
+        })
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| format!("{}: {e}", gp.name))?;
+        let bytes = until - from;
+        let lines = estimate::estimate_lines(bytes, &sample);
+        let average_line = if lines == 0 { 100 } else { (bytes / lines).max(1) };
+        out.push(GenerationEstimate { distance: gp.distance, lines, bytes, approximate: true, average_line });
+    }
+    Ok(out)
+}
+
+async fn read_exact_at(file: &mut russh_sftp::client::fs::File, offset: u64, buf: &mut [u8]) -> io::Result<()> {
+    file.seek(io::SeekFrom::Start(offset)).await?;
+    let mut done = 0;
+    while done < buf.len() {
+        let n = file.read(&mut buf[done..]).await?;
+        if n == 0 {
+            return Err(io::ErrorKind::UnexpectedEof.into());
+        }
+        done += n;
+    }
+    Ok(())
+}
+
+/// The total of the estimates of the Generations.
+pub fn total_estimate(estimates: &[GenerationEstimate]) -> estimate::Estimate {
+    let mut total = estimate::Estimate::default();
+    for e in estimates {
+        total.add(estimate::Estimate { lines: e.lines, bytes: e.bytes, approximate: e.approximate });
+    }
+    total
+}
+
+/// "Read newest N lines": keep the newest Generations whole, cut the one the
+/// limit falls in from its start, and leave the older ones out. `plan` and
+/// `estimates` are oldest first, one for one.
+pub fn fit_newest(plan: &mut Vec<GenerationPlan>, estimates: &[GenerationEstimate], limit: usize) {
+    let mut room = limit as u64;
+    let mut keep_from = plan.len();
+    for (i, e) in estimates.iter().enumerate().rev() {
+        if room == 0 {
+            break;
+        }
+        keep_from = i;
+        if e.lines > room {
+            // This one is cut: only its last `room` lines are read.
+            let gp = &mut plan[i];
+            if gp.compression.is_compressed() {
+                gp.skip_lines = (e.lines - room) as usize;
+            } else {
+                gp.start_byte = Some(gp.size.saturating_sub(room * e.average_line));
+            }
+            room = 0;
+            break;
+        }
+        room -= e.lines;
+    }
+    let dropped = keep_from > 0;
+    plan.drain(..keep_from);
+    if dropped {
+        if let Some(first) = plan.first_mut() {
+            first.older_dropped = true;
+        }
+    }
 }
 
 // ── Reading ──────────────────────────────────────────────────────────────────
@@ -165,6 +315,13 @@ pub struct GenerationPlan {
     pub size: u64,
     pub modified: Option<u64>,
     pub compression: Compression,
+    /// Plain files: begin at the first line that starts after this byte (to
+    /// fit the Full Read Limit). Nothing before it is read.
+    pub start_byte: Option<u64>,
+    /// Compressed files: this many lines at the start are not kept.
+    pub skip_lines: usize,
+    /// Older Generations were left out before this one.
+    pub older_dropped: bool,
 }
 
 /// What Open in full reads.
@@ -298,6 +455,7 @@ pub async fn run(
             complete: false,
             stop: None,
             lines: 0,
+            older_not_read: gp.start_byte.is_some() || gp.skip_lines > 0 || gp.older_dropped,
             file: GenerationMeta::file_name(gp.distance),
         };
         let result = reader.read_generation(index, gp, &mut meta).await;
@@ -392,7 +550,7 @@ impl Reader {
         let mut session = self.session().await?;
         let mut sftp = session.open_sftp().await?;
         let (start, end) = {
-            let (start, to) = (self.plan.start, self.plan.to);
+            let (start, to, start_byte) = (self.plan.start, self.plan.to, gp.start_byte);
             let (size, path) = (gp.size, gp.path.clone());
             let handle = tokio::runtime::Handle::current();
             let file = sftp.open(path.clone()).await.map_err(|e| format!("{}: {e}", gp.name))?;
@@ -405,6 +563,10 @@ impl Reader {
                 let end = match to {
                     Some(t) => find_end_offset(&mut src, size, t)?.max(start),
                     None => size,
+                };
+                let start = match start_byte {
+                    Some(b) if b > start => align_to_line(&mut src, b, size)?.min(end),
+                    _ => start,
                 };
                 Ok((start, end))
             })
@@ -536,6 +698,7 @@ impl Reader {
                 to,
                 room,
                 skip_written: written,
+                skip_lines: gp.skip_lines,
                 tx: self.tx.clone(),
                 ctl: self.ctl.clone(),
                 index,
@@ -603,6 +766,8 @@ struct DecodeJob {
     room: usize,
     /// Lines the copy already holds, which a second attempt does not repeat.
     skip_written: usize,
+    /// Lines at the start of the file that are not kept.
+    skip_lines: usize,
     tx: Sender<ReadEvent>,
     ctl: Arc<ReadControl>,
     index: usize,
@@ -661,6 +826,9 @@ impl DecodeJob {
                 }
             };
             line_no += 1;
+            if line_no <= self.skip_lines {
+                continue;
+            }
             let text = decode_line(buf.strip_suffix(b"\n").unwrap_or(&buf));
             let time = line_timestamp(&text);
             if !started {
@@ -862,5 +1030,67 @@ mod tests {
         let size = data.len() as u64;
         assert_eq!(find_start_offset(&mut data.clone(), size, secs_of(&stamp(0))).unwrap(), 0);
         assert_eq!(find_start_offset(&mut Vec::<u8>::new(), 0, 5.0).unwrap(), 0);
+    }
+
+    fn gp(distance: u32, size: u64, compressed: bool) -> GenerationPlan {
+        GenerationPlan {
+            distance,
+            name: format!("f{distance}"),
+            path: format!("/f{distance}"),
+            size,
+            modified: None,
+            compression: if compressed { Compression::Gzip } else { Compression::None },
+            start_byte: None,
+            skip_lines: 0,
+            older_dropped: false,
+        }
+    }
+
+    fn est(distance: u32, lines: u64, average_line: u64) -> GenerationEstimate {
+        GenerationEstimate { distance, lines, bytes: lines * average_line, approximate: true, average_line }
+    }
+
+    #[test]
+    fn newest_fits_whole_files_then_cuts_the_one_the_limit_falls_in() {
+        // Oldest first: 2 (compressed, 1,500 lines), 1 (800), 0 (500).
+        let mut plan = vec![gp(2, 3_000, true), gp(1, 80_000, false), gp(0, 50_000, false)];
+        let estimates = [est(2, 1_500, 100), est(1, 800, 100), est(0, 500, 100)];
+        fit_newest(&mut plan, &estimates, 1_000);
+        // 500 of the file, then the last 500 of `app.log.1`; the oldest is out.
+        let names: Vec<_> = plan.iter().map(|p| p.distance).collect();
+        assert_eq!(names, [1, 0]);
+        assert_eq!(plan[0].start_byte, Some(80_000 - 500 * 100));
+        assert!(plan[0].older_dropped);
+        assert_eq!(plan[1].start_byte, None);
+    }
+
+    #[test]
+    fn newest_cuts_a_compressed_file_by_lines_to_skip() {
+        let mut plan = vec![gp(1, 3_000, true), gp(0, 50_000, false)];
+        fit_newest(&mut plan, &[est(1, 1_500, 100), est(0, 500, 100)], 1_000);
+        assert_eq!(plan.len(), 2);
+        assert_eq!(plan[0].skip_lines, 1_000);
+        assert!(!plan[0].older_dropped && plan[0].start_byte.is_none());
+    }
+
+    #[test]
+    fn newest_keeps_everything_that_fits() {
+        let mut plan = vec![gp(1, 100, false), gp(0, 100, false)];
+        fit_newest(&mut plan, &[est(1, 10, 10), est(0, 10, 10)], 1_000);
+        assert_eq!(plan.len(), 2);
+        assert!(plan.iter().all(|p| p.start_byte.is_none() && p.skip_lines == 0 && !p.older_dropped));
+    }
+
+    #[test]
+    fn aligning_goes_to_the_next_line_start() {
+        let data = b"aaaa\nbbbb\ncccc\n".to_vec();
+        let size = data.len() as u64;
+        let mut src = data;
+        assert_eq!(align_to_line(&mut src, 0, size).unwrap(), 0);
+        // 5 is the start of `bbbb`: nothing to skip.
+        assert_eq!(align_to_line(&mut src, 5, size).unwrap(), 5);
+        // 7 is in the middle of it: the next line starts at 10.
+        assert_eq!(align_to_line(&mut src, 7, size).unwrap(), 10);
+        assert_eq!(align_to_line(&mut src, 99, size).unwrap(), size);
     }
 }

@@ -63,6 +63,10 @@ pub struct GenerationMeta {
     pub complete: bool,
     pub stop: Option<StopReason>,
     pub lines: usize,
+    /// Older lines of this file (or older files) were left out to fit the Full
+    /// Read Limit: the Break at the top says so.
+    #[serde(default)]
+    pub older_not_read: bool,
     /// Name of the file in the folder.
     pub file: String,
 }
@@ -233,6 +237,7 @@ mod tests {
             complete,
             stop: (!complete).then_some(StopReason::Cancelled),
             lines,
+            older_not_read: false,
             file: GenerationMeta::file_name(distance),
         };
         CopyMeta {

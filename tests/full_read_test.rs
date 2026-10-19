@@ -53,7 +53,17 @@ impl Env {
         let path = self.path(name);
         let bytes = std::fs::read(&path).unwrap();
         let compression = Compression::detect(&bytes[..bytes.len().min(6)]);
-        GenerationPlan { distance, name: name.into(), path, size: bytes.len() as u64, modified: None, compression }
+        GenerationPlan {
+            distance,
+            name: name.into(),
+            path,
+            size: bytes.len() as u64,
+            modified: None,
+            compression,
+            start_byte: None,
+            skip_lines: 0,
+            older_dropped: false,
+        }
     }
 
     fn plan(&self, generations: Vec<GenerationPlan>, start: Option<f64>, to: Option<f64>, limit: usize) -> ReadPlan {
@@ -229,4 +239,40 @@ fn cancel_keeps_what_was_read_and_pause_loses_nothing() {
     assert!(!meta.is_complete());
     assert_eq!(meta.total_lines(), kept);
     assert_eq!(std::fs::read_to_string(dir.join("gen-0.log")).unwrap().lines().count(), kept);
+}
+
+#[test]
+fn read_newest_lines_cuts_the_oldest_and_says_older_lines_were_not_read() {
+    use log_gpui::remote::full_read::{estimate_generations, fit_newest, total_estimate};
+    let Some(env) = env() else { return };
+    std::fs::write(env.path("app.log"), (5_000..6_000).map(stamp).collect::<String>()).unwrap();
+    std::fs::write(env.path("app.log.1"), (0..5_000).map(stamp).collect::<String>()).unwrap();
+    std::fs::write(env.path("app.log.2.gz"), gzip(&(0..100).map(stamp).collect::<String>())).unwrap();
+    let mut plan_gens = vec![env.generation(2, "app.log.2.gz"), env.generation(1, "app.log.1"), env.generation(0, "app.log")];
+    // Estimate over the real connection.
+    let session = env.hub.handle().block_on(async {
+        let store = env.store.clone();
+        env.hub.session(&store, &env.server_id).await.unwrap()
+    });
+    let estimates = env.hub.handle().block_on(async {
+        let sftp = session.open_sftp().await.unwrap();
+        estimate_generations(&sftp, &plan_gens, None, None).await.unwrap()
+    });
+    let total = total_estimate(&estimates);
+    assert!(total.approximate && total.over(2_000));
+    fit_newest(&mut plan_gens, &estimates, 2_000);
+    let plan = env.plan(plan_gens, None, None, 2_000);
+    let (rx, _) = env.start(plan);
+    let events = all_events(&rx);
+    let got = lines_of(&events);
+    // About 2,000 lines: all of the file and the end of `app.log.1`, whole lines.
+    assert!(got.len() > 1_500 && got.len() <= 2_000, "{}", got.len());
+    assert_eq!(got.last().unwrap(), stamp(5_999).trim_end());
+    assert!(got.first().unwrap().contains("INFO line"));
+    let ReadEvent::Done(meta) = events.last().unwrap() else { panic!() };
+    assert_eq!(meta.generations.len(), 2);
+    assert!(meta.generations[0].older_not_read);
+    // The number of the first line read is the real one in `app.log.1`.
+    let first = meta.generations[0].first_line_no.unwrap();
+    assert!(got.first().unwrap().ends_with(&format!("line {}", first - 1)));
 }
