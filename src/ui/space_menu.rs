@@ -20,6 +20,11 @@ use gpui_component::sidebar::SidebarMenuItem;
 use gpui_component::{ActiveTheme as _, Icon, Sizable as _, h_flex};
 use gpui_kit::assets::IconName;
 
+/// A menu item for an action that cannot be undone, in the danger color.
+pub fn danger_item(label: &'static str) -> PopupMenuItem {
+    PopupMenuItem::element(move |_, cx| div().text_color(cx.theme().danger).child(label))
+}
+
 /// Identity and state of the Log Space a row acts on.
 #[derive(Clone)]
 pub struct SpaceRef {
@@ -198,7 +203,7 @@ pub fn space_menu(
         )
     })
     .item(PopupMenuItem::separator())
-    .item(PopupMenuItem::new("Delete").on_click(move |_, _, app| {
+    .item(danger_item("Delete").on_click(move |_, _, app| {
         let id = delete.space_id.clone();
         delete.view.update(app, |this, cx| this.request_delete_log_space(&id, cx));
     }))
@@ -281,7 +286,7 @@ fn file_menu(menu: PopupMenu, file: &FileRef, cx: &mut App) -> PopupMenu {
             }))
             .item(PopupMenuItem::separator())
             .item(
-                PopupMenuItem::new("Delete")
+                danger_item("Delete")
                     .disabled(!file.can_delete)
                     .on_click(move |_, _, app| {
                         let (space, id) = (delete.space_id.clone(), delete.file_id.clone());

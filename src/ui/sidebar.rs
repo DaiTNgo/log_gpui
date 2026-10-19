@@ -140,6 +140,8 @@ impl SidebarView {
         let active_project_id = workspace.active_project_id.as_deref();
 
         let mut nodes: Vec<ProjectNode> = Vec::new();
+        // The last Project cannot be removed.
+        let can_remove = workspace.project_count() > 1;
         for project in &workspace.projects {
             let is_active = active_project_id == Some(project.id.as_str());
             let active_target = if is_active {
@@ -257,13 +259,16 @@ impl SidebarView {
                                     },
                                 ))
                                 .item(PopupMenuItem::separator())
-                                .item(PopupMenuItem::new("Remove from Sidebar").on_click(
-                                    move |_, _, app| {
-                                        let id = remove_id.clone();
-                                        remove_view
-                                            .update(app, |this, cx| this.remove_project_at(&id, cx));
-                                    },
-                                ))
+                                .item(
+                                    crate::ui::space_menu::danger_item("Remove from Sidebar")
+                                        .disabled(!can_remove)
+                                        .on_click(move |_, _, app| {
+                                            let id = remove_id.clone();
+                                            remove_view.update(app, |this, cx| {
+                                                this.request_remove_project(&id, cx)
+                                            });
+                                        }),
+                                )
                             })
                     })
                     .action(move |_, _| {

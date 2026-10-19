@@ -305,6 +305,26 @@ impl AppView {
                     },
                 )
             }
+            ConfirmAction::DeleteServer { server_id } => {
+                let name = self.remote.servers.get(server_id).map(|s| s.name.clone()).unwrap_or_default();
+                (
+                    format!("Delete Server \u{201c}{name}\u{201d}?"),
+                    "Its settings and remembered password are removed. Files on it are not touched.",
+                )
+            }
+            ConfirmAction::RemoveProject { project_id } => {
+                let name = self
+                    .workspace_state
+                    .projects
+                    .iter()
+                    .find(|p| p.id == *project_id)
+                    .map(|p| p.name.clone())
+                    .unwrap_or_default();
+                (
+                    format!("Remove \u{201c}{name}\u{201d} from the Sidebar?"),
+                    "Its Log Spaces are removed with it. Log files on disk are not touched.",
+                )
+            }
             ConfirmAction::DeleteScratchFile { space_id, file_id } => {
                 let name = self
                     .active_project()
@@ -314,7 +334,11 @@ impl AppView {
                 (format!("Delete “{name}”?"), "The scratch file will be deleted.")
             }
         };
-        let confirm_label = if matches!(action, ConfirmAction::ClearFiles { .. }) { "Clear" } else { "Delete" };
+        let confirm_label = match action {
+            ConfirmAction::ClearFiles { .. } => "Clear",
+            ConfirmAction::RemoveProject { .. } => "Remove",
+            _ => "Delete",
+        };
         let theme = cx.theme();
         let (bg, border, muted) = (theme.popover, theme.border, theme.muted_foreground);
         Self::modal_backdrop()

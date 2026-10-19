@@ -40,6 +40,7 @@ impl AppView {
         let theme = cx.theme();
         let (bg, border, muted, danger) = (theme.popover, theme.border, theme.muted_foreground, theme.danger);
         let error = dialog.error.clone();
+        let info = dialog.info.clone();
         let body = if dialog.form.is_some() {
             self.render_server_form(cx)
         } else {
@@ -94,7 +95,7 @@ impl AppView {
                                 .ghost()
                                 .xsmall()
                                 .label("Delete")
-                                .on_click(cx.listener(move |this, _, _, cx| this.delete_server_from_dialog(&del_id, cx))),
+                                .on_click(cx.listener(move |this, _, _, cx| this.request_delete_server(&del_id, cx))),
                         ),
                 );
             }
@@ -102,6 +103,7 @@ impl AppView {
                 .gap_3()
                 .child(list)
                 .when_some(error.clone(), |this, e| this.child(div().text_xs().text_color(danger).child(e)))
+                .when_some(info.clone(), |this, m| this.child(div().text_xs().text_color(muted).child(m)))
                 .child(
                     h_flex()
                         .justify_between()

@@ -1,5 +1,6 @@
 
 use crate::workspace::project::{Project, ProjectColorAccent};
+use gpui::prelude::FluentBuilder as _;
 use gpui_component::{ActiveTheme as _, Icon};
 use gpui_kit::assets::IconName;
 use gpui::{
@@ -25,6 +26,8 @@ impl ProjectSwitcher {
         }
 
         let mono_font = cx.theme().mono_font_family.clone();
+        // The last Project cannot be removed.
+        let can_remove = projects.len() > 1;
         let mut list = div().flex().flex_col().gap_0p5().w_full();
 
         for proj in projects.iter() {
@@ -109,15 +112,26 @@ impl ProjectSwitcher {
                 .child(
                     div()
                         .id(ElementId::from(format!("proj_remove_{}", remove_btn_id)))
-                        .cursor_pointer()
                         .px_1()
                         .py_0p5()
                         .rounded_md()
                         .text_xs()
                         .child("×")
-                        .on_click(cx.listener(move |this, _, _window, cx| {
-                            this.remove_project_at(&remove_btn_id, cx);
-                        })),
+                        .map(|this| {
+                            if can_remove {
+                                this.cursor_pointer()
+                                    .text_color(cx.theme().danger)
+                                    .tooltip(|window, cx| gpui_component::tooltip::Tooltip::new("Remove from Sidebar").build(window, cx))
+                                    .on_click(cx.listener(move |this, _, _window, cx| {
+                                        this.request_remove_project(&remove_btn_id, cx);
+                                    }))
+                            } else {
+                                this.opacity(0.4).tooltip(|window, cx| {
+                                    gpui_component::tooltip::Tooltip::new("The last Project cannot be removed")
+                                        .build(window, cx)
+                                })
+                            }
+                        }),
                 );
 
             list = list.child(row);
