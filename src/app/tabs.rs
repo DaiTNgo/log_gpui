@@ -13,7 +13,7 @@ use crate::column::FieldMaxChars;
 use crate::filter::FilterState;
 use crate::focus::FocusTabs;
 use crate::live::LiveBuffer;
-use crate::space_view::{BuiltView, ParsedFile, build_file_view, build_space_view};
+use crate::space_view::{BuiltView, EmptyCanvas, ParsedFile, build_file_view, build_space_view};
 use crate::archive::{ArchiveError, MAX_UNCOMPRESSED_BYTES, detect, read_entries, read_source};
 use crate::workspace::log_space::{LogFile, LogSpace, LogSpaceKind};
 use crate::workspace::project::Project;
@@ -59,6 +59,33 @@ impl OpenView {
 
 impl AppView {
     /// Whether the focused tab shows log lines (gates the context sidebar).
+    /// What the canvas shows instead of rows, or `None` when it shows rows:
+    /// nothing open, a Log Space with no files, or a view whose every Source
+    /// File failed to load.
+    pub fn empty_canvas(&self) -> Option<EmptyCanvas> {
+        let space = self.active_space().filter(|_| self.active_tab_is_log_file());
+        let Some(space) = space else {
+            let log_space_open = matches!(self.active_target(), Some(TabTarget::LogSpace { .. }));
+            return Some(if log_space_open { EmptyCanvas::NoFiles { can_add: false } } else { EmptyCanvas::NoLogSpace });
+        };
+        if space.files.is_empty() {
+            return Some(EmptyCanvas::NoFiles { can_add: space.kind == LogSpaceKind::Imported });
+        }
+        if !self.all_entries.is_empty() {
+            return None;
+        }
+        // A File View shows one file; a Log Space all of its files.
+        let viewed = match self.active_target() {
+            Some(TabTarget::FileView { file_id, .. }) => vec![file_id],
+            _ => space.files.iter().map(|f| f.file_id.clone()).collect(),
+        };
+        let errors: Vec<String> = viewed
+            .iter()
+            .map(|id| self.parsed_files.get(id).and_then(|p| p.load_error.clone()))
+            .collect::<Option<_>>()?;
+        Some(EmptyCanvas::LoadFailed { errors })
+    }
+
     pub(crate) fn active_tab_is_log_file(&self) -> bool {
         self.active_target()
             .map(|t| t.is_log_view())
@@ -138,8 +165,9 @@ impl AppView {
             Some(source) => match ParsedFile::from_source(source) {
                 Ok(parsed) => parsed,
                 Err(e) => {
-                    self.notice = Some(read_failure(file, &e));
-                    ParsedFile::empty()
+                    let error = read_failure(file, &e);
+                    self.notice = Some(error.clone());
+                    ParsedFile::failed(error)
                 }
             },
             None => ParsedFile::empty(),
@@ -161,8 +189,10 @@ impl AppView {
         let bytes = match read_source(source) {
             Ok(bytes) => bytes,
             Err(e) => {
-                self.notice = Some(read_failure(file, &e));
-                Vec::new()
+                let error = read_failure(file, &e);
+                self.notice = Some(error.clone());
+                self.parsed_files.insert(file.file_id.clone(), ParsedFile::failed(error));
+                return;
             }
         };
         let mut parsed = ParsedFile::from_bytes(&bytes);
@@ -200,9 +230,10 @@ impl AppView {
                 Ok(entries) => entries,
                 Err(e) => {
                     let e = std::io::Error::from(e);
-                    notices.extend(files.iter().map(|f| read_failure(f, &e)));
                     for file in files {
-                        self.parsed_files.insert(file.file_id.clone(), ParsedFile::empty());
+                        let error = read_failure(file, &e);
+                        notices.push(error.clone());
+                        self.parsed_files.insert(file.file_id.clone(), ParsedFile::failed(error));
                     }
                     continue;
                 }
@@ -212,8 +243,9 @@ impl AppView {
                 let parsed = match content {
                     Some(Ok(bytes)) => ParsedFile::from_bytes(&bytes),
                     Some(Err(e)) => {
-                        notices.push(read_failure(file, &std::io::Error::from(e)));
-                        ParsedFile::empty()
+                        let error = read_failure(file, &std::io::Error::from(e));
+                        notices.push(error.clone());
+                        ParsedFile::failed(error)
                     }
                     None => ParsedFile::empty(),
                 };

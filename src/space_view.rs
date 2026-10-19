@@ -26,6 +26,8 @@ pub struct ParsedFile {
     pub raw_breaks: BTreeMap<usize, Arc<BreakMark>>,
     /// What a live file keeps besides its lines.
     pub live: Option<LiveBuffer>,
+    /// Why the file could not be read; it then counts as empty.
+    pub load_error: Option<String>,
 }
 
 /// The lines of `text` as shown in the Raw View.
@@ -43,6 +45,7 @@ impl ParsedFile {
             lines: Arc::new(split_lines(&String::from_utf8_lossy(bytes))),
             raw_breaks: BTreeMap::new(),
             live: None,
+            load_error: None,
         }
     }
 
@@ -79,6 +82,44 @@ impl ParsedFile {
 
     pub fn empty() -> Self {
         Self::from_text("")
+    }
+
+    /// An empty file that could not be read, and why.
+    pub fn failed(error: String) -> Self {
+        Self { load_error: Some(error), ..Self::empty() }
+    }
+}
+
+/// What the canvas shows instead of rows.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum EmptyCanvas {
+    /// No Log Space or File View is open.
+    NoLogSpace,
+    /// The open Log Space has no files; `can_add` when files can be added
+    /// to it from here (an Imported Log Space).
+    NoFiles { can_add: bool },
+    /// Every Source File of the open view failed to load: why, per file.
+    LoadFailed { errors: Vec<String> },
+}
+
+impl EmptyCanvas {
+    pub fn title(&self) -> &'static str {
+        match self {
+            Self::NoLogSpace => "No Log Space open",
+            Self::NoFiles { .. } => "This Log Space has no files",
+            Self::LoadFailed { .. } => "The log could not be read",
+        }
+    }
+
+    pub fn detail(&self) -> String {
+        match self {
+            Self::NoLogSpace => {
+                "A Log Space groups log files and reads them as one timeline, merged by timestamp.".into()
+            }
+            Self::NoFiles { can_add: true } => "Add log files to read them here as one timeline.".into(),
+            Self::NoFiles { can_add: false } => "Its lines show here once it has files.".into(),
+            Self::LoadFailed { errors } => errors.join("\n"),
+        }
     }
 }
 

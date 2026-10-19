@@ -259,46 +259,55 @@ impl AppView {
 
     /// Shown when no tab is open or the open Log Space has no files.
     pub(super) fn render_empty_state(&mut self, cx: &mut Context<Self>) -> gpui::AnyElement {
+        use crate::space_view::EmptyCanvas;
         use gpui_component::button::{Button, ButtonVariants as _};
-        use gpui_component::Sizable as _;
+        use gpui_component::{Icon, Sizable as _};
+        use gpui_kit::assets::IconName;
+        let state = self.empty_canvas().unwrap_or(EmptyCanvas::NoLogSpace);
         let theme = cx.theme();
-        let muted = theme.muted_foreground;
-        let space = self.active_target().and_then(|t| match t {
-            crate::workspace::working_set::TabTarget::LogSpace { space_id } => Some(space_id),
-            _ => None,
-        });
-        let imported_space = space.as_ref().and_then(|id| {
-            self.active_project()
-                .and_then(|p| p.log_space(id))
-                .filter(|s| s.kind == crate::workspace::log_space::LogSpaceKind::Imported)
-                .map(|s| s.id.clone())
-        });
-        let (message, button) = match imported_space {
-            Some(space_id) => (
-                "This Log Space has no files.",
-                Button::new("empty-add-files")
-                    .primary()
-                    .small()
-                    .label("Add files")
-                    .on_click(cx.listener(move |this, _, _, cx| this.add_files_dialog(&space_id, cx))),
-            ),
-            None => (
-                "No Log Space open.",
+        let (muted, danger) = (theme.muted_foreground, theme.danger);
+        let (icon, icon_color) = match state {
+            EmptyCanvas::NoLogSpace => (IconName::Layers, muted),
+            EmptyCanvas::NoFiles { .. } => (IconName::FolderOpen, muted),
+            EmptyCanvas::LoadFailed { .. } => (IconName::TriangleAlert, danger),
+        };
+        let button = match state {
+            EmptyCanvas::NoLogSpace => Some(
                 Button::new("empty-new-space")
                     .primary()
                     .small()
                     .label("New Log Space")
                     .on_click(cx.listener(|this, _, _, cx| this.open_new_space_dialog(cx))),
             ),
+            EmptyCanvas::NoFiles { can_add: true } => self.active_space().map(|space| {
+                let space_id = space.id.clone();
+                Button::new("empty-add-files")
+                    .primary()
+                    .small()
+                    .label("Add files")
+                    .on_click(cx.listener(move |this, _, _, cx| this.add_files_dialog(&space_id, cx)))
+            }),
+            _ => None,
         };
         v_flex()
             .flex_1()
             .h_full()
             .items_center()
             .justify_center()
-            .gap_3()
-            .child(div().text_color(muted).child(message))
-            .child(button)
+            .gap_2()
+            .px_6()
+            .child(Icon::new(icon).size(px(32.0)).text_color(icon_color))
+            .child(div().text_base().font_weight(gpui::FontWeight::SEMIBOLD).child(state.title()))
+            .child(
+                div()
+                    .max_w(px(420.0))
+                    .text_sm()
+                    .text_center()
+                    .text_color(muted)
+                    .whitespace_normal()
+                    .child(state.detail()),
+            )
+            .children(button.map(|b| div().pt_2().child(b)))
             .into_any_element()
     }
 }

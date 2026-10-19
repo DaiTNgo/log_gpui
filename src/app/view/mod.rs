@@ -52,7 +52,7 @@ impl Render for AppView {
         let has_files = self.active_space().is_some_and(|s| !s.files.is_empty());
         let colors = self.canvas_colors(cx);
         let parsed = self.active_tab_is_log_file() && has_files && self.view_mode == ViewMode::Parsed;
-        let log_canvas = if !self.active_tab_is_log_file() || !has_files {
+        let log_canvas = if self.empty_canvas().is_some() {
             self.render_empty_state(cx)
         } else if self.view_mode == ViewMode::Raw {
             self.render_raw_view(cx)
