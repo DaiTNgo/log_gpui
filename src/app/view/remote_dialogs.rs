@@ -39,6 +39,7 @@ impl AppView {
             (request.server_name.clone(), request.address.clone(), request.fingerprint.clone());
         let theme = cx.theme();
         let (bg, border, muted) = (theme.popover, theme.border, theme.muted_foreground);
+        let mono_font = theme.mono_font_family.clone();
         Self::modal_backdrop()
             .child(
                 v_flex()
@@ -61,7 +62,7 @@ impl AppView {
                     )))
                     .child(
                         div()
-                            .font_family(".AppleSystemUIFontMonospaced")
+                            .font_family(mono_font)
                             .text_sm()
                             .child(fingerprint),
                     )
@@ -118,7 +119,7 @@ impl AppView {
                     .when_some(error, |this, e| this.child(div().text_xs().text_color(danger).child(e)))
                     .child(
                         Checkbox::new("secret-remember")
-                            .label("Remember in Keychain")
+                            .label(crate::ui::platform::REMEMBER_SECRET)
                             .checked(remember)
                             .on_click(cx.listener(|this, _, _, cx| this.toggle_secret_remember(cx))),
                     )

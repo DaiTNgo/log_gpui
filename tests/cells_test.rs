@@ -1,5 +1,6 @@
 use log_gpui::column::{ColumnLayoutState, PinnableColumn};
 use log_gpui::parser::text::parse_text_bytes;
+use log_gpui::text_selection::byte_at_x;
 use log_gpui::ui::cells::{Hit, Layer, TextCell, byte_for_hit, cell_text, compose, hit_cell, shows_placeholder};
 
 fn rows() -> Vec<log_gpui::model::LogEntry> {
@@ -61,7 +62,8 @@ fn a_pointer_maps_to_the_cell_and_character_under_it() {
         Hit::Text { cell: TextCell::Level, x } => assert!(x > 14.0 && x < 16.0, "x = {x}"),
         other => panic!("{other:?}"),
     }
-    let byte = byte_for_hit(&es[0], hit, 7.2);
+    // A fixed 7.2px advance stands in for the shaped font.
+    let byte = byte_for_hit(&es[0], hit, |text, x| byte_at_x(text, x, 7.2));
     assert_eq!(&es[0].raw_line[byte..byte + 3], "ROR", "after `ER`");
     assert_eq!(hit_cell(&layout, 10.0, 0.0), Hit::Gutter);
 }

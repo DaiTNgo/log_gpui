@@ -109,13 +109,9 @@ impl SearchState {
             return;
         };
 
-        for &entry_ix in filter_pass {
-            if let Some(entry) = entries.get(entry_ix)
-                && matcher.is_match(&entry.raw_line)
-            {
-                self.matched_visible_indices.push(entry_ix);
-            }
-        }
+        self.matched_visible_indices = crate::par::filter(filter_pass, |entry_ix| {
+            entries.get(entry_ix).is_some_and(|entry| matcher.is_match(&entry.raw_line))
+        });
         if self.current_match_idx >= self.matched_visible_indices.len() {
             self.current_match_idx = 0;
         }

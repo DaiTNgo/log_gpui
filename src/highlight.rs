@@ -7,6 +7,7 @@ use crate::model::LogEntry;
 use crate::palette::HighlightColor;
 use crate::unicode_text::{self, Needle};
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 
 /// Column key of the message text. Highlight Rules may use it, with Custom
 /// Values only; it is not a Filter column.
@@ -109,37 +110,73 @@ pub struct RowPaint {
     pub column: String,
 }
 
+/// The paint of each row, shared by every row the same rule paints.
+pub type RowPaints = Vec<Option<Arc<RowPaint>>>;
+
+/// A rule with its conditions folded once, to test a whole log against it.
+struct CompiledRule<'a> {
+    column: &'a str,
+    values: Vec<Needle>,
+    custom: Vec<Needle>,
+    paint: Arc<RowPaint>,
+}
+
+impl<'a> CompiledRule<'a> {
+    fn new(index: usize, rule: &'a HighlightRule) -> Self {
+        Self {
+            column: &rule.column,
+            values: rule.values.iter().map(|v| Needle::new(v)).collect(),
+            custom: rule.custom.iter().map(|c| Needle::new(c)).collect(),
+            paint: Arc::new(RowPaint { rule: index, color: rule.color.clone(), column: rule.column.clone() }),
+        }
+    }
+
+    fn matches_value(&self, value: Option<&str>) -> bool {
+        let Some(v) = value else { return false };
+        self.values.iter().any(|n| n.equals(v)) || self.custom.iter().any(|n| n.is_in(v))
+    }
+}
+
+fn compile(rules: &[HighlightRule]) -> Vec<CompiledRule<'_>> {
+    rules
+        .iter()
+        .enumerate()
+        .filter(|(_, r)| r.enabled)
+        .map(|(i, r)| CompiledRule::new(i, r))
+        .collect()
+}
+
+fn paint_compiled(rules: &[CompiledRule], entries: &[LogEntry], row: usize) -> Option<Arc<RowPaint>> {
+    rules
+        .iter()
+        .find(|rule| rule.matches_value(value_of(entries, row, rule.column)))
+        .map(|rule| rule.paint.clone())
+}
+
 /// The rule that paints `row`: the first enabled rule in the list that it
 /// meets. A Continuation Line is judged by its Parent Line's values.
 pub fn paint_for_row(rules: &[HighlightRule], entries: &[LogEntry], row: usize) -> Option<RowPaint> {
-    rules.iter().enumerate().find_map(|(i, rule)| {
-        if !rule.enabled {
-            return None;
-        }
-        rule.matches_value(value_of(entries, row, &rule.column)).then(|| RowPaint {
-            rule: i,
-            color: rule.color.clone(),
-            column: rule.column.clone(),
-        })
-    })
+    paint_compiled(&compile(rules), entries, row).map(|p| (*p).clone())
 }
 
 /// The paint of every row of `entries`, for the rows' own order.
-pub fn paint_rows(rules: &[HighlightRule], entries: &[LogEntry]) -> Vec<Option<RowPaint>> {
-    if rules.iter().all(|r| !r.enabled) {
+pub fn paint_rows(rules: &[HighlightRule], entries: &[LogEntry]) -> RowPaints {
+    let compiled = compile(rules);
+    if compiled.is_empty() {
         return vec![None; entries.len()];
     }
-    (0..entries.len()).map(|row| paint_for_row(rules, entries, row)).collect()
+    crate::par::map_rows(entries.len(), |row| paint_compiled(&compiled, entries, row))
 }
 
 /// How many of `rows` (positions in `entries`) `rule` matches by its own
 /// condition, for the count in the Highlights list. Continuation Lines are
 /// not counted, like Filter counts.
-pub fn count_matches(rule: &HighlightRule, entries: &[LogEntry], rows: impl IntoIterator<Item = usize>) -> usize {
-    rows.into_iter()
-        .filter(|&row| entries.get(row).is_some_and(|e| e.parent.is_none()))
-        .filter(|&row| rule.matches_value(value_of(entries, row, &rule.column)))
-        .count()
+pub fn count_matches(rule: &HighlightRule, entries: &[LogEntry], rows: &[usize]) -> usize {
+    let compiled = CompiledRule::new(0, rule);
+    crate::par::count(rows, |row| {
+        entries.get(row).is_some_and(|e| e.parent.is_none())
+            && compiled.matches_value(value_of(entries, row, &rule.column))
+    })
 }
 
 /// The next unused rule id of a list.

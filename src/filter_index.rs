@@ -19,8 +19,6 @@ pub const MISSING: u16 = u16::MAX;
 enum Source {
     /// The Source File of a row in a Log Space (the Source Column).
     SourceFile,
-    /// The message text; read by Highlight Rules, never a Filter column.
-    Message,
     Level,
     Module,
     RequestId,
@@ -32,7 +30,6 @@ impl Source {
     fn key(&self) -> String {
         match self {
             Source::SourceFile => "source".to_string(),
-            Source::Message => "message".to_string(),
             Source::Level => "level".to_string(),
             Source::Module => "module".to_string(),
             Source::RequestId => "request_id".to_string(),
@@ -44,7 +41,6 @@ impl Source {
     fn label(&self) -> String {
         match self {
             Source::SourceFile => "Source".to_string(),
-            Source::Message => "Message".to_string(),
             Source::Level => "Level".to_string(),
             Source::Module => "Module".to_string(),
             Source::RequestId => "Request ID".to_string(),
@@ -56,7 +52,6 @@ impl Source {
     fn value<'a>(&self, entry: &'a LogEntry) -> Option<&'a str> {
         let v = match self {
             Source::SourceFile => entry.source.as_deref().unwrap_or(""),
-            Source::Message => entry.payload.as_str(),
             Source::Level => entry.level_text.as_str(),
             Source::Module => entry.tag.as_str(),
             Source::RequestId => entry.request_id.as_deref().unwrap_or(""),
@@ -85,16 +80,22 @@ pub fn value_of<'a>(entries: &'a [LogEntry], row: usize, key: &str) -> Option<&'
 
 /// The value a row holds in the column `key`, or `None` when it has none.
 pub fn column_value<'a>(entry: &'a LogEntry, key: &str) -> Option<&'a str> {
-    let source = match key {
-        "source" => Source::SourceFile,
-        "message" => Source::Message,
-        "level" => Source::Level,
-        "module" => Source::Module,
-        "request_id" => Source::RequestId,
-        "trace_id" => Source::TraceId,
-        other => Source::Json(other.to_string()),
+    // Called once per row by Filter and Highlight Rules: no allocation here.
+    let v = match key {
+        "source" => entry.source.as_deref().unwrap_or(""),
+        "message" => entry.payload.as_str(),
+        "level" => entry.level_text.as_str(),
+        "module" => entry.tag.as_str(),
+        "request_id" => entry.request_id.as_deref().unwrap_or(""),
+        "trace_id" => entry.trace_id.as_deref().unwrap_or(""),
+        other => entry
+            .json_fields
+            .iter()
+            .find(|(name, _)| name == other)
+            .map(|(_, v)| v.as_str())
+            .unwrap_or(""),
     };
-    source.value(entry)
+    if v.is_empty() { None } else { Some(v) }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

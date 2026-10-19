@@ -1,4 +1,5 @@
-//! Passwords and passphrases: kept in the macOS Keychain, never in a file of
+//! Passwords and passphrases: kept in the system credential store (macOS
+//! Keychain, Windows Credential Manager), never in a file of
 //! the app.
 
 use std::collections::HashMap;

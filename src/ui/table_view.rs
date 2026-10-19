@@ -95,7 +95,7 @@ impl TableDelegate for LogTableDelegate {
                 .into_any_element(),
             1 => div()
                 .px_2()
-                .font_family(".AppleSystemUIFontMonospaced")
+                .font_family(cx.theme().mono_font_family.clone())
                 .text_xs()
                 .child(entry.time_str.clone())
                 .into_any_element(),
@@ -106,7 +106,7 @@ impl TableDelegate for LogTableDelegate {
                     .unwrap_or_else(|| "-".to_string());
                 div()
                     .px_2()
-                    .font_family(".AppleSystemUIFontMonospaced")
+                    .font_family(cx.theme().mono_font_family.clone())
                     .text_xs()
                     .text_color(rgb(0x38bdf8))
                     .child(delta_text)

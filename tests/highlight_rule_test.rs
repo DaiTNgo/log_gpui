@@ -129,7 +129,7 @@ fn a_stack_trace_is_painted_like_its_parent_line() {
 fn match_counts_skip_continuation_lines() {
     let es = rows();
     let r = rule(1, "level", &["ERROR"], &[], color(Hue::Red));
-    assert_eq!(count_matches(&r, &es, 0..es.len()), 1);
+    assert_eq!(count_matches(&r, &es, &(0..es.len()).collect::<Vec<_>>()), 1);
 }
 
 // ─── Scope ───────────────────────────────────────────────────────────────────

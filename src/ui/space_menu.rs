@@ -190,11 +190,11 @@ fn file_menu(menu: PopupMenu, file: &FileRef) -> PopupMenu {
                 },
             ));
             menu.item(
-                PopupMenuItem::new("Reveal in Finder")
+                PopupMenuItem::new(crate::ui::platform::REVEAL_IN_FILE_MANAGER)
                     .disabled(file.path.is_none())
                     .on_click(move |_, _, app| {
                         if let Some(path) = reveal.path.clone() {
-                            reveal.view.update(app, |this, _| this.reveal_in_finder(&path));
+                            reveal.view.update(app, |this, _| this.reveal_in_file_manager(&path));
                         }
                     }),
             )
@@ -328,13 +328,19 @@ pub fn push_file(list: MenuList, file: FileRef, active: bool) -> MenuList {
 
     let open = file.clone();
     let context = file.clone();
-    let label = if file.no_timestamps {
-        format!("{}  ⚑ No timestamps", file.display_name)
-    } else {
-        file.display_name.clone()
-    };
-    let item = SidebarMenuItem::new(label)
+    let no_timestamps = file.no_timestamps;
+    let item = SidebarMenuItem::new(file.display_name.clone())
         .icon(IconName::File)
+        .when(no_timestamps, |item| {
+            item.suffix(|_, cx| {
+                h_flex()
+                    .gap_1()
+                    .text_xs()
+                    .text_color(cx.theme().muted_foreground)
+                    .child(Icon::new(IconName::Flag).size(px(12.0)))
+                    .child("No timestamps")
+            })
+        })
         .active(active)
         .on_click(move |ev, window, app| {
             let (project, space, id) =

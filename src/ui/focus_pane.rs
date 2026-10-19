@@ -43,7 +43,7 @@ pub const COLLAPSED_HEIGHT: f32 = TAB_STRIP_HEIGHT + 1.0;
 /// Where the pane reads the text of its rows from.
 pub enum PaneSource {
     Parsed {
-        paints: Arc<Vec<Option<RowPaint>>>,
+        paints: Arc<crate::highlight::RowPaints>,
     },
     Raw {
         sections: Arc<Vec<RawSection>>,
@@ -338,8 +338,9 @@ impl FocusPane {
             font_size: state.density.font_size(),
         };
         let list = uniform_list("focus_pane_list", count, move |range, _window, cx| {
+            let mono_font = cx.theme().mono_font_family.clone();
             let this = env.view.read(cx);
-            range.filter_map(|i| env.row(i, &this.all_entries)).collect::<Vec<_>>()
+            range.filter_map(|i| env.row(i, &this.all_entries, &mono_font)).collect::<Vec<_>>()
         })
         .size_full()
         .with_width_from_item(Some(longest))
@@ -354,19 +355,19 @@ impl FocusPane {
             .overflow_hidden()
             .relative()
             .horizontal_scrollbar(&scroll_handle)
-            .on_mouse_down(MouseButton::Left, move |event, _w, cx| {
-                v_down.update(cx, |this, cx| this.start_pane_selection(event.position, cx));
+            .on_mouse_down(MouseButton::Left, move |event, window, cx| {
+                v_down.update(cx, |this, cx| this.start_pane_selection(event.position, window, cx));
             })
-            .on_mouse_move(move |event, _w, cx| {
+            .on_mouse_move(move |event, window, cx| {
                 if event.pressed_button == Some(MouseButton::Left) {
-                    v_move.update(cx, |this, cx| this.drag_pane_selection(event.position, cx));
+                    v_move.update(cx, |this, cx| this.drag_pane_selection(event.position, window, cx));
                 }
             })
-            .on_mouse_up(MouseButton::Left, move |event, _w, cx| {
-                v_up.update(cx, |this, cx| this.finish_pane_selection(event.position, cx));
+            .on_mouse_up(MouseButton::Left, move |event, window, cx| {
+                v_up.update(cx, |this, cx| this.finish_pane_selection(event.position, window, cx));
             })
-            .on_mouse_up_out(MouseButton::Left, move |event, _w, cx| {
-                v_up_out.update(cx, |this, cx| this.finish_pane_selection(event.position, cx));
+            .on_mouse_up_out(MouseButton::Left, move |event, window, cx| {
+                v_up_out.update(cx, |this, cx| this.finish_pane_selection(event.position, window, cx));
             })
             .child(
                 gpui::canvas(
@@ -403,19 +404,6 @@ impl FocusPane {
     }
 }
 
-pub fn row_len(source: &PaneSource, entries: &[LogEntry], row: FocusRow) -> usize {
-    match (source, row) {
-        (PaneSource::Parsed { .. }, FocusRow::Entry(ix)) => {
-            entries.get(ix).map_or(0, |e| e.raw_line.len())
-        }
-        (PaneSource::Raw { sections, .. }, FocusRow::Raw { section, line }) => sections
-            .get(section)
-            .and_then(|s| s.lines.get(line))
-            .map_or(0, String::len),
-        _ => 0,
-    }
-}
-
 /// What the virtualized list needs to build the rows on its own.
 struct PaneRows {
     view: gpui::Entity<AppView>,
@@ -432,7 +420,12 @@ struct PaneRows {
 }
 
 impl PaneRows {
-    fn row(&self, index: usize, entries: &[LogEntry]) -> Option<gpui::Stateful<gpui::Div>> {
+    fn row(
+        &self,
+        index: usize,
+        entries: &[LogEntry],
+        mono_font: &gpui::SharedString,
+    ) -> Option<gpui::Stateful<gpui::Div>> {
         let row = *self.rows.get(index)?;
         let colors = self.colors;
         // Each row is read as a `LogEntry`: the Parsed View has them, a Raw
@@ -444,7 +437,7 @@ impl PaneRows {
                 (PaneSource::Parsed { paints }, FocusRow::Entry(ix)) => {
                     let e = entries.get(ix)?;
                     break_label = e.break_before.as_ref().map(|m| m.label.clone());
-                    (e, paints.get(ix).and_then(|p| p.as_ref()), e.index, e.source.as_deref().map(str::to_string))
+                    (e, paints.get(ix).and_then(|p| p.as_deref()), e.index, e.source.as_deref().map(str::to_string))
                 }
                 (PaneSource::Raw { sections, markers }, FocusRow::Raw { section, line }) => {
                     let s = sections.get(section)?;
@@ -515,7 +508,7 @@ impl PaneRows {
                 .items_center()
                 // Monospace, like the Log Canvas rows: hit-testing a pointer
                 // assumes every character is the same width.
-                .font_family(".AppleSystemUIFontMonospaced")
+                .font_family(mono_font.clone())
                 .text_size(px(self.font_size))
                 .bg(if is_selected { base_bg.blend(colors.selected.opacity(0.5)) } else { base_bg })
                 .child(

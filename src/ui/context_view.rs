@@ -1,5 +1,6 @@
 use crate::model::LogEntry;
 
+use gpui_component::ActiveTheme as _;
 use gpui::{
     div, px, InteractiveElement, IntoElement, ParentElement, StatefulInteractiveElement,
     Styled,
@@ -23,6 +24,7 @@ impl ContextModal {
         let Some(target_ix) = selected_entry_ix else {
             return div().into_any_element();
         };
+        let mono_font = cx.theme().mono_font_family.clone();
 
         if target_ix >= all_entries.len() {
             return div().into_any_element();
@@ -50,7 +52,7 @@ impl ContextModal {
                 .py_1()
                 .rounded_md()
                 .border_1()
-                .font_family(".AppleSystemUIFontMonospaced")
+                .font_family(mono_font.clone())
                 .text_xs()
                 .child(
                     div()

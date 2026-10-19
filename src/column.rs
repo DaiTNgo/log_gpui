@@ -139,7 +139,8 @@ impl FieldMaxChars {
 
 /// Computes dynamic column width based on ADR 0003:
 /// Width = max(min_width, (max_chars * W_char) + padding)
-/// where W_char = 0.6 * font_size.
+/// where W_char is the measured advance of the monospace font (0.6 * font_size
+/// until measured, see `ui::mono`).
 /// Also ensures effective character length is at least the column title length
 /// so column headers never truncate and widths scale consistently with font size.
 #[inline]
@@ -149,7 +150,7 @@ pub fn compute_column_width(
     font_size: f32,
     min_width: Pixels,
 ) -> Pixels {
-    let char_width = 0.6 * font_size;
+    let char_width = crate::ui::mono::char_width(font_size);
     let effective_chars = max_chars.max(col.title_chars());
     let padding = match col {
         PinnableColumn::Timestamp => 16.0,

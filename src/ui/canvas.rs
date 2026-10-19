@@ -6,6 +6,7 @@ use crate::palette::{HighlightColor, Tone, Weight, text_rgb};
 use crate::search::SearchState;
 use crate::text_selection::{TextSelection, clip_to_span};
 use crate::ui::cells::{Layer, TextCell, cell_text, compose, shows_placeholder};
+use gpui_component::ActiveTheme as _;
 use gpui::StyledText;
 use gpui::{
     AppContext as _, ElementId, InteractiveElement, IntoElement, ListHorizontalSizingBehavior,
@@ -76,9 +77,11 @@ pub struct CanvasViewState<'a> {
     /// The rows, borrowed from the view for this frame only (never cloned).
     pub entries: &'a [LogEntry],
     pub visible_indices: Arc<Vec<usize>>,
+    /// Position of the row with the longest message (sets the list's width).
+    pub longest_row: usize,
     pub selected_row_pos: Option<usize>,
     /// The Highlight Rule paint of each entry (by entry position).
-    pub paints: Arc<Vec<Option<RowPaint>>>,
+    pub paints: Arc<crate::highlight::RowPaints>,
     pub selection: Option<TextSelection>,
     /// Receives where the rows are on screen while painting.
     pub bounds_sink: std::rc::Rc<std::cell::Cell<gpui::Bounds<Pixels>>>,
@@ -197,19 +200,8 @@ impl LogCanvas {
             .child(anchored_header);
 
         // 2. Virtualized List using uniform_list
-        let entries_clone = state.entries;
-        let visible_clone = state.visible_indices.clone();
-        let longest_vis_pos = visible_clone
-            .iter()
-            .enumerate()
-            .max_by_key(|(_, entry_ix)| {
-                entries_clone
-                    .get(**entry_ix)
-                    .map(|e| e.payload.len())
-                    .unwrap_or(0)
-            })
-            .map(|(vis_pos, _)| vis_pos)
-            .unwrap_or(0);
+        // The view shows every entry, so an entry's position is its row.
+        let longest_vis_pos = state.longest_row.min(total_visible.saturating_sub(1));
         let env = RowEnv {
             visible: state.visible_indices.clone(),
             view: state.view.clone(),
@@ -232,9 +224,10 @@ impl LogCanvas {
             move |range, _window, cx| {
                 // The rows are read from the view as each one is drawn, so a
                 // frame never copies them.
+                let mono_font = cx.theme().mono_font_family.clone();
                 let this = env.view.read(cx);
                 range
-                    .filter_map(|vis_pos| env.row(vis_pos, &this.all_entries))
+                    .filter_map(|vis_pos| env.row(vis_pos, &this.all_entries, &mono_font))
                     .collect::<Vec<_>>()
             },
         )
@@ -419,20 +412,20 @@ impl LogCanvas {
                             .overflow_hidden()
                             .relative()
                             .horizontal_scrollbar(state.scroll_handle)
-                            .on_mouse_down(MouseButton::Left, move |event, _window, cx| {
+                            .on_mouse_down(MouseButton::Left, move |event, window, cx| {
                                 v_down.update(cx, |this, cx| {
-                                    this.start_text_selection(event.position, cx)
+                                    this.start_text_selection(event.position, window, cx)
                                 });
                             })
-                            .on_mouse_down(MouseButton::Right, move |event, _window, cx| {
+                            .on_mouse_down(MouseButton::Right, move |event, window, cx| {
                                 v_right.update(cx, |this, cx| {
-                                    this.on_cell_right_click(event.position, cx)
+                                    this.on_cell_right_click(event.position, window, cx)
                                 });
                             })
-                            .on_mouse_move(move |event, _window, cx| {
+                            .on_mouse_move(move |event, window, cx| {
                                 if event.pressed_button == Some(MouseButton::Left) {
                                     v_move.update(cx, |this, cx| {
-                                        this.drag_text_selection(event.position, cx)
+                                        this.drag_text_selection(event.position, window, cx)
                                     });
                                 }
                             })
@@ -645,7 +638,7 @@ struct RowEnv {
     current_match_pos: Option<usize>,
     scroll_handle: UniformListScrollHandle,
     layout: ColumnLayoutState,
-    paints: Arc<Vec<Option<RowPaint>>>,
+    paints: Arc<crate::highlight::RowPaints>,
     selection: Option<TextSelection>,
     row_height: f32,
     font_size: f32,
@@ -658,11 +651,16 @@ impl RowEnv {
         gpui::rgb(rgb).into()
     }
 
-    fn row(&self, vis_pos: usize, entries: &[LogEntry]) -> Option<gpui::Stateful<gpui::Div>> {
+    fn row(
+        &self,
+        vis_pos: usize,
+        entries: &[LogEntry],
+        mono_font: &gpui::SharedString,
+    ) -> Option<gpui::Stateful<gpui::Div>> {
         let colors = self.colors;
         let &entry_ix = self.visible.get(vis_pos)?;
         let entry = entries.get(entry_ix)?;
-        let paint = self.paints.get(entry_ix).and_then(|p| p.as_ref());
+        let paint = self.paints.get(entry_ix).and_then(|p| p.as_deref());
 
         let level_symbol = if entry.is_continuation() {
             " "
@@ -727,7 +725,7 @@ impl RowEnv {
             .flex()
             .flex_row()
             .items_center()
-            .font_family(".AppleSystemUIFontMonospaced")
+            .font_family(mono_font.clone())
             .text_size(px(self.font_size))
             .bg(row_bg)
             .on_click(move |_event, _window, cx| {

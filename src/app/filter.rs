@@ -87,6 +87,7 @@ impl AppView {
                 visible.truncate(rows);
             }
         }
+        self.longest_row = longest(self.all_entries.iter().map(|e| e.payload.len()));
         // Rows may be new: a selection of them no longer means the same.
         self.text_selection = None;
         self.selecting = false;
@@ -225,4 +226,15 @@ impl AppView {
             state.set_value(SharedString::from(to), window, cx);
         });
     }
+}
+
+/// Position of the largest of `lens` (the first one on a tie), 0 when empty.
+pub(crate) fn longest(lens: impl Iterator<Item = usize>) -> usize {
+    let mut best = (0, 0);
+    for (pos, len) in lens.enumerate() {
+        if len > best.1 {
+            best = (pos, len);
+        }
+    }
+    best.0
 }

@@ -6,7 +6,7 @@ use super::AppView;
 use crate::text_selection::{TextPos, TextSelection};
 use crate::ui::canvas::horizontal_scroll_x;
 use crate::ui::cells::{Hit, TextCell, byte_for_hit, cell_text, hit_cell};
-use gpui::{Context, Pixels, Point, ScrollStrategy, point, px};
+use gpui::{Context, Pixels, Point, ScrollStrategy, Window, point, px};
 use std::time::Duration;
 
 /// Distance the canvas scrolls sideways each step while dragging past an edge.
@@ -31,14 +31,10 @@ pub struct CellTarget {
 }
 
 impl AppView {
-    fn char_width(&self) -> f32 {
-        0.6 * self.density.font_size()
-    }
-
     /// Where a pointer at window position `at` is in the rows: the row (kept
     /// inside the rows shown) and the byte of its stored line. `None` when
     /// there are no rows.
-    pub fn text_pos_at(&self, at: Point<Pixels>) -> Option<(TextPos, Hit)> {
+    pub fn text_pos_at(&self, at: Point<Pixels>, window: &Window, cx: &gpui::App) -> Option<(TextPos, Hit)> {
         let total = self.visible_indices.len();
         if total == 0 {
             return None;
@@ -51,14 +47,17 @@ impl AppView {
         let x = f32::from(at.x - bounds.origin.x);
         let hit = hit_cell(&self.column_layout, x, f32::from(horizontal_scroll_x(&self.scroll_handle)));
         let entry = self.all_entries.get(*self.visible_indices.get(row)?)?;
-        let byte = byte_for_hit(entry, hit, self.char_width());
+        let font_size = self.density.font_size();
+        let byte = byte_for_hit(entry, hit, |text, x| {
+            crate::ui::mono::index_for_x(text, x, font_size, window, cx)
+        });
         Some((TextPos::new(row, byte), hit))
     }
 
-    pub fn start_text_selection(&mut self, at: Point<Pixels>, cx: &mut Context<Self>) {
+    pub fn start_text_selection(&mut self, at: Point<Pixels>, window: &Window, cx: &mut Context<Self>) {
         self.color_bar = None;
         self.pane_selection = None;
-        match self.text_pos_at(at) {
+        match self.text_pos_at(at, window, cx) {
             Some((pos, _)) => {
                 self.text_selection = Some(TextSelection::new(pos, pos));
                 self.selecting = true;
@@ -68,15 +67,15 @@ impl AppView {
         cx.notify();
     }
 
-    pub fn drag_text_selection(&mut self, at: Point<Pixels>, cx: &mut Context<Self>) {
+    pub fn drag_text_selection(&mut self, at: Point<Pixels>, window: &Window, cx: &mut Context<Self>) {
         if !self.selecting {
             return;
         }
-        if let (Some((pos, _)), Some(sel)) = (self.text_pos_at(at), self.text_selection.as_mut()) {
+        if let (Some((pos, _)), Some(sel)) = (self.text_pos_at(at, window, cx), self.text_selection.as_mut()) {
             sel.move_head(pos);
         }
         self.autoscroll_toward(at);
-        self.ensure_autoscroll(cx);
+        self.ensure_autoscroll(window, cx);
         cx.notify();
     }
 
@@ -128,21 +127,21 @@ impl AppView {
 
     /// While a drag is past an edge, keep scrolling and extending the
     /// selection even when the pointer does not move.
-    fn ensure_autoscroll(&mut self, cx: &mut Context<Self>) {
+    fn ensure_autoscroll(&mut self, window: &Window, cx: &mut Context<Self>) {
         if self.autoscroll_running || self.autoscroll_dir == (0, 0) {
             return;
         }
         self.autoscroll_running = true;
-        cx.spawn(async move |this, cx| {
+        cx.spawn_in(window, async move |this, cx| {
             loop {
                 cx.background_executor().timer(AUTOSCROLL_INTERVAL).await;
                 let keep_going = this
-                    .update(cx, |this, cx| {
+                    .update_in(cx, |this, window, cx| {
                         if !this.selecting || this.autoscroll_dir == (0, 0) {
                             this.autoscroll_running = false;
                             return false;
                         }
-                        this.step_autoscroll(cx);
+                        this.step_autoscroll(window, cx);
                         true
                     })
                     .unwrap_or(false);
@@ -154,12 +153,12 @@ impl AppView {
         .detach();
     }
 
-    fn step_autoscroll(&mut self, cx: &mut Context<Self>) {
+    fn step_autoscroll(&mut self, window: &Window, cx: &mut Context<Self>) {
         let (dx, dy) = self.autoscroll_dir;
         let total = self.visible_indices.len();
         if dy != 0 && total > 0 {
             // Scroll a row at a time by moving to the row past the edge.
-            let (pos, _) = self.text_pos_at(self.autoscroll_pointer).unzip();
+            let (pos, _) = self.text_pos_at(self.autoscroll_pointer, window, cx).unzip();
             if let Some(pos) = pos {
                 let next = if dy < 0 { pos.row.saturating_sub(1) } else { (pos.row + 1).min(total - 1) };
                 self.scroll_handle.scroll_to_item(next, ScrollStrategy::Nearest);
@@ -172,7 +171,7 @@ impl AppView {
             let x = (f32::from(offset.x) - dx as f32 * AUTOSCROLL_STEP_X).clamp(-f32::from(max.x).abs(), 0.0);
             handle.set_offset(point(px(x), offset.y));
         }
-        if let (Some((pos, _)), Some(sel)) = (self.text_pos_at(self.autoscroll_pointer), self.text_selection.as_mut()) {
+        if let (Some((pos, _)), Some(sel)) = (self.text_pos_at(self.autoscroll_pointer, window, cx), self.text_selection.as_mut()) {
             sel.move_head(pos);
         }
         cx.notify();
@@ -196,8 +195,8 @@ impl AppView {
     }
 
     /// What a right-click at `at` landed on.
-    pub fn cell_target_at(&self, at: Point<Pixels>) -> Option<CellTarget> {
-        let (pos, hit) = self.text_pos_at(at)?;
+    pub fn cell_target_at(&self, at: Point<Pixels>, window: &Window, cx: &gpui::App) -> Option<CellTarget> {
+        let (pos, hit) = self.text_pos_at(at, window, cx)?;
         let entry = self.all_entries.get(*self.visible_indices.get(pos.row)?)?;
         let mut cell = None;
         let mut column_value = None;
@@ -231,8 +230,8 @@ impl AppView {
 
     /// Remember what a right-click landed on for the menu that opens. A click
     /// outside the selection drops the selection first.
-    pub fn on_cell_right_click(&mut self, at: Point<Pixels>, cx: &mut Context<Self>) {
-        let target = self.cell_target_at(at);
+    pub fn on_cell_right_click(&mut self, at: Point<Pixels>, window: &Window, cx: &mut Context<Self>) {
+        let target = self.cell_target_at(at, window, cx);
         if let (Some(t), Some(sel)) = (&target, self.text_selection) {
             let inside = sel.range_in_row(t.row, usize::MAX).is_some_and(|r| r.contains(&t.byte))
                 || sel.covers_row(t.row) && sel.ordered().0.row != sel.ordered().1.row;

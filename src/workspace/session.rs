@@ -136,12 +136,23 @@ impl SessionManifest {
     }
 }
 
+/// The user's home directory: `$HOME`, or `%USERPROFILE%` on Windows.
+pub fn home_dir() -> Option<std::path::PathBuf> {
+    std::env::var_os("HOME")
+        .or_else(|| if cfg!(windows) { std::env::var_os("USERPROFILE") } else { None })
+        .map(std::path::PathBuf::from)
+}
+
 /// Directory (in the user config directory) holding the app's own data:
-/// `$XDG_CONFIG_HOME/log_gpui` or `~/.config/log_gpui`.
+/// `$XDG_CONFIG_HOME/log_gpui`, `%APPDATA%\log_gpui` on Windows, or
+/// `~/.config/log_gpui`.
 pub fn app_data_dir() -> std::path::PathBuf {
+    let appdata = if cfg!(windows) { std::env::var_os("APPDATA") } else { None };
     let mut path = if let Some(xdg) = std::env::var_os("XDG_CONFIG_HOME") {
         std::path::PathBuf::from(xdg)
-    } else if let Some(home) = std::env::var_os("HOME") {
+    } else if let Some(appdata) = appdata {
+        std::path::PathBuf::from(appdata)
+    } else if let Some(home) = home_dir() {
         std::path::PathBuf::from(home).join(".config")
     } else {
         std::path::PathBuf::from(".")

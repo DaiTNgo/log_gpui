@@ -69,10 +69,15 @@ pub struct AppView {
     /// The Filter result: the entries that pass it, ascending. The view shows
     /// every entry; Filter only narrows the Focus Pane.
     pub filter_pass: Arc<Vec<usize>>,
+    /// The row with the longest message, which sets the view's width. Found
+    /// when the rows change, never while drawing.
+    pub longest_row: usize,
     /// The Focus Tabs of the open view; the open tab holds the Search.
     pub focus: FocusTabs,
     /// The lines the open Focus Tab lists.
     pub focus_rows: Arc<Vec<FocusRow>>,
+    /// The row of `focus_rows` with the longest text (sets the pane's width).
+    pub focus_longest: usize,
     pub focus_scroll: UniformListScrollHandle,
     /// The Focus Window, while the Focus Pane lives there. Never saved.
     pub focus_window: Option<focus_window::FocusWindowHandle>,
@@ -108,7 +113,7 @@ pub struct AppView {
     /// a pointer position into a row and a character.
     pub canvas_bounds: Rc<Cell<Bounds<Pixels>>>,
     /// The Highlight Rule paint of each entry of the open view.
-    pub highlight_paints: Arc<Vec<Option<crate::highlight::RowPaint>>>,
+    pub highlight_paints: Arc<crate::highlight::RowPaints>,
     /// How many shown rows each Highlight Rule matches, by rule id.
     pub rule_counts: HashMap<u64, usize>,
     /// The floating bar of colors (or the palette of a rule).
@@ -195,6 +200,8 @@ impl AppView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        // Column widths restored below are fitted with the measured font.
+        crate::ui::mono::measure(cx);
         let focus_handle = cx.focus_handle();
         let scroll_handle = UniformListScrollHandle::new();
         let all_entries: Vec<LogEntry> = Vec::new();
@@ -334,8 +341,10 @@ impl AppView {
             filter_index,
             filter_ui,
             filter_pass: Arc::new(Vec::new()),
+            longest_row: 0,
             focus: FocusTabs::new(),
             focus_rows: Arc::new(Vec::new()),
+            focus_longest: 0,
             focus_scroll: UniformListScrollHandle::new(),
             focus_window: None,
             focus_find_input,

@@ -1,5 +1,7 @@
 
 use crate::workspace::project::{Project, ProjectColorAccent};
+use gpui_component::{ActiveTheme as _, Icon};
+use gpui_kit::assets::IconName;
 use gpui::{
     div, px, ElementId, InteractiveElement, IntoElement, ParentElement, StatefulInteractiveElement,
     Styled,
@@ -22,6 +24,7 @@ impl ProjectSwitcher {
             return div().into_any_element();
         }
 
+        let mono_font = cx.theme().mono_font_family.clone();
         let mut list = div().flex().flex_col().gap_0p5().w_full();
 
         for proj in projects.iter() {
@@ -40,9 +43,13 @@ impl ProjectSwitcher {
                     rename_buffer.to_string()
                 };
                 div()
+                    .flex()
+                    .items_center()
                     .text_xs()
-                    .font_family(".AppleSystemUIFontMonospaced")
-                    .child(format!("{}▏", shown))
+                    .font_family(mono_font.clone())
+                    .child(shown)
+                    // The caret is drawn, not a glyph the font may lack.
+                    .child(div().w(px(1.0)).h(px(12.0)).ml(px(1.0)).bg(cx.theme().foreground))
             } else {
                 div()
                     .text_xs()
@@ -94,7 +101,7 @@ impl ProjectSwitcher {
                         .py_0p5()
                         .rounded_md()
                         .text_xs()
-                        .child("✎")
+                        .child(Icon::new(IconName::Pencil).size(px(12.0)))
                         .on_click(cx.listener(move |this, _, _window, cx| {
                             this.begin_project_rename(&rename_btn_id, cx);
                         })),

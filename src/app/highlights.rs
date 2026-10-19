@@ -4,7 +4,7 @@
 
 use super::AppView;
 use crate::highlight::{
-    HighlightRule, MESSAGE_COLUMN, RuleError, RowPaint, move_rule, next_rule_id, paint_rows,
+    HighlightRule, MESSAGE_COLUMN, RuleError, move_rule, next_rule_id, paint_rows,
 };
 use crate::palette::{HighlightColor, next_rule_color};
 use gpui::Context;
@@ -19,12 +19,11 @@ impl AppView {
     /// shows it.
     pub fn recompute_highlight_paints(&mut self) {
         let rules = self.highlight_rules().to_vec();
-        let paints: Vec<Option<RowPaint>> = paint_rows(&rules, &self.all_entries);
-        self.highlight_paints = Arc::new(paints);
+        self.highlight_paints = Arc::new(paint_rows(&rules, &self.all_entries));
         self.rule_counts = rules
             .iter()
             .map(|r| {
-                let n = crate::highlight::count_matches(r, &self.all_entries, self.visible_indices.iter().copied());
+                let n = crate::highlight::count_matches(r, &self.all_entries, &self.visible_indices);
                 (r.id, n)
             })
             .collect();

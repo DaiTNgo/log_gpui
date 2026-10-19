@@ -4,7 +4,7 @@
 
 use crate::column::{ColumnLayoutState, PinnableColumn};
 use crate::model::LogEntry;
-use crate::text_selection::{byte_at_x, floor_char_boundary};
+use crate::text_selection::floor_char_boundary;
 use gpui::{HighlightStyle, Hsla};
 use std::ops::Range;
 
@@ -189,10 +189,13 @@ pub fn hit_cell(layout: &ColumnLayoutState, x: f32, scroll_x: f32) -> Hit {
 /// The byte of the line a pointer at `hit` stands on in `entry`. A pointer in
 /// the Gutter, in the Source Column or over a `_` stands at the start of the
 /// line's message.
-pub fn byte_for_hit(entry: &LogEntry, hit: Hit, char_width: f32) -> usize {
+///
+/// `index_for_x(text, x)` is the byte of `text` nearest `x` pixels into it, as
+/// the text is drawn.
+pub fn byte_for_hit(entry: &LogEntry, hit: Hit, index_for_x: impl Fn(&str, f32) -> usize) -> usize {
     match hit {
         Hit::Text { cell, x } => match cell_text(entry, cell) {
-            Some((text, Some(range))) => range.start + byte_at_x(text, x, char_width),
+            Some((text, Some(range))) => range.start + index_for_x(text, x),
             _ => message_start(entry),
         },
         Hit::Gutter | Hit::Source => 0,

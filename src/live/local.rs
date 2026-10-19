@@ -6,7 +6,6 @@ use super::splitter::LineSplitter;
 use async_channel::{Receiver, Sender};
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
-use std::os::unix::fs::MetadataExt;
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -49,6 +48,21 @@ struct Open {
     offset: u64,
 }
 
+/// Identity of the file behind a path: its inode on Unix. Windows has no
+/// stable file index in std, so there the creation time stands in for it.
+#[cfg(unix)]
+fn file_id(meta: &std::fs::Metadata) -> u64 {
+    std::os::unix::fs::MetadataExt::ino(meta)
+}
+
+#[cfg(not(unix))]
+fn file_id(meta: &std::fs::Metadata) -> u64 {
+    meta.created()
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map_or(0, |d| d.as_nanos() as u64)
+}
+
 impl LocalFileSource {
     fn run(self, events: Sender<SourceEvent>, commands: Receiver<SourceCommand>) {
         let mut splitter = LineSplitter::new();
@@ -60,7 +74,7 @@ impl LocalFileSource {
         // The file as the app loaded it.
         match File::open(&self.path).and_then(|f| f.metadata().map(|m| (f, m))) {
             Ok((file, meta)) => {
-                open = Some(Open { file, ino: meta.ino(), offset: self.start_offset.min(meta.len()) });
+                open = Some(Open { file, ino: file_id(&meta), offset: self.start_offset.min(meta.len()) });
                 let _ = events.try_send(SourceEvent::Status(SourceStatus::Live));
             }
             Err(_) => {
@@ -116,7 +130,7 @@ impl LocalFileSource {
             (None, Some(meta)) => {
                 // The file appeared (or came back): a new Generation.
                 if let Ok(file) = File::open(&self.path) {
-                    *open = Some(Open { file, ino: meta.ino(), offset: 0 });
+                    *open = Some(Open { file, ino: file_id(&meta), offset: 0 });
                     splitter.clear();
                     if !*waiting {
                         send(SourceEvent::Break { kind: BreakKind::Rotated });
@@ -129,13 +143,13 @@ impl LocalFileSource {
                 }
             }
             (Some(current), Some(meta)) => {
-                if meta.ino() != current.ino {
+                if file_id(&meta) != current.ino {
                     // Rotated: read the rest of the old file first.
                     drain(current, splitter, events);
                     splitter.clear();
                     send(SourceEvent::Break { kind: BreakKind::Rotated });
                     if let Ok(file) = File::open(&self.path) {
-                        *open = Some(Open { file, ino: meta.ino(), offset: 0 });
+                        *open = Some(Open { file, ino: file_id(&meta), offset: 0 });
                         if let Some(current) = open.as_mut() {
                             drain(current, splitter, events);
                         }

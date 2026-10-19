@@ -1,5 +1,6 @@
 use crate::search::SearchState;
 
+use gpui_component::ActiveTheme as _;
 use gpui::{
     div, px, InteractiveElement, IntoElement, ParentElement, StatefulInteractiveElement,
     Styled,
@@ -18,6 +19,7 @@ impl MatchNavigator {
     pub fn render(
         search_state: &SearchState,
         view: &gpui::Entity<crate::app::AppView>,
+        cx: &gpui::App,
     ) -> Option<impl IntoElement> {
         if !search_state.is_open {
             return None;
@@ -51,7 +53,7 @@ impl MatchNavigator {
             .child(
                 div()
                     .text_xs()
-                    .font_family(".AppleSystemUIFontMonospaced")
+                    .font_family(cx.theme().mono_font_family.clone())
                     .child(navigator_text),
             )
             .child(

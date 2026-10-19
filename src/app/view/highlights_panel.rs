@@ -15,7 +15,7 @@ use gpui_component::checkbox::Checkbox;
 use gpui_component::input::Input;
 use gpui_component::switch::Switch;
 use gpui_component::tag::Tag;
-use gpui_component::{ActiveTheme as _, Sizable as _, h_flex, v_flex};
+use gpui_component::{ActiveTheme as _, Icon, Sizable as _, h_flex, v_flex};
 use gpui_kit::assets::IconName;
 
 /// The payload of dragging a rule: its place in the list.
@@ -94,7 +94,7 @@ impl AppView {
                 div()
                     .cursor_grab()
                     .text_color(cx.theme().muted_foreground)
-                    .child("⋮⋮"),
+                    .child(Icon::new(IconName::GripVertical).size(px(14.0))),
             )
             .child(
                 swatch(ElementId::from(format!("hl-color-{id}")), &rule.color, tone, 18.0).on_click(

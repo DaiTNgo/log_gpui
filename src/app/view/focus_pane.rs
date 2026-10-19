@@ -75,13 +75,7 @@ impl AppView {
         let hint = (self.focus.search().matcher.is_none() && !filtering).then_some(
             "Type a Search Expression, or pick a Filter, to list lines here",
         );
-        let longest = self
-            .focus_rows
-            .iter()
-            .enumerate()
-            .max_by_key(|(_, row)| crate::ui::focus_pane::row_len(&source, &self.all_entries, **row))
-            .map(|(i, _)| i)
-            .unwrap_or(0);
+        let longest = self.focus_longest;
         PaneState {
             view,
             mode,

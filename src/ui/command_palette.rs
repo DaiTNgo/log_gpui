@@ -1,10 +1,29 @@
 
+use gpui_component::ActiveTheme as _;
 use gpui::{
     div, px, ElementId, InteractiveElement, IntoElement, ParentElement, StatefulInteractiveElement,
     Styled,
 };
 
 pub struct CommandPalette;
+
+/// A shortcut as written in the list (macOS symbols), spelled for this platform:
+/// `⌘⇧F` stays as is on macOS and reads `Ctrl+Shift+F` elsewhere.
+fn display_shortcut(shortcut: &'static str) -> gpui::SharedString {
+    if cfg!(target_os = "macos") || !shortcut.contains(['⌘', '⇧', '⌥']) {
+        return shortcut.into();
+    }
+    let mut out = String::new();
+    for ch in shortcut.chars() {
+        match ch {
+            '⌘' => out.push_str("Ctrl+"),
+            '⇧' => out.push_str("Shift+"),
+            '⌥' => out.push_str("Alt+"),
+            c => out.push(c),
+        }
+    }
+    out.into()
+}
 
 pub struct PaletteCommand {
     pub name: &'static str,
@@ -157,6 +176,7 @@ impl CommandPalette {
         }
 
         let commands = Self::list();
+        let mono_font = cx.theme().mono_font_family.clone();
         let mut list = div().flex().flex_col().gap_0p5().w_full();
 
         for (ix, cmd) in commands.into_iter().enumerate() {
@@ -180,8 +200,8 @@ impl CommandPalette {
                 .child(
                     div()
                         .text_xs()
-                        .font_family(".AppleSystemUIFontMonospaced")
-                        .child(cmd.shortcut),
+                        .font_family(mono_font.clone())
+                        .child(display_shortcut(cmd.shortcut)),
                 )
                 .on_click(cx.listener(move |this, _, window, cx| {
                     this.execute_palette_action(act, window, cx);

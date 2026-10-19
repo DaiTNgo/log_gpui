@@ -13,25 +13,26 @@ const TAB_BAR_HEIGHT: f32 = 34.0;
 impl AppView {
     pub(super) fn render_tab_bar(&mut self, cx: &mut Context<Self>) -> gpui::AnyElement {
         let view = cx.entity();
-        let (labels, active_idx): (Vec<String>, Option<usize>) = match self.active_project() {
+        let (labels, active_idx): (Vec<(String, bool)>, Option<usize>) = match self.active_project() {
             Some(proj) => (
                 proj.working_set
                     .tabs()
                     .iter()
                     .map(|tab| match &tab.target {
-                        TabTarget::LogSpace { space_id } => proj
-                            .log_space(space_id)
-                            .map(|s| s.name.clone())
-                            .unwrap_or_else(|| space_id.clone()),
+                        TabTarget::LogSpace { space_id } => (
+                            proj.log_space(space_id).map(|s| s.name.clone()).unwrap_or_else(|| space_id.clone()),
+                            false,
+                        ),
                         TabTarget::FileView { space_id, file_id } => {
                             let space = proj.log_space(space_id);
                             let file = space.and_then(|s| s.file(file_id));
-                            match (file, space) {
+                            let label = match (file, space) {
                                 (Some(f), Some(s)) => format!("{} · {}", f.display_name, s.name),
                                 _ => file_id.clone(),
-                            }
+                            };
+                            (label, false)
                         }
-                        TabTarget::InvestigationBoard { case_id } => format!("⚑ {}", case_id),
+                        TabTarget::InvestigationBoard { case_id } => (case_id.clone(), true),
                     })
                     .collect(),
                 proj.working_set.active_tab_index(),
@@ -50,7 +51,7 @@ impl AppView {
         // Zed-style strip: flat tabs split by a hairline; the active tab takes
         // the main view's tone and drops the bottom border so it joins the
         // content below. The close button shows on hover (always when active).
-        let tabs = labels.into_iter().enumerate().map(|(index, label)| {
+        let tabs = labels.into_iter().enumerate().map(|(index, (label, board))| {
             let active = active_idx == Some(index);
             let group = SharedString::from(format!("working-tab-{index}"));
             let (click_view, close_view) = (view.clone(), view.clone());
@@ -71,6 +72,7 @@ impl AppView {
                 .when(!active, |this| {
                     this.bg(bar_bg).text_color(muted).hover(|s| s.text_color(fg))
                 })
+                .when(board, |this| this.child(Icon::new(IconName::Flag).size_3()))
                 .child(label)
                 .child(
                     div()

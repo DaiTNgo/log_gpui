@@ -61,6 +61,7 @@ impl Render for AppView {
                 view: cx.entity().clone(),
                 entries: if parsed { &self.all_entries } else { &[] },
                 visible_indices: self.visible_indices.clone(),
+                longest_row: self.longest_row,
                 selected_row_pos: self.selected_row_pos,
                 density: self.density,
                 show_minimap: self.show_minimap,
@@ -137,7 +138,7 @@ impl Render for AppView {
                 let sections = ContextSections {
                     filter: self.render_filter_panel_content(cx),
                     highlights: self.render_highlights_panel_content(cx),
-                    inspector: InspectorView::render_body(self.inspector_lines()),
+                    inspector: InspectorView::render_body(self.inspector_lines(), cx),
                     active_filters: self.filter_state.active_count(),
                     rule_count: self.highlight_rules().len(),
                     parsed: self.view_mode == ViewMode::Parsed,

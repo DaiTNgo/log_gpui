@@ -191,7 +191,7 @@ impl AppView {
         let text = |input: &Entity<InputState>| input.read(cx).value().trim().to_string();
         let key = text(&fields.key_path);
         let key = match key.strip_prefix("~/") {
-            Some(rest) => std::env::var("HOME").map(|h| format!("{h}/{rest}")).unwrap_or(key),
+            Some(rest) => crate::workspace::session::home_dir().map(|h| h.join(rest).display().to_string()).unwrap_or(key),
             None => key,
         };
         let mut server = form.initial.clone();
@@ -215,7 +215,7 @@ impl AppView {
         let text = |input: &Entity<InputState>| input.read(cx).value().trim().to_string();
         let key = text(&fields.key_path);
         let key = match key.strip_prefix("~/") {
-            Some(rest) => std::env::var("HOME").map(|h| format!("{h}/{rest}")).unwrap_or(key),
+            Some(rest) => crate::workspace::session::home_dir().map(|h| h.join(rest).display().to_string()).unwrap_or(key),
             None => key,
         };
         let mut server = Server::new(&text(&fields.name), &text(&fields.host), &text(&fields.user), AuthMethod::Password);

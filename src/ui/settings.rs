@@ -329,7 +329,9 @@ fn rows_of(section: SettingsSection, view: &Entity<AppView>, v: &Values, cx: &Ap
         SettingsSection::Keymap => SHORTCUTS
             .into_iter()
             .filter_map(|(keys, label)| {
-                Keystroke::parse(keys).ok().map(|stroke| Row {
+                // Shortcuts take Ctrl in place of Cmd off macOS.
+                let keys = if cfg!(target_os = "macos") { keys.to_string() } else { keys.replace("cmd-", "ctrl-") };
+                Keystroke::parse(&keys).ok().map(|stroke| Row {
                     title: label,
                     description: "",
                     control: Kbd::new(stroke).into_any_element(),

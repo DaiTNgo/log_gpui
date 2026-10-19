@@ -217,7 +217,7 @@ impl AppView {
             .child(
                 h_flex().gap_2().child(label("")).child(
                     Checkbox::new("server-remember")
-                        .label("Remember in Keychain")
+                        .label(crate::ui::platform::REMEMBER_SECRET)
                         .checked(remember)
                         .on_click(cx.listener(|this, _, _, cx| this.toggle_server_remember(cx))),
                 ),

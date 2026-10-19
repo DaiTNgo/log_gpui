@@ -9,6 +9,7 @@ pub mod live;
 pub mod marker;
 pub mod model;
 pub mod palette;
+pub mod par;
 pub mod parser;
 pub mod raw_view;
 pub mod remote;

@@ -463,9 +463,46 @@ impl AppView {
         .detach();
     }
 
-    /// Reveal a file in the system file manager.
-    pub fn reveal_in_finder(&mut self, path: &str) {
+    /// Show a file, selected, in the system file manager.
+    pub fn reveal_in_file_manager(&mut self, path: &str) {
+        #[cfg(target_os = "macos")]
         let _ = std::process::Command::new("open").arg("-R").arg(path).spawn();
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt as _;
+            // Explorer reads `/select,` and the path as one argument and takes
+            // quotes only around the path, so the argument is written as is.
+            let path = path.replace('/', "\\");
+            let _ = std::process::Command::new("explorer").raw_arg(format!("/select,\"{path}\"")).spawn();
+        }
+        #[cfg(not(any(target_os = "macos", windows)))]
+        {
+            let path = std::path::PathBuf::from(path);
+            // Ask the file manager to select the file (Nautilus, Dolphin, Nemo…
+            // answer on D-Bus); open its folder when none does.
+            std::thread::spawn(move || {
+                let uri = file_uri(&path);
+                let shown = std::process::Command::new("dbus-send")
+                    .args([
+                        "--session",
+                        "--print-reply",
+                        "--dest=org.freedesktop.FileManager1",
+                        "/org/freedesktop/FileManager1",
+                        "org.freedesktop.FileManager1.ShowItems",
+                    ])
+                    .arg(format!("array:string:{uri}"))
+                    .arg("string:")
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .status()
+                    .is_ok_and(|s| s.success());
+                if !shown {
+                    if let Some(dir) = path.parent() {
+                        let _ = std::process::Command::new("xdg-open").arg(dir).spawn();
+                    }
+                }
+            });
+        }
     }
 
     // ── Deleting ────────────────────────────────────────────────────────────
@@ -594,4 +631,18 @@ impl AppView {
         self.notice = None;
         cx.notify();
     }
+}
+
+/// `path` as a `file://` URI, every byte outside the unreserved set escaped.
+#[cfg(not(any(target_os = "macos", windows)))]
+fn file_uri(path: &std::path::Path) -> String {
+    use std::os::unix::ffi::OsStrExt as _;
+    let mut uri = String::from("file://");
+    for &b in path.as_os_str().as_bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' | b'/' => uri.push(b as char),
+            _ => uri.push_str(&format!("%{b:02X}")),
+        }
+    }
+    uri
 }

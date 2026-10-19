@@ -7,7 +7,7 @@ use crate::focus::{FocusRow, LineRef, compute_focus_rows, nearest_row_before};
 use crate::search::SearchState;
 use crate::workspace::state::FocusPaneState;
 use crate::workspace::working_set::ViewMode;
-use crate::text_selection::{TextPos, TextSelection, byte_at_x};
+use crate::text_selection::{TextPos, TextSelection};
 use gpui::{Context, Pixels, Point, ScrollStrategy, Window};
 use std::sync::Arc;
 
@@ -56,13 +56,20 @@ impl AppView {
 
     /// The entry of the Parsed View a line is, if the view has it.
     pub fn entry_of_line_ref(&self, line: &LineRef) -> Option<usize> {
-        self.all_entries
-            .iter()
-            .position(|e| {
+        let is_line = |ix: usize| {
+            self.all_entries.get(ix).is_some_and(|e| {
                 e.index == line.line
                     && e.generation == line.generation
                     && e.file_id.as_deref().unwrap_or("") == &*line.file_id
             })
+        };
+        // Called on every render (Inspector) and click: the selected row, or
+        // the row a single file puts the line at, is almost always it.
+        let likely = [self.selected_row_pos, line.line.checked_sub(1)];
+        if let Some(ix) = likely.into_iter().flatten().find(|&ix| is_line(ix)) {
+            return Some(ix);
+        }
+        (0..self.all_entries.len()).find(|&ix| is_line(ix))
     }
 
     /// The row of the open view a line is: an entry of the Parsed View or a
@@ -135,6 +142,7 @@ impl AppView {
         let sections = self.sections_if_raw();
         let texts: Vec<&str> =
             Self::focus_row_texts(&self.all_entries, &sections, &self.focus_rows).collect();
+        self.focus_longest = super::filter::longest(texts.iter().map(|t| t.len()));
         self.focus.find_mut().compute_hits(texts.into_iter(), false);
         self.pane_selection = None;
     }
@@ -436,7 +444,7 @@ impl AppView {
 
     /// Where a pointer at window position `at` is in the pane's rows: the
     /// pane row (kept inside the rows listed) and the byte of its line.
-    fn pane_pos_at(&self, at: Point<Pixels>) -> Option<TextPos> {
+    fn pane_pos_at(&self, at: Point<Pixels>, window: &Window, cx: &gpui::App) -> Option<TextPos> {
         let total = self.focus_rows.len();
         if total == 0 {
             return None;
@@ -454,7 +462,8 @@ impl AppView {
         let text = Self::focus_row_texts(&self.all_entries, &sections, &self.focus_rows[row..=row])
             .next()
             .unwrap_or("");
-        Some(TextPos::new(row, byte_at_x(text, x, 0.6 * self.density.font_size())))
+        let byte = crate::ui::mono::index_for_x(text, x, self.density.font_size(), window, cx);
+        Some(TextPos::new(row, byte))
     }
 
     /// Whether the pane names the Source File of each line.
@@ -466,10 +475,10 @@ impl AppView {
             )
     }
 
-    pub fn start_pane_selection(&mut self, at: Point<Pixels>, cx: &mut Context<Self>) {
+    pub fn start_pane_selection(&mut self, at: Point<Pixels>, window: &Window, cx: &mut Context<Self>) {
         self.text_selection = None;
         self.color_bar = None;
-        match self.pane_pos_at(at) {
+        match self.pane_pos_at(at, window, cx) {
             Some(pos) => {
                 self.pane_selection = Some(TextSelection::new(pos, pos));
                 self.pane_selecting = true;
@@ -479,11 +488,11 @@ impl AppView {
         cx.notify();
     }
 
-    pub fn drag_pane_selection(&mut self, at: Point<Pixels>, cx: &mut Context<Self>) {
+    pub fn drag_pane_selection(&mut self, at: Point<Pixels>, window: &Window, cx: &mut Context<Self>) {
         if !self.pane_selecting {
             return;
         }
-        if let (Some(pos), Some(sel)) = (self.pane_pos_at(at), self.pane_selection.as_mut()) {
+        if let (Some(pos), Some(sel)) = (self.pane_pos_at(at, window, cx), self.pane_selection.as_mut()) {
             sel.move_head(pos);
         }
         cx.notify();
@@ -491,7 +500,7 @@ impl AppView {
 
     /// The button went up: a drag leaves a selection, a plain click makes the
     /// row under the pointer the current line.
-    pub fn finish_pane_selection(&mut self, at: Point<Pixels>, cx: &mut Context<Self>) {
+    pub fn finish_pane_selection(&mut self, at: Point<Pixels>, window: &Window, cx: &mut Context<Self>) {
         if !self.pane_selecting {
             return;
         }
@@ -500,7 +509,7 @@ impl AppView {
             Some(sel) if !sel.is_empty() => {}
             _ => {
                 self.pane_selection = None;
-                if let Some(pos) = self.pane_pos_at(at) {
+                if let Some(pos) = self.pane_pos_at(at, window, cx) {
                     self.goto_pane_row(pos.row, Origin::Pane, cx);
                 }
             }

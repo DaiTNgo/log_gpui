@@ -27,3 +27,11 @@ flate2 = "1.1.10"
 
 [dev-dependencies]
 tempfile = "3"
+
+# GPUI is far too slow to scroll or type in when built without
+# optimization; dependencies are optimized even in dev builds (built once).
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.dev]
+opt-level = 1
