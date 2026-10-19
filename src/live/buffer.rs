@@ -368,6 +368,60 @@ impl LiveBuffer {
         parsed.raw_breaks.insert(0, mark);
     }
 
+    // ── Remote Copy ─────────────────────────────────────────────────────────
+
+    /// A Generation of a Remote Copy begins: the first one just numbers its
+    /// lines; a later one is a new Generation with a Break `label` above its
+    /// first line. `first_line_no` is the number of its first line in its
+    /// file, or `None` while that is being counted (the lines carry
+    /// provisional numbers until `set_first_line_no`).
+    pub fn begin_copy_generation(&mut self, first_line_no: Option<usize>, first: bool, label: &str) {
+        if !first {
+            self.begin_generation_state();
+            self.add_pending(BreakMark { kind: BreakKind::Rotated, label: label.to_string() });
+        }
+        let base = first_line_no.unwrap_or(PROVISIONAL_BASE);
+        self.first_index = base;
+        self.next_index = base;
+        self.numbers_known = first_line_no.is_some();
+        self.tail_last_index = None;
+    }
+
+    /// The number of the first line of the Generation is known now. Returns
+    /// how far every number of the Generation moved.
+    pub fn set_first_line_no(&mut self, parsed: &mut ParsedFile, first_line_no: usize) -> Option<isize> {
+        if self.numbers_known {
+            return None;
+        }
+        let delta = first_line_no as isize - self.first_index as isize;
+        let generation = self.generation;
+        for entry in parsed.entries.iter_mut().filter(|e| e.generation == generation) {
+            entry.index = (entry.index as isize + delta) as usize;
+            entry.parent = entry.parent.map(|p| (p as isize + delta) as usize);
+        }
+        self.first_index = (self.first_index as isize + delta) as usize;
+        self.next_index = (self.next_index as isize + delta) as usize;
+        self.numbers_known = true;
+        Some(delta)
+    }
+
+    /// The lines of the Remote Copy end here, short of the end of the file:
+    /// a Break is drawn below the last line.
+    pub fn mark_read_end(&mut self, parsed: &mut ParsedFile, kind: BreakKind, label: &str) {
+        if let Some(last) = parsed.entries.last_mut() {
+            last.break_after = Some(Arc::new(BreakMark { kind, label: label.to_string() }));
+        }
+    }
+
+    /// Older lines were not read: a Break above the first line says so.
+    pub fn mark_older_not_read(&mut self, parsed: &mut ParsedFile, label: &str) {
+        if let Some(top) = parsed.entries.first_mut() {
+            let mark = Arc::new(BreakMark { kind: BreakKind::OlderNotRead, label: label.to_string() });
+            top.break_before = Some(mark.clone());
+            parsed.raw_breaks.insert(0, mark);
+        }
+    }
+
     /// Draw (or take away) the Break at the top of the lines that offers the
     /// next Rotated File. It only exists while the top line is the first line
     /// of its Generation.

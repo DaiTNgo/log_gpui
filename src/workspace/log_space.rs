@@ -174,6 +174,9 @@ pub struct LogFile {
     /// by its path).
     #[serde(default)]
     pub from_glob: Option<String>,
+    /// For a Remote Copy, the folder in the app's data folder that holds it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub copy: Option<String>,
     /// The file's current Generation, counted from 0 each time it is opened
     /// and raised on every rotation, truncation or deletion.
     #[serde(skip)]
@@ -191,6 +194,7 @@ impl LogFile {
             remote: None,
             entry: None,
             from_glob: None,
+            copy: None,
             generation: 0,
         }
     }
@@ -207,6 +211,7 @@ impl LogFile {
             remote: Some(RemoteRef::file(server_id, path)),
             entry: None,
             from_glob: None,
+            copy: None,
             generation: 0,
         }
     }
@@ -236,6 +241,7 @@ impl LogFile {
             }),
             entry: None,
             from_glob: None,
+            copy: None,
             generation: 0,
         }
     }
@@ -260,8 +266,23 @@ impl LogFile {
             remote: None,
             entry: None,
             from_glob: None,
+            copy: None,
             generation: 0,
         }
+    }
+
+    /// A Remote Copy: the content of a Remote File and its Rotated Files read
+    /// whole into `dir`. It is shown as `<server>:<path>`.
+    pub fn remote_copy(dir: &str, server_name: &str, path: &str) -> Self {
+        let id = Path::new(dir).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+        let mut file = Self::new(format!("remote-copy:{id}"), format!("{server_name}:{path}"));
+        file.copy = Some(dir.to_string());
+        file
+    }
+
+    /// Whether the file is a Remote Copy.
+    pub fn is_remote_copy(&self) -> bool {
+        self.copy.is_some()
     }
 
     /// A file inside an Archive. Its identity is the Archive and the entry;
@@ -283,6 +304,7 @@ impl LogFile {
             remote: None,
             entry: Some(entry.to_string()),
             from_glob: None,
+            copy: None,
             generation: 0,
         }
     }

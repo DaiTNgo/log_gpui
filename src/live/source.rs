@@ -54,6 +54,14 @@ pub enum BreakKind {
     EarlierWindowFull,
     /// The lines since the Starting Time do not fit the Live Window.
     StartTimeOverflow,
+    /// The read of a Remote Copy was cancelled; the lines end here.
+    ReadCancelled,
+    /// The read of a Remote Copy stopped at the Full Read Limit.
+    ReadLimit,
+    /// The file was rotated while a Remote Copy read it.
+    ReadRotated,
+    /// Older lines of a Remote Copy were left out to fit the Full Read Limit.
+    OlderNotRead,
 }
 
 impl BreakKind {
@@ -75,6 +83,10 @@ impl BreakKind {
             BreakKind::Changed => "earlier lines of this generation are no longer on the Server",
             BreakKind::EarlierAvailable | BreakKind::EarlierWindowFull => "earlier generation",
             BreakKind::StartTimeOverflow => "lines since the Starting Time do not fit the Live Window",
+            BreakKind::ReadCancelled => "read cancelled",
+            BreakKind::ReadLimit => "stopped at Full Read Limit",
+            BreakKind::ReadRotated => "file rotated while reading",
+            BreakKind::OlderNotRead => "older lines were not read",
         }
     }
 

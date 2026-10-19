@@ -837,6 +837,7 @@ impl RowEnv {
             })
         });
         let label_left = scroll_x + anchored_width + px(8.0);
+        let break_after = entry.break_after.as_ref().map(|mark| mark.label.clone());
         Some(
             row_element
                 .when_some(outline, |row, color| {
@@ -852,7 +853,10 @@ impl RowEnv {
                     )
                 })
                 .when_some(break_label, |row, label| {
-                    row.child(render_break(label, label_left, &colors, break_actions))
+                    row.child(render_break(label, label_left, &colors, break_actions, false))
+                })
+                .when_some(break_after, |row, label| {
+                    row.child(render_break(label, label_left, &colors, None, true))
                 }),
         )
     }
@@ -913,6 +917,7 @@ pub(crate) fn render_break(
     label_left: Pixels,
     colors: &CanvasColors,
     actions: Option<BreakActions>,
+    below: bool,
 ) -> gpui::AnyElement {
     let buttons: Vec<gpui::AnyElement> = actions
         .map(|a| {
@@ -964,7 +969,8 @@ pub(crate) fn render_break(
         .unwrap_or_default();
     div()
         .absolute()
-        .top(px(-7.0))
+        .when(below, |d| d.bottom(px(-7.0)))
+        .when(!below, |d| d.top(px(-7.0)))
         .left_0()
         .right_0()
         .h(px(14.0))

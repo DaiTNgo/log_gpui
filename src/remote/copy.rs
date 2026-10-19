@@ -168,6 +168,51 @@ pub fn read_meta(dir: &Path) -> io::Result<CopyMeta> {
     serde_json::from_slice(&bytes).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
 }
 
+/// What a folder holds when its `meta.json` was never written (the app closed
+/// during the read): its `gen-*.log` files, oldest first, each cancelled.
+pub fn recover_meta(dir: &Path) -> io::Result<CopyMeta> {
+    let mut found: Vec<(u32, String)> = Vec::new();
+    for entry in std::fs::read_dir(dir)? {
+        let name = entry?.file_name().to_string_lossy().to_string();
+        if let Some(n) = name.strip_prefix("gen-").and_then(|r| r.strip_suffix(".log")).and_then(|n| n.parse().ok()) {
+            found.push((n, name));
+        }
+    }
+    if found.is_empty() {
+        return Err(io::Error::new(io::ErrorKind::NotFound, "no Remote Copy here"));
+    }
+    // The biggest distance is the oldest.
+    found.sort_by(|a, b| b.0.cmp(&a.0));
+    let generations = found
+        .iter()
+        .map(|(distance, file)| GenerationMeta {
+            distance: *distance,
+            source_name: file.clone(),
+            compressed: false,
+            start_offset: 0,
+            end_offset: None,
+            first_line_no: None,
+            from: None,
+            to: None,
+            complete: false,
+            stop: Some(StopReason::Cancelled),
+            lines: 0,
+            older_not_read: false,
+            file: file.clone(),
+        })
+        .collect();
+    Ok(CopyMeta {
+        server_id: String::new(),
+        server_name: String::new(),
+        path: String::new(),
+        read_at: String::new(),
+        start_text: None,
+        to_text: None,
+        limit_lines: 0,
+        generations,
+    })
+}
+
 /// Remove a Remote Copy's folder. Only a folder that holds a `meta.json` or
 /// only `gen-*.log` files is removed, so a wrong path never deletes more.
 pub fn remove(dir: &Path) -> io::Result<()> {
