@@ -4,6 +4,11 @@
 //! at a temp dir (session, `servers.json`, `known_hosts.json`) and remembered
 //! secrets live in memory instead of the OS keychain. This goes through
 //! `AppView::with_services`; nothing else in the app knows about tests.
+//!
+//! Some app code still writes to the config dir directly (saving Servers,
+//! known hosts, scratch files), so before any app opens the whole test
+//! process gets its own `XDG_CONFIG_HOME` in a temp dir, and the harness
+//! refuses to run if the config dir is not inside it.
 #![allow(dead_code)]
 
 use gpui::{AppContext as _, Entity, TestAppContext, VisualTestContext};
@@ -22,8 +27,22 @@ pub struct Harness {
     pub dir: tempfile::TempDir,
 }
 
+/// Point the config dir of this test process at a temp dir, once.
+fn isolate_config_dir() {
+    static CONFIG: std::sync::OnceLock<tempfile::TempDir> = std::sync::OnceLock::new();
+    let dir = CONFIG.get_or_init(|| {
+        let dir = tempfile::tempdir().unwrap();
+        // SAFETY: set once, before any app (or thread of one) reads it.
+        unsafe { std::env::set_var("XDG_CONFIG_HOME", dir.path()) };
+        dir
+    });
+    let config = log_gpui::workspace::session::app_data_dir();
+    assert!(config.starts_with(dir.path()), "config dir {config:?} is not isolated");
+}
+
 /// Open `AppView` in a test window with config in a fresh temp dir.
 pub fn open_app(cx: &mut TestAppContext) -> Harness {
+    isolate_config_dir();
     cx.update(|cx| {
         gpui_component::init(cx);
     });
