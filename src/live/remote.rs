@@ -6,18 +6,24 @@
 //! carries on exactly where it stopped. Rotation is told by the inode (read
 //! with `stat` through exec); a smaller size is a truncation.
 
-use super::backward::BackwardLines;
+use super::backward::{BackwardLines, cut_before_start};
+use super::line_time::newest_timestamp;
 use super::source::{
-    BreakKind, LineSource, SourceCommand, SourceEvent, SourceHandle, SourceStatus,
+    BreakKind, EarlierFile, EarlierStart, LineSource, ReadProgress, SourceCommand, SourceEvent, SourceHandle,
+    SourceStatus,
 };
 use crate::workspace::log_space::line_hash;
 use super::splitter::LineSplitter;
+use crate::remote::browse::{dirname, join};
+use crate::remote::compress::{AsyncBridge, Compression, decoder};
+use crate::remote::rotated::{RotatedFile, list_rotated};
+use crate::remote::starting_time::resolve_start;
 use crate::remote::{ConnectError, RemoteHub, RemoteSession, ServerStore, shell_quote};
 use async_channel::{Receiver, Sender};
 use russh_sftp::client::SftpSession;
 use russh_sftp::client::error::Error as SftpError;
 use russh_sftp::protocol::StatusCode;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio::io::{AsyncReadExt, AsyncSeekExt};
@@ -47,6 +53,9 @@ pub struct RemoteFileSource {
     /// `<server>:<path>`.
     pub name: String,
     pub window: usize,
+    /// Starting Time as the user typed it (a span such as `1h` or a time):
+    /// older lines are not read. `None` reads the last lines as usual.
+    pub start_time: Option<String>,
     /// For a file brought by a Live Glob: the inodes that glob has read. The
     /// file goes Gone when it is deleted, and when its path comes to hold a
     /// file the glob already read under another name.
@@ -99,6 +108,8 @@ struct Ctl {
     /// The app dropped what it held: stop reading older lines for good.
     clear: bool,
     load_more: Option<LoadMoreRequest>,
+    /// The app asked for the next Rotated File: how many lines fit.
+    load_earlier: Option<usize>,
     /// A Load More was dropped before it started: the app is told so.
     cancelled: bool,
 }
@@ -112,7 +123,7 @@ enum Flow {
 
 impl Ctl {
     fn new(window: usize) -> Self {
-        Self { window, paused: false, clear: false, load_more: None, cancelled: false }
+        Self { window, paused: false, clear: false, load_more: None, load_earlier: None, cancelled: false }
     }
 
     fn apply(&mut self, command: SourceCommand) -> Flow {
@@ -125,6 +136,7 @@ impl Ctl {
             // For a Remote Command only.
             SourceCommand::Restart | SourceCommand::SetRestartOnExit(_) => {}
             SourceCommand::Clear => self.clear = true,
+            SourceCommand::LoadEarlier { room } => self.load_earlier = Some(room),
             SourceCommand::CancelLoadMore => {
                 if self.load_more.take().is_some() {
                     self.cancelled = true;
@@ -158,6 +170,18 @@ struct Memory {
     /// Inode of a file at the path that a Live Glob read already: the path
     /// stays Gone while it holds it.
     gone_ino: Option<u64>,
+    /// Position in the Rotated Files (newest first) of the next one to load:
+    /// the Generations above the file, however they came to be held.
+    earlier_next: usize,
+    /// Reading up from the current file to the Rotated Files was looked at
+    /// once, when the file opened.
+    auto_checked: bool,
+    /// Lines of the current file are held up to its first byte.
+    current_exhausted: bool,
+    /// Reading stopped at the Starting Time.
+    stop_reached: bool,
+    /// The Starting Time, resolved on the clock of the file.
+    stop_before: Option<f64>,
 }
 
 fn classify(e: &SftpError) -> Kind {
@@ -356,6 +380,8 @@ impl RemoteFileSource {
         let mut announced_reconnect = !was_down || !mem.opened;
         let mut announced_live = false;
         let mut backfill_ready = mem.backward.is_some();
+        // A rotation moved the Rotated Files: the button names another file.
+        let mut reannounce = false;
         loop {
             // Commands first.
             loop {
@@ -411,6 +437,21 @@ impl RemoteFileSource {
                     },
                     None => {
                         let _ = events.try_send(SourceEvent::OlderUnavailable);
+                    }
+                }
+            }
+            if let Some(room) = ctl.load_earlier.take() {
+                match self.load_earlier(&sftp, session, mem, events, room, false).await {
+                    Ok(()) => {}
+                    Err(Kind::Lost) => return Served::Lost,
+                    Err(Kind::Denied) => {
+                        let _ = events.try_send(SourceEvent::Progress(None));
+                        let _ = events.try_send(SourceEvent::EarlierAvailable(None));
+                    }
+                    Err(Kind::Missing | Kind::Other(_)) => {
+                        let _ = events.try_send(SourceEvent::Progress(None));
+                        let _ = events.try_send(SourceEvent::Problem("could not read the earlier generation".into()));
+                        let _ = events.try_send(SourceEvent::EarlierAvailable(None));
                     }
                 }
             }
@@ -520,6 +561,8 @@ impl RemoteFileSource {
                         mem.splitter.clear();
                         let _ = events.try_send(SourceEvent::Break { kind: BreakKind::Rotated });
                         mem.generation += 1;
+                        mem.earlier_next += 1;
+                        reannounce = true;
                         mem.offset = 0;
                         mem.backward = None;
                         mem.loaded = 0;
@@ -527,6 +570,8 @@ impl RemoteFileSource {
                         mem.splitter.clear();
                         let _ = events.try_send(SourceEvent::Break { kind: BreakKind::Truncated });
                         mem.generation += 1;
+                        mem.earlier_next += 1;
+                        reannounce = true;
                         mem.offset = 0;
                         mem.backward = None;
                         mem.loaded = 0;
@@ -586,18 +631,50 @@ impl RemoteFileSource {
                         match read_backward(handle, backward, want).await {
                             Ok((lines, bytes)) if !lines.is_empty() => {
                                 mem.loaded += lines.len();
+                                mem.stop_reached |= backward.reached_start_time();
+                                mem.current_exhausted |= backward.is_done() && !backward.reached_start_time();
                                 let _ = events.try_send(SourceEvent::Backfill { lines, generation: 0, bytes });
                                 // Keep going without waiting for the next poll.
                                 tokio::task::yield_now().await;
                                 continue;
                             }
-                            Ok(_) => mem.backward = None,
+                            Ok(_) => {
+                                mem.stop_reached |= backward.reached_start_time();
+                                mem.current_exhausted |= backward.is_done() && !backward.reached_start_time();
+                                mem.backward = None;
+                            }
                             Err(Kind::Lost) => return Served::Lost,
                             Err(_) => mem.backward = None,
                         }
                     } else if mem.loaded >= ctl.window || backward.is_done() {
+                        mem.stop_reached |= backward.reached_start_time();
+                        mem.current_exhausted |= backward.is_done() && !backward.reached_start_time();
                         mem.backward = None;
                     }
+                }
+            }
+
+            // The file is held up to its first byte: offer the Rotated Files,
+            // and read into the newest one when it is plain and there is room.
+            if mem.opened && mem.current_exhausted && !mem.auto_checked && !mem.no_refill && !mem.stop_reached {
+                mem.auto_checked = true;
+                let room = ctl.window.saturating_sub(mem.loaded);
+                let result = if room > 0 {
+                    self.load_earlier(&sftp, session, mem, events, room, true).await
+                } else {
+                    self.announce_earlier(&sftp, mem, events).await
+                };
+                match result {
+                    Ok(()) => {}
+                    Err(Kind::Lost) => return Served::Lost,
+                    Err(_) => {
+                        let _ = events.try_send(SourceEvent::Progress(None));
+                    }
+                }
+            } else if reannounce && mem.auto_checked {
+                reannounce = false;
+                if let Err(Kind::Lost) = self.announce_earlier(&sftp, mem, events).await {
+                    return Served::Lost;
                 }
             }
 
@@ -605,6 +682,217 @@ impl RemoteFileSource {
                 return Served::Closed;
             }
         }
+    }
+
+    /// Tell the app which Rotated File would be loaded next, if any.
+    async fn announce_earlier(
+        &self,
+        sftp: &SftpSession,
+        mem: &Memory,
+        events: &Sender<SourceEvent>,
+    ) -> Result<(), Kind> {
+        let list = list_rotated(sftp, &self.path).await.map_err(|_| Kind::Lost)?;
+        let next = list.get(mem.earlier_next).map(|f| EarlierFile {
+            name: f.name.clone(),
+            size: f.size,
+            compressed: f.compression.is_compressed(),
+        });
+        let _ = events.try_send(SourceEvent::EarlierAvailable(next));
+        Ok(())
+    }
+
+    /// Load the next Rotated File above the lines held, at most `room`
+    /// lines. `auto`: it was not asked for, so only a plain file is read.
+    async fn load_earlier(
+        &self,
+        sftp: &SftpSession,
+        session: &Arc<RemoteSession>,
+        mem: &mut Memory,
+        events: &Sender<SourceEvent>,
+        room: usize,
+        auto: bool,
+    ) -> Result<(), Kind> {
+        let list = match list_rotated(sftp, &self.path).await {
+            Ok(list) => list,
+            Err(_) => return Err(Kind::Lost),
+        };
+        let Some(target) = list.get(mem.earlier_next).cloned() else {
+            let _ = events.try_send(SourceEvent::EarlierAvailable(None));
+            return Ok(());
+        };
+        if !target.compression.is_supported() {
+            let _ = events.try_send(SourceEvent::Problem(format!("{}: compression not supported", target.name)));
+            let _ = events.try_send(SourceEvent::EarlierAvailable(None));
+            return Ok(());
+        }
+        if auto && target.compression.is_compressed() {
+            let _ = events.try_send(SourceEvent::EarlierAvailable(Some(EarlierFile {
+                name: target.name.clone(),
+                size: target.size,
+                compressed: true,
+            })));
+            return Ok(());
+        }
+        let path = join(&dirname(&self.path), &target.name);
+        let room = room.max(1);
+        let read = if target.compression.is_compressed() {
+            self.read_compressed_earlier(sftp, &path, &target, room, mem.stop_before, events).await?
+        } else {
+            self.read_plain_earlier(sftp, session, &path, &target, room, mem.stop_before, events).await?
+        };
+        mem.stop_reached |= read.stopped_at_time;
+        if read.lines == 0 {
+            let _ = events.try_send(SourceEvent::EarlierAvailable(None));
+            return Ok(());
+        }
+        mem.earlier_next += 1;
+        mem.generation += 1;
+        mem.loaded += read.lines;
+        if read.reached_start && !read.stopped_at_time {
+            // Held up to the first line of this file: the next one is offered.
+            self.announce_earlier(sftp, mem, events).await?;
+        } else {
+            let _ = events.try_send(SourceEvent::EarlierAvailable(None));
+        }
+        Ok(())
+    }
+
+    /// A plain Rotated File is read from its end like the current file.
+    #[allow(clippy::too_many_arguments)]
+    async fn read_plain_earlier(
+        &self,
+        sftp: &SftpSession,
+        session: &Arc<RemoteSession>,
+        path: &str,
+        target: &RotatedFile,
+        room: usize,
+        stop_before: Option<f64>,
+        events: &Sender<SourceEvent>,
+    ) -> Result<EarlierRead, Kind> {
+        let mut file = sftp.open(path.to_string()).await.map_err(|e| classify(&e))?;
+        // Its real number of lines first, so the numbers are right at once.
+        let command = format!("wc -l < {}", shell_quote(path));
+        let counted = tokio::time::timeout(WC_TIMEOUT, session.exec(&command)).await;
+        let total = counted
+            .ok()
+            .and_then(|r| r.ok())
+            .and_then(|o| String::from_utf8_lossy(&o.stdout).trim().parse::<usize>().ok());
+        let mut backward = BackwardLines::new(target.size, BLOCK).with_stop_before(stop_before);
+        let mut left = room;
+        let mut sent = 0usize;
+        let mut start = Some(EarlierStart { name: target.name.clone(), modified: modified_text(target.modified) });
+        loop {
+            let want = left.min(BACKFILL_BATCH);
+            let (lines, bytes) = read_backward(&mut file, &mut backward, want).await?;
+            let done = backward.is_done();
+            if lines.is_empty() && sent == 0 {
+                return Ok(EarlierRead { lines: 0, reached_start: done, stopped_at_time: backward.reached_start_time() });
+            }
+            if lines.is_empty() {
+                break;
+            }
+            left -= lines.len();
+            sent += lines.len();
+            let last_line_no = start.as_ref().and(total);
+            let _ = events.try_send(SourceEvent::Earlier {
+                start: start.take(),
+                lines,
+                bytes,
+                last_line_no,
+                reached_start: done,
+            });
+            if left == 0 || done {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+        Ok(EarlierRead {
+            lines: sent,
+            reached_start: backward.is_done(),
+            stopped_at_time: backward.reached_start_time(),
+        })
+    }
+
+    /// A compressed Rotated File is decoded from its start on a blocking
+    /// thread; only the last `room` lines are kept.
+    async fn read_compressed_earlier(
+        &self,
+        sftp: &SftpSession,
+        path: &str,
+        target: &RotatedFile,
+        room: usize,
+        stop_before: Option<f64>,
+        events: &Sender<SourceEvent>,
+    ) -> Result<EarlierRead, Kind> {
+        let file = sftp.open(path.to_string()).await.map_err(|e| classify(&e))?;
+        let handle = tokio::runtime::Handle::current();
+        let (kind, size, what, progress_events) =
+            (target.compression, target.size, target.name.clone(), events.clone());
+        let done = Arc::new(std::sync::atomic::AtomicU64::new(0));
+        let counter = done.clone();
+        let job = tokio::task::spawn_blocking(move || -> std::io::Result<(VecDeque<(String, u32)>, usize)> {
+            use std::io::BufRead;
+            let bridge = CountRead { inner: AsyncBridge::buffered(handle, file), count: counter.clone() };
+            let mut reader = std::io::BufReader::with_capacity(256 * 1024, decoder(kind, bridge)?);
+            let mut ring: VecDeque<(String, u32)> = VecDeque::new();
+            let mut total = 0usize;
+            let mut buf = Vec::new();
+            let mut last_report = Instant::now() - Duration::from_secs(1);
+            loop {
+                buf.clear();
+                let n = reader.read_until(b'\n', &mut buf)?;
+                if n == 0 {
+                    break;
+                }
+                let text = buf.strip_suffix(b"\n").unwrap_or(&buf);
+                ring.push_back((super::splitter::decode_line(text), n as u32));
+                if ring.len() > room {
+                    ring.pop_front();
+                }
+                total += 1;
+                if last_report.elapsed() > Duration::from_millis(250) {
+                    last_report = Instant::now();
+                    if progress_events.is_closed() {
+                        return Err(std::io::Error::new(std::io::ErrorKind::Interrupted, "closed"));
+                    }
+                    let _ = progress_events.try_send(SourceEvent::Progress(Some(ReadProgress {
+                        what: what.clone(),
+                        done: counter.load(std::sync::atomic::Ordering::Relaxed),
+                        total: Some(size),
+                    })));
+                }
+            }
+            Ok((ring, total))
+        });
+        let _ = events.try_send(SourceEvent::Progress(Some(ReadProgress {
+            what: target.name.clone(),
+            done: 0,
+            total: Some(target.size),
+        })));
+        let outcome = job.await;
+        let _ = events.try_send(SourceEvent::Progress(None));
+        let (ring, total) = match outcome {
+            Ok(Ok(read)) => read,
+            Ok(Err(e)) => return Err(Kind::Other(e.to_string())),
+            Err(e) => return Err(Kind::Other(e.to_string())),
+        };
+        let dropped = total - ring.len();
+        let (lines, bytes): (Vec<String>, Vec<u32>) = ring.into_iter().unzip();
+        let (lines, bytes, stopped) = match stop_before {
+            Some(time) => cut_before_start(lines, bytes, time),
+            None => (lines, bytes, false),
+        };
+        let kept = lines.len();
+        if kept > 0 {
+            let _ = events.try_send(SourceEvent::Earlier {
+                start: Some(EarlierStart { name: target.name.clone(), modified: modified_text(target.modified) }),
+                lines,
+                bytes,
+                last_line_no: Some(total),
+                reached_start: dropped == 0,
+            });
+        }
+        Ok(EarlierRead { lines: kept, reached_start: dropped == 0, stopped_at_time: stopped })
     }
 
     /// Open the file and send its last lines; start counting its lines.
@@ -619,7 +907,24 @@ impl RemoteFileSource {
     ) -> Result<russh_sftp::client::fs::File, Kind> {
         let mut file = sftp.open(self.path.clone()).await.map_err(|e| classify(&e))?;
         let mut backward = BackwardLines::new(stat.size, BLOCK);
-        let (first, bytes) = read_backward(&mut file, &mut backward, TAIL_LINES.min(window)).await?;
+        let (mut first, mut bytes) = read_backward(&mut file, &mut backward, TAIL_LINES.min(window)).await?;
+        if let Some(text) = &self.start_time {
+            let newest = newest_timestamp(first.iter().map(String::as_str));
+            match resolve_start(text, newest) {
+                Ok(Some(time)) => {
+                    mem.stop_before = Some(time);
+                    (first, bytes) = backward.cut_batch_at(time, first, bytes);
+                    mem.stop_reached |= backward.reached_start_time();
+                    if first.is_empty() {
+                        let _ = events.try_send(SourceEvent::Problem(format!("no lines since {}", text.trim())));
+                    }
+                }
+                Ok(None) => {}
+                Err(e) => {
+                    let _ = events.try_send(SourceEvent::Problem(format!("Starting Time: {e}")));
+                }
+            }
+        }
         mem.offset = backward.follow_offset();
         mem.loaded = first.len();
         mem.splitter.clear();
@@ -705,6 +1010,34 @@ impl RemoteFileSource {
             reached_start,
         });
         Ok(())
+    }
+}
+
+/// What loading a Rotated File gave.
+struct EarlierRead {
+    lines: usize,
+    /// The lines reach the first line of the Rotated File.
+    reached_start: bool,
+    stopped_at_time: bool,
+}
+
+/// `YYYY-MM-DD HH:MM:SS` for a modified time in seconds since the epoch.
+fn modified_text(secs: Option<u64>) -> Option<String> {
+    let secs = i64::try_from(secs?).ok()?;
+    chrono::DateTime::from_timestamp(secs, 0).map(|t| t.format("%Y-%m-%d %H:%M:%S").to_string())
+}
+
+/// Counts the bytes that pass through, for the progress of a decode.
+struct CountRead<R> {
+    inner: R,
+    count: Arc<std::sync::atomic::AtomicU64>,
+}
+
+impl<R: std::io::Read> std::io::Read for CountRead<R> {
+    fn read(&mut self, out: &mut [u8]) -> std::io::Result<usize> {
+        let n = self.inner.read(out)?;
+        self.count.fetch_add(n as u64, std::sync::atomic::Ordering::Relaxed);
+        Ok(n)
     }
 }
 

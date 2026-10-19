@@ -117,6 +117,7 @@ impl Harness {
                     path: path.clone(),
                     name: format!("web1:{path}"),
                     window: 100_000,
+                    start_time: None,
                     glob_inodes: Some(self.inodes.clone()),
                 }
                 .spawn();

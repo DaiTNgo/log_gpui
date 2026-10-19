@@ -36,6 +36,23 @@ impl ReadAt for Vec<u8> {
     }
 }
 
+/// Cut `lines` (in file order) at the Starting Time `time`: the last Parent
+/// Line older than it, and the Continuation Lines that belong to that line,
+/// are dropped with everything above. `true` when such a line was found.
+pub fn cut_before_start(mut lines: Vec<String>, mut lens: Vec<u32>, time: f64) -> (Vec<String>, Vec<u32>, bool) {
+    let limit = time - START_SLACK_SECS;
+    let Some(old) = lines.iter().rposition(|l| line_timestamp(l).is_some_and(|t| t < limit)) else {
+        return (lines, lens, false);
+    };
+    let keep_from = lines[old + 1..]
+        .iter()
+        .position(|l| line_timestamp(l).is_some())
+        .map_or(lines.len(), |i| old + 1 + i);
+    lines.drain(..keep_from);
+    lens.drain(..keep_from);
+    (lines, lens, true)
+}
+
 /// Reads the lines of a file from the end towards the start, a block at a
 /// time. The first batch holds the last complete lines; the unfinished line
 /// after the last newline is left to the forward reader (`follow_offset`).
@@ -166,23 +183,23 @@ impl BackwardLines {
         self.cut_at_start_time(lines, lens)
     }
 
+    /// Set the Starting Time after the first batch was read (it is what tells
+    /// the time of the end of the file) and apply it to that batch.
+    pub fn cut_batch_at(&mut self, time: f64, lines: Vec<String>, lens: Vec<u32>) -> (Vec<String>, Vec<u32>) {
+        self.stop_before = Some(time);
+        self.cut_at_start_time(lines, lens)
+    }
+
     /// Drop what is older than the Starting Time, if the batch reaches it.
-    fn cut_at_start_time(&mut self, mut lines: Vec<String>, mut lens: Vec<u32>) -> (Vec<String>, Vec<u32>) {
+    fn cut_at_start_time(&mut self, lines: Vec<String>, lens: Vec<u32>) -> (Vec<String>, Vec<u32>) {
         let Some(time) = self.stop_before else { return (lines, lens) };
-        let limit = time - START_SLACK_SECS;
-        let old = lines.iter().rposition(|l| line_timestamp(l).is_some_and(|t| t < limit));
-        let Some(old) = old else { return (lines, lens) };
-        // The Continuation Lines after that Parent Line belong to it.
-        let keep_from = lines[old + 1..]
-            .iter()
-            .position(|l| line_timestamp(l).is_some())
-            .map_or(lines.len(), |i| old + 1 + i);
-        lines.drain(..keep_from);
-        lens.drain(..keep_from);
-        self.stopped = true;
-        self.pos = 0;
-        self.data.clear();
-        self.newlines = 0;
+        let (lines, lens, found) = cut_before_start(lines, lens, time);
+        if found {
+            self.stopped = true;
+            self.pos = 0;
+            self.data.clear();
+            self.newlines = 0;
+        }
         (lines, lens)
     }
 

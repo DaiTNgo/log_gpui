@@ -62,6 +62,12 @@ pub struct LiveRuntime {
     pub glob_interval: u64,
     /// Files with a Load More being read.
     pub loading_more: HashSet<String>,
+    /// The next Rotated File each file could load above its lines.
+    pub earlier: HashMap<String, crate::live::source::EarlierFile>,
+    /// Files with a Rotated File being loaded.
+    pub loading_earlier: HashSet<String>,
+    /// Long reads under way, by file.
+    pub progress: HashMap<String, crate::live::source::ReadProgress>,
     /// The Live Globs' watchers and what they found.
     pub globs: super::globs::GlobRuntime,
     pub pump_started: bool,
@@ -81,6 +87,9 @@ impl LiveRuntime {
             glob_limit: 50,
             glob_interval: 5,
             loading_more: HashSet::new(),
+            earlier: HashMap::new(),
+            loading_earlier: HashSet::new(),
+            progress: HashMap::new(),
             globs: super::globs::GlobRuntime::new(),
             pump_started: false,
             batches_since_release: 0,
@@ -400,6 +409,7 @@ impl AppView {
                             SourceEvent::Tail { lines, .. }
                             | SourceEvent::Backfill { lines, .. }
                             | SourceEvent::Older { lines, .. }
+                            | SourceEvent::Earlier { lines, .. }
                             | SourceEvent::Append { lines, .. } => lines.len().max(1),
                             _ => 1,
                         });
@@ -485,6 +495,30 @@ impl AppView {
                         delta.structural = true;
                     }
                 }
+                SourceEvent::Earlier { start, lines, bytes, last_line_no, reached_start } => {
+                    if reached_start || start.is_none() && lines.is_empty() {
+                        self.live.loading_earlier.remove(file_id);
+                    }
+                    if buffer.apply_earlier(&mut parsed, start.as_ref(), &lines, &bytes, last_line_no) {
+                        self.shift_generations_for(file_id);
+                    }
+                    delta.structural = true;
+                }
+                SourceEvent::EarlierAvailable(file) => {
+                    self.live.loading_earlier.remove(file_id);
+                    buffer.set_earlier_available(&mut parsed, file.as_ref());
+                    match file {
+                        Some(file) => self.live.earlier.insert(file_id.to_string(), file),
+                        None => self.live.earlier.remove(file_id),
+                    };
+                    delta.structural = true;
+                }
+                SourceEvent::Progress(progress) => {
+                    match progress {
+                        Some(p) => self.live.progress.insert(file_id.to_string(), p),
+                        None => self.live.progress.remove(file_id),
+                    };
+                }
                 SourceEvent::OlderUnavailable => {
                     self.live.loading_more.remove(file_id);
                     buffer.mark_changed(&mut parsed);
@@ -556,6 +590,18 @@ impl AppView {
             for space in &mut project.log_spaces {
                 if let Some(file) = space.file_mut(file_id) {
                     file.begin_generation();
+                }
+            }
+        }
+    }
+
+    /// The file gained an earlier Generation below all it held: its own count
+    /// moves up with the buffer's, and Markers keep their distance.
+    pub(crate) fn shift_generations_for(&mut self, file_id: &str) {
+        if let Some(project) = self.active_project_mut() {
+            for space in &mut project.log_spaces {
+                if let Some(file) = space.file_mut(file_id) {
+                    file.generation += 1;
                 }
             }
         }

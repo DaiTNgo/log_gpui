@@ -389,6 +389,7 @@ impl AppView {
                 path: path.to_string(),
                 name: name.to_string(),
                 window: self.live.window,
+                start_time: None,
                 glob_inodes,
             }
             .spawn(),
