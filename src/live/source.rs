@@ -64,6 +64,9 @@ pub enum BreakKind {
     OlderNotRead,
     /// Load More read lines from before the Starting Time.
     BeforeStartTime,
+    /// The Remote Command was edited: the lines after the Break are the new
+    /// command's, a new Generation. The Break names both commands.
+    CommandChanged,
 }
 
 impl BreakKind {
@@ -90,6 +93,7 @@ impl BreakKind {
             BreakKind::ReadRotated => "file rotated while reading",
             BreakKind::OlderNotRead => "older lines were not read",
             BreakKind::BeforeStartTime => "lines before the Starting Time loaded",
+            BreakKind::CommandChanged => "command changed",
         }
     }
 
@@ -97,7 +101,11 @@ impl BreakKind {
     pub fn starts_generation(self) -> bool {
         matches!(
             self,
-            BreakKind::Rotated | BreakKind::Truncated | BreakKind::Deleted | BreakKind::Restarted(_)
+            BreakKind::Rotated
+                | BreakKind::Truncated
+                | BreakKind::Deleted
+                | BreakKind::Restarted(_)
+                | BreakKind::CommandChanged
         )
     }
 }
@@ -213,6 +221,16 @@ impl StreamMask {
     pub fn is_empty(&self) -> bool {
         self.len == 0
     }
+
+    /// Cut the mask at `at`: it keeps the first `at` streams and the rest
+    /// are returned.
+    pub fn split_off(&mut self, at: usize) -> StreamMask {
+        let at = at.min(self.len);
+        let rest: StreamMask = (at..self.len).filter_map(|i| self.get(i)).collect();
+        let keep: StreamMask = (0..at).filter_map(|i| self.get(i)).collect();
+        *self = keep;
+        rest
+    }
 }
 
 impl FromIterator<Stream> for StreamMask {
@@ -301,6 +319,10 @@ pub enum SourceEvent {
     TotalLines(Option<usize>),
     Break { kind: BreakKind },
     Status(SourceStatus),
+    /// The Remote Command was edited: its lines stay and a new Run of the new
+    /// command starts (a new Generation). `from` and `to` are the names
+    /// `<server>$ <command>`, for the Break.
+    CommandChanged { from: String, to: String },
     /// A Remote Command started a Run: the command line as sent to the Server
     /// (the `--since` form when resumed).
     Run { command: String },
@@ -346,6 +368,10 @@ pub enum SourceCommand {
     Restart,
     /// Turn Restart on exit on or off for a Remote Command.
     SetRestartOnExit(bool),
+    /// Run another command (or the same one on another Server) in place of a
+    /// Remote Command: the Run in progress ends, the lines stay, and the new
+    /// command starts a new Run. `name` is `<server>$ <command>`.
+    Replace { server_id: String, target: crate::workspace::log_space::RemoteTarget, name: String },
     Close,
 }
 

@@ -21,6 +21,17 @@ use std::time::Duration;
 /// How long the app gathers new lines before applying them.
 pub const LIVE_BATCH_INTERVAL: Duration = Duration::from_millis(100);
 
+/// How long one pump spends applying lines before it leaves the rest for the
+/// next one, so a burst of lines never holds up a frame.
+pub const PUMP_BUDGET: Duration = Duration::from_millis(8);
+
+/// The most lines of one file one pump takes: a bigger `Append` is cut.
+pub const LINES_PER_FILE_PER_PUMP: usize = 8_000;
+
+/// A batch of this many lines or more is read on a worker thread before the
+/// app applies it.
+pub const PREPARE_MIN_LINES: usize = 1_500;
+
 /// Default Live Window: the newest lines kept for each Remote File.
 pub const DEFAULT_LIVE_WINDOW: usize = 100_000;
 
@@ -88,6 +99,16 @@ pub struct LiveRuntime {
     /// The Live Globs' watchers and what they found.
     pub globs: super::globs::GlobRuntime,
     pub pump_started: bool,
+    /// Events taken from a source that did not fit one pump, per file, in
+    /// order, to be applied before what the source sends next.
+    backlog: HashMap<String, std::collections::VecDeque<SourceEvent>>,
+    /// Files whose batch is being read on a worker thread, by the `seq` of
+    /// their source; their events wait until it is applied.
+    parsing: HashMap<String, u64>,
+    /// Where the next pump starts among the files, so every file gets turns.
+    pump_cursor: usize,
+    /// A batch of this many lines is read on a worker thread.
+    pub preparse_min: usize,
     /// Batches applied since the allocator's cache was last given back.
     batches_since_release: usize,
 }
@@ -113,6 +134,10 @@ impl LiveRuntime {
             copy_reads: HashMap::new(),
             globs: super::globs::GlobRuntime::new(),
             pump_started: false,
+            backlog: HashMap::new(),
+            parsing: HashMap::new(),
+            pump_cursor: 0,
+            preparse_min: PREPARE_MIN_LINES,
             batches_since_release: 0,
         }
     }
@@ -316,10 +341,14 @@ impl AppView {
         }
         self.live.pump_started = true;
         cx.spawn(async move |this, cx| {
+            let mut wait = LIVE_BATCH_INTERVAL;
             loop {
-                cx.background_executor().timer(LIVE_BATCH_INTERVAL).await;
-                if this.update(cx, |this, cx| this.pump_live(cx)).is_err() {
-                    break;
+                cx.background_executor().timer(wait).await;
+                // With lines left over the next pump comes at once, a frame
+                // later, instead of after the whole interval.
+                match this.update(cx, |this, cx| this.pump_live(cx)) {
+                    Ok(more) => wait = if more { Duration::from_millis(16) } else { LIVE_BATCH_INTERVAL },
+                    Err(_) => break,
                 }
             }
         })
@@ -418,48 +447,48 @@ impl AppView {
 
     // ── Applying a batch ────────────────────────────────────────────────────
 
-    /// Drain every source and apply what arrived, once.
-    pub fn pump_live(&mut self, cx: &mut Context<Self>) {
+    /// Apply what the sources sent, for as long as the budget lasts. Returns
+    /// whether lines are left for another pump.
+    pub fn pump_live(&mut self, cx: &mut Context<Self>) -> bool {
         self.pump_copy_reads(cx);
         if self.live.sources.is_empty() {
-            return;
+            return false;
         }
         self.update_follow_from_scroll();
 
-        let mut batches: Vec<(String, Vec<SourceEvent>)> = Vec::new();
-        let mut budget = 200_000usize;
-        for (file_id, source) in &self.live.sources {
-            let mut events = Vec::new();
-            while budget > 0 {
-                match source.handle.events.try_recv() {
-                    Ok(event) => {
-                        budget = budget.saturating_sub(match &event {
-                            SourceEvent::Tail { lines, .. }
-                            | SourceEvent::Backfill { lines, .. }
-                            | SourceEvent::Older { lines, .. }
-                            | SourceEvent::Earlier { lines, .. }
-                            | SourceEvent::Append { lines, .. } => lines.len().max(1),
-                            _ => 1,
-                        });
-                        events.push(event);
-                    }
-                    Err(_) => break,
-                }
-            }
-            if !events.is_empty() {
-                batches.push((file_id.clone(), events));
-            }
-        }
-        if batches.is_empty() {
-            return;
-        }
-
         let started = std::time::Instant::now();
+        let mut ids: Vec<String> = self.live.sources.keys().cloned().collect();
+        ids.sort();
+        let turn = self.live.pump_cursor % ids.len();
+        self.live.pump_cursor = self.live.pump_cursor.wrapping_add(1);
+        ids.rotate_left(turn);
+
         let mut deltas: Vec<(String, FileDelta)> = Vec::new();
-        for (file_id, events) in batches {
+        for file_id in ids {
+            if !deltas.is_empty() && started.elapsed() >= PUMP_BUDGET {
+                break;
+            }
+            if self.live.parsing.contains_key(&file_id) {
+                continue;
+            }
+            let events = self.drain_events(&file_id);
+            if events.is_empty() {
+                continue;
+            }
+            let events = match self.start_preparing(&file_id, events, cx) {
+                Ok(()) => continue,
+                Err(events) => events,
+            };
             let delta = self.apply_file_events(&file_id, events);
             deltas.push((file_id, delta));
         }
+        let more = !self.live.parsing.is_empty()
+            || self.live.backlog.values().any(|q| !q.is_empty())
+            || self.live.sources.values().any(|s| !s.handle.events.is_empty());
+        if deltas.is_empty() {
+            return more;
+        }
+
         let parsed_in = started.elapsed();
         self.apply_deltas(deltas, cx);
         self.ask_again_after_auth_failure(cx);
@@ -471,6 +500,112 @@ impl AppView {
                 self.all_entries.len()
             );
         }
+        more
+    }
+
+    /// The events of `file_id` waiting to be applied, up to
+    /// `LINES_PER_FILE_PER_PUMP` lines: an `Append` that is longer is cut,
+    /// and what is left of it waits for the next pump.
+    fn drain_events(&mut self, file_id: &str) -> Vec<SourceEvent> {
+        let Some(source) = self.live.sources.get(file_id) else { return Vec::new() };
+        let incoming = source.handle.events.clone();
+        let mut events = Vec::new();
+        let mut taken = 0usize;
+        while taken < LINES_PER_FILE_PER_PUMP {
+            let waiting = self.live.backlog.get_mut(file_id).and_then(|q| q.pop_front());
+            let Some(mut event) = waiting.or_else(|| incoming.try_recv().ok()) else { break };
+            let room = LINES_PER_FILE_PER_PUMP - taken;
+            if let SourceEvent::Append { lines, bytes, streams } = &mut event {
+                if lines.len() > room {
+                    let rest_lines = lines.split_off(room);
+                    let rest_bytes = bytes.split_off(room.min(bytes.len()));
+                    let rest_streams = streams.as_mut().map(|s| s.split_off(room));
+                    self.live.backlog.entry(file_id.to_string()).or_default().push_front(SourceEvent::Append {
+                        lines: rest_lines,
+                        bytes: rest_bytes,
+                        streams: rest_streams,
+                    });
+                }
+            }
+            taken += match &event {
+                SourceEvent::Tail { lines, .. }
+                | SourceEvent::Backfill { lines, .. }
+                | SourceEvent::Older { lines, .. }
+                | SourceEvent::Earlier { lines, .. }
+                | SourceEvent::Append { lines, .. } => lines.len().max(1),
+                _ => 1,
+            };
+            events.push(event);
+        }
+        events
+    }
+
+    /// Read the lines of a big batch on a worker thread, and apply the batch
+    /// when they are read, so the frames go on meanwhile. A small batch is
+    /// given back for the caller to apply.
+    fn start_preparing(
+        &mut self,
+        file_id: &str,
+        events: Vec<SourceEvent>,
+        cx: &mut Context<Self>,
+    ) -> Result<(), Vec<SourceEvent>> {
+        let lines: usize = events
+            .iter()
+            .map(|e| match e {
+                SourceEvent::Tail { lines, .. }
+                | SourceEvent::Backfill { lines, .. }
+                | SourceEvent::Older { lines, .. }
+                | SourceEvent::Append { lines, .. } => lines.len(),
+                _ => 0,
+            })
+            .sum();
+        let (Some(source), Some(parsed)) = (self.live.sources.get(file_id), self.parsed_files.get(file_id)) else {
+            return Err(events);
+        };
+        let Some(buffer) = parsed.live.as_ref() else { return Err(events) };
+        if lines < self.live.preparse_min {
+            return Err(events);
+        }
+        let job = buffer.prepare_job(parsed.entries.first().map(|e| e.generation));
+        let seq = source.seq;
+        self.live.parsing.insert(file_id.to_string(), seq);
+        let file_id = file_id.to_string();
+        cx.spawn(async move |this, cx| {
+            let (events, prepared) = cx
+                .background_executor()
+                .spawn(async move {
+                    let prepared = job.run(&events);
+                    (events, prepared)
+                })
+                .await;
+            this.update(cx, |this, cx| this.finish_preparing(&file_id, seq, events, prepared, cx)).ok();
+        })
+        .detach();
+        Ok(())
+    }
+
+    fn finish_preparing(
+        &mut self,
+        file_id: &str,
+        seq: u64,
+        events: Vec<SourceEvent>,
+        prepared: std::collections::VecDeque<crate::live::PreparedLines>,
+        cx: &mut Context<Self>,
+    ) {
+        self.live.parsing.remove(file_id);
+        // A source that was closed or replaced meanwhile has no say any more.
+        if self.live.sources.get(file_id).map(|s| s.seq) != Some(seq) {
+            return;
+        }
+        if let Some(buffer) = self.parsed_files.get_mut(file_id).and_then(|p| p.live.as_mut()) {
+            buffer.set_prepared(prepared);
+        }
+        let delta = self.apply_file_events(file_id, events);
+        if let Some(buffer) = self.parsed_files.get_mut(file_id).and_then(|p| p.live.as_mut()) {
+            buffer.set_prepared(Default::default());
+        }
+        self.apply_deltas(vec![(file_id.to_string(), delta)], cx);
+        self.ask_again_after_auth_failure(cx);
     }
 
     /// Follow turns off when the user scrolled away from the newest line, and

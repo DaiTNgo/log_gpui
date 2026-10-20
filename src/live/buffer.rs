@@ -7,9 +7,10 @@
 //! provisional numbers from `PROVISIONAL_BASE` up; the Gutter shows none for
 //! them.
 
-use super::source::{BreakKind, RestartKind, StreamMask, clock_text};
+use super::source::{BreakKind, RestartKind, SourceEvent, StreamMask, clock_text};
 use crate::parser::LineParser;
 use crate::space_view::ParsedFile;
+use std::collections::VecDeque;
 use std::sync::Arc;
 
 /// Provisional line numbers start here; a number at or above half of it is
@@ -96,6 +97,10 @@ pub struct LiveBuffer {
     /// Length in the file of each held line, line end included, parallel to
     /// the entries of the cache (0 when not known: local files).
     byte_lens: Vec<u32>,
+    /// Lines read ahead of the app applying them (`PrepareJob`), in the order
+    /// they will be applied. An entry that does not fit what is applied is
+    /// dropped and the lines are read again.
+    prepared: VecDeque<PreparedLines>,
     /// Offset just after the last line of the current Generation held or
     /// cleared.
     next_offset: u64,
@@ -118,6 +123,105 @@ pub struct Trimmed {
     pub text_bytes: usize,
 }
 
+/// How a run of lines is read: one after another with the Parent Line carried
+/// on from the lines before (the lines that follow what is held), or on their
+/// own (lines inserted above).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PrepKind {
+    Sequential,
+    Fresh,
+}
+
+/// The entries of lines that were read before the app applied them.
+#[derive(Debug, Clone)]
+pub struct PreparedLines {
+    kind: PrepKind,
+    /// The number the first line got.
+    first: usize,
+    parent_before: Option<usize>,
+    parent_after: Option<usize>,
+    reading: LineParser,
+    entries: Vec<crate::model::LogEntry>,
+}
+
+/// What a worker needs to read the lines of a batch of events before the app
+/// applies them: the state of the buffer's parser and numbering when it was
+/// taken. Reading ahead is a guess about the state the events will be applied
+/// in; `LiveBuffer` uses it only when the guess was right.
+#[derive(Debug, Clone)]
+pub struct PrepareJob {
+    parser: LineParser,
+    next_index: usize,
+    first_index: usize,
+    /// Whether the oldest line held is of the current Generation (what
+    /// `Older` lines go above).
+    older_goes_above_current: bool,
+    replace_last: bool,
+}
+
+impl PrepareJob {
+    /// Read the lines of `events` in the order they will be applied. Stops
+    /// at the first event whose effect on the numbering is not known here.
+    pub fn run(mut self, events: &[SourceEvent]) -> VecDeque<PreparedLines> {
+        let mut out = VecDeque::new();
+        for event in events {
+            match event {
+                SourceEvent::Append { lines, .. } => {
+                    if self.replace_last {
+                        break;
+                    }
+                    out.push_back(self.sequential(lines));
+                }
+                SourceEvent::Tail { lines, .. } => {
+                    let start = self.next_index;
+                    out.push_back(self.sequential(lines));
+                    self.first_index = start;
+                }
+                SourceEvent::Backfill { lines, .. } => out.push_back(self.fresh(lines)),
+                SourceEvent::Older { lines, .. } => {
+                    if !self.older_goes_above_current {
+                        break;
+                    }
+                    out.push_back(self.fresh(lines));
+                }
+                SourceEvent::Status(_)
+                | SourceEvent::Progress(_)
+                | SourceEvent::Inode(_)
+                | SourceEvent::Problem(_)
+                | SourceEvent::Run { .. } => {}
+                _ => break,
+            }
+        }
+        out
+    }
+
+    fn sequential(&mut self, lines: &[String]) -> PreparedLines {
+        let first = self.next_index;
+        let parent_before = self.parser.parent();
+        let reading = self.parser.clone();
+        let entries: Vec<_> = lines.iter().enumerate().map(|(i, line)| self.parser.parse(first + i, line)).collect();
+        self.next_index += lines.len();
+        PreparedLines {
+            kind: PrepKind::Sequential,
+            first,
+            parent_before,
+            parent_after: self.parser.parent(),
+            reading,
+            entries,
+        }
+    }
+
+    fn fresh(&mut self, lines: &[String]) -> PreparedLines {
+        let first = self.first_index.saturating_sub(lines.len());
+        let mut parser = LineParser::new();
+        parser.set_format(self.parser.format());
+        let reading = self.parser.clone();
+        let entries: Vec<_> = lines.iter().enumerate().map(|(i, line)| parser.parse(first + i, line)).collect();
+        self.first_index = first;
+        PreparedLines { kind: PrepKind::Fresh, first, parent_before: None, parent_after: None, reading, entries }
+    }
+}
+
 impl LiveBuffer {
     /// For a file whose `loaded_lines` lines are already in the cache with
     /// their real numbers.
@@ -135,6 +239,7 @@ impl LiveBuffer {
             local_offset: 0,
             replace_last: false,
             byte_lens: Vec::new(),
+            prepared: VecDeque::new(),
             next_offset: 0,
             hold: HoldMode::Window,
             clear_mark: None,
@@ -171,6 +276,7 @@ impl LiveBuffer {
             local_offset: 0,
             replace_last: false,
             byte_lens: Vec::new(),
+            prepared: VecDeque::new(),
             next_offset: 0,
             hold: HoldMode::Window,
             clear_mark: None,
@@ -190,6 +296,41 @@ impl LiveBuffer {
 
     pub fn first_index(&self) -> usize {
         self.first_index
+    }
+
+    /// What a worker needs to read the lines of events ahead of their being
+    /// applied. `top_generation` is the Generation of the oldest line held.
+    pub fn prepare_job(&self, top_generation: Option<u32>) -> PrepareJob {
+        PrepareJob {
+            parser: self.parser.clone(),
+            next_index: self.next_index,
+            first_index: self.first_index,
+            older_goes_above_current: top_generation.is_none_or(|g| g == self.generation),
+            replace_last: self.replace_last,
+        }
+    }
+
+    /// Lines read ahead, to be used by the `apply_*` call that matches them.
+    pub fn set_prepared(&mut self, prepared: VecDeque<PreparedLines>) {
+        self.prepared = prepared;
+    }
+
+    /// The first prepared lines when they are the ones being applied: read in
+    /// the same way, with the same numbers (and, one after another, the same
+    /// Parent Line). Anything else prepared is not used.
+    fn take_prepared(&mut self, kind: PrepKind, first: usize, count: usize) -> Option<PreparedLines> {
+        let front = self.prepared.pop_front()?;
+        let fits = front.kind == kind
+            && front.first == first
+            && front.entries.len() == count
+            && front.reading.reads_like(&self.parser)
+            && (kind == PrepKind::Fresh || front.parent_before == self.parser.parent());
+        if fits {
+            Some(front)
+        } else {
+            self.prepared.clear();
+            None
+        }
     }
 
     pub fn next_index(&self) -> usize {
@@ -255,17 +396,17 @@ impl LiveBuffer {
         bytes: &[u32],
     ) {
         let count = lines.len();
-        let mut parser = LineParser::new();
-        parser.set_format(self.parser.format());
-        let mut entries: Vec<_> = lines
-            .iter()
-            .enumerate()
-            .map(|(i, line)| {
-                let mut entry = parser.parse(first + i, line);
-                entry.generation = generation;
-                entry
-            })
-            .collect();
+        let mut entries: Vec<_> = match self.take_prepared(PrepKind::Fresh, first, count) {
+            Some(p) => p.entries,
+            None => {
+                let mut parser = LineParser::new();
+                parser.set_format(self.parser.format());
+                lines.iter().enumerate().map(|(i, line)| parser.parse(first + i, line)).collect()
+            }
+        };
+        for entry in entries.iter_mut() {
+            entry.generation = generation;
+        }
         let last_parent = entries.iter().rev().find(|e| e.has_time).map(|e| e.index);
         for entry in parsed.entries[at..].iter_mut() {
             if entry.generation != generation || entry.has_time || entry.parent.is_some() {
@@ -522,8 +663,15 @@ impl LiveBuffer {
             self.byte_lens.push(len);
             self.next_offset += u64::from(len);
         }
+        let mut prepared = self.take_prepared(PrepKind::Sequential, self.next_index, lines.len()).map(|p| {
+            self.parser.set_parent(p.parent_after);
+            p.entries.into_iter()
+        });
         for (i, line) in lines.iter().enumerate() {
-            let mut entry = self.parser.parse(self.next_index, line);
+            let mut entry = match prepared.as_mut().and_then(|it| it.next()) {
+                Some(entry) => entry,
+                None => self.parser.parse(self.next_index, line),
+            };
             entry.generation = self.generation;
             // The Stream is the line's own: a Continuation Line keeps its own.
             entry.stream = streams.and_then(|s| s.get(i));

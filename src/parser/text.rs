@@ -156,6 +156,27 @@ impl LineParser {
         self.parent = None;
     }
 
+    /// The line number of the Parent Line the next Continuation Line goes
+    /// under.
+    pub fn parent(&self) -> Option<usize> {
+        self.parent
+    }
+
+    pub fn set_parent(&mut self, parent: Option<usize>) {
+        self.parent = parent;
+    }
+
+    /// Whether `other` reads lines the same way: the same Extraction Rules
+    /// and the same Log Format (the same ones, not equal ones).
+    pub fn reads_like(&self, other: &LineParser) -> bool {
+        Arc::ptr_eq(&self.config, &other.config)
+            && match (&self.format, &other.format) {
+                (Some(a), Some(b)) => Arc::ptr_eq(a, b),
+                (None, None) => true,
+                _ => false,
+            }
+    }
+
     /// The entry for line number `index`.
     pub fn parse(&mut self, index: usize, line: &str) -> LogEntry {
         let mut event = parse_line(index, line, self.format.as_deref());
