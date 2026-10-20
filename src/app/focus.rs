@@ -381,6 +381,11 @@ impl AppView {
             return None;
         }
         let filtering = self.view_mode == ViewMode::Parsed && self.filter_state.active_count() > 0;
+        if filtering && self.filter_pass.is_empty() {
+            if let Some(notice) = self.unread_filter_notice() {
+                return Some(notice);
+            }
+        }
         let search = self.focus.search();
         let expression = search.matcher.is_some().then_some(search.query.as_str());
         Some(FocusPaneNotice::for_empty_pane(expression, filtering, self.filter_pass.is_empty()))
@@ -476,6 +481,19 @@ impl AppView {
         let row_h = self.density.row_height();
         let y = f32::from(at.y - bounds.origin.y) - f32::from(offset.y);
         let row = ((y / row_h).floor().max(0.0) as usize).min(total - 1);
+        if let Some(layout) = self.pane_columns() {
+            // The same columns as the view, none pinned, scrolled with the pane.
+            let entry = match self.focus_rows.get(row) {
+                Some(crate::focus::FocusRow::Entry(ix)) => self.all_entries.get(*ix)?,
+                _ => return None,
+            };
+            let hit = crate::ui::cells::hit_cell(&layout, f32::from(at.x - bounds.origin.x), -f32::from(offset.x));
+            let font = self.density.font_size();
+            let byte = crate::ui::cells::byte_for_hit(entry, hit, |text, x| {
+                crate::ui::mono::index_for_x(text, x, font, window, cx)
+            });
+            return Some(TextPos::new(row, byte));
+        }
         let parsed = self.view_mode == ViewMode::Parsed;
         let x = f32::from(at.x - bounds.origin.x)
             - f32::from(offset.x)
@@ -488,7 +506,18 @@ impl AppView {
         Some(TextPos::new(row, byte))
     }
 
-    /// Whether the pane names the Source File of each line.
+    /// The columns the pane shows in the Parsed View: the view's, with none
+    /// pinned (the pane scrolls as one). `None` in the Raw View.
+    pub fn pane_columns(&self) -> Option<crate::column::ColumnLayoutState> {
+        (self.view_mode == ViewMode::Parsed).then(|| {
+            let mut layout = self.column_layout.clone();
+            layout.unpin_all();
+            layout
+        })
+    }
+
+    /// Whether the pane names the Source File of each line (the Raw View;
+    /// the Parsed View has the Source Column when it is turned on).
     pub fn pane_shows_source(&self) -> bool {
         self.active_space().is_some_and(|s| s.files.len() > 1)
             && matches!(

@@ -41,9 +41,17 @@ static HEADER_RATIOS: [AtomicU32; PinnableColumn::ALL.len()] =
 
 /// Width in pixels of the label of `col`'s Column Header.
 pub fn header_label_width(col: PinnableColumn) -> f32 {
-    let measured = f32::from_bits(HEADER_RATIOS[col as usize].load(Ordering::Relaxed));
+    let measured = col
+        .fixed_index()
+        .map_or(0.0, |i| f32::from_bits(HEADER_RATIOS[i].load(Ordering::Relaxed)));
     let ratio = if measured > 0.0 { measured } else { col.title_chars() as f32 * DEFAULT_HEADER_RATIO };
     ratio * HEADER_FONT_SIZE
+}
+
+/// Width in pixels of any Column Header text (a Column Label, a field name),
+/// estimated from its length.
+pub fn header_text_width(text: &str) -> f32 {
+    text.chars().count() as f32 * DEFAULT_HEADER_RATIO * HEADER_FONT_SIZE
 }
 
 /// Measure the theme's monospace font and the Column Header labels. Call
@@ -59,7 +67,9 @@ pub fn measure(cx: &App) {
             .map(|ch| text_system.advance(header_id, px(100.0), ch).ok().map(|s| f32::from(s.width)))
             .sum();
         if let Some(ratio) = width.map(|w| w / 100.0).filter(|r| r.is_finite() && *r > 0.0) {
-            HEADER_RATIOS[col as usize].store(ratio.to_bits(), Ordering::Relaxed);
+            if let Some(i) = col.fixed_index() {
+                HEADER_RATIOS[i].store(ratio.to_bits(), Ordering::Relaxed);
+            }
         }
     }
     let font_id = text_system.resolve_font(&gpui::font(cx.theme().mono_font_family.clone()));

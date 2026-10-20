@@ -23,6 +23,7 @@ use gpui::{
 };
 use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::input::{Input, InputState};
+use gpui_component::menu::ContextMenuExt as _;
 use gpui_component::scroll::ScrollableElement as _;
 use gpui_component::tag::Tag;
 use gpui_component::{ActiveTheme as _, Icon, Sizable as _, h_flex, v_flex};
@@ -96,6 +97,10 @@ pub struct PaneState<'a> {
     /// Index in `rows` of the widest row. Computed by the caller: the pane
     /// renders inside the AppView's own render, so it must not read it back.
     pub longest: usize,
+    /// In the Parsed View, the view's columns: the pane shows the same ones,
+    /// in the same order and widths, under their Column Labels. `None` in the
+    /// Raw View, where the pane shows each raw line.
+    pub columns: Option<crate::column::ColumnLayoutState>,
 }
 
 /// Width taken by the cells before the text of a row.
@@ -294,6 +299,31 @@ impl FocusPane {
                         .when_some(notice.detail(), |this, detail| {
                             this.child(div().text_xs().text_color(muted).child(detail))
                         })
+                        .when_some(
+                            match notice {
+                                FocusPaneNotice::UnreadColumn { key, can_turn_on, .. } => Some((key.clone(), *can_turn_on)),
+                                _ => None,
+                            },
+                            |this, (key, can_turn_on)| {
+                                let (v_remove, v_on) = (state.view.clone(), state.view.clone());
+                                let on_key = key.clone();
+                                this.child(
+                                    h_flex()
+                                        .gap_2()
+                                        .pt_1()
+                                        .child(Button::new("focus-pane-remove-condition").small().label("Remove condition").on_click(
+                                            move |_, _w, cx| v_remove.update(cx, |this, cx| this.filter_clear_column(&key, cx)),
+                                        ))
+                                        .when(can_turn_on, |d| {
+                                            d.child(
+                                                Button::new("focus-pane-turn-on").small().primary().label("Turn column back on").on_click(
+                                                    move |_, _w, cx| v_on.update(cx, |this, cx| this.turn_column_back_on(&on_key, cx)),
+                                                ),
+                                            )
+                                        }),
+                                )
+                            },
+                        )
                         .when(notice.offers_clear_filter(), |this| {
                             this.child(
                                 Button::new("focus-pane-clear-filter")
@@ -341,8 +371,11 @@ impl FocusPane {
         let alt_handle = state.scroll_handle.clone();
         let bounds_sink = state.bounds_sink.clone();
         let view = state.view.clone();
+        let menu_view = view.clone();
         let (v_down, v_move, v_up, v_up_out) = (view.clone(), view.clone(), view.clone(), view);
+        let header = state.columns.as_ref().map(|layout| render_column_header(layout, &scroll_handle, &state.colors));
         let env = PaneRows {
+            columns: state.columns.clone(),
             view: state.view.clone(),
             rows: state.rows,
             source: state.source,
@@ -398,10 +431,11 @@ impl FocusPane {
                     .absolute()
                     .size_full(),
             )
-            .child(list);
+            .child(list)
+            .context_menu(move |menu, _window, cx| crate::ui::cell_menu::pane_menu(menu, &menu_view, cx));
 
         // The vertical scrollbar has its own column at the far right, so it never covers the rows.
-        div()
+        let body = div()
             .flex_1()
             .min_h(px(0.0))
             .flex()
@@ -418,12 +452,23 @@ impl FocusPane {
                     ),
                 ),
             )
-            .into_any_element()
+            .into_any_element();
+        match header {
+            Some(header) => gpui_component::v_flex()
+                .flex_1()
+                .min_h(px(0.0))
+                .child(header)
+                .child(body)
+                .into_any_element(),
+            None => body,
+        }
     }
 }
 
 /// What the virtualized list needs to build the rows on its own.
 struct PaneRows {
+    /// The view's columns, in the Parsed View.
+    columns: Option<crate::column::ColumnLayoutState>,
     view: gpui::Entity<AppView>,
     rows: Arc<Vec<FocusRow>>,
     source: PaneSource,
@@ -496,12 +541,21 @@ impl PaneRows {
         };
         let find_ranges = self.find.find_ranges(&entry.raw_line);
         let selected_in_line = self.selection.and_then(|s| s.range_in_row(index, entry.raw_line.len()));
+        let columns = self.columns.as_ref().filter(|_| parsed);
+        let hidden_match = columns.and_then(|layout| {
+            crate::ui::cells::hidden_matches(entry, &search_ranges, layout)
+                .map(|hidden| crate::ui::cells::hidden_matches_tooltip(&hidden, layout))
+        });
+        // In columns, Search is painted on whichever cell holds each Match.
+        let (cell_search, line_search): (&[(usize, usize)], &[(usize, usize)]) =
+            if columns.is_some() { (&[], &search_ranges) } else { (&search_ranges, &[]) };
         let ctx = CellCtx {
             colors: &colors,
             entry,
             paint,
-            search_ranges: &search_ranges,
+            search_ranges: cell_search,
             find_ranges: &find_ranges,
+            line_search,
             selected: selected_in_line.as_ref(),
             tone,
             rule_cell: None,
@@ -543,6 +597,14 @@ impl PaneRows {
                         .when(stderr, |d| {
                             d.tooltip(|window, cx| gpui_component::tooltip::Tooltip::new("stderr").build(window, cx))
                         })
+                        .relative()
+                        .when_some(hidden_match, |d, tip| {
+                            d.child(crate::ui::canvas::hidden_match_mark(
+                                ElementId::from(("focus-hidden-match", index)),
+                                tip,
+                                &colors,
+                            ))
+                        })
                         .child(crate::live::line_number_text(number))
                 })
                 .when(parsed, |this| {
@@ -559,7 +621,21 @@ impl PaneRows {
                             .child(level_symbol),
                     )
                 })
-                .when(self.show_source, |this| {
+                .when_some(columns, |this, layout| {
+                    let mut this = this;
+                    for col in layout.columns() {
+                        this = this.child(crate::ui::canvas::render_column_cell(col, layout, &ctx));
+                    }
+                    this.child(
+                        div()
+                            .flex_1()
+                            .px_2()
+                            .whitespace_nowrap()
+                            .pr_16()
+                            .child(render_text_cell(&ctx, TextCell::Message)),
+                    )
+                })
+                .when(columns.is_none() && self.show_source, |this| {
                     this.child(
                         div()
                             .flex_shrink_0()
@@ -570,14 +646,16 @@ impl PaneRows {
                             .child(source_name.unwrap_or_default()),
                     )
                 })
-                .child(
-                    div()
-                        .flex_1()
-                        .px_2()
-                        .whitespace_nowrap()
-                        .pr_16()
-                        .child(render_text_cell(&ctx, TextCell::Raw)),
-                )
+                .when(columns.is_none(), |this| {
+                    this.child(
+                        div()
+                            .flex_1()
+                            .px_2()
+                            .whitespace_nowrap()
+                            .pr_16()
+                            .child(render_text_cell(&ctx, TextCell::Raw)),
+                    )
+                })
                 .when_some(outline, |row, color| {
                     row.child(
                         div().absolute().top_0().left_0().right_0().bottom_0().border_1().border_color(color),
@@ -588,4 +666,47 @@ impl PaneRows {
                 }),
         )
     }
+}
+
+/// The Column Headers of the pane in the Parsed View: the view's columns
+/// under their Column Labels, sliding with the pane's horizontal scroll.
+fn render_column_header(
+    layout: &crate::column::ColumnLayoutState,
+    scroll_handle: &gpui::UniformListScrollHandle,
+    colors: &CanvasColors,
+) -> gpui::AnyElement {
+    let scroll_x = crate::ui::canvas::horizontal_scroll_x(scroll_handle);
+    let mut row = h_flex()
+        .relative()
+        .left(-scroll_x)
+        .h_full()
+        .items_center()
+        .child(div().flex_shrink_0().w(px(NUMBER_WIDTH + LEVEL_WIDTH)));
+    for col in layout.columns() {
+        row = row.child(
+            div()
+                .flex_shrink_0()
+                .w(layout.width(col))
+                .when(col.is_compact(), |d| d.px_1())
+                .when(!col.is_compact(), |d| d.px_2())
+                .truncate()
+                .child(layout.header_text(col).to_string()),
+        );
+    }
+    let message = layout.labels.get("message").cloned().unwrap_or_else(|| "MESSAGE".to_string());
+    row = row.child(div().px_2().whitespace_nowrap().child(message));
+    div()
+        .id("focus-pane-column-header")
+        .h(px(22.0))
+        .w_full()
+        .flex_shrink_0()
+        .overflow_hidden()
+        .border_b_1()
+        .border_color(colors.border)
+        .bg(colors.header_bg)
+        .text_color(colors.header_fg)
+        .text_xs()
+        .font_weight(gpui::FontWeight::SEMIBOLD)
+        .child(row)
+        .into_any_element()
 }

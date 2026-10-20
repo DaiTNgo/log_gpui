@@ -614,7 +614,10 @@ pub fn push_file(list: MenuList, file: FileRef, active: bool) -> MenuList {
                 defer_rename(open.view.clone(), target, open.display_name.clone(), window, app);
             }
         })
-        .context_menu(move |menu, _, cx| file_menu(menu, &context, cx));
+        .context_menu(move |menu, _, cx| {
+            let menu = file_menu(menu, &context, cx);
+            file_format_items(menu, &context, cx)
+        });
     if file.in_glob { list.grouped_child(item, file.gone) } else { list.nested_child(item) }
 }
 
@@ -622,4 +625,74 @@ pub fn push_file(list: MenuList, file: FileRef, active: bool) -> MenuList {
 #[allow(dead_code)]
 pub fn space_element_id(space_id: &str) -> ElementId {
     ElementId::from(SharedString::from(format!("space-{space_id}")))
+}
+
+/// The items to choose a Log Format: for the Log Space `space_id`, or for its
+/// file `file_id` when given.
+pub fn format_menu(
+    menu: gpui_component::menu::PopupMenu,
+    view: &gpui::Entity<crate::app::AppView>,
+    space_id: &str,
+    file_id: Option<&str>,
+    current: Option<crate::log_format::FormatChoice>,
+    formats: &[(String, String)],
+) -> gpui_component::menu::PopupMenu {
+    use crate::log_format::FormatChoice;
+    let choose = |choice: Option<FormatChoice>| {
+        let (view, space, file) = (view.clone(), space_id.to_string(), file_id.map(str::to_string));
+        move |_: &gpui::ClickEvent, _: &mut gpui::Window, app: &mut gpui::App| {
+            let choice = choice.clone();
+            view.update(app, |this, cx| match &file {
+                Some(file) => this.set_file_format(file, choice, cx),
+                None => this.set_space_format(&space, choice, cx),
+            });
+        }
+    };
+    let unset = if file_id.is_some() { "As the Log Space" } else { "By file name, else Auto-detect" };
+    let mut menu = menu
+        .item(PopupMenuItem::new(unset).checked(current.is_none()).on_click(choose(None)))
+        .item(
+            PopupMenuItem::new("Auto-detect")
+                .checked(current == Some(FormatChoice::AutoDetect))
+                .on_click(choose(Some(FormatChoice::AutoDetect))),
+        );
+    if !formats.is_empty() {
+        menu = menu.item(PopupMenuItem::separator());
+    }
+    for (id, name) in formats {
+        let c = FormatChoice::Format(id.clone());
+        menu = menu.item(PopupMenuItem::new(name.clone()).checked(current.as_ref() == Some(&c)).on_click(choose(Some(c))));
+    }
+    let (new_view, edit_view) = (view.clone(), view.clone());
+    let apply_to = file_id.is_none().then(|| space_id.to_string());
+    menu = menu.item(PopupMenuItem::separator()).item(PopupMenuItem::new("New Log Format…").on_click(
+        move |_, window, app| {
+            let (view, apply_to) = (new_view.clone(), apply_to.clone());
+            window.defer(app, move |window, app| {
+                view.update(app, |this, cx| this.open_format_editor(None, apply_to, window, cx));
+            });
+        },
+    ));
+    if let Some(FormatChoice::Format(id)) = current {
+        menu = menu.item(PopupMenuItem::new("Edit this Log Format…").on_click(move |_, window, app| {
+            let (view, id) = (edit_view.clone(), id.clone());
+            window.defer(app, move |window, app| {
+                view.update(app, |this, cx| this.open_format_editor(Some(&id), None, window, cx));
+            });
+        }));
+    }
+    menu
+}
+
+/// The Log Format of a Source File of the active Project, chosen for the
+/// file alone: a "Log Format" section of the file's menu.
+fn file_format_items(menu: PopupMenu, file: &FileRef, cx: &mut App) -> PopupMenu {
+    let this = file.view.read(cx);
+    if this.workspace_state.active_project_id.as_deref() != Some(file.project_id.as_str()) {
+        return menu;
+    }
+    let current = this.file_format_choice(&file.file_id);
+    let formats: Vec<(String, String)> = this.log_formats().iter().map(|f| (f.id.clone(), f.name.clone())).collect();
+    let menu = menu.item(PopupMenuItem::separator()).item(PopupMenuItem::label("Log Format"));
+    format_menu(menu, &file.view, &file.space_id, Some(&file.file_id), current, &formats)
 }

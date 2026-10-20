@@ -579,13 +579,18 @@ impl AppView {
                 cx.notify();
                 return;
             }
+            ConfirmAction::DeleteLogFormat { format_id } => {
+                self.delete_log_format(format_id, cx);
+                return;
+            }
             _ => {}
         }
         self.persist_active_session();
         match action {
             ConfirmAction::ClearFiles { .. }
             | ConfirmAction::DeleteServer { .. }
-            | ConfirmAction::RemoveProject { .. } => {}
+            | ConfirmAction::RemoveProject { .. }
+            | ConfirmAction::DeleteLogFormat { .. } => {}
             ConfirmAction::DeleteLogSpace { space_id } => {
                 let removed = self
                     .active_project_mut()

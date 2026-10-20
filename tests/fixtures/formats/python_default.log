@@ -1,0 +1,4 @@
+WARNING:root:disk usage at 91%
+INFO:billing.worker:charged order 1842
+ERROR:billing.gateway:timeout talking to gateway: retry 3
+DEBUG:urllib3.connectionpool:Starting new HTTPS connection (1): api.example:443

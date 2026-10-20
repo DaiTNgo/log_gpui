@@ -1,5 +1,5 @@
 //! Right context sidebar for the focused log file: four stacked, collapsible
-//! sections (Filter / Highlights / Inspector). Every section reflects the
+//! sections (Filter / Highlights / Columns / Inspector). Every section reflects the
 //! state of the focused file only; the Inspector takes the remaining height.
 
 use crate::app::AppView;
@@ -28,6 +28,7 @@ const INSPECTOR_MIN_HEIGHT: f32 = 240.0;
 pub struct ContextSections {
     pub filter: gpui::AnyElement,
     pub highlights: gpui::AnyElement,
+    pub columns: gpui::AnyElement,
     pub inspector: gpui::AnyElement,
     pub active_filters: usize,
     pub rule_count: usize,
@@ -50,6 +51,7 @@ impl ContextSidebar {
         let ContextSections {
             filter,
             highlights,
+            columns,
             inspector,
             active_filters,
             rule_count,
@@ -57,7 +59,7 @@ impl ContextSidebar {
         } = sections;
 
         // Split the height left over by the Inspector between the open tool sections.
-        let tools = [ContextSection::Filter, ContextSection::Highlights];
+        let tools = [ContextSection::Filter, ContextSection::Highlights, ContextSection::Columns];
         let open_tools = tools.iter().filter(|t| !state.is_collapsed(**t)).count();
         let inspector_room = if state.is_collapsed(ContextSection::Inspector) {
             0.0
@@ -66,7 +68,7 @@ impl ContextSidebar {
         };
         let budget = viewport_height
             - WINDOW_CHROME_HEIGHT
-            - SECTION_HEADER_HEIGHT * 3.0
+            - SECTION_HEADER_HEIGHT * 4.0
             - inspector_room;
         let section_cap = if open_tools == 0 {
             SECTION_MAX_HEIGHT
@@ -181,6 +183,7 @@ impl ContextSidebar {
             .when(parsed, |this| {
                 this.child(section(ContextSection::Filter, Some(active_filters), filter, window, cx))
                     .child(section(ContextSection::Highlights, Some(rule_count), highlights, window, cx))
+                    .child(section(ContextSection::Columns, None, columns, window, cx))
             })
             .child(section(ContextSection::Inspector, None, inspector, window, cx))
             .into_any_element()

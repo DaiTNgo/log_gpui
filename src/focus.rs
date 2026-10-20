@@ -62,6 +62,18 @@ pub enum FocusPaneNotice {
     NoMatches { expression: String, filtering: bool },
     /// Filter alone leaves no line (only in the Parsed View).
     FilterExcludesAll,
+    /// Filter leaves no line because a condition is on a column that is no
+    /// longer read (its Extraction Rule is off or deleted).
+    UnreadColumn {
+        /// The column's key.
+        key: String,
+        /// Its Column Label or name.
+        name: String,
+        /// Why it is not read ("rule turned off").
+        reason: String,
+        /// Whether "Turn column back on" can read it again.
+        can_turn_on: bool,
+    },
 }
 
 impl FocusPaneNotice {
@@ -85,6 +97,9 @@ impl FocusPaneNotice {
             Self::Hint => "Type a Search Expression, or pick a Filter, to list lines here".into(),
             Self::NoMatches { expression, .. } => format!("No lines match \u{201c}{expression}\u{201d}"),
             Self::FilterExcludesAll => "The Filter excludes every line".into(),
+            Self::UnreadColumn { name, reason, .. } => {
+                format!("No lines: Filter uses {name}, which is no longer read ({reason})")
+            }
         }
     }
 
@@ -97,6 +112,7 @@ impl FocusPaneNotice {
                 Some("Check the Search Expression for a typo, or loosen the Filter.")
             }
             Self::FilterExcludesAll => Some("Loosen the Filter, or clear it to list every line."),
+            Self::UnreadColumn { .. } => None,
         }
     }
 

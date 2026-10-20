@@ -3,7 +3,7 @@
 //! pointer position maps back to a byte of the line.
 
 use crate::column::{ColumnLayoutState, PinnableColumn};
-use crate::model::LogEntry;
+use crate::model::{FieldKey, LogEntry};
 use crate::text_selection::floor_char_boundary;
 use gpui::{HighlightStyle, Hsla};
 use std::ops::Range;
@@ -17,6 +17,8 @@ pub enum TextCell {
     Message,
     /// The whole stored line, as the Focus Pane shows it.
     Raw,
+    /// A Field Column.
+    Field(FieldKey),
 }
 
 impl TextCell {
@@ -28,6 +30,7 @@ impl TextCell {
             TextCell::Module => "module",
             TextCell::Message => "message",
             TextCell::Raw => "raw",
+            TextCell::Field(k) => k.as_str(),
         }
     }
 
@@ -49,6 +52,7 @@ impl TextCell {
             PinnableColumn::Timestamp => Some(TextCell::Timestamp),
             PinnableColumn::Level => Some(TextCell::Level),
             PinnableColumn::Module => Some(TextCell::Module),
+            PinnableColumn::Field(k) => Some(TextCell::Field(k)),
             PinnableColumn::Source | PinnableColumn::Stream => None,
         }
     }
@@ -61,7 +65,7 @@ pub fn cell_text(entry: &LogEntry, cell: TextCell) -> Option<(&str, Option<Range
     if cell == TextCell::Raw {
         return Some((entry.raw_line.as_str(), Some(0..entry.raw_line.len())));
     }
-    if let Some(range) = entry.spans.get(cell.field()) {
+    if let Some(range) = entry.span(cell.field()) {
         if let Some(text) = entry.raw_line.get(range.clone()) {
             return Some((text, Some(range.clone())));
         }
@@ -76,6 +80,7 @@ pub fn cell_text(entry: &LogEntry, cell: TextCell) -> Option<(&str, Option<Range
         TextCell::Module => entry.tag.as_str(),
         TextCell::Message => entry.payload.as_str(),
         TextCell::Raw => entry.raw_line.as_str(),
+        TextCell::Field(_) => "",
     };
     (!text.is_empty()).then_some((text, None))
 }
@@ -205,4 +210,47 @@ pub fn byte_for_hit(entry: &LogEntry, hit: Hit, index_for_x: impl Fn(&str, f32) 
 
 fn message_start(entry: &LogEntry) -> usize {
     entry.spans.get("message").map_or(0, |r| r.start)
+}
+
+/// Where the Matches of a line are when none of them shows: the hidden
+/// columns that hold them (none when they are in text no column shows, such
+/// as the key names of a JSON line). `None` when a cell that is laid out
+/// shows at least one Match, or there is no Match.
+pub fn hidden_matches(
+    entry: &LogEntry,
+    ranges: &[(usize, usize)],
+    layout: &ColumnLayoutState,
+) -> Option<Vec<PinnableColumn>> {
+    if ranges.is_empty() {
+        return None;
+    }
+    let overlaps = |span: &Range<usize>| ranges.iter().any(|&(s, e)| s < span.end && span.start < e);
+    let shown = layout.columns();
+    let visible = shown
+        .iter()
+        .filter_map(|c| TextCell::from_column(*c))
+        .chain([TextCell::Message])
+        .filter_map(|cell| cell_text(entry, cell).and_then(|(_, span)| span))
+        .any(|span| overlaps(&span));
+    if visible {
+        return None;
+    }
+    let fixed = [PinnableColumn::Timestamp, PinnableColumn::Level, PinnableColumn::Module].into_iter();
+    let fields = entry.fields().map(|(k, _)| PinnableColumn::Field(k)).collect::<Vec<_>>();
+    let hidden = fixed
+        .chain(fields)
+        .filter(|c| !shown.contains(c))
+        .filter(|c| entry.span(c.key()).is_some_and(overlaps))
+        .collect();
+    Some(hidden)
+}
+
+/// The tooltip of a line whose Matches are all out of sight.
+pub fn hidden_matches_tooltip(hidden: &[PinnableColumn], layout: &ColumnLayoutState) -> String {
+    if hidden.is_empty() {
+        return "Matches only text no column shows".to_string();
+    }
+    let names: Vec<&str> = hidden.iter().map(|c| layout.header_text(*c)).collect();
+    let noun = if names.len() == 1 { "column" } else { "columns" };
+    format!("Matches in hidden {noun}: {}", names.join(", "))
 }

@@ -276,6 +276,7 @@ impl AppView {
         self.all_entries = built.entries;
         self.filter_index = built.index;
         self.column_layout.max_chars = built.max_chars;
+        self.read_rule_fields();
         self.column_layout.set_source_visible(source_visible);
         self.sync_stream_column();
     }
@@ -304,6 +305,7 @@ impl AppView {
     pub(crate) fn build_view_for(&mut self, target: &TabTarget) -> Option<OpenView> {
         let space = self.active_project()?.log_space(target.space_id()?)?.clone();
         self.ensure_space_loaded(&space);
+        self.apply_log_formats(&space);
         match target {
             TabTarget::LogSpace { .. } => {
                 let built = build_space_view(&space, &self.parsed_files);
@@ -411,6 +413,7 @@ impl AppView {
         self.filter_ui.expanded = None;
         self.filter_ui.inputs_dirty = true;
         self.column_layout.max_chars = built.max_chars;
+        self.read_rule_fields();
         self.column_layout.set_source_visible(source_visible);
         self.sync_stream_column();
         if fresh {

@@ -101,6 +101,7 @@ impl AppView {
             selection: self.pane_selection,
             bounds_sink: self.pane_bounds.clone(),
             longest,
+            columns: self.pane_columns(),
         }
     }
 

@@ -88,6 +88,8 @@ impl AppView {
             }
         }
         self.longest_row = longest(self.all_entries.iter().map(|e| e.payload.len()));
+        // A Field Column shows once a row has a value in it.
+        self.sync_view_columns();
         // Rows may be new: a selection of them no longer means the same.
         self.text_selection = None;
         self.selecting = false;

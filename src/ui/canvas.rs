@@ -14,6 +14,7 @@ use gpui::{
     UniformListScrollHandle, Window, div, prelude::FluentBuilder as _, px, uniform_list,
 };
 use gpui_component::Icon;
+use gpui_component::Sizable as _;
 use gpui_component::menu::ContextMenuExt as _;
 use gpui_component::scroll::ScrollableElement as _;
 use std::sync::Arc;
@@ -100,6 +101,22 @@ pub struct CanvasViewState<'a> {
     pub search_state: &'a SearchState,
     pub colors: CanvasColors,
     pub scroll_handle: &'a UniformListScrollHandle,
+    /// Coverage of each Field Column laid out: Parent Lines with a value,
+    /// and all Parent Lines.
+    pub coverage: std::collections::HashMap<crate::model::FieldKey, (usize, usize)>,
+    /// The Column Label being edited on its Column Header.
+    pub label_edit: Option<HeaderEdit>,
+    /// Whether the Field Columns are being read again (rules changed): their
+    /// headers show a thin bar meanwhile.
+    pub reading_fields: bool,
+}
+
+/// A Column Label being edited on a Column Header.
+#[derive(Clone)]
+pub struct HeaderEdit {
+    pub key: String,
+    pub input: gpui::Entity<gpui_component::input::InputState>,
+    pub error: Option<String>,
 }
 
 pub struct LogCanvas;
@@ -168,7 +185,7 @@ impl LogCanvas {
                 scrolling_header_cols.child(render_pinnable_column_header(*col, w, false, &state));
         }
 
-        scrolling_header_cols = scrolling_header_cols.child(div().flex_1().px_2().child("MESSAGE"));
+        scrolling_header_cols = scrolling_header_cols.child(render_message_header(&state));
 
         let header = div()
             .h(px(26.0))
@@ -504,14 +521,11 @@ fn render_pinnable_column_header(
         state_variant => {
             if let Some(icon) = state_variant.icon() {
                 let btn = div()
-                    .id(ElementId::from((
-                        if is_sticky {
-                            "sticky_pin_toggle"
-                        } else {
-                            "pin_toggle"
-                        },
-                        col as usize,
-                    )))
+                    .id(ElementId::from(col.element_name(if is_sticky {
+                        "sticky_pin_toggle"
+                    } else {
+                        "pin_toggle"
+                    })))
                     .cursor_pointer()
                     .flex()
                     .items_center()
@@ -539,14 +553,11 @@ fn render_pinnable_column_header(
     };
 
     let mut header_div = div()
-        .id(ElementId::from((
-            if is_sticky {
-                "sticky_header_col"
-            } else {
-                "header_col"
-            },
-            col as usize,
-        )))
+        .id(ElementId::from(col.element_name(if is_sticky {
+            "sticky_header_col"
+        } else {
+            "header_col"
+        })))
         .flex_shrink_0()
         .w(width)
         .h_full()
@@ -573,7 +584,7 @@ fn render_pinnable_column_header(
     let view_drag_end_out = state.view.clone();
 
     let resize_handle = div()
-        .id(ElementId::from(("col_resize_handle", col as usize)))
+        .id(ElementId::from(col.element_name("col_resize_handle")))
         .occlude()
         .cursor_col_resize()
         .absolute()
@@ -617,8 +628,35 @@ fn render_pinnable_column_header(
             cx.stop_propagation();
         });
 
+    let key = col.key();
+    let coverage = match col {
+        PinnableColumn::Field(k) => state.coverage.get(&k).copied(),
+        _ => None,
+    };
+    let title = header_title(key, state.column_layout.header_text(col).to_string(), state);
+    let coverage_el = coverage.and_then(|(covered, total)| {
+        let label = crate::columns::coverage_label(covered, total)?;
+        let tip = crate::columns::coverage_tooltip(covered, total);
+        Some(
+            div()
+                .id(col.element_name("coverage"))
+                .flex_shrink_0()
+                .pr(px(18.0))
+                .font_weight(gpui::FontWeight::NORMAL)
+                .text_color(state.colors.muted)
+                .child(label)
+                .tooltip(move |window, cx| gpui_component::tooltip::Tooltip::new(tip.clone()).build(window, cx)),
+        )
+    });
+    let menu_view = state.view.clone();
+    let reading = (state.reading_fields && col.is_field()).then(|| {
+        div().absolute().left_0().right_0().bottom_0().h(px(2.0)).bg(state.colors.info.opacity(0.7))
+    });
     header_div
-        .child(div().flex_1().min_w_0().truncate().child(col.label()))
+        .child(title)
+        .children(coverage_el)
+        .children(reading)
+        .context_menu(move |menu, _window, _cx| header_menu(menu, &menu_view, key, true))
         .child(
             // Overlaid on the right edge so the label keeps the full width
             // while the toggle is hidden.
@@ -632,6 +670,98 @@ fn render_pinnable_column_header(
                 .child(toggle_element),
         )
         .child(resize_handle)
+}
+
+/// The text of a Column Header, or the field editing its Column Label.
+/// Double-clicking the text starts editing it.
+fn header_title(key: &'static str, text: String, state: &CanvasViewState) -> gpui::AnyElement {
+    if let Some(edit) = state.label_edit.as_ref().filter(|e| e.key == key) {
+        let cancel_view = state.view.clone();
+        return div()
+            .flex_1()
+            .min_w_0()
+            .flex()
+            .items_center()
+            .gap_1()
+            .on_key_down(move |event: &gpui::KeyDownEvent, _window, cx| {
+                if event.keystroke.key == "escape" {
+                    cx.stop_propagation();
+                    cancel_view.update(cx, |this, cx| this.cancel_column_label(cx));
+                }
+            })
+            .child(
+                div().flex_1().min_w_0().child(
+                    gpui_component::input::Input::new(&edit.input)
+                        .xsmall()
+                        .when(edit.error.is_some(), |i| i.border_color(state.colors.danger)),
+                ),
+            )
+            .when_some(edit.error.clone(), |d, error| {
+                d.child(
+                    div()
+                        .id(gpui::SharedString::from(format!("label-error-{key}")))
+                        .flex_shrink_0()
+                        .text_color(state.colors.danger)
+                        .child(Icon::new(gpui_kit::assets::IconName::TriangleAlert).size_3())
+                        .tooltip(move |window, cx| gpui_component::tooltip::Tooltip::new(error.clone()).build(window, cx)),
+                )
+            })
+            .into_any_element();
+    }
+    let rename_view = state.view.clone();
+    div()
+        .flex_1()
+        .min_w_0()
+        .truncate()
+        .child(text)
+        .on_mouse_down(MouseButton::Left, move |event, window, cx| {
+            if event.click_count >= 2 {
+                cx.stop_propagation();
+                rename_view.update(cx, |this, cx| this.begin_column_rename(key, false, window, cx));
+            }
+        })
+        .into_any_element()
+}
+
+/// The MESSAGE Column Header: never hidden or pinned, but it can be renamed.
+fn render_message_header(state: &CanvasViewState) -> gpui::AnyElement {
+    let text = state.column_layout.labels.get("message").cloned().unwrap_or_else(|| "MESSAGE".to_string());
+    let menu_view = state.view.clone();
+    div()
+        .id("header_col-message")
+        .flex_1()
+        .px_2()
+        .flex()
+        .child(header_title("message", text, state))
+        .context_menu(move |menu, _window, _cx| header_menu(menu, &menu_view, "message", false))
+        .into_any_element()
+}
+
+/// Right-click menu of a Column Header.
+fn header_menu(
+    menu: gpui_component::menu::PopupMenu,
+    view: &gpui::Entity<crate::app::AppView>,
+    key: &'static str,
+    can_hide: bool,
+) -> gpui_component::menu::PopupMenu {
+    use gpui_component::menu::PopupMenuItem;
+    let (hide_view, rename_view, manage_view) = (view.clone(), view.clone(), view.clone());
+    let mut menu = menu;
+    if can_hide {
+        menu = menu.item(PopupMenuItem::new("Hide column").on_click(move |_, _, app| {
+            hide_view.update(app, |this, cx| this.set_column_shown(key, false, cx));
+        }));
+    }
+    menu.item(PopupMenuItem::new("Rename").on_click(move |_, window, app| {
+        let view = rename_view.clone();
+        // Deferred so the closing menu cannot steal the input focus.
+        window.defer(app, move |window, app| {
+            view.update(app, |this, cx| this.begin_column_rename(key, false, window, cx));
+        });
+    }))
+    .item(PopupMenuItem::new("Manage columns…").on_click(move |_, _, app| {
+        manage_view.update(app, |this, cx| this.manage_columns(Some(key), cx));
+    }))
 }
 
 /// Everything one row needs to draw itself, cloned out of the view state so
@@ -701,10 +831,14 @@ impl RowEnv {
         } else {
             None
         };
+        // Search matches the whole line; each shown cell paints the Matches
+        // it holds, and a line whose Matches are all out of sight says so.
         let search_ranges = match (&self.search_matcher, is_match) {
-            (Some(m), true) => m.find_ranges(&entry.payload),
+            (Some(m), true) => m.find_ranges(&entry.raw_line),
             _ => Vec::new(),
         };
+        let hidden_match = crate::ui::cells::hidden_matches(entry, &search_ranges, &self.layout)
+            .map(|hidden| crate::ui::cells::hidden_matches_tooltip(&hidden, &self.layout));
         let selected_in_line = self
             .selection
             .and_then(|s| s.range_in_row(vis_pos, entry.raw_line.len()));
@@ -715,8 +849,9 @@ impl RowEnv {
             colors: &colors,
             entry,
             paint,
-            search_ranges: &search_ranges,
+            search_ranges: &[],
             find_ranges: &[],
+            line_search: &search_ranges,
             selected: selected_in_line.as_ref(),
             tone: colors.tone(),
             rule_cell: paint.map(|p| self.rule_color(&p.color, Weight::Cell)),
@@ -804,6 +939,10 @@ impl RowEnv {
                                             gpui_component::tooltip::Tooltip::new("stderr").build(window, cx)
                                         })
                                     })
+                                    .relative()
+                                    .when_some(hidden_match.clone(), |d, tip| {
+                                        d.child(hidden_match_mark(ElementId::from(("hidden-match", vis_pos)), tip, &colors))
+                                    })
                                     .child(crate::live::line_number_text(entry.index))
                             })
                             // Gutter: Level Marker
@@ -862,6 +1001,23 @@ impl RowEnv {
                 }),
         )
     }
+}
+
+/// The mark in the Gutter of a Match line whose Matches are all in hidden
+/// columns (or text no column shows), with a tooltip naming them.
+pub(crate) fn hidden_match_mark(id: ElementId, tip: String, colors: &CanvasColors) -> gpui::AnyElement {
+    div()
+        .id(id)
+        .absolute()
+        .left(px(4.0))
+        .top_0()
+        .bottom_0()
+        .flex()
+        .items_center()
+        .text_color(colors.search)
+        .child(Icon::new(gpui_kit::assets::IconName::EyeOff).size_3())
+        .tooltip(move |window, cx| gpui_component::tooltip::Tooltip::new(tip.clone()).build(window, cx))
+        .into_any_element()
 }
 
 /// What a Break of a Remote File lets the user do about the lines above it.
@@ -1018,6 +1174,9 @@ pub(crate) struct CellCtx<'a> {
     /// Matches of Focus Find (painted in the Focus Pane only), in bytes of
     /// the stored line.
     pub find_ranges: &'a [(usize, usize)],
+    /// Matches of Search in bytes of the stored line (the Focus Pane, which
+    /// finds them in the whole line), painted on whichever cell holds them.
+    pub line_search: &'a [(usize, usize)],
     /// The selected part of the line, in bytes of the stored line.
     pub selected: Option<&'a std::ops::Range<usize>>,
     pub tone: Tone,
@@ -1051,16 +1210,20 @@ pub(crate) fn render_text_cell(ctx: &CellCtx, cell: TextCell) -> gpui::AnyElemen
             });
         }
     }
-    if cell == TextCell::Raw {
-        for &(s, e) in ctx.find_ranges {
-            layers.push(Layer {
-                range: s..e,
-                background: Some(ctx.colors.find.opacity(0.6)),
-                color: None,
-            });
-        }
-    }
     if let Some(span) = &span {
+        // Ranges of the stored line, cut to the part this cell shows.
+        let line_layers = [(ctx.line_search, ctx.colors.search.opacity(0.55)), (ctx.find_ranges, ctx.colors.find.opacity(0.6))];
+        for (ranges, paint) in line_layers {
+            for &(s, e) in ranges {
+                if let Some(part) = clip_to_span(&(s..e), span) {
+                    layers.push(Layer {
+                        range: part.start - span.start..part.end - span.start,
+                        background: Some(paint),
+                        color: None,
+                    });
+                }
+            }
+        }
         for marker in &ctx.entry.markers {
             if let Some(part) = clip_to_span(&marker.range, span) {
                 let rgb = marker.color.rgb(ctx.tone);
@@ -1129,6 +1292,17 @@ fn render_module_cell(ctx: &CellCtx, width: Pixels) -> impl IntoElement {
         .child(render_text_cell(ctx, TextCell::Module))
 }
 
+/// A Field Column cell: the field's text in the line, empty when the line
+/// has no value, a dim `_` on a Continuation Line.
+fn render_field_cell(ctx: &CellCtx, key: crate::model::FieldKey, width: Pixels) -> impl IntoElement {
+    div()
+        .flex_shrink_0()
+        .w(width)
+        .px_2()
+        .truncate()
+        .child(render_text_cell(ctx, TextCell::Field(key)))
+}
+
 fn render_source_cell(ctx: &CellCtx, width: Pixels) -> impl IntoElement {
     let source = ctx.entry.source.as_deref().unwrap_or("");
     let mut cell = div()
@@ -1164,7 +1338,7 @@ fn apply_partition_divider_style<T: gpui::Styled>(element: T, is_active: bool) -
     }
 }
 
-fn render_column_cell(
+pub(crate) fn render_column_cell(
     col: PinnableColumn,
     layout: &ColumnLayoutState,
     ctx: &CellCtx,
@@ -1176,6 +1350,7 @@ fn render_column_cell(
         PinnableColumn::Module => render_module_cell(ctx, width).into_any_element(),
         PinnableColumn::Source => render_source_cell(ctx, width).into_any_element(),
         PinnableColumn::Stream => render_stream_cell(ctx, width).into_any_element(),
+        PinnableColumn::Field(key) => render_field_cell(ctx, key, width).into_any_element(),
     }
 }
 

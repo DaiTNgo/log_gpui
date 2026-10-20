@@ -286,10 +286,10 @@ impl AppView {
         let Some(action) = self.confirm.clone() else {
             return div().into_any_element();
         };
-        let (title, detail) = match &action {
+        let (title, detail): (String, String) = match &action {
             ConfirmAction::ClearFiles { markers, .. } => (
                 format!("Clear will remove {markers} Marker{}", if *markers == 1 { "" } else { "s" }),
-                "Markers do not come back when the lines are loaded again.",
+                "Markers do not come back when the lines are loaded again.".into(),
             ),
             ConfirmAction::DeleteLogSpace { space_id } => {
                 let space = self.active_project().and_then(|p| p.log_space(space_id));
@@ -299,9 +299,9 @@ impl AppView {
                 (
                     format!("Delete “{name}”?"),
                     if scratch {
-                        "Its scratch files will be deleted."
+                        "Its scratch files will be deleted.".into()
                     } else {
-                        "Your log files on disk are not touched."
+                        "Your log files on disk are not touched.".into()
                     },
                 )
             }
@@ -309,7 +309,7 @@ impl AppView {
                 let name = self.remote.servers.get(server_id).map(|s| s.name.clone()).unwrap_or_default();
                 (
                     format!("Delete Server \u{201c}{name}\u{201d}?"),
-                    "Its settings and remembered password are removed. Files on it are not touched.",
+                    "Its settings and remembered password are removed. Files on it are not touched.".into(),
                 )
             }
             ConfirmAction::RemoveProject { project_id } => {
@@ -322,7 +322,7 @@ impl AppView {
                     .unwrap_or_default();
                 (
                     format!("Remove \u{201c}{name}\u{201d} from the Sidebar?"),
-                    "Its Log Spaces are removed with it. Log files on disk are not touched.",
+                    "Its Log Spaces are removed with it. Log files on disk are not touched.".into(),
                 )
             }
             ConfirmAction::DeleteScratchFile { space_id, file_id } => {
@@ -331,7 +331,20 @@ impl AppView {
                     .and_then(|p| p.file(space_id, file_id))
                     .map(|f| f.display_name.clone())
                     .unwrap_or_default();
-                (format!("Delete “{name}”?"), "The scratch file will be deleted.")
+                (format!("Delete “{name}”?"), "The scratch file will be deleted.".into())
+            }
+            ConfirmAction::DeleteLogFormat { format_id } => {
+                let name = self.formats.store.get(format_id).map(|f| f.name.clone()).unwrap_or_default();
+                let several = self.workspace_state.projects.len() > 1;
+                let places: Vec<String> = self
+                    .log_format_uses(format_id)
+                    .into_iter()
+                    .map(|u| if several { format!("{} ({})", u.place, u.project) } else { u.place })
+                    .collect();
+                (
+                    format!("Delete Log Format \u{201c}{name}\u{201d}?"),
+                    format!("Used by {}. They go back to Auto-detect.", places.join(", ")),
+                )
             }
         };
         let confirm_label = match action {

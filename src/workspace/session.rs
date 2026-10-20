@@ -55,6 +55,12 @@ pub struct ProjectSnapshot {
     pub highlight_rules: Vec<crate::highlight::HighlightRule>,
     #[serde(default)]
     pub recent_colors: crate::palette::RecentColors,
+    #[serde(default)]
+    pub columns: crate::columns::ColumnSettings,
+    #[serde(default)]
+    pub extraction_rules: Vec<crate::extract::ExtractionRule>,
+    #[serde(default)]
+    pub format_choices: crate::log_format::FormatChoices,
 }
 
 impl SessionManifest {
@@ -83,6 +89,9 @@ impl SessionManifest {
                 investigation_cases: p.investigation_cases.clone(),
                 highlight_rules: p.highlight_rules.clone(),
                 recent_colors: p.recent_colors.clone(),
+                columns: p.columns.clone(),
+                extraction_rules: p.extraction_rules.clone(),
+                format_choices: p.format_choices.clone(),
             })
             .collect();
 
@@ -118,6 +127,9 @@ impl SessionManifest {
                 investigation_cases: p.investigation_cases,
                 highlight_rules: p.highlight_rules,
                 recent_colors: p.recent_colors,
+                columns: p.columns,
+                extraction_rules: p.extraction_rules,
+                format_choices: p.format_choices,
             });
         }
         ws.active_project_id = self.active_project_id;

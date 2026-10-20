@@ -47,14 +47,17 @@ pub enum SettingsSection {
     General,
     Appearance,
     RawView,
+    /// The Log Format library, shared by every Project.
+    LogFormats,
     Keymap,
 }
 
 impl SettingsSection {
-    const ALL: [SettingsSection; 4] = [
+    const ALL: [SettingsSection; 5] = [
         SettingsSection::General,
         SettingsSection::Appearance,
         SettingsSection::RawView,
+        SettingsSection::LogFormats,
         SettingsSection::Keymap,
     ];
 
@@ -63,6 +66,7 @@ impl SettingsSection {
             SettingsSection::General => "General",
             SettingsSection::Appearance => "Appearance",
             SettingsSection::RawView => "Raw View",
+            SettingsSection::LogFormats => "Log Formats",
             SettingsSection::Keymap => "Keymap",
         }
     }
@@ -91,6 +95,8 @@ struct Values {
     wrap: bool,
     density: Density,
     colors: crate::palette::MatchColors,
+    /// The Log Format library: id, name, template.
+    formats: Vec<(String, String, String)>,
 }
 
 pub fn open_settings_dialog(view: Entity<AppView>, window: &mut Window, cx: &mut App) {
@@ -112,6 +118,7 @@ pub fn open_settings_dialog(view: Entity<AppView>, window: &mut Window, cx: &mut
                     wrap: v.raw.soft_wrap,
                     density: v.density,
                     colors: v.workspace_state.match_colors,
+                    formats: v.log_formats().iter().map(|f| (f.id.clone(), f.name.clone(), f.template.clone())).collect(),
                 },
                 v.settings_section,
                 v.settings_search.read(cx).value().trim().to_lowercase(),
@@ -235,8 +242,75 @@ pub fn open_settings_dialog(view: Entity<AppView>, window: &mut Window, cx: &mut
 }
 
 /// The rows of one section.
+/// Open the Log Format editor on `id` (or a new format), closing Settings
+/// first so the editor is not under it.
+fn edit_format(view: &Entity<AppView>, id: Option<String>, window: &mut Window, app: &mut App) {
+    window.close_all_dialogs(app);
+    let view = view.clone();
+    window.defer(app, move |window, app| {
+        view.update(app, |this, cx| this.open_format_editor(id.as_deref(), None, window, cx));
+    });
+}
+
+fn log_format_rows(view: &Entity<AppView>, v: &Values, cx: &App) -> Vec<Row> {
+    let muted = cx.theme().muted_foreground;
+    let new_view = view.clone();
+    let mut list = v_flex().w(px(440.0)).gap_1();
+    if v.formats.is_empty() {
+        list = list.child(div().text_sm().text_color(muted).child("No Log Formats yet."));
+    }
+    for (id, name, template) in &v.formats {
+        let (edit_view, dup_view, del_view) = (view.clone(), view.clone(), view.clone());
+        let (edit_id, dup_id, del_id) = (id.clone(), id.clone(), id.clone());
+        list = list.child(
+            h_flex()
+                .gap_2()
+                .items_center()
+                .child(
+                    v_flex()
+                        .flex_1()
+                        .min_w(px(0.0))
+                        .child(div().text_sm().child(name.clone()))
+                        .child(div().text_xs().text_color(muted).truncate().child(template.clone())),
+                )
+                .child(Button::new(SharedString::from(format!("fmt-edit-{id}"))).xsmall().label("Edit").on_click(
+                    move |_, window, app| edit_format(&edit_view, Some(edit_id.clone()), window, app),
+                ))
+                .child(Button::new(SharedString::from(format!("fmt-dup-{id}"))).xsmall().label("Duplicate").on_click(
+                    move |_, window, app| {
+                        dup_view.update(app, |this, cx| this.duplicate_log_format(&dup_id, cx));
+                        window.refresh();
+                    },
+                ))
+                .child(Button::new(SharedString::from(format!("fmt-del-{id}"))).xsmall().label("Delete").on_click(
+                    move |_, window, app| {
+                        // Asking first closes Settings, so the question shows.
+                        if !del_view.read(app).log_format_uses(&del_id).is_empty() {
+                            window.close_all_dialogs(app);
+                        }
+                        del_view.update(app, |this, cx| this.request_delete_log_format(&del_id, cx));
+                        window.refresh();
+                    },
+                )),
+        );
+    }
+    vec![
+        Row {
+            title: "Log Formats",
+            description: "Templates that read a whole line into columns. Shared by every Project; choose one for a Log Space in its Columns section.",
+            control: Button::new("fmt-new")
+                .small()
+                .label("New Log Format…")
+                .on_click(move |_, window, app| edit_format(&new_view, None, window, app))
+                .into_any_element(),
+        },
+        Row { title: "Library", description: "", control: list.into_any_element() },
+    ]
+}
+
 fn rows_of(section: SettingsSection, view: &Entity<AppView>, v: &Values, cx: &App) -> Vec<Row> {
     match section {
+        SettingsSection::LogFormats => log_format_rows(view, v, cx),
         SettingsSection::General => {
             let view = view.clone();
             let step_view = view.clone();

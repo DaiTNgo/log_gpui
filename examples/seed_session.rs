@@ -2,7 +2,9 @@
 //! `seed_session <session dir> <file>...` makes an Imported Log Space;
 //! with `SEED_REMOTE_PORT` and `SEED_REMOTE_KEY` set, the files are paths on
 //! a Server at 127.0.0.1 (also written to `servers.json`) and the space is a
-//! Remote Log Space. `SEED_RAW` opens it in the Raw View.
+//! Remote Log Space. `SEED_RAW` opens it in the Raw View. `SEED_COLUMNS`,
+//! `SEED_HIDE` and `SEED_LABELS` set the Project's Columns section;
+//! `SEED_RULES` adds Extraction Rules.
 
 use log_gpui::remote::{AuthMethod, Server, ServerStore};
 use log_gpui::workspace::log_space::LogSpaceKind;
@@ -48,6 +50,49 @@ fn main() {
         space.add_imported_files(&files).unwrap();
         space.id.clone()
     };
+    // `SEED_COLUMNS=user,region` turns Field Columns on, `SEED_HIDE=level`
+    // hides fixed columns and `SEED_LABELS=module=Service` names columns.
+    let list = |name: &str| -> Vec<String> {
+        std::env::var(name).map(|v| v.split(',').map(str::to_string).collect()).unwrap_or_default()
+    };
+    for key in list("SEED_COLUMNS") {
+        project.columns.set_shown(&key, true);
+    }
+    for key in list("SEED_HIDE") {
+        project.columns.set_shown(&key, false);
+    }
+    for pair in list("SEED_LABELS") {
+        if let Some((key, label)) = pair.split_once('=') {
+            project.columns.labels.insert(key.to_string(), label.to_string());
+        }
+    }
+    // `SEED_RULES="user=user=(\w+);;ms=took=(\d+)ms"` adds Extraction Rules.
+    if let Ok(rules) = std::env::var("SEED_RULES") {
+        for (name, pattern) in rules.split(";;").filter_map(|r| r.split_once('=')) {
+            let id = log_gpui::extract::next_rule_id(&project.extraction_rules);
+            project.extraction_rules.push(log_gpui::extract::ExtractionRule {
+                id,
+                name: name.into(),
+                pattern: pattern.into(),
+                scope: Default::default(),
+                description: "custom regex".into(),
+                enabled: true,
+            });
+            project.columns.set_shown(name, true);
+        }
+    }
+    // `SEED_FILTER=level=warn` sets a Filter, which opens the Focus Pane.
+    if let Some((column, value)) = std::env::var("SEED_FILTER").ok().as_deref().and_then(|f| f.split_once('=')) {
+        if let Some(space) = project.log_space_mut(&space_id) {
+            space.filter.toggle_value(column, value);
+        }
+    }
+    // `SEED_SEARCH=error` types a Search Expression into the first Focus Tab.
+    if let Ok(query) = std::env::var("SEED_SEARCH") {
+        if let Some(space) = project.log_space_mut(&space_id) {
+            space.focus.search_mut().query = query;
+        }
+    }
     let mut session = TabSessionState::new();
     if std::env::var("SEED_RAW").is_ok() {
         session.mode = log_gpui::workspace::working_set::ViewMode::Raw;

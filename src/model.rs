@@ -84,7 +84,7 @@ pub struct Spans(std::sync::Arc<[(&'static str, Range<usize>)]>);
 
 /// The one copy of a field name, kept for the rest of the run: names come
 /// from the fields of the logs read, so there are few of them.
-fn intern(name: &str) -> &'static str {
+pub fn intern(name: &str) -> &'static str {
     use std::cell::RefCell;
     use std::collections::HashSet;
     thread_local! {
@@ -101,9 +101,76 @@ fn intern(name: &str) -> &'static str {
     })
 }
 
+/// Span names that are not fields of their own: the fixed cells, and the
+/// JSON keys they were read from under another name.
+const NOT_FIELDS: [&str; 6] = ["timestamp", "level", "module", "message", "time", "requestId"];
+
+/// Whether `name` is a field a Field Column can show, not a fixed cell.
+pub fn is_field_name(name: &str) -> bool {
+    !NOT_FIELDS.contains(&name)
+}
+
+/// The name of a field read from lines: a JSON key, a field of a Log Format
+/// or an Extraction Rule, a Detected Field. Kept once for the whole run, so
+/// it is `Copy` and cheap to compare; it orders by its text.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct FieldKey(&'static str);
+
+impl FieldKey {
+    pub fn new(name: &str) -> Self {
+        Self(intern(name))
+    }
+
+    pub fn as_str(self) -> &'static str {
+        self.0
+    }
+}
+
+impl std::fmt::Debug for FieldKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self.0)
+    }
+}
+
+impl std::fmt::Display for FieldKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.0)
+    }
+}
+
+impl Serialize for FieldKey {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.0)
+    }
+}
+
+impl<'de> Deserialize<'de> for FieldKey {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let name = String::deserialize(deserializer)?;
+        Ok(FieldKey::new(&name))
+    }
+}
+
 impl Spans {
+    /// Spans by name, in the order of their names.
     pub fn from_map(map: &HashMap<String, Range<usize>>) -> Self {
-        Self(map.iter().map(|(name, range)| (intern(name), range.clone())).collect())
+        let mut pairs: Vec<(&'static str, Range<usize>)> =
+            map.iter().map(|(name, range)| (intern(name), range.clone())).collect();
+        pairs.sort_by(|a, b| a.0.cmp(b.0));
+        Self(pairs.into())
+    }
+
+    /// Spans from `(name, range)` pairs, kept in the given order.
+    pub fn from_pairs(pairs: Vec<(&'static str, Range<usize>)>) -> Self {
+        Self(pairs.into())
+    }
+
+    /// The fields among the spans (not the fixed cells), by name.
+    pub fn fields(&self) -> impl Iterator<Item = (FieldKey, &Range<usize>)> {
+        self.0
+            .iter()
+            .filter(|(name, _)| is_field_name(name))
+            .map(|(name, range)| (FieldKey(name), range))
     }
 
     pub fn get(&self, name: &str) -> Option<&Range<usize>> {
@@ -185,6 +252,11 @@ pub struct LogEntry {
     /// Byte range in `raw_line` of each field read from the line.
     #[serde(default)]
     pub spans: Spans,
+    /// Fields Extraction Rules read from the line. A field `spans` already
+    /// has keeps its value there (rule 38). Worked out again when the rules
+    /// change.
+    #[serde(skip)]
+    pub extra: Spans,
     /// Line number of the Parent Line when this is a Continuation Line.
     #[serde(default)]
     pub parent: Option<usize>,
@@ -199,8 +271,6 @@ pub struct LogEntry {
     pub request_id: Option<String>,
     /// Trace ID
     pub trace_id: Option<String>,
-    /// Key-value fields from structured JSON log
-    pub json_fields: Vec<(String, String)>,
     /// Generation of the file the line was read in; line numbers start again
     /// from 1 in each Generation.
     #[serde(default)]
@@ -243,13 +313,13 @@ impl LogEntry {
             level,
             level_text: if level == LogLevel::Unknown { SharedString::default() } else { level.as_str().into() },
             spans: Spans::default(),
+            extra: Spans::default(),
             parent: None,
             payload: payload.into(),
             raw_line: raw_line.into(),
             markers: Vec::new(),
             request_id: None,
             trace_id: None,
-            json_fields: Vec::new(),
             generation: 0,
             break_before: None,
             break_after: None,
@@ -271,9 +341,22 @@ impl LogEntry {
         self.parent.is_some()
     }
 
+    /// Where the field `name` is in the line: read with the line, or else
+    /// by an Extraction Rule.
+    pub fn span(&self, name: &str) -> Option<&Range<usize>> {
+        self.spans.get(name).or_else(|| self.extra.get(name))
+    }
+
     /// The text of the field `name` exactly as stored in the line.
     pub fn span_text(&self, name: &str) -> Option<&str> {
-        self.spans.get(name).and_then(|r| self.raw_line.get(r.clone()))
+        self.span(name).and_then(|r| self.raw_line.get(r.clone()))
+    }
+
+    /// Each field of the line (not the fixed cells) with its text: the ones
+    /// read with the line by name, then those of Extraction Rules.
+    pub fn fields(&self) -> impl Iterator<Item = (FieldKey, &str)> {
+        let rules = self.extra.fields().filter(|(key, _)| self.spans.get(key.as_str()).is_none());
+        self.spans.fields().chain(rules).filter_map(|(key, r)| Some((key, self.raw_line.get(r.clone())?)))
     }
 
     /// Convert a schema-typed `LogEvent` back into the rendering model. Every
@@ -295,22 +378,6 @@ impl LogEntry {
             .unwrap_or_default();
         let request_id = event.get_field("requestId").and_then(|v| v.as_str()).map(|s| s.to_string());
 
-        let mut json_fields: Vec<(String, String)> = Vec::new();
-        for (name, value) in &event.fields {
-            if matches!(name.as_str(), "level" | "module" | "time" | "message" | "requestId") {
-                continue;
-            }
-            let text = match value {
-                crate::parser::event::LogValue::Null => String::new(),
-                other => event
-                    .span_text(name)
-                    .map(str::to_string)
-                    .unwrap_or_else(|| other.to_string_value()),
-            };
-            json_fields.push((name.clone(), text));
-        }
-        json_fields.sort();
-
         let mut entry = LogEntry::new(
             event.index,
             event.timestamp,
@@ -325,7 +392,6 @@ impl LogEntry {
         entry.parent = event.parent;
         entry.has_time = event.has_time;
         entry.request_id = request_id;
-        entry.json_fields = json_fields;
         entry
     }
 }

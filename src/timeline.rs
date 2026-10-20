@@ -166,9 +166,9 @@ pub fn union_field_names(files: &[&[LogEntry]]) -> Vec<String> {
     for entries in files {
         let mut in_file = Vec::new();
         for entry in entries.iter() {
-            for (name, _) in &entry.json_fields {
-                if seen.insert(name.clone()) {
-                    in_file.push(name.clone());
+            for (name, _) in entry.fields() {
+                if seen.insert(name.as_str()) {
+                    in_file.push(name.as_str().to_string());
                 }
             }
         }

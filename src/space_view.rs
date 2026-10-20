@@ -28,6 +28,8 @@ pub struct ParsedFile {
     pub live: Option<LiveBuffer>,
     /// Why the file could not be read; it then counts as empty.
     pub load_error: Option<String>,
+    /// Id of the Log Format the entries were read with (`None`: Auto-detect).
+    pub format_id: Option<String>,
 }
 
 /// The lines of `text` as shown in the Raw View.
@@ -41,12 +43,30 @@ impl ParsedFile {
             .expect("parsing text bytes never fails");
         Self {
             entries: parsed.entries,
-            max_chars: parsed.max_chars,
+            max_chars: parsed.max_chars.clone(),
             lines: Arc::new(split_lines(&String::from_utf8_lossy(bytes))),
             raw_breaks: BTreeMap::new(),
             live: None,
             load_error: None,
+            format_id: None,
         }
+    }
+
+    /// Read the entries again with the Log Format `format` of id `format_id`
+    /// (`None`: Auto-detect); a live file reads its new lines with it too.
+    pub fn reformat(&mut self, format_id: Option<String>, format: Option<Arc<crate::log_format::CompiledFormat>>) {
+        crate::parser::text::reread_entries(&mut self.entries, format.as_deref());
+        self.adopt_format(format_id, format);
+    }
+
+    /// The entries were read again with a format: remember it, and read new
+    /// lines with it.
+    pub fn adopt_format(&mut self, format_id: Option<String>, format: Option<Arc<crate::log_format::CompiledFormat>>) {
+        self.max_chars = FieldMaxChars::scan_entries(&self.entries);
+        if let Some(live) = self.live.as_mut() {
+            live.set_format(format);
+        }
+        self.format_id = format_id;
     }
 
     /// The lines, to change them in place.
@@ -221,7 +241,7 @@ pub fn build_file_view(file: &LogFile, parsed: &ParsedFile) -> BuiltView {
     file.apply_markers(&mut entries);
     let index = FilterIndex::build(&entries);
     BuiltView {
-        max_chars: parsed.max_chars,
+        max_chars: parsed.max_chars.clone(),
         index,
         no_timestamp_files: Vec::new(),
         entries,

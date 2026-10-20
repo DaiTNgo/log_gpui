@@ -1,4 +1,4 @@
-use crate::model::LogEntry;
+use crate::model::{FieldKey, LogEntry};
 use crate::density::Density;
 use gpui::{px, Pixels};
 use gpui_kit::assets::IconName;
@@ -11,14 +11,18 @@ pub const DEFAULT_LEVEL_WIDTH: Pixels = px(68.0);
 pub const DEFAULT_MODULE_WIDTH: Pixels = px(100.0);
 pub const DEFAULT_SOURCE_WIDTH: Pixels = px(120.0);
 pub const DEFAULT_STREAM_WIDTH: Pixels = px(72.0);
+pub const DEFAULT_FIELD_WIDTH: Pixels = px(120.0);
 
 pub const MIN_TIMESTAMP_WIDTH: Pixels = px(48.0);
 pub const MIN_LEVEL_WIDTH: Pixels = px(36.0);
 pub const MIN_MODULE_WIDTH: Pixels = px(48.0);
 pub const MIN_SOURCE_WIDTH: Pixels = px(48.0);
 pub const MIN_STREAM_WIDTH: Pixels = px(48.0);
+pub const MIN_FIELD_WIDTH: Pixels = px(48.0);
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+/// A column of the Parsed View other than the Gutter and MESSAGE. Saved as
+/// its name (`Level`, `field:user`) so it can key a map in a session file.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum PinnableColumn {
     Timestamp,
     Level,
@@ -29,9 +33,87 @@ pub enum PinnableColumn {
     /// The Stream Column of a Log Space with a Remote Command: `stdout` or
     /// `stderr`. Hidden unless turned on; it is never pinned.
     Stream,
+    /// A Field Column: a field read from the line, shown after the fixed
+    /// columns in the order of the Columns section.
+    Field(FieldKey),
 }
 
 impl PinnableColumn {
+    /// The column's name in a session file.
+    pub fn save_name(self) -> String {
+        match self {
+            PinnableColumn::Timestamp => "Timestamp".into(),
+            PinnableColumn::Level => "Level".into(),
+            PinnableColumn::Module => "Module".into(),
+            PinnableColumn::Source => "Source".into(),
+            PinnableColumn::Stream => "Stream".into(),
+            PinnableColumn::Field(k) => format!("field:{k}"),
+        }
+    }
+
+    fn from_save_name(name: &str) -> Option<Self> {
+        Some(match name {
+            "Timestamp" => PinnableColumn::Timestamp,
+            "Level" => PinnableColumn::Level,
+            "Module" => PinnableColumn::Module,
+            "Source" => PinnableColumn::Source,
+            "Stream" => PinnableColumn::Stream,
+            other => PinnableColumn::Field(FieldKey::new(other.strip_prefix("field:")?)),
+        })
+    }
+
+    /// The column key Filter and Highlight Rules use for this column.
+    pub fn key(self) -> &'static str {
+        match self {
+            PinnableColumn::Timestamp => "timestamp",
+            PinnableColumn::Level => "level",
+            PinnableColumn::Module => "module",
+            PinnableColumn::Source => "source",
+            PinnableColumn::Stream => "stream",
+            PinnableColumn::Field(k) => k.as_str(),
+        }
+    }
+
+    /// The column of a Filter or Highlight Rule column key, when it is one
+    /// the Parsed View can show.
+    pub fn from_key(key: &str) -> Option<Self> {
+        Some(match key {
+            "timestamp" => PinnableColumn::Timestamp,
+            "level" => PinnableColumn::Level,
+            "module" => PinnableColumn::Module,
+            "source" => PinnableColumn::Source,
+            "stream" => PinnableColumn::Stream,
+            "message" | "request_id" | "trace_id" => return None,
+            field => PinnableColumn::Field(FieldKey::new(field)),
+        })
+    }
+
+    pub fn is_field(self) -> bool {
+        matches!(self, PinnableColumn::Field(_))
+    }
+
+    /// A short id to tell the elements of one column from another's.
+    pub fn element_name(self, prefix: &str) -> gpui::SharedString {
+        format!("{prefix}-{}", self.save_name()).into()
+    }
+}
+
+impl Serialize for PinnableColumn {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&self.save_name())
+    }
+}
+
+impl<'de> Deserialize<'de> for PinnableColumn {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let name = String::deserialize(deserializer)?;
+        PinnableColumn::from_save_name(&name)
+            .ok_or_else(|| serde::de::Error::custom(format!("unknown column {name}")))
+    }
+}
+
+impl PinnableColumn {
+    /// The fixed columns, in their order before the Field Columns.
     pub const ALL: [PinnableColumn; 5] = [
         PinnableColumn::Timestamp,
         PinnableColumn::Level,
@@ -59,7 +141,13 @@ impl PinnableColumn {
             PinnableColumn::Module => "MODULE",
             PinnableColumn::Source => "SOURCE",
             PinnableColumn::Stream => "STREAM",
+            PinnableColumn::Field(k) => k.as_str(),
         }
+    }
+
+    /// Position among `ALL` of a fixed column.
+    pub fn fixed_index(self) -> Option<usize> {
+        Self::ALL.iter().position(|c| *c == self)
     }
 
     #[inline]
@@ -70,13 +158,14 @@ impl PinnableColumn {
     /// Character length of the Column Header label, for estimating its width
     /// before the UI font is measured.
     #[inline]
-    pub const fn title_chars(&self) -> usize {
+    pub fn title_chars(&self) -> usize {
         match self {
             PinnableColumn::Timestamp => 9, // "TIMESTAMP"
             PinnableColumn::Level => 5,     // "LEVEL"
             PinnableColumn::Module => 6,    // "MODULE"
             PinnableColumn::Source => 6,    // "SOURCE"
             PinnableColumn::Stream => 6,    // "STREAM", and "stdout" / "stderr"
+            PinnableColumn::Field(k) => k.as_str().chars().count(),
         }
     }
 }
@@ -112,7 +201,7 @@ impl PinToggleState {
 }
 
 /// Tracks the maximum character lengths per structured field observed across log entries.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct FieldMaxChars {
     pub timestamp: usize,
     pub level: usize,
@@ -121,16 +210,45 @@ pub struct FieldMaxChars {
     pub source: usize,
     #[serde(default)]
     pub stream: usize,
+    /// Longest value of each field read from the lines.
+    #[serde(default)]
+    pub fields: HashMap<FieldKey, usize>,
 }
 
 impl FieldMaxChars {
-    pub const fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             timestamp: 0,
             level: 0,
             module: 0,
             source: 0,
             stream: 0,
+            fields: HashMap::new(),
+        }
+    }
+
+    /// Longest value seen in `col`.
+    pub fn of(&self, col: PinnableColumn) -> usize {
+        match col {
+            PinnableColumn::Timestamp => self.timestamp,
+            PinnableColumn::Level => self.level,
+            PinnableColumn::Module => self.module,
+            PinnableColumn::Source => self.source,
+            PinnableColumn::Stream => self.stream,
+            PinnableColumn::Field(k) => self.fields.get(&k).copied().unwrap_or(0),
+        }
+    }
+
+    /// Take the longer of each length in `other`.
+    pub fn merge(&mut self, other: &FieldMaxChars) {
+        self.timestamp = self.timestamp.max(other.timestamp);
+        self.level = self.level.max(other.level);
+        self.module = self.module.max(other.module);
+        self.source = self.source.max(other.source);
+        self.stream = self.stream.max(other.stream);
+        for (k, n) in &other.fields {
+            let m = self.fields.entry(*k).or_default();
+            *m = (*m).max(*n);
         }
     }
 
@@ -145,6 +263,17 @@ impl FieldMaxChars {
         }
         if let Some(stream) = entry.stream {
             self.stream = self.stream.max(stream.as_str().len());
+        }
+        if entry.parent.is_none() {
+            for (key, text) in entry.fields() {
+                let n = text.chars().count();
+                match self.fields.get_mut(&key) {
+                    Some(m) => *m = (*m).max(n),
+                    None => {
+                        self.fields.insert(key, n);
+                    }
+                }
+            }
         }
     }
 
@@ -178,6 +307,7 @@ pub fn compute_column_width(
         PinnableColumn::Module => 16.0,
         PinnableColumn::Source => 16.0,
         PinnableColumn::Stream => 16.0,
+        PinnableColumn::Field(_) => 16.0,
     };
     let content_width = (max_chars as f32) * char_width + padding;
     px(content_width.max(header_width(col))).max(min_width)
@@ -189,7 +319,19 @@ pub fn compute_column_width(
 #[inline]
 pub fn header_width(col: PinnableColumn) -> f32 {
     let side_padding = if col.is_compact() { 8.0 } else { 16.0 };
-    crate::ui::mono::header_label_width(col) + side_padding + 2.0
+    crate::ui::mono::header_label_width(col) + side_padding + 2.0 + coverage_room(col)
+}
+
+/// Room a Field Column's header keeps for its Coverage (`99%`) and the Pin
+/// Toggle beside it.
+fn coverage_room(col: PinnableColumn) -> f32 {
+    if col.is_field() { crate::ui::mono::header_text_width("99%") + 22.0 } else { 0.0 }
+}
+
+/// The narrowest a column shows a Column Label in full.
+pub fn label_header_width(col: PinnableColumn, label: &str) -> f32 {
+    let side_padding = if col.is_compact() { 8.0 } else { 16.0 };
+    crate::ui::mono::header_text_width(label) + side_padding + 2.0 + coverage_room(col)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -207,6 +349,18 @@ pub struct ColumnLayoutState {
     /// Whether the Stream Column is shown.
     #[serde(default)]
     pub stream_visible: bool,
+    /// Fixed columns the user hid (TIMESTAMP, LEVEL, MODULE). Set from the
+    /// Project's Columns section.
+    #[serde(default)]
+    pub hidden: BTreeSet<PinnableColumn>,
+    /// The Field Columns laid out, in the order the Columns section gives:
+    /// the ones turned on that have a value in the view. Set from the
+    /// Project and the view's rows.
+    #[serde(default)]
+    pub fields: Vec<FieldKey>,
+    /// Column Labels by column key, from the Project.
+    #[serde(default)]
+    pub labels: HashMap<String, String>,
     pub is_resizing: Option<(PinnableColumn, Pixels)>,
     pub resize_start_x: Option<Pixels>,
     pub hovered_header: Option<PinnableColumn>,
@@ -244,6 +398,9 @@ impl ColumnLayoutState {
             gutter_width: DEFAULT_GUTTER_WIDTH,
             source_visible: false,
             stream_visible: false,
+            hidden: BTreeSet::new(),
+            fields: Vec::new(),
+            labels: HashMap::new(),
             is_resizing: None,
             resize_start_x: None,
             hovered_header: None,
@@ -306,24 +463,61 @@ impl ColumnLayoutState {
         self.ordered_pinned.clear();
     }
 
+    /// Pinned columns keep the view's column order, whatever order they
+    /// were pinned in.
     fn sync_ordered_pinned(&mut self) {
         self.ordered_pinned = self
-            .pinned_columns
-            .iter()
-            .copied()
-            .filter(|c| self.is_laid_out(*c))
+            .columns()
+            .into_iter()
+            .filter(|c| self.pinned_columns.contains(c))
             .collect();
     }
 
-    /// Whether the column takes part in the layout (every column but a
-    /// hidden Source Column or Stream Column).
+    /// Whether the column takes part in the layout: a fixed column the user
+    /// has not hidden, a Source or Stream Column turned on, a Field Column
+    /// of the view.
     #[inline]
     pub fn is_laid_out(&self, col: PinnableColumn) -> bool {
         match col {
             PinnableColumn::Source => self.source_visible,
             PinnableColumn::Stream => self.stream_visible,
-            _ => true,
+            PinnableColumn::Field(k) => self.fields.contains(&k),
+            fixed => !self.hidden.contains(&fixed),
         }
+    }
+
+    /// The columns laid out, in the view's order: TIMESTAMP, LEVEL, MODULE,
+    /// Source, Stream, then the Field Columns.
+    pub fn columns(&self) -> Vec<PinnableColumn> {
+        PinnableColumn::ALL
+            .iter()
+            .copied()
+            .chain(self.fields.iter().map(|k| PinnableColumn::Field(*k)))
+            .filter(|c| self.is_laid_out(*c))
+            .collect()
+    }
+
+    /// Set the fixed columns the user hid and the Field Columns to lay out,
+    /// in order. A new Field Column is fitted to its values.
+    pub fn set_view_columns(
+        &mut self,
+        hidden: BTreeSet<PinnableColumn>,
+        fields: Vec<FieldKey>,
+        density: Density,
+    ) {
+        for key in &fields {
+            if !self.widths.contains_key(&PinnableColumn::Field(*key)) {
+                self.auto_fit(PinnableColumn::Field(*key), density);
+            }
+        }
+        self.hidden = hidden;
+        self.fields = fields;
+        self.sync_ordered_pinned();
+    }
+
+    /// The text of a column's Column Header: its Column Label, or its name.
+    pub fn header_text(&self, col: PinnableColumn) -> &str {
+        self.labels.get(col.key()).map(String::as_str).unwrap_or(col.label())
     }
 
     /// Show or hide the Stream Column.
@@ -353,7 +547,7 @@ impl ColumnLayoutState {
     /// Reset all column widths back to their defaults, discarding manual
     /// adjustments and dynamic sizing (used when restoring a saved view).
     pub fn reset_widths_to_defaults(&mut self) {
-        self.widths.clear();
+        self.widths.retain(|c, _| c.is_field());
         self.widths.insert(PinnableColumn::Timestamp, DEFAULT_TIMESTAMP_WIDTH);
         self.widths.insert(PinnableColumn::Level, DEFAULT_LEVEL_WIDTH);
         self.widths.insert(PinnableColumn::Module, DEFAULT_MODULE_WIDTH);
@@ -363,11 +557,7 @@ impl ColumnLayoutState {
 
     /// Returns unpinned columns in natural schema order.
     pub fn unpinned_columns(&self) -> Vec<PinnableColumn> {
-        PinnableColumn::ALL
-            .iter()
-            .copied()
-            .filter(|col| self.is_laid_out(*col) && !self.is_pinned(*col))
-            .collect()
+        self.columns().into_iter().filter(|col| !self.is_pinned(*col)).collect()
     }
 
     /// Sum of the widths of all currently pinned columns.
@@ -400,13 +590,11 @@ impl ColumnLayoutState {
     #[inline]
     pub fn natural_column_left(&self, col: PinnableColumn) -> Pixels {
         let mut left = self.gutter_width;
-        for earlier in PinnableColumn::ALL {
+        for earlier in self.columns() {
             if earlier == col {
                 break;
             }
-            if self.is_laid_out(earlier) {
-                left += self.width(earlier);
-            }
+            left += self.width(earlier);
         }
         left
     }
@@ -414,12 +602,7 @@ impl ColumnLayoutState {
     /// Natural schema position of the MESSAGE column at scroll_x = 0.
     #[inline]
     pub fn natural_message_left(&self) -> Pixels {
-        PinnableColumn::ALL
-            .iter()
-            .filter(|c| self.is_laid_out(**c))
-            .map(|c| self.width(*c))
-            .sum::<Pixels>()
-            + self.gutter_width
+        self.columns().into_iter().map(|c| self.width(c)).sum::<Pixels>() + self.gutter_width
     }
 
     /// Target anchored position of a column when sticky. Returns None if not pinned.
@@ -509,6 +692,7 @@ impl ColumnLayoutState {
             PinnableColumn::Module => DEFAULT_MODULE_WIDTH,
             PinnableColumn::Source => DEFAULT_SOURCE_WIDTH,
             PinnableColumn::Stream => DEFAULT_STREAM_WIDTH,
+            PinnableColumn::Field(_) => DEFAULT_FIELD_WIDTH,
         })
     }
 
@@ -520,6 +704,7 @@ impl ColumnLayoutState {
             PinnableColumn::Module => MIN_MODULE_WIDTH,
             PinnableColumn::Source => MIN_SOURCE_WIDTH,
             PinnableColumn::Stream => MIN_STREAM_WIDTH,
+            PinnableColumn::Field(_) => MIN_FIELD_WIDTH,
         })
     }
 
@@ -568,22 +753,20 @@ impl ColumnLayoutState {
 
     /// Recalculates dynamic widths from recorded max_chars for a given density.
     pub fn recompute_widths(&mut self, density: Density) {
-        for col in PinnableColumn::ALL {
+        let fields = self.fields.iter().map(|k| PinnableColumn::Field(*k));
+        for col in PinnableColumn::ALL.into_iter().chain(fields.collect::<Vec<_>>()) {
             self.auto_fit(col, density);
         }
     }
 
     /// Auto-fits a specific column back to its optimal dynamic width for the given density.
     pub fn auto_fit(&mut self, col: PinnableColumn, density: Density) {
-        let count = match col {
-            PinnableColumn::Timestamp => self.max_chars.timestamp,
-            PinnableColumn::Level => self.max_chars.level,
-            PinnableColumn::Module => self.max_chars.module,
-            PinnableColumn::Source => self.max_chars.source,
-            PinnableColumn::Stream => self.max_chars.stream,
-        };
+        let count = self.max_chars.of(col);
         let min = self.min_width(col);
-        let calculated = compute_column_width(col, count, density.font_size(), min);
+        let mut calculated = compute_column_width(col, count, density.font_size(), min);
+        if let Some(label) = self.labels.get(col.key()) {
+            calculated = calculated.max(px(label_header_width(col, label)));
+        }
         self.widths.insert(col, calculated);
     }
 

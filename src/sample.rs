@@ -123,13 +123,7 @@ fn generate_samples() -> Vec<(LogEntry, Vec<String>)> {
 
             entry.request_id = Some(req_id.clone());
             entry.trace_id = Some(trace_id);
-            entry.json_fields = vec![
-                ("service".to_string(), tag.to_string()),
-                ("level".to_string(), level.as_str().to_lowercase()),
-                ("requestId".to_string(), req_id),
-                ("latencyMs".to_string(), format!("{}", (round * 7 + i * 3) % 250)),
-                ("thread".to_string(), format!("tokio-worker-{}", i)),
-            ];
+
 
             entries.push((entry, sub_lines));
         }

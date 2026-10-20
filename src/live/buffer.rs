@@ -176,6 +176,11 @@ impl LiveBuffer {
     }
 
     /// Whether the next appended line replaces the last loaded one.
+    /// Read new lines with the Log Format `format` (`None`: Auto-detect).
+    pub fn set_format(&mut self, format: Option<std::sync::Arc<crate::log_format::CompiledFormat>>) {
+        self.parser.set_format(format);
+    }
+
     pub fn replaces_last_line(&self) -> bool {
         self.replace_last
     }
@@ -248,6 +253,7 @@ impl LiveBuffer {
     ) {
         let count = lines.len();
         let mut parser = LineParser::new();
+        parser.set_format(self.parser.format());
         let mut entries: Vec<_> = lines
             .iter()
             .enumerate()

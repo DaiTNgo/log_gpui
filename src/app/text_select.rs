@@ -206,7 +206,9 @@ impl AppView {
                     cell = Some(c);
                     column_value = match c {
                         TextCell::Timestamp | TextCell::Raw => None,
-                        TextCell::Level | TextCell::Module => Some((c.column_key().to_string(), text.to_string())),
+                        TextCell::Level | TextCell::Module | TextCell::Field(_) => {
+                            Some((c.column_key().to_string(), text.to_string()))
+                        }
                         // MESSAGE takes the selected text as a Custom Value.
                         TextCell::Message => self
                             .selected_text()

@@ -50,7 +50,7 @@ fn json_strings_keep_their_escapes() {
     assert_eq!(cell(e, "level"), "error");
     assert_eq!(cell(e, "n"), "42");
     assert_eq!(cell(e, "ok"), "true");
-    let n = e.json_fields.iter().find(|(k, _)| k == "n").unwrap();
+    let n = e.fields().find(|(k, _)| k.as_str() == "n").unwrap();
     assert_eq!(n.1, "42");
 }
 

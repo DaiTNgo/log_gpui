@@ -134,6 +134,9 @@ impl WorkspaceState {
             investigation_cases: Vec::new(),
             highlight_rules: Vec::new(),
             recent_colors: Default::default(),
+            columns: Default::default(),
+            extraction_rules: Vec::new(),
+            format_choices: Default::default(),
         };
         self.projects.push(project);
         let idx = self.projects.len() - 1;
@@ -340,13 +343,16 @@ impl LeftSidebarState {
 pub enum ContextSection {
     Filter,
     Highlights,
+    /// Which columns the Parsed View shows, their order and Column Labels.
+    Columns,
     Inspector,
 }
 
 impl ContextSection {
-    pub const ALL: [ContextSection; 3] = [
+    pub const ALL: [ContextSection; 4] = [
         ContextSection::Filter,
         ContextSection::Highlights,
+        ContextSection::Columns,
         ContextSection::Inspector,
     ];
 
@@ -354,12 +360,20 @@ impl ContextSection {
         match self {
             ContextSection::Filter => "Filter",
             ContextSection::Highlights => "Highlights",
+            ContextSection::Columns => "Columns",
             ContextSection::Inspector => "Inspector",
         }
     }
 
-    fn index(self) -> usize {
-        Self::ALL.iter().position(|s| *s == self).unwrap_or(0)
+    /// Slot in the saved `collapsed` flags (Columns has a flag of its own,
+    /// added after them).
+    fn index(self) -> Option<usize> {
+        match self {
+            ContextSection::Filter => Some(0),
+            ContextSection::Highlights => Some(1),
+            ContextSection::Inspector => Some(2),
+            ContextSection::Columns => None,
+        }
     }
 }
 
@@ -370,6 +384,8 @@ impl ContextSection {
 pub struct ContextSidebarState {
     pub visible: bool,
     collapsed: [bool; 3],
+    #[serde(default = "default_true")]
+    columns_collapsed: bool,
 }
 
 impl Default for ContextSidebarState {
@@ -378,6 +394,7 @@ impl Default for ContextSidebarState {
             visible: false,
             // Highlights starts collapsed so Filter and Inspector get the room.
             collapsed: [false, true, false],
+            columns_collapsed: true,
         }
     }
 }
@@ -393,17 +410,27 @@ impl ContextSidebarState {
     }
 
     pub fn is_collapsed(&self, section: ContextSection) -> bool {
-        self.collapsed[section.index()]
+        match section.index() {
+            Some(i) => self.collapsed[i],
+            None => self.columns_collapsed,
+        }
+    }
+
+    fn collapsed_mut(&mut self, section: ContextSection) -> &mut bool {
+        match section.index() {
+            Some(i) => &mut self.collapsed[i],
+            None => &mut self.columns_collapsed,
+        }
     }
 
     pub fn toggle_section(&mut self, section: ContextSection) {
-        let c = &mut self.collapsed[section.index()];
+        let c = self.collapsed_mut(section);
         *c = !*c;
     }
 
     /// Show the sidebar with a specific section expanded.
     pub fn reveal(&mut self, section: ContextSection) {
-        self.collapsed[section.index()] = false;
+        *self.collapsed_mut(section) = false;
         self.visible = true;
     }
 

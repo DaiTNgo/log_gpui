@@ -49,10 +49,14 @@ fn detects_columns_values_and_counts() {
 
 #[test]
 fn json_fields_become_columns() {
-    let mut entries = sample();
-    entries[0].json_fields.push(("region".into(), "us".into()));
-    entries[2].json_fields.push(("region".into(), "eu".into()));
-    entries[3].json_fields.push(("region".into(), "us".into()));
+    let entries = log_gpui::parser::text::parse_text_bytes(
+        br#"{"msg":"a","region":"us"}
+{"msg":"b"}
+{"msg":"c","region":"eu"}
+{"msg":"d","region":"us"}
+"#,
+    )
+    .unwrap();
     let index = FilterIndex::build(&entries);
     let region = index.column("region").expect("json column");
     assert_eq!(region.values.len(), 2);

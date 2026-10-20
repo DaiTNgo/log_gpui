@@ -835,7 +835,8 @@ impl AppView {
             if take_old {
                 merged.push(old.next().map(|(e, _)| e).unwrap());
             } else {
-                let row = new.next().unwrap();
+                let mut row = new.next().unwrap();
+                self.read_rule_fields_of(&mut row.entry);
                 self.column_layout.max_chars.record_entry(&row.entry);
                 merged.push(row.entry);
             }

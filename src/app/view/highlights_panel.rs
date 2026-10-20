@@ -58,6 +58,9 @@ impl AppView {
     }
 
     fn column_label(&self, key: &str) -> String {
+        if let Some(label) = self.active_project().and_then(|p| p.columns.label(key)) {
+            return label.to_string();
+        }
         if key == MESSAGE_COLUMN {
             return "Message".to_string();
         }

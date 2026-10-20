@@ -6,6 +6,11 @@
 pub mod color;
 mod connection_details;
 mod commands;
+pub mod columns;
+pub mod rules;
+pub mod new_column;
+pub mod formats;
+pub mod format_editor;
 mod filter;
 mod focus;
 mod focus_window;
@@ -83,6 +88,8 @@ pub enum ConfirmAction {
     ClearFiles { file_ids: Vec<String>, markers: usize },
     DeleteServer { server_id: String },
     RemoveProject { project_id: String },
+    /// Delete a Log Format a Log Space or Source File has chosen.
+    DeleteLogFormat { format_id: String },
 }
 
 pub struct AppView {
@@ -188,6 +195,20 @@ pub struct AppView {
 
     /// Inline rename of a sidebar row (project, Log Space or file), if any.
     pub renaming: Option<rename::RenameState>,
+    /// A Column Label being edited on its Column Header.
+    pub label_edit: Option<columns::LabelEdit>,
+    /// The New Column dialog ("Make column…", or "Edit" on a rule).
+    pub new_column: Option<new_column::NewColumnDialog>,
+    /// The Log Format editor, when open.
+    pub format_editor: Option<format_editor::FormatEditor>,
+    /// The Log Format library (app config) and its compiled templates.
+    pub formats: formats::FormatLibrary,
+    /// The compiled Extraction Rules and their background reading.
+    pub rule_cache: rules::RuleCache,
+    /// Row of the Columns section picked out by "Manage columns…".
+    pub columns_highlighted: Option<String>,
+    /// Search of the Detected Fields in the Columns section.
+    pub columns_query: Entity<InputState>,
 
     /// Raw View or Parsed View of the focused tab.
     pub view_mode: ViewMode,
@@ -255,6 +276,12 @@ impl AppView {
         });
 
         // Restore the last session; a session from an older format is ignored.
+        // The Log Format library sits beside the session (in the app's
+        // config directory).
+        let formats_path = persistence
+            .as_ref()
+            .and_then(|p| p.path().parent().map(|d| d.join("log_formats.json")))
+            .unwrap_or_else(crate::log_format::LogFormatStore::default_path);
         let mut workspace_state = persistence
             .as_ref()
             .and_then(|p| p.load().ok().flatten())
@@ -356,6 +383,13 @@ impl AppView {
             },
         )
         .detach();
+        let columns_query = cx.new(|cx| InputState::new(window, cx).placeholder("Find a field…"));
+        cx.subscribe(&columns_query, |_this: &mut Self, _, event: &InputEvent, cx| {
+            if matches!(event, InputEvent::Change) {
+                cx.notify();
+            }
+        })
+        .detach();
         let rule_input = cx.new(|cx| InputState::new(window, cx).placeholder("Add value…  (contains)"));
         cx.subscribe_in(
             &rule_input,
@@ -437,6 +471,13 @@ impl AppView {
             expanded_projects,
             expanded_spaces,
             renaming: None,
+            label_edit: None,
+            rule_cache: Default::default(),
+            new_column: None,
+            format_editor: None,
+            formats: formats::FormatLibrary::load(formats_path),
+            columns_highlighted: None,
+            columns_query,
             view_mode: ViewMode::Parsed,
             raw: raw::RawViewState::new(),
             new_space: None,

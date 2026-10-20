@@ -19,6 +19,13 @@ use gpui_component::{h_flex, v_flex, ActiveTheme as _, Icon, Selectable as _, Si
 use gpui_kit::assets::IconName;
 
 impl AppView {
+    /// The name Filter shows for a column: its Column Label, or `fallback`.
+    fn filter_column_name(&self, key: &str, fallback: &str) -> String {
+        self.active_project()
+            .and_then(|p| p.columns.label(key))
+            .map_or_else(|| fallback.to_string(), str::to_string)
+    }
+
     /// Keys of the columns shown as cards: those with a condition, plus the
     /// column being edited. Conditions on a column the file does not have are
     /// listed too, so the user can clear them.
@@ -60,7 +67,7 @@ impl AppView {
                 .items_center()
                 .justify_between()
                 .rounded_md()
-                .child(div().text_xs().child(col.label.clone()))
+                .child(div().text_xs().child(self.filter_column_name(&col.key, &col.label)))
                 .child(
                     div()
                         .text_xs()
@@ -144,7 +151,7 @@ impl AppView {
 
     fn render_filter_card(&self, ix: usize, key: &str, cx: &mut Context<Self>) -> gpui::AnyElement {
         let col = self.filter_index.column(key);
-        let label = col.map_or_else(|| key.to_string(), |c| c.label.clone());
+        let label = self.filter_column_name(key, &col.map_or_else(|| key.to_string(), |c| c.label.clone()));
         let cf = self.filter_state.column(key);
         let hide = cf.is_some_and(|c| c.hide);
         let count = cf.map_or(0, |c| c.values.len() + c.custom.len());
@@ -199,7 +206,14 @@ impl AppView {
             .rounded_md()
             .border_1()
             .border_color(cx.theme().border)
-            .child(header);
+            .child(header)
+            .when_some(col.is_none().then(|| self.unread_column(key)).flatten(), |card, reason| {
+                let note = match reason {
+                    crate::app::rules::UnreadReason::NotRead => "column no longer read".to_string(),
+                    other => format!("column no longer read ({})", other.text()),
+                };
+                card.child(div().text_xs().text_color(cx.theme().muted_foreground).child(note))
+            });
 
         if expanded {
             let view = cx.entity();

@@ -6,7 +6,10 @@ use regex::Regex;
 use serde_json::Value;
 use std::collections::{BTreeSet, HashMap};
 use std::ops::Range;
-use std::sync::LazyLock;
+use std::sync::{Arc, LazyLock};
+
+pub use crate::extract::LineConfig;
+use crate::log_format::CompiledFormat;
 
 static RE_STANDARD: LazyLock<Regex> = LazyLock::new(|| {
     // Matches: 2026-09-05 12:34:56.789 [INFO] [auth] Message
@@ -57,16 +60,15 @@ pub fn parse_text_bytes(bytes: &[u8]) -> anyhow::Result<Vec<LogEntry>> {
 }
 
 pub fn parse_text_bytes_with_max_chars(bytes: &[u8]) -> anyhow::Result<ParseResult> {
+    parse_text_bytes_with_config(bytes, &LineConfig::default())
+}
+
+/// Parse bytes, reading the fields of `config` from every line as well.
+pub fn parse_text_bytes_with_config(bytes: &[u8], config: &LineConfig) -> anyhow::Result<ParseResult> {
     let content = String::from_utf8_lossy(bytes);
-    let mut entries = Vec::new();
-    let mut max_chars = crate::column::FieldMaxChars::new();
-
-    for event in parse_events(&content) {
-        let entry = LogEntry::from_event(&event);
-        max_chars.record_entry(&entry);
-        entries.push(entry);
-    }
-
+    let mut entries: Vec<LogEntry> = parse_events(&content).iter().map(LogEntry::from_event).collect();
+    config.apply(&mut entries);
+    let max_chars = crate::column::FieldMaxChars::scan_entries(&entries);
     Ok(ParseResult { entries, max_chars })
 }
 
@@ -97,11 +99,16 @@ pub fn parse_text_bytes_with_schema(bytes: &[u8]) -> anyhow::Result<SchemaParseR
 /// line with one. Its Parent Line is the nearest line above with a time.
 /// Lines before the first timestamp have no Parent Line.
 pub fn parse_events(content: &str) -> Vec<LogEvent> {
+    parse_events_with(content, None)
+}
+
+/// The same, reading the lines `format` matches with it.
+pub fn parse_events_with(content: &str, format: Option<&CompiledFormat>) -> Vec<LogEvent> {
     let mut events = Vec::new();
     let mut parent: Option<usize> = None;
     for (i, line) in content.lines().enumerate() {
         let index = i + 1;
-        let mut event = parse_line(index, line);
+        let mut event = parse_line(index, line, format);
         if event.has_time {
             parent = Some(index);
         } else if let Some(p) = parent {
@@ -118,11 +125,30 @@ pub fn parse_events(content: &str) -> Vec<LogEvent> {
 #[derive(Debug, Clone, Default)]
 pub struct LineParser {
     parent: Option<usize>,
+    /// Fields read beyond Auto-detect (Extraction Rules).
+    config: Arc<LineConfig>,
+    /// The Log Format of the file, if it has one.
+    format: Option<Arc<CompiledFormat>>,
 }
 
 impl LineParser {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Read lines with `config` from now on.
+    pub fn set_config(&mut self, config: Arc<LineConfig>) {
+        self.config = config;
+    }
+
+    /// Read lines with the Log Format `format` from now on (`None`:
+    /// Auto-detect).
+    pub fn set_format(&mut self, format: Option<Arc<CompiledFormat>>) {
+        self.format = format;
+    }
+
+    pub fn format(&self) -> Option<Arc<CompiledFormat>> {
+        self.format.clone()
     }
 
     /// Forget the Parent Line: what comes next starts a new file.
@@ -132,13 +158,15 @@ impl LineParser {
 
     /// The entry for line number `index`.
     pub fn parse(&mut self, index: usize, line: &str) -> LogEntry {
-        let mut event = parse_line(index, line);
+        let mut event = parse_line(index, line, self.format.as_deref());
         if event.has_time {
             self.parent = Some(index);
         } else if let Some(p) = self.parent {
             event = event.into_continuation(p);
         }
-        LogEntry::from_event(&event)
+        let mut entry = LogEntry::from_event(&event);
+        entry.extra = self.config.extra_spans(&entry);
+        entry
     }
 }
 
@@ -148,9 +176,42 @@ fn group_range(caps: &regex::Captures, i: usize, lead: usize) -> Option<Range<us
     caps.get(i).map(|m| m.start() + lead..m.end() + lead)
 }
 
+/// A line read with a Log Format, or `None` when the format does not match
+/// it. Its `timestamp` field is read like the time Auto-detect finds, so the
+/// line sorts, filters by time and starts Continuation Lines the same way.
+fn parse_with_format(index: usize, raw_line: &str, format: &CompiledFormat) -> Option<LogEvent> {
+    let mut spans = format.read(raw_line)?;
+    spans.retain(|_, r| r.start < r.end);
+    let text = |name: &str| spans.get(name).map(|r| &raw_line[r.clone()]);
+    let time_str = text("timestamp").unwrap_or_default().to_string();
+    let parsed = text("timestamp").and_then(read_timestamp);
+    let message = text("message").unwrap_or(raw_line).to_string();
+    let mut event = LogEvent::new(index, parsed.unwrap_or_else(|| infer_incrementing_timestamp(index)), time_str, message, raw_line.to_string())
+        .with_metadata(text("level"), text("module"));
+    for (name, range) in &spans {
+        if !matches!(name.as_str(), "timestamp" | "level" | "module" | "message") {
+            event.set_field(name, LogValue::Str(raw_line[range.clone()].to_string()));
+        }
+    }
+    if !spans.contains_key("message") {
+        spans.insert("message".to_string(), 0..raw_line.len());
+    }
+    event.spans = spans;
+    Some(if parsed.is_some() { event } else { event.without_time() })
+}
+
+/// Read one line: with its Log Format when the format matches it, else by
+/// Auto-detect.
+pub fn parse_line_with(index: usize, raw_line: &str, format: Option<&CompiledFormat>) -> LogEvent {
+    parse_line(index, raw_line, format)
+}
+
 /// Detect the format of a single line and produce a structured `LogEvent`.
 /// What a cell shows is always a span of `raw_line`; nothing is made up.
-fn parse_line(index: usize, raw_line: &str) -> LogEvent {
+fn parse_line(index: usize, raw_line: &str, format: Option<&CompiledFormat>) -> LogEvent {
+    if let Some(event) = format.and_then(|f| parse_with_format(index, raw_line, f)) {
+        return event;
+    }
     let line_trimmed = raw_line.trim();
     let lead = raw_line.len() - raw_line.trim_start().len();
     let whole = 0..raw_line.len();
@@ -285,12 +346,16 @@ pub fn read_timestamp(text: &str) -> Option<f64> {
         return Some(clock_seconds(dt.naive_local()));
     }
     let bare = RE_TZ_SUFFIX.replace(t, "");
-    let bare = bare.trim_end();
+    // Python's logging writes the fraction after a comma.
+    let bare = bare.trim_end().replace(',', ".");
+    let bare = bare.as_str();
     for fmt in [
         "%Y-%m-%d %H:%M:%S%.f",
         "%Y-%m-%dT%H:%M:%S%.f",
         "%Y/%m/%d %H:%M:%S%.f",
         "%Y/%m/%dT%H:%M:%S%.f",
+        // nginx / Apache: 10/Oct/2026:13:55:36
+        "%d/%b/%Y:%H:%M:%S",
     ] {
         if let Ok(ndt) = NaiveDateTime::parse_from_str(bare, fmt) {
             return Some(clock_seconds(ndt));
@@ -461,13 +526,17 @@ fn parse_json_log_event(
         event = event.without_time();
     }
 
-    // Insert every raw JSON key as a dynamic field.
+    // Insert every raw JSON key as a dynamic field. A `null` value is no
+    // value: its key has no span.
+    event.spans = key_spans.clone();
     if let Value::Object(map) = json {
         for (key, value) in map {
+            if value.is_null() {
+                event.spans.remove(key);
+            }
             event.set_field(key, json_to_log_value(value));
         }
     }
-    event.spans = key_spans.clone();
 
     // Canonical fields, in the text the line has for them.
     let canonical = [("timestamp", time_key), ("level", level_key), ("module", tag_key), ("message", msg_key)];
@@ -601,5 +670,61 @@ impl SchemaBuilder {
             (true, _, _) => FieldType::String,
             _ => FieldType::String,
         }
+    }
+}
+/// What reading a stored line again needs: its line number, Generation and
+/// text. Copied cheaply out of the cache so it can be read in the background.
+pub type StoredLine = (usize, u32, gpui::SharedString);
+
+pub fn stored_lines(entries: &[LogEntry]) -> Vec<StoredLine> {
+    entries.iter().map(|e| (e.index, e.generation, e.raw_line.clone())).collect()
+}
+
+/// Read stored lines again with `format` (`None`: Auto-detect), across the
+/// cores. A line without a time continues the nearest line above it in the
+/// same Generation that has one.
+pub fn reread(lines: &[StoredLine], format: Option<&CompiledFormat>) -> Vec<LogEntry> {
+    let events = crate::par::map_rows(lines.len(), |i| parse_line(lines[i].0, &lines[i].2, format));
+    let mut parent: Option<usize> = None;
+    let mut generation: Option<u32> = None;
+    events
+        .into_iter()
+        .zip(lines)
+        .map(|(mut event, (index, line_gen, _))| {
+            if generation != Some(*line_gen) {
+                generation = Some(*line_gen);
+                parent = None;
+            }
+            if event.has_time {
+                parent = Some(*index);
+            } else if let Some(p) = parent {
+                event = event.into_continuation(p);
+            }
+            LogEntry::from_event(&event)
+        })
+        .collect()
+}
+
+/// Take what was read again from `fresh` into `entry`, keeping what is not
+/// read from the line (number, Generation, stream, Markers, Breaks).
+pub fn adopt(entry: &mut LogEntry, fresh: LogEntry) {
+    entry.timestamp = fresh.timestamp;
+    entry.has_time = fresh.has_time;
+    entry.time_str = fresh.time_str;
+    entry.tag = fresh.tag;
+    entry.level = fresh.level;
+    entry.level_text = fresh.level_text;
+    entry.spans = fresh.spans;
+    entry.extra = Default::default();
+    entry.parent = fresh.parent;
+    entry.payload = fresh.payload;
+    entry.request_id = fresh.request_id;
+}
+
+/// Read `entries` again with `format`, in place.
+pub fn reread_entries(entries: &mut [LogEntry], format: Option<&CompiledFormat>) {
+    let fresh = reread(&stored_lines(entries), format);
+    for (entry, f) in entries.iter_mut().zip(fresh) {
+        adopt(entry, f);
     }
 }

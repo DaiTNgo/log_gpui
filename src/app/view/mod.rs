@@ -2,6 +2,9 @@
 
 mod chrome;
 mod color_bar;
+mod columns_panel;
+mod new_column_view;
+mod format_editor_view;
 mod command_views;
 mod connection_view;
 mod dialogs;
@@ -78,6 +81,18 @@ impl Render for AppView {
                 selection: self.text_selection,
                 colors,
                 scroll_handle: &self.scroll_handle,
+                coverage: self
+                    .column_layout
+                    .fields
+                    .iter()
+                    .map(|k| (*k, self.filter_index.coverage(k.as_str())))
+                    .collect(),
+                reading_fields: self.rule_cache.reading,
+                label_edit: self.label_edit.as_ref().filter(|e| !e.in_panel).map(|e| crate::ui::canvas::HeaderEdit {
+                    key: e.key.clone(),
+                    input: e.input.clone(),
+                    error: e.error.clone(),
+                }),
             })
         };
 
@@ -103,6 +118,8 @@ impl Render for AppView {
 
         let command_palette = CommandPalette::render(self.is_palette_open, cx);
         let new_space_dialog = self.render_new_space_dialog(cx);
+        let new_column_dialog = self.render_new_column(cx);
+        let format_editor = self.render_format_editor(cx);
         let confirm = self.render_confirm(cx);
         let custom_load = self.render_custom_load(cx);
         let host_key_dialog = self.render_host_key_dialog(cx);
@@ -149,6 +166,7 @@ impl Render for AppView {
                 let sections = ContextSections {
                     filter: self.render_filter_panel_content(cx),
                     highlights: self.render_highlights_panel_content(cx),
+                    columns: self.render_columns_panel_content(cx),
                     inspector: InspectorView::render_body(self.inspector_lines(), cx),
                     active_filters: self.filter_state.active_count(),
                     rule_count: self.highlight_rules().len(),
@@ -206,6 +224,8 @@ impl Render for AppView {
             .child(command_palette)
             .child(project_switcher)
             .child(new_space_dialog)
+            .child(new_column_dialog)
+            .child(format_editor)
             .child(custom_load)
             .child(servers_dialog)
             .child(remote_picker)

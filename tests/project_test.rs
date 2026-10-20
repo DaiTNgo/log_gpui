@@ -249,7 +249,7 @@ fn test_context_sidebar_requires_a_log_file_tab() {
 #[test]
 fn test_context_section_labels() {
     let labels: Vec<_> = ContextSection::ALL.iter().map(|t| t.as_str()).collect();
-    assert_eq!(labels, ["Filter", "Highlights", "Inspector"]);
+    assert_eq!(labels, ["Filter", "Highlights", "Columns", "Inspector"]);
 }
 
 #[test]

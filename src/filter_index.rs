@@ -5,7 +5,7 @@
 //! is marked as overflowing: it is not offered for filtering. `timestamp` and
 //! `message`/payload are never filterable columns.
 
-use crate::model::LogEntry;
+use crate::model::{FieldKey, LogEntry};
 use crate::unicode_text;
 use std::collections::HashMap;
 
@@ -26,7 +26,8 @@ enum Source {
     Module,
     RequestId,
     TraceId,
-    Json(String),
+    /// A field read from the line: a JSON key, or a Field Column's field.
+    Field(FieldKey),
 }
 
 impl Source {
@@ -38,7 +39,7 @@ impl Source {
             Source::Module => "module".to_string(),
             Source::RequestId => "request_id".to_string(),
             Source::TraceId => "trace_id".to_string(),
-            Source::Json(k) => k.clone(),
+            Source::Field(k) => k.as_str().to_string(),
         }
     }
 
@@ -50,7 +51,7 @@ impl Source {
             Source::Module => "Module".to_string(),
             Source::RequestId => "Request ID".to_string(),
             Source::TraceId => "Trace ID".to_string(),
-            Source::Json(k) => k.clone(),
+            Source::Field(k) => k.as_str().to_string(),
         }
     }
 
@@ -67,12 +68,7 @@ impl Source {
             Source::Module => entry.tag.as_str(),
             Source::RequestId => entry.request_id.as_deref().unwrap_or(""),
             Source::TraceId => entry.trace_id.as_deref().unwrap_or(""),
-            Source::Json(k) => entry
-                .json_fields
-                .iter()
-                .find(|(name, _)| name == k)
-                .map(|(_, v)| v.as_str())
-                .unwrap_or(""),
+            Source::Field(k) => entry.span_text(k.as_str()).unwrap_or(""),
         };
         if v.is_empty() { None } else { Some(v) }
     }
@@ -104,12 +100,7 @@ pub fn column_value<'a>(entry: &'a LogEntry, key: &str) -> Option<&'a str> {
         "module" => entry.tag.as_str(),
         "request_id" => entry.request_id.as_deref().unwrap_or(""),
         "trace_id" => entry.trace_id.as_deref().unwrap_or(""),
-        other => entry
-            .json_fields
-            .iter()
-            .find(|(name, _)| name == other)
-            .map(|(_, v)| v.as_str())
-            .unwrap_or(""),
+        other => entry.span_text(other).unwrap_or(""),
     };
     if v.is_empty() { None } else { Some(v) }
 }
@@ -139,6 +130,9 @@ pub struct ColumnIndex {
     /// Raw spelling -> (id, rows), to pick the most frequent display form.
     spellings: HashMap<String, (u16, usize)>,
     rows: usize,
+    /// Parent Lines that have a value in the column (Coverage). Kept when
+    /// the column overflows.
+    covered: usize,
 }
 
 impl ColumnIndex {
@@ -153,7 +147,21 @@ impl ColumnIndex {
             folded_ids: HashMap::new(),
             spellings: HashMap::new(),
             rows: rows_before,
+            covered: 0,
         }
+    }
+
+    /// The field the column shows, when it is a field read from the line.
+    pub fn field(&self) -> Option<FieldKey> {
+        match self.source {
+            Source::Field(k) => Some(k),
+            _ => None,
+        }
+    }
+
+    /// Number of Parent Lines that have a value in the column.
+    pub fn covered(&self) -> usize {
+        self.covered
     }
 
     /// Number of distinct values, or `None` once the column overflowed.
@@ -186,6 +194,8 @@ impl ColumnIndex {
     /// Forget the rows from `keep` on; `removed` are those rows' entries.
     fn truncate(&mut self, keep: usize, removed: &[LogEntry]) {
         self.rows = keep;
+        let lost = removed.iter().filter(|e| e.parent.is_none() && self.source.value(e).is_some()).count();
+        self.covered = self.covered.saturating_sub(lost);
         if self.overflow {
             return;
         }
@@ -207,6 +217,9 @@ impl ColumnIndex {
 
     fn push_row(&mut self, entry: &LogEntry, parent_row: usize) {
         self.rows += 1;
+        if entry.parent.is_none() && self.source.value(entry).is_some() {
+            self.covered += 1;
+        }
         if self.overflow {
             return;
         }
@@ -293,6 +306,12 @@ pub struct FilterIndex {
     max_entry: Option<(f64, String)>,
     /// Row of the latest line that is not a Continuation Line.
     parent_row: usize,
+    /// Number of rows that are not Continuation Lines (Coverage's total).
+    parent_lines: usize,
+    /// Number of those with a timestamp of their own.
+    timed_lines: usize,
+    /// Parent Lines whose message has each `key=value` key, read or not.
+    kv_counts: HashMap<FieldKey, usize>,
 }
 
 /// A row has its own timestamp when it is a finite, positive number.
@@ -317,7 +336,7 @@ impl FilterIndex {
         if !entries.is_empty() {
             index.init_fixed_columns();
             for name in field_order {
-                index.columns.push(ColumnIndex::new(Source::Json(name.clone()), 0));
+                index.columns.push(ColumnIndex::new(Source::Field(FieldKey::new(name)), 0));
             }
         }
         index.append(entries);
@@ -350,6 +369,74 @@ impl FilterIndex {
         self.columns.iter().find(|c| c.key == key)
     }
 
+    /// Number of rows that are not Continuation Lines.
+    pub fn parent_lines(&self) -> usize {
+        self.parent_lines
+    }
+
+    /// Number of rows with a timestamp of their own.
+    pub fn timed_lines(&self) -> usize {
+        self.timed_lines
+    }
+
+    /// How many Parent Lines have each `key=value` key in their message.
+    pub fn kv_counts(&self) -> &HashMap<FieldKey, usize> {
+        &self.kv_counts
+    }
+
+    fn count_kv(&mut self, entry: &LogEntry, add: bool) {
+        if entry.parent.is_some() {
+            return;
+        }
+        for key in crate::extract::kv_keys(entry) {
+            if add {
+                *self.kv_counts.entry(key).or_default() += 1;
+            } else if let Some(n) = self.kv_counts.get_mut(&key) {
+                *n -= 1;
+                if *n == 0 {
+                    self.kv_counts.remove(&key);
+                }
+            }
+        }
+    }
+
+    /// Coverage of the column `key`: the Parent Lines with a value in it, and
+    /// all Parent Lines. A column the rows never had covers none.
+    pub fn coverage(&self, key: &str) -> (usize, usize) {
+        (self.column(key).map_or(0, |c| c.covered), self.parent_lines)
+    }
+
+    /// Detect the Field Columns again, the others kept: after the fields
+    /// read from the rows changed (an Extraction Rule was added or changed).
+    pub fn rebuild_fields(&mut self, entries: &[LogEntry]) {
+        debug_assert_eq!(entries.len(), self.rows);
+        self.columns.retain(|c| c.field().is_none());
+        let mut fields: Vec<ColumnIndex> = Vec::new();
+        let mut parent_row = 0;
+        for (row, entry) in entries.iter().enumerate() {
+            if entry.parent.is_none() {
+                parent_row = row;
+            }
+            for (name, _) in entry.fields() {
+                if !fields.iter().any(|c| c.source == Source::Field(name)) {
+                    fields.push(ColumnIndex::new(Source::Field(name), row));
+                }
+            }
+            for col in &mut fields {
+                col.push_row(entry, parent_row);
+            }
+        }
+        for col in &mut fields {
+            col.finalize_display();
+        }
+        self.columns.extend(fields);
+    }
+
+    /// The fields read from the rows, as columns.
+    pub fn field_columns(&self) -> impl Iterator<Item = &ColumnIndex> {
+        self.columns.iter().filter(|c| c.field().is_some())
+    }
+
     /// Account for rows added at the end of the file (tail): new values are
     /// appended after the existing ones and counts grow with the new rows.
     /// `new_entries` are the rows after the first `self.rows()` rows.
@@ -375,6 +462,11 @@ impl FilterIndex {
         self.effective_ts.truncate(kept.len());
         self.first_ts = self.effective_ts.iter().copied().find(|t| !t.is_nan());
         self.parent_row = kept.iter().rposition(|e| e.parent.is_none()).unwrap_or(0);
+        self.parent_lines -= removed.iter().filter(|e| e.parent.is_none()).count();
+        self.timed_lines -= removed.iter().filter(|e| e.parent.is_none() && has_timestamp(e)).count();
+        for entry in removed {
+            self.count_kv(entry, false);
+        }
     }
 
     fn push_row(&mut self, entry: &LogEntry) {
@@ -384,11 +476,13 @@ impl FilterIndex {
         }
         if entry.parent.is_none() {
             self.parent_row = row;
+            self.parent_lines += 1;
+            self.count_kv(entry, true);
         }
         let parent_row = self.parent_row;
-        for (name, _) in &entry.json_fields {
-            if !self.columns.iter().any(|c| c.source == Source::Json(name.clone())) {
-                self.columns.push(ColumnIndex::new(Source::Json(name.clone()), row));
+        for (name, _) in entry.fields() {
+            if !self.columns.iter().any(|c| c.source == Source::Field(name)) {
+                self.columns.push(ColumnIndex::new(Source::Field(name), row));
             }
         }
         for col in &mut self.columns {
@@ -397,6 +491,9 @@ impl FilterIndex {
 
         let prev = self.effective_ts.last().copied().unwrap_or(f64::NAN);
         if has_timestamp(entry) {
+            if entry.parent.is_none() {
+                self.timed_lines += 1;
+            }
             self.effective_ts.push(entry.timestamp);
             if self.first_ts.is_none() {
                 self.first_ts = Some(entry.timestamp);
