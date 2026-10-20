@@ -36,6 +36,8 @@ pub struct LiveSourceState {
     pub name: String,
     /// Whether the file is on a Server (Live Window applies).
     pub remote: bool,
+    /// Whether it is a Remote Command (its output cannot be read again).
+    pub command: bool,
     /// Where a remote source's real line numbers could not be counted.
     pub numbers_unavailable: bool,
     /// Reconnects or Runs, last error and last line: shown in Connection
@@ -267,6 +269,7 @@ impl AppView {
                     status: SourceStatus::Connecting,
                     name: file.name,
                     remote: file.remote.is_some(),
+                    command: file.remote.as_ref().is_some_and(|r| r.is_command()),
                     numbers_unavailable: false,
                     health: Default::default(),
                 },

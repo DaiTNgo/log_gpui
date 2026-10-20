@@ -103,6 +103,7 @@ impl AppView {
             format!("Load more ({})", info.amount_label(step))
         };
         let cancel_file = section.file_id.clone();
+        let command = info.command;
         let mut row = h_flex()
             .px_2()
             .gap_2()
@@ -115,8 +116,11 @@ impl AppView {
                     .xsmall()
                     .label("Clear")
                     .on_click(cx.listener(move |this, _, _, cx| this.request_clear_file(&clear_file, cx))),
-            )
-            .child(
+            );
+        if command {
+            return Some(self.live_row_with_waiting(row, cleared, "Waiting for output", warning, muted));
+        }
+        row = row.child(
                 Button::new(id("more"))
                     .ghost()
                     .xsmall()
@@ -143,6 +147,19 @@ impl AppView {
                     .on_click(cx.listener(move |this, _, _, cx| this.back_to_live_window(&back_file, cx))),
             );
         }
+        Some(self.live_row_with_waiting(row, cleared, "Waiting for new lines", warning, muted))
+    }
+
+    /// The actions row, and under it the "cleared" line of a file that holds
+    /// no line yet.
+    fn live_row_with_waiting(
+        &self,
+        row: gpui::Div,
+        cleared: Option<String>,
+        waiting: &'static str,
+        warning: gpui::Hsla,
+        muted: gpui::Hsla,
+    ) -> gpui::AnyElement {
         let mut block = v_flex().w_full().child(row);
         if let Some(text) = cleared {
             block = block.child(
@@ -153,10 +170,10 @@ impl AppView {
                     .text_color(warning)
                     .child("⏤")
                     .child(text)
-                    .child(div().text_color(muted).child("Waiting for new lines")),
+                    .child(div().text_color(muted).child(waiting)),
             );
         }
-        Some(block.into_any_element())
+        block.into_any_element()
     }
 
     /// The Breaks of a live file, listed above its text: the editor holds

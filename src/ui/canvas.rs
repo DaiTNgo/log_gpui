@@ -829,7 +829,9 @@ impl RowEnv {
         let break_label = entry.break_before.as_ref().map(|mark| mark.label.clone());
         let break_actions = entry.break_before.as_ref().and_then(|mark| {
             let file_id = entry.file_id.as_deref()?.to_string();
-            break_has_actions(mark.kind).then(|| BreakActions {
+            // A Remote Command's lines carry their stream: its output cannot be
+            // read again, so its Breaks have no buttons.
+            (break_has_actions(mark.kind) && entry.stream.is_none()).then(|| BreakActions {
                 view: self.view.clone(),
                 file_id,
                 kind: mark.kind,

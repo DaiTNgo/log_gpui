@@ -404,3 +404,41 @@ fn a_tool_that_does_not_know_since_runs_as_written_once_and_remembers() {
     assert!(!next_command.contains("--since"), "{next_command}");
     h.close();
 }
+
+#[test]
+fn clear_does_not_stop_the_run_and_resuming_by_time_still_starts_at_the_last_line_received() {
+    let Some(env) = env() else { return };
+    let log = "docker-clear.log";
+    let _ = std::fs::remove_file(format!("{}/fake/{log}", env.dir));
+    env.append_fake(log, &[&format!("{T1} one"), &format!("{T2} two"), &format!("{T3} three")]);
+    let fields = PresetFields::docker("clear");
+    let command = fields.command();
+    let h = env.start(&command, Some(fields), false, 100_000);
+    let mut got = Vec::new();
+    while got.len() < 3 {
+        let SourceEvent::Append { lines, .. } = next(&h, is_append) else { unreachable!() };
+        got.extend(lines);
+    }
+
+    // The app drops every line it holds: the Run goes on, no Break, no restart.
+    h.send(SourceCommand::Clear);
+    env.append_fake(log, &[&format!("{T4} four")]);
+    let SourceEvent::Append { lines, .. } = next(&h, is_append) else { unreachable!() };
+    assert_eq!(lines, vec![format!("{T4} four")], "the same Run still delivers");
+
+    // The connection is lost with nothing held: resuming starts after the last
+    // line received, not from the lines that are held (none).
+    env.drop_sessions();
+    env.append_fake(log, &[&format!("{T5} five")]);
+    next(&h, is_break(BreakKind::Disconnected));
+    let run = next(&h, |e| matches!(e, SourceEvent::Run { command } if command.contains("--since")));
+    let SourceEvent::Run { command: resumed } = run else { unreachable!() };
+    assert_eq!(resumed, format!("docker logs -f --timestamps --since {T4} 'clear'"));
+    let mut after = Vec::new();
+    while after.is_empty() {
+        let SourceEvent::Append { lines, .. } = next(&h, is_append) else { unreachable!() };
+        after.extend(lines);
+    }
+    assert_eq!(after, vec![format!("{T5} five")], "no loss, no repeat");
+    h.close();
+}

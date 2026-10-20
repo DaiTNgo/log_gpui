@@ -28,6 +28,8 @@ pub struct HoldInfo {
     pub remaining: usize,
     /// Why Load More is off, when it is.
     pub load_more_off: Option<&'static str>,
+    /// A Remote Command: Clear only; no Load more, no Back to Live Window.
+    pub command: bool,
 }
 
 impl HoldInfo {
@@ -134,7 +136,10 @@ impl AppView {
         let buffer = parsed.live.as_ref()?;
         let at_start = buffer.at_generation_start(parsed);
         let status = self.live.sources.get(file_id).map(|s| &s.status);
-        let load_more_off = if at_start {
+        let command = self.live.sources.get(file_id).is_some_and(|s| s.command);
+        let load_more_off = if command {
+            Some("A Remote Command's output cannot be read again")
+        } else if at_start {
             Some("Already at the first line")
         } else if !matches!(status, Some(SourceStatus::Live)) {
             Some("Disconnected")
@@ -152,6 +157,7 @@ impl AppView {
             loading: self.live.loading_more.contains(file_id),
             remaining: FULL_READ_LIMIT.saturating_sub(parsed.entries.len()),
             load_more_off,
+            command,
         })
     }
 

@@ -34,9 +34,9 @@
 
 ## 4. Clear trên Remote Command
 
-- [ ] 4.1 `RemoteCommandSource` nhận `SourceCommand::Clear` mà không dừng hay chạy lại Run; dùng chung `LiveBuffer::clear` và `remove_lines`
-- [ ] 4.2 Giữ timestamp của dòng cuối đã nhận trong nguồn (không đọc từ `ParsedFile`) để Resume By Time đúng sau Clear; test Clear rồi mất kết nối với preset chưa sửa
-- [ ] 4.3 Remote Command không có Load more / Back to Live Window: Break "cleared" không nút, File Section rỗng ghi "Waiting for output"
+- [x] 4.1 `RemoteCommandSource` nhận `SourceCommand::Clear` mà không dừng hay chạy lại Run; dùng chung `LiveBuffer::clear` và `remove_lines`
+- [x] 4.2 Giữ timestamp của dòng cuối đã nhận trong nguồn (không đọc từ `ParsedFile`) để Resume By Time đúng sau Clear; test Clear rồi mất kết nối với preset chưa sửa
+- [x] 4.3 Remote Command không có Load more / Back to Live Window: Break "cleared" không nút, File Section rỗng ghi "Waiting for output"
 
 ## 5. Back to Live Window
 

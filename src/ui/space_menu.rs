@@ -308,6 +308,15 @@ fn remote_file_live_items(menu: PopupMenu, file: &FileRef, cx: &App) -> PopupMen
     };
     let Some(info) = info else { return menu };
     let clear = file.clone();
+    if info.command {
+        return menu
+            .item(PopupMenuItem::new(info.tooltip()).disabled(true))
+            .item(PopupMenuItem::new("Clear").on_click(move |_, _, app| {
+                let id = clear.file_id.clone();
+                clear.view.update(app, |this, cx| this.request_clear_file(&id, cx));
+            }))
+            .item(PopupMenuItem::separator());
+    }
     let more = file.clone();
     let back = file.clone();
     let extended = info.extended;
