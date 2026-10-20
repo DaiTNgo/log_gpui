@@ -198,6 +198,19 @@ impl FocusFind {
         }
     }
 
+    /// Add the hits among rows appended to the tab's list: `lines` are the
+    /// texts of the new rows, the first being row `first_row`. The selected
+    /// hit stays.
+    pub fn extend_hits<'a>(&mut self, lines: impl Iterator<Item = &'a str>, first_row: usize) {
+        if let Some(matcher) = &self.matcher {
+            for (i, text) in lines.enumerate() {
+                if matcher.is_match(text) {
+                    self.hits.push(first_row + i);
+                }
+            }
+        }
+    }
+
     /// `(selected, total)`, `(0, 0)` without hits.
     pub fn display(&self) -> (usize, usize) {
         if self.hits.is_empty() { (0, 0) } else { (self.current + 1, self.hits.len()) }

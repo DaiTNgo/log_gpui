@@ -29,6 +29,23 @@ impl AppView {
             .collect();
     }
 
+    /// Paint the rows from `from` on, appended after the rows painted, and
+    /// count them in the rules' counts. False when the paints did not cover
+    /// the rows before `from` (the caller paints everything again).
+    pub(crate) fn extend_highlight_paints(&mut self, from: usize) -> bool {
+        if self.highlight_paints.len() != from {
+            return false;
+        }
+        let rules = self.highlight_rules().to_vec();
+        let new = crate::highlight::paint_rows_from(&rules, &self.all_entries, from);
+        Arc::make_mut(&mut self.highlight_paints).extend(new);
+        for rule in &rules {
+            let n = crate::highlight::count_matches(rule, &self.all_entries, &self.visible_indices[from..]);
+            *self.rule_counts.entry(rule.id).or_insert(0) += n;
+        }
+        true
+    }
+
     fn rules_changed(&mut self, cx: &mut Context<Self>) {
         self.recompute_highlight_paints();
         self.schedule_session_save(cx);

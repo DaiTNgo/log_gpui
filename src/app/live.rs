@@ -31,6 +31,11 @@ pub const FULL_READ_LIMIT: usize = 2_000_000;
 /// A running source and what it last said.
 pub struct LiveSourceState {
     pub handle: SourceHandle,
+    /// Which source this is: a file whose source was replaced (edited, read
+    /// again) has a new number. `pump_live` drains only the sources it holds,
+    /// each through its own channel, so a late event of a closed source never
+    /// reaches the file's new lines.
+    pub seq: u64,
     pub status: SourceStatus,
     /// Name shown for the file in the status bar list.
     pub name: String,
@@ -65,6 +70,11 @@ pub struct LiveRuntime {
     pub glob_limit: usize,
     /// Seconds between two checks of a Live Glob's folder.
     pub glob_interval: u64,
+    /// The number the next source gets (`LiveSourceState::seq`).
+    next_source_seq: u64,
+    /// A Remote Command that was edited onto another Server: the Server it
+    /// left, whose connection closes when its old Run has ended.
+    pub release_after_replace: HashMap<String, String>,
     /// Files with a Load More being read.
     pub loading_more: HashSet<String>,
     /// The next Rotated File each file could load above its lines.
@@ -94,6 +104,8 @@ impl LiveRuntime {
             full_read_limit: FULL_READ_LIMIT,
             glob_limit: 50,
             glob_interval: 5,
+            next_source_seq: 0,
+            release_after_replace: HashMap::new(),
             loading_more: HashSet::new(),
             earlier: HashMap::new(),
             loading_earlier: HashSet::new(),
@@ -279,10 +291,13 @@ impl AppView {
             if file.spaces.iter().any(|s| self.live.paused_spaces.contains(s)) {
                 handle.send(SourceCommand::Pause);
             }
+            self.live.next_source_seq += 1;
+            let seq = self.live.next_source_seq;
             self.live.sources.insert(
                 file_id,
                 LiveSourceState {
                     handle,
+                    seq,
                     status: SourceStatus::Connecting,
                     name: file.name,
                     remote: file.remote.is_some(),
@@ -583,6 +598,16 @@ impl AppView {
                         // Only the label changes; rows do not.
                     }
                 }
+                SourceEvent::CommandChanged { from, to } => {
+                    buffer.apply_command_changed(&from, &to, &time);
+                    self.begin_generation_for(file_id);
+                    if let Some(old) = self.live.release_after_replace.remove(file_id) {
+                        self.release_unused_server(&old);
+                    }
+                    if let Some(source) = self.live.sources.get_mut(file_id) {
+                        source.name = to;
+                    }
+                }
                 SourceEvent::Problem(message) => self.notice = Some(message),
                 SourceEvent::Run { .. } => {}
                 SourceEvent::Status(status) => {
@@ -817,6 +842,8 @@ impl AppView {
         // Merge the rows below `from` with the new ones, by the same key a
         // full merge uses. Continuation Lines share their Parent's key and
         // follow it in line order, so they stay under it.
+        // Rows that all sort after the last one only add to the view.
+        let at_end = from == self.all_entries.len();
         let tail: Vec<LogEntry> = self.all_entries.split_off(from);
         let tail_ts: Vec<f64> = (0..tail.len())
             .map(|i| self.filter_index.effective_timestamp(from + i).unwrap_or(0.0))
@@ -847,7 +874,11 @@ impl AppView {
         }
         self.all_entries.extend(merged);
         self.filter_index.append(&self.all_entries[grew_from..]);
-        self.apply_filters_and_refresh(cx);
+        if at_end {
+            self.apply_rows_appended(grew_from, cx);
+        } else {
+            self.apply_filters_and_refresh(cx);
+        }
 
         if let Some(line) = selected {
             self.selected_row_pos = self.entry_of_line_ref(&line);

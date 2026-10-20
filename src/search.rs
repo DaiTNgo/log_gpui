@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 /// Search of a Focus Tab: the typed Search Expression and the Matches found
-/// on the lines that pass Filter. Only the typed text is stored (with the
+/// on every line of the view (Filter only narrows the Focus Pane). Only the typed text is stored (with the
 /// tab); the matcher and the Matches are computed again.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct SearchState {
@@ -98,12 +98,12 @@ impl SearchState {
         }
     }
 
-    /// Update the Matches among `filter_pass`, the entries that pass Filter.
+    /// Update the Matches among `rows`, every entry of the view.
     /// A Match is stored as the entry's position, which is also its row in
     /// the view (the view shows every entry). While the typed text is invalid
     /// the Matches of the last valid expression are kept (and the selected
     /// match with them).
-    pub fn update_matches(&mut self, entries: &[LogEntry], filter_pass: &[usize]) {
+    pub fn update_matches(&mut self, entries: &[LogEntry], rows: &[usize]) {
         let replaced = self.reparse();
         self.matched_visible_indices.clear();
         if replaced {
@@ -115,13 +115,26 @@ impl SearchState {
             return;
         };
 
-        self.matched_visible_indices = crate::par::filter(filter_pass, |entry_ix| {
+        self.matched_visible_indices = crate::par::filter(rows, |entry_ix| {
             entries.get(entry_ix).is_some_and(|entry| matcher.is_match(&entry.raw_line))
         });
         if self.current_match_idx >= self.matched_visible_indices.len() {
             self.current_match_idx = 0;
         }
         self.matched_shared = Arc::new(self.matched_visible_indices.clone());
+    }
+
+    /// Rows from `from` on were appended after the rows the Matches were
+    /// found among: add the Matches among them, by the matcher the Matches
+    /// were found with.
+    pub fn extend_matches(&mut self, entries: &[LogEntry], from: usize) {
+        let Some(matcher) = &self.matcher else { return };
+        let rows: Vec<usize> = (from..entries.len()).collect();
+        let found = crate::par::filter(&rows, |ix| matcher.is_match(&entries[ix].raw_line));
+        if !found.is_empty() {
+            self.matched_visible_indices.extend_from_slice(&found);
+            Arc::make_mut(&mut self.matched_shared).extend(found);
+        }
     }
 
     /// Position (in the visible list) of the selected match, if any.

@@ -73,6 +73,7 @@ impl AppView {
     /// and the Focus Pane. The view keeps every line: Filter only narrows the
     /// pane.
     pub fn apply_filters_and_refresh(&mut self, cx: &mut Context<Self>) {
+        self.refreshes.full += 1;
         self.evaluate_filter_pass();
         if self.visible_indices.len() != self.all_entries.len() {
             // Always every row in order: grow or cut the list where it is, not
@@ -102,11 +103,51 @@ impl AppView {
         cx.notify();
     }
 
+    /// Rows from `from` on were appended after the last row, and the rows
+    /// before them did not change: the cost is that of the new rows. Filter,
+    /// delta times, the longest row, highlight paints and counts, Matches and
+    /// the Focus Pane all continue where the last pass stopped, and give what
+    /// `apply_filters_and_refresh` would. Call it after `filter_index` took
+    /// the new rows in.
+    pub fn apply_rows_appended(&mut self, from: usize, cx: &mut Context<Self>) {
+        let rows = self.all_entries.len();
+        if from > rows || self.visible_indices.len() != from || self.filter_pass.len() > from {
+            return self.apply_filters_and_refresh(cx);
+        }
+        self.refreshes.appended += 1;
+        let pass_before = self.filter_pass.len();
+        let passing = self.filter_state.evaluate_from(&self.filter_index, &mut self.all_entries, from);
+        std::sync::Arc::make_mut(&mut self.filter_pass).extend(passing);
+        std::sync::Arc::make_mut(&mut self.visible_indices).extend(from..rows);
+
+        let mut longest_len = self.all_entries.get(self.longest_row).map_or(0, |e| e.payload.len());
+        for (i, entry) in self.all_entries[from..].iter().enumerate() {
+            if entry.payload.len() > longest_len {
+                longest_len = entry.payload.len();
+                self.longest_row = from + i;
+            }
+        }
+        // A Field Column shows once a row has a value in it.
+        self.sync_view_columns();
+        self.text_selection = None;
+        self.selecting = false;
+        if !self.extend_highlight_paints(from) {
+            self.recompute_highlight_paints();
+        }
+        let matches_before = self.focus.search().total_matches();
+        self.focus.search_mut().extend_matches(&self.all_entries, from);
+        self.extend_focus(matches_before, pass_before);
+        self.clamp_selected_row();
+        self.schedule_session_save(cx);
+        cx.notify();
+    }
+
     /// The Filter changed (a Value, Hide Mode, a Custom Value, the Time
     /// Range) and the rows did not: only the Focus Pane follows. Matches,
     /// highlight paints and rule counts read every row of the view (Search
     /// matches the whole view, ADR 0012), so they stay as they are.
     pub fn apply_filter_change(&mut self, cx: &mut Context<Self>) {
+        self.refreshes.filter += 1;
         self.evaluate_filter_pass();
         self.text_selection = None;
         self.selecting = false;

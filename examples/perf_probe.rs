@@ -175,6 +175,13 @@ fn app_probe(n: usize) {
     });
     state(&mut h, "Search keystroke ('user=4')");
 
+    // The first scan of every row after a batch that only touched the new
+    // rows pays for bringing the old rows' memory back in (tens of ms at
+    // 1M lines): do it once before measuring, so the lines compare the work.
+    h.view.update(&mut h.cx, |app, cx| {
+        app.filter_toggle_value("level", "info", cx);
+        app.filter_toggle_value("level", "info", cx);
+    });
     time("app Filter Value toggle (level=error)", || {
         h.view.update(&mut h.cx, |app, cx| app.filter_toggle_value("level", "error", cx));
     });

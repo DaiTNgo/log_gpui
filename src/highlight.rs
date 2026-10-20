@@ -161,11 +161,18 @@ pub fn paint_for_row(rules: &[HighlightRule], entries: &[LogEntry], row: usize) 
 
 /// The paint of every row of `entries`, for the rows' own order.
 pub fn paint_rows(rules: &[HighlightRule], entries: &[LogEntry]) -> RowPaints {
+    paint_rows_from(rules, entries, 0)
+}
+
+/// The paint of the rows from `from` on, to go after the paints of the rows
+/// before it.
+pub fn paint_rows_from(rules: &[HighlightRule], entries: &[LogEntry], from: usize) -> RowPaints {
     let compiled = compile(rules);
+    let count = entries.len().saturating_sub(from);
     if compiled.is_empty() {
-        return vec![None; entries.len()];
+        return vec![None; count];
     }
-    crate::par::map_rows(entries.len(), |row| paint_compiled(&compiled, entries, row))
+    crate::par::map_rows(count, |i| paint_compiled(&compiled, entries, from + i))
 }
 
 /// How many of `rows` (positions in `entries`) `rule` matches by its own

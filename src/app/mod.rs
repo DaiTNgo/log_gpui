@@ -92,6 +92,17 @@ pub enum ConfirmAction {
     DeleteLogFormat { format_id: String },
 }
 
+/// How the open view was refreshed, counted since the app started.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct RefreshCounts {
+    /// Every row read again (`apply_filters_and_refresh`).
+    pub full: usize,
+    /// Only Filter and the Focus Pane (`apply_filter_change`).
+    pub filter: usize,
+    /// Rows appended after the last one (`apply_rows_appended`).
+    pub appended: usize,
+}
+
 pub struct AppView {
     pub all_entries: Vec<LogEntry>,
     pub visible_indices: Arc<Vec<usize>>,
@@ -169,6 +180,9 @@ pub struct AppView {
     pub column_layout: ColumnLayoutState,
     /// Live reading: sources, Follow and Pause.
     pub live: live::LiveRuntime,
+    /// How often the view was refreshed each way (tests and the perf probe
+    /// read it to see which path a change took).
+    pub refreshes: RefreshCounts,
     /// Servers, the SSH hub and their dialogs.
     pub remote: remote::RemoteUi,
     pub server_dialog: Option<server_dialog::ServerDialog>,
@@ -457,6 +471,7 @@ impl AppView {
             show_minimap: true,
             column_layout,
             live: live::LiveRuntime::new(),
+            refreshes: RefreshCounts::default(),
             remote,
             server_dialog: None,
             workspace_state,

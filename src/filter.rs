@@ -203,9 +203,23 @@ impl FilterState {
     /// Also refreshes every row's delta time from the row above it: Filter
     /// narrows the Focus Pane, not the view.
     pub fn evaluate(&self, index: &FilterIndex, entries: &mut [LogEntry]) -> Vec<usize> {
-        let mut visible = Vec::with_capacity(entries.len());
-        let mut prev_ts: Option<f64> = None;
+        self.evaluate_from(index, entries, 0)
+    }
 
+    /// `evaluate` for the rows from `start` on, which were appended after
+    /// rows that were evaluated already: their indices, and their delta
+    /// times continue from the row above `start`.
+    pub fn evaluate_from(&self, index: &FilterIndex, entries: &mut [LogEntry], start: usize) -> Vec<usize> {
+        let visible = self.pass(index, entries, start);
+        update_delta_times(entries, start);
+        visible
+    }
+
+    /// The indices of the rows from `start` on that pass the Filter. Reads
+    /// the rows only: delta times are the rows' own and do not depend on
+    /// Filter.
+    pub fn pass(&self, index: &FilterIndex, entries: &[LogEntry], start: usize) -> Vec<usize> {
+        let mut visible = Vec::with_capacity(entries.len().saturating_sub(start));
         let stale = index.rows() != entries.len();
         let active: Vec<(&ColumnFilter, CompiledColumn)> = self
             .columns
@@ -216,7 +230,7 @@ impl FilterState {
         let (from, to) = self.time_range.bounds(index.anchor_day());
         let time_active = (from.is_some() || to.is_some()) && !stale;
 
-        for row in 0..entries.len() {
+        for row in start..entries.len() {
             let columns_ok = active.iter().all(|(cf, compiled)| {
                 let matched = compiled.matches(row, entries, &cf.column);
                 matched != cf.hide
@@ -230,11 +244,20 @@ impl FilterState {
                 visible.push(row);
             }
         }
-        // The view shows every row, so each delta is from the row above it.
-        for entry in entries.iter_mut() {
-            update_entry_delta_time(entry, &mut prev_ts);
-        }
         visible
+    }
+}
+
+/// Give the rows from `start` on their delta time from the row above them (the
+/// view shows every row, so Filter does not change them). `start` rows come
+/// after rows that have theirs already.
+pub fn update_delta_times(entries: &mut [LogEntry], start: usize) {
+    let start = start.min(entries.len());
+    // The row above whose time a delta is counted from: the last row that
+    // is not a Continuation Line.
+    let mut prev_ts: Option<f64> = entries[..start].iter().rev().find(|e| e.parent.is_none()).map(|e| e.timestamp);
+    for entry in entries[start..].iter_mut() {
+        update_entry_delta_time(entry, &mut prev_ts);
     }
 }
 

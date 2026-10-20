@@ -125,8 +125,15 @@ impl AppView {
             ViewMode::Parsed => {
                 let search = self.focus.search();
                 if search.matcher.is_some() {
-                    // The Matches already are the lines that pass Filter and match.
-                    search.matched_visible_indices.iter().map(|&ix| FocusRow::Entry(ix)).collect()
+                    // The Matches are every line of the view; the pane lists
+                    // those that also pass Filter.
+                    let limited = self.filter_limits_focus();
+                    search
+                        .matched_visible_indices
+                        .iter()
+                        .filter(|&&ix| !limited || self.filter_pass.binary_search(&ix).is_ok())
+                        .map(|&ix| FocusRow::Entry(ix))
+                        .collect()
                 } else {
                     compute_focus_rows(&self.all_entries, &self.filter_pass, self.filter_limits_focus(), None)
                 }
@@ -144,6 +151,50 @@ impl AppView {
             Self::focus_row_texts(&self.all_entries, &sections, &self.focus_rows).collect();
         self.focus_longest = super::filter::longest(texts.iter().map(|t| t.len()));
         self.focus.find_mut().compute_hits(texts.into_iter(), false);
+        self.pane_selection = None;
+    }
+
+    /// `refresh_focus` after rows were appended to the view: the pane lists
+    /// the new Matches (or, with no Search Expression, the new rows that pass
+    /// Filter), after the rows it had. `matches_before` and `pass_before`
+    /// are how many Matches and rows passing Filter there were before.
+    pub(crate) fn extend_focus(&mut self, matches_before: usize, pass_before: usize) {
+        if self.view_mode != ViewMode::Parsed {
+            return self.refresh_focus();
+        }
+        let limited = self.filter_limits_focus();
+        let first_new = self.focus_rows.len();
+        let search = self.focus.search();
+        let new_rows: Vec<FocusRow> = if search.matcher.is_some() {
+            search.matched_visible_indices[matches_before.min(search.matched_visible_indices.len())..]
+                .iter()
+                .filter(|&&ix| !limited || self.filter_pass.binary_search(&ix).is_ok())
+                .map(|&ix| FocusRow::Entry(ix))
+                .collect()
+        } else if limited {
+            self.filter_pass[pass_before..].iter().map(|&ix| FocusRow::Entry(ix)).collect()
+        } else {
+            Vec::new()
+        };
+        let text = |row: &FocusRow| match *row {
+            FocusRow::Entry(ix) => self.all_entries.get(ix).map_or("", |e| e.raw_line.as_str()),
+            FocusRow::Raw { .. } => "",
+        };
+        let mut longest_len = match self.focus_rows.get(self.focus_longest) {
+            Some(row) if first_new > 0 => text(row).len(),
+            _ => 0,
+        };
+        let mut longest_pos = if first_new > 0 { self.focus_longest } else { 0 };
+        for (i, row) in new_rows.iter().enumerate() {
+            if text(row).len() > longest_len {
+                longest_len = text(row).len();
+                longest_pos = first_new + i;
+            }
+        }
+        let texts: Vec<&str> = new_rows.iter().map(text).collect();
+        self.focus.find_mut().extend_hits(texts.into_iter(), first_new);
+        self.focus_longest = longest_pos;
+        Arc::make_mut(&mut self.focus_rows).extend(new_rows);
         self.pane_selection = None;
     }
 
@@ -276,7 +327,7 @@ impl AppView {
         match self.view_mode {
             ViewMode::Parsed => {
                 self.active_search_mut().reparse();
-                self.focus.search_mut().update_matches(&self.all_entries, &self.filter_pass);
+                self.focus.search_mut().update_matches(&self.all_entries, &self.visible_indices);
             }
             ViewMode::Raw => {
                 self.run_raw_search_keep_position(cx);
