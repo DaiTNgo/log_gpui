@@ -313,7 +313,7 @@ impl<'a> CompiledColumn<'a> {
     }
 }
 
-fn update_entry_delta_time(entry: &mut LogEntry, prev_ts: &mut Option<f64>) {
+pub(crate) fn update_entry_delta_time(entry: &mut LogEntry, prev_ts: &mut Option<f64>) {
     if entry.parent.is_some() {
         // A Continuation Line has no time of its own.
         entry.delta_time_ms = None;

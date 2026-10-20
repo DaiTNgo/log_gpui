@@ -135,7 +135,7 @@ struct NeededFile {
 }
 
 /// The row at the top of the view before rows moved.
-struct TopAnchor {
+pub(crate) struct TopAnchor {
     line: LineRef,
     /// Its position in the rows.
     row: usize,
@@ -145,7 +145,7 @@ struct TopAnchor {
 }
 
 /// What a batch did to one file.
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub(crate) struct FileDelta {
     /// Positions in the file's entries of the lines appended at the end.
     pub(crate) appended: Option<Range<usize>>,
@@ -622,8 +622,9 @@ impl AppView {
         }
         if remote {
             let limit = buffer.limit(window, self.live.full_read_limit);
+            // Not structural: the oldest rows of the file leave the view in
+            // place (`trim_open_view`).
             if let Some(trimmed) = buffer.trim_to_window(&mut parsed, limit) {
-                delta.structural = true;
                 delta.trimmed = Some(trimmed);
             }
         }
@@ -690,7 +691,7 @@ impl AppView {
         };
         let relevant: Vec<&(String, FileDelta)> = deltas
             .iter()
-            .filter(|(id, d)| space_files.contains(id) && (d.appended.is_some() || d.structural))
+            .filter(|(id, d)| space_files.contains(id) && (d.appended.is_some() || d.structural || d.trimmed.is_some()))
             .collect();
         if relevant.is_empty() {
             cx.notify();
@@ -699,7 +700,9 @@ impl AppView {
 
         let before = self.all_entries.len();
         let structural = relevant.iter().any(|(_, d)| d.structural);
-        if structural || !self.append_to_open_view(&relevant, cx) {
+        let trimmed_any = relevant.iter().any(|(_, d)| d.trimmed.is_some());
+        let in_place = !structural && self.apply_trims_and_appends(&relevant, cx);
+        if !in_place {
             self.rebuild_open_view_keeping_position(cx);
 
             if let Some((file_id, d)) = relevant.iter().find(|(_, d)| d.trimmed.is_some()).map(|(f, d)| (f.as_str(), d)) {
@@ -711,7 +714,7 @@ impl AppView {
         // Rows are copied and freed in large blocks all the time: give the
         // allocator's cache back now and then, or it grows to gigabytes.
         self.live.batches_since_release += 1;
-        if structural || self.live.batches_since_release >= 50 {
+        if structural || trimmed_any || self.live.batches_since_release >= 50 {
             self.live.batches_since_release = 0;
             release_freed_memory();
         }
@@ -726,6 +729,30 @@ impl AppView {
         cx.notify();
     }
 
+    /// Show a batch without building the view again: the oldest rows of the
+    /// files that were trimmed leave in place, then the new lines are added.
+    /// Returns false when the view has to be built again.
+    fn apply_trims_and_appends(&mut self, relevant: &[&(String, FileDelta)], cx: &mut Context<Self>) -> bool {
+        let mut adjusted: Vec<(String, FileDelta)> = Vec::new();
+        for (file_id, delta) in relevant.iter().copied() {
+            let mut delta = delta.clone();
+            if let Some(trimmed) = delta.trimmed.clone() {
+                if !self.trim_open_view(file_id, &trimmed) {
+                    return false;
+                }
+                // The new lines are where they were, less the lines that left.
+                delta.appended = delta
+                    .appended
+                    .take()
+                    .filter(|r| r.end > trimmed.removed)
+                    .map(|r| r.start.saturating_sub(trimmed.removed)..r.end - trimmed.removed);
+            }
+            adjusted.push((file_id.clone(), delta));
+        }
+        let appended: Vec<&(String, FileDelta)> = adjusted.iter().filter(|(_, d)| d.appended.is_some()).collect();
+        appended.is_empty() || self.append_to_open_view(&appended, cx)
+    }
+
     /// Tell the Raw View's editors what changed: lines at the end are added to
     /// the text, anything else builds the editor again.
     fn queue_raw_updates(&mut self, deltas: &[(String, FileDelta)]) {
@@ -737,9 +764,20 @@ impl AppView {
                 self.raw.stale.insert(file_id.clone());
                 continue;
             }
+            // The oldest lines leave the editor's text; lines of this batch
+            // that were trimmed at once were never in it.
+            let removed = delta.trimmed.as_ref().map_or(0, |t| t.removed);
+            if let Some(trimmed) = &delta.trimmed {
+                if delta.appended.as_ref().is_some_and(|r| r.start < trimmed.removed) {
+                    self.raw.stale.insert(file_id.clone());
+                    continue;
+                }
+                *self.raw.pending_trims.entry(file_id.clone()).or_default() += trimmed.text_bytes;
+            }
             let Some(range) = delta.appended.clone() else { continue };
             let Some(parsed) = self.parsed_files.get(file_id) else { continue };
-            let Some(lines) = parsed.lines.get(range.clone()) else {
+            let held = range.start - removed..range.end - removed;
+            let Some(lines) = parsed.lines.get(held) else {
                 self.raw.stale.insert(file_id.clone());
                 continue;
             };
@@ -889,7 +927,7 @@ impl AppView {
 
     /// Build the rows again from the cache, keeping the reading position:
     /// the row at the top of the view stays at the top.
-    pub(crate) fn rebuild_open_view_keeping_position(&mut self, cx: &mut Context<Self>) {
+    pub fn rebuild_open_view_keeping_position(&mut self, cx: &mut Context<Self>) {
         self.rebuild_open_view_without(&HashSet::new(), cx);
     }
 
@@ -960,7 +998,7 @@ impl AppView {
 
     /// The row at the top of the Parsed View, as a line that survives rows
     /// being inserted above it, and how far the view is scrolled into it.
-    fn top_row_anchor(&self) -> Option<TopAnchor> {
+    pub(crate) fn top_row_anchor(&self) -> Option<TopAnchor> {
         if self.view_mode != ViewMode::Parsed {
             return None;
         }
@@ -976,7 +1014,7 @@ impl AppView {
     /// Scroll so the anchor's line is at the same pixel offset from the top as
     /// before, wherever the rows around it moved. Does nothing while Follow
     /// is on (the view goes to the newest line) or when the line is gone.
-    fn restore_top_anchor(&mut self, anchor: Option<TopAnchor>) {
+    pub(crate) fn restore_top_anchor(&mut self, anchor: Option<TopAnchor>) {
         let Some(anchor) = anchor else { return };
         if self.live.follow {
             return;

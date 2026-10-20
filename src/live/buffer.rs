@@ -113,6 +113,9 @@ pub struct Trimmed {
     pub generation: u32,
     /// Number of the oldest line still kept, in the Generation of that line.
     pub first_kept: usize,
+    /// Bytes the removed lines took in the Raw View's text: each line and
+    /// its newline.
+    pub text_bytes: usize,
 }
 
 impl LiveBuffer {
@@ -619,6 +622,18 @@ impl LiveBuffer {
         self.add_pending(BreakMark { kind, label: format!("{} {} {time}", self.name, kind.label()) });
     }
 
+    /// The Remote Command was edited: the Break names both commands, and the
+    /// lines after it are a new Generation.
+    pub fn apply_command_changed(&mut self, from: &str, to: &str, time: &str) {
+        self.begin_generation_state();
+        self.name = to.to_string();
+        self.disconnected_at = None;
+        self.add_pending(BreakMark {
+            kind: BreakKind::CommandChanged,
+            label: format!("command changed {time}: {from} → {to}"),
+        });
+    }
+
     fn begin_generation_state(&mut self) {
         self.generation += 1;
         self.parser.reset();
@@ -693,6 +708,7 @@ impl LiveBuffer {
 
     fn trim_to(&mut self, parsed: &mut ParsedFile, keep: usize) -> Option<Trimmed> {
         let removed = parsed.entries.len() - keep;
+        let text_bytes = parsed.lines.iter().take(removed).map(|l| l.len() + 1).sum();
         parsed.entries.drain(..removed);
         parsed.lines_mut().drain(..removed);
         self.sync_byte_lens(removed + keep);
@@ -709,7 +725,7 @@ impl LiveBuffer {
         if generation == self.generation {
             self.first_index = first_kept;
         }
-        Some(Trimmed { removed, generation, first_kept })
+        Some(Trimmed { removed, generation, first_kept, text_bytes })
     }
 
     /// Give back the memory the cache holds beyond its lines.
@@ -743,7 +759,7 @@ impl LiveBuffer {
             kind: BreakKind::Cleared,
             label: format!("{} {} {time}", self.name, BreakKind::Cleared.label()),
         });
-        Trimmed { removed, generation: self.generation, first_kept: usize::MAX }
+        Trimmed { removed, generation: self.generation, first_kept: usize::MAX, text_bytes: 0 }
     }
 
     /// Where the oldest held line starts in the file on the Server.

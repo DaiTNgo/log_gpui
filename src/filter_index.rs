@@ -215,6 +215,32 @@ impl ColumnIndex {
         self.row_ids.truncate(keep);
     }
 
+    /// Forget the rows at `dropped` (ascending positions; `removed` are
+    /// those rows' entries, in the same order). The other rows keep their
+    /// order.
+    fn drop_rows(&mut self, dropped: &[usize], removed: &[LogEntry]) {
+        let lost = removed.iter().filter(|e| e.parent.is_none() && self.source.value(e).is_some()).count();
+        self.covered = self.covered.saturating_sub(lost);
+        self.rows -= dropped.len();
+        if self.overflow {
+            return;
+        }
+        for (i, entry) in removed.iter().enumerate() {
+            if entry.parent.is_some() && self.source.inherits() {
+                continue;
+            }
+            let Some(&id) = self.row_ids.get(dropped[i]) else { continue };
+            if id == MISSING {
+                continue;
+            }
+            self.values[id as usize].count -= 1;
+            if let Some((_, n)) = self.source.value(entry).and_then(|raw| self.spellings.get_mut(raw)) {
+                *n = n.saturating_sub(1);
+            }
+        }
+        remove_positions(&mut self.row_ids, dropped);
+    }
+
     fn push_row(&mut self, entry: &LogEntry, parent_row: usize) {
         self.rows += 1;
         if entry.parent.is_none() && self.source.value(entry).is_some() {
@@ -469,6 +495,42 @@ impl FilterIndex {
         }
     }
 
+    /// Forget the rows at `dropped` (ascending positions); `removed` are
+    /// those rows' entries, in the same order, and `kept` the rows left.
+    /// Rows from the front of the view leave when the Live Window trims a
+    /// file.
+    pub fn drop_rows(&mut self, dropped: &[usize], removed: &[LogEntry], kept: &[LogEntry]) {
+        debug_assert_eq!(self.rows, kept.len() + removed.len());
+        for col in &mut self.columns {
+            col.drop_rows(dropped, removed);
+            col.finalize_display();
+        }
+        let parent_at_or_before = self.parent_row;
+        let before = dropped.partition_point(|&p| p <= parent_at_or_before);
+        self.parent_row = parent_at_or_before.saturating_sub(before);
+        self.rows = kept.len();
+        remove_positions(&mut self.effective_ts, dropped);
+        self.first_ts = self.effective_ts.iter().copied().find(|t| !t.is_nan());
+        self.parent_lines -= removed.iter().filter(|e| e.parent.is_none()).count();
+        self.timed_lines -= removed.iter().filter(|e| e.parent.is_none() && has_timestamp(e)).count();
+        for entry in removed {
+            self.count_kv(entry, false);
+        }
+        // The earliest and latest time are those of the rows left (rows are
+        // in time order).
+        let timed = |e: &&LogEntry| has_timestamp(e);
+        if let Some(first) = kept.iter().find(timed) {
+            self.min_entry = Some((first.timestamp, first.time_str.to_string()));
+        }
+        if let Some(last) = kept.iter().rev().find(timed) {
+            self.max_entry = Some((last.timestamp, last.time_str.to_string()));
+        }
+        if kept.is_empty() {
+            self.min_entry = None;
+            self.max_entry = None;
+        }
+    }
+
     fn push_row(&mut self, entry: &LogEntry) {
         let row = self.rows;
         if self.columns.is_empty() && row == 0 {
@@ -536,4 +598,47 @@ impl FilterIndex {
             _ => None,
         }
     }
+}
+
+/// Remove the items at `dropped` (ascending positions) from `items`.
+pub(crate) fn remove_positions<T>(items: &mut Vec<T>, dropped: &[usize]) {
+    let (Some(&first), Some(&last)) = (dropped.first(), dropped.last()) else { return };
+    if last - first + 1 == dropped.len() {
+        // One run, the usual case: the oldest lines of one file.
+        let end = (last + 1).min(items.len());
+        items.drain(first.min(end)..end);
+        return;
+    }
+    let mut next = 0;
+    let mut row = 0;
+    items.retain(|_| {
+        let drop = next < dropped.len() && dropped[next] == row;
+        if drop {
+            next += 1;
+        }
+        row += 1;
+        !drop
+    });
+}
+
+/// Take the items at `dropped` (ascending positions) out of `items` and
+/// return them in order.
+pub(crate) fn take_positions<T>(items: &mut Vec<T>, dropped: &[usize]) -> Vec<T> {
+    let (Some(&first), Some(&last)) = (dropped.first(), dropped.last()) else { return Vec::new() };
+    if last - first + 1 == dropped.len() {
+        return items.drain(first..=last).collect();
+    }
+    let mut taken = Vec::with_capacity(dropped.len());
+    let mut kept = Vec::with_capacity(items.len() - dropped.len());
+    let mut next = 0;
+    for (row, item) in std::mem::take(items).into_iter().enumerate() {
+        if next < dropped.len() && dropped[next] == row {
+            taken.push(item);
+            next += 1;
+        } else {
+            kept.push(item);
+        }
+    }
+    *items = kept;
+    taken
 }

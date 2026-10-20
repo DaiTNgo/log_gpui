@@ -84,6 +84,9 @@ pub struct RawViewState {
     lines_cache: std::cell::RefCell<HashMap<String, Arc<Vec<String>>>>,
     /// Text a live file received, to add to its editor at the next render.
     pub pending_appends: HashMap<String, String>,
+    /// Bytes to cut from the start of the text of each live file's editor:
+    /// the oldest lines left the Live Window.
+    pub pending_trims: HashMap<String, usize>,
     /// Live files whose editor must be built again (lines were inserted
     /// above, dropped or renumbered).
     pub stale: HashSet<String>,
@@ -107,6 +110,7 @@ impl RawViewState {
             last_selection: HashMap::new(),
             lines_cache: Default::default(),
             pending_appends: HashMap::new(),
+            pending_trims: HashMap::new(),
             stale: HashSet::new(),
         }
     }
@@ -245,6 +249,7 @@ impl AppView {
         let mut created = false;
         for file_id in std::mem::take(&mut self.raw.stale) {
             self.raw.pending_appends.remove(&file_id);
+            self.raw.pending_trims.remove(&file_id);
             self.raw.editors.remove(&file_id);
             self.raw.last_selection.remove(&file_id);
         }
@@ -262,6 +267,16 @@ impl AppView {
             // The caret moved with the insert; the current line is unchanged.
             self.raw.last_selection.insert(file_id.clone(), sel);
             appended = true;
+        }
+        for (file_id, bytes) in std::mem::take(&mut self.raw.pending_trims) {
+            let Some(editor) = self.raw.editors.get(&file_id) else { continue };
+            editor.state.update(cx, |state, cx| {
+                state.set_selected_range(0..bytes, cx);
+                state.replace("", window, cx);
+            });
+            // The caret moved with the cut; the current line is unchanged.
+            let sel = editor.state.read(cx).selected_range();
+            self.raw.last_selection.insert(file_id, sel);
         }
         if appended && search_focused {
             self.search_input.update(cx, |state, cx| state.focus(window, cx));
