@@ -75,6 +75,20 @@ impl AppView {
         cx.notify();
     }
 
+    /// Whether a Project can be removed: never the last one.
+    pub fn can_remove_project(&self) -> bool {
+        self.workspace_state.project_count() > 1
+    }
+
+    /// Ask before removing a Project (and its Log Spaces) from the Sidebar.
+    pub fn request_remove_project(&mut self, project_id: &str, cx: &mut Context<Self>) {
+        if !self.can_remove_project() {
+            return;
+        }
+        self.confirm = Some(crate::app::ConfirmAction::RemoveProject { project_id: project_id.to_string() });
+        cx.notify();
+    }
+
     pub fn remove_project_at(&mut self, project_id: &str, cx: &mut Context<Self>) {
         if self.workspace_state.project_count() <= 1 {
             return;

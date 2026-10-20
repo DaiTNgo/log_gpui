@@ -46,6 +46,8 @@ pub struct ServerForm {
 pub struct ServerDialog {
     pub form: Option<ServerForm>,
     pub error: Option<String>,
+    /// A message that is not an error (something done), shown muted.
+    pub info: Option<String>,
 }
 
 impl AppView {
@@ -74,6 +76,7 @@ impl AppView {
     fn set_server_form(&mut self, id: Option<String>, initial: Server, cx: &mut Context<Self>) {
         let dialog = self.server_dialog.get_or_insert_with(ServerDialog::default);
         dialog.error = None;
+        dialog.info = None;
         dialog.form = Some(ServerForm {
             id,
             use_key: matches!(initial.auth, AuthMethod::Key { .. }),
@@ -183,7 +186,9 @@ impl AppView {
         let initial = form.initial.clone();
         let key_path = match &initial.auth {
             AuthMethod::Key { path } => path.clone(),
-            AuthMethod::Password => "~/.ssh/id_ed25519".to_string(),
+            AuthMethod::Password | AuthMethod::Agent { .. } | AuthMethod::KeyboardInteractive => {
+                "~/.ssh/id_ed25519".to_string()
+            }
         };
         let field = |placeholder: &'static str, value: String, window: &mut Window, cx: &mut Context<Self>| {
             let input = cx.new(|cx| InputState::new(window, cx).placeholder(placeholder));
@@ -369,6 +374,25 @@ impl AppView {
         }
     }
 
+    /// Ask before deleting a Server. One that is in use is refused at once,
+    /// saying what uses it.
+    pub fn request_delete_server(&mut self, server_id: &str, cx: &mut Context<Self>) {
+        let mut users = self.server_users(server_id);
+        for s in &self.remote.servers.servers {
+            if s.jump_server_id.as_deref() == Some(server_id) {
+                users.push(format!("Jump Server of {}", s.name));
+            }
+        }
+        if let Some(dialog) = self.server_dialog.as_mut() {
+            dialog.info = None;
+            dialog.error = (!users.is_empty()).then(|| ServerError::InUse(users.clone()).message());
+        }
+        if users.is_empty() {
+            self.confirm = Some(crate::app::ConfirmAction::DeleteServer { server_id: server_id.to_string() });
+        }
+        cx.notify();
+    }
+
     pub fn delete_server_from_dialog(&mut self, server_id: &str, cx: &mut Context<Self>) {
         let error = self.delete_server(server_id, cx).err().map(|e| e.message());
         if let Some(dialog) = self.server_dialog.as_mut() {
@@ -387,7 +411,8 @@ impl AppView {
         }
         self.reconnect_server_sources(server_id);
         if let Some(dialog) = self.server_dialog.as_mut() {
-            dialog.error = Some(format!("The host key of {} is no longer trusted; it will be asked again.", server.name));
+            dialog.error = None;
+            dialog.info = Some(format!("The host key of {} is no longer trusted; it will be asked again.", server.name));
         }
         cx.notify();
     }

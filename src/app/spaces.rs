@@ -565,13 +565,27 @@ impl AppView {
     /// Carry out the confirmed deletion.
     pub fn accept_confirm(&mut self, cx: &mut Context<Self>) {
         let Some(action) = self.confirm.take() else { return };
-        if let ConfirmAction::ClearFiles { file_ids, .. } = &action {
-            self.clear_files_now(file_ids, cx);
-            return;
+        match &action {
+            ConfirmAction::ClearFiles { file_ids, .. } => {
+                self.clear_files_now(file_ids, cx);
+                return;
+            }
+            ConfirmAction::DeleteServer { server_id } => {
+                self.delete_server_from_dialog(server_id, cx);
+                return;
+            }
+            ConfirmAction::RemoveProject { project_id } => {
+                self.remove_project_at(project_id, cx);
+                cx.notify();
+                return;
+            }
+            _ => {}
         }
         self.persist_active_session();
         match action {
-            ConfirmAction::ClearFiles { .. } => {}
+            ConfirmAction::ClearFiles { .. }
+            | ConfirmAction::DeleteServer { .. }
+            | ConfirmAction::RemoveProject { .. } => {}
             ConfirmAction::DeleteLogSpace { space_id } => {
                 let removed = self
                     .active_project_mut()

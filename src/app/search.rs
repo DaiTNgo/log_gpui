@@ -3,20 +3,10 @@
 
 use super::AppView;
 use super::focus::Origin;
-use crate::ui::floating_panel::PanelKind;
 use crate::workspace::working_set::ViewMode;
 use gpui::{Context, Window};
 
 impl AppView {
-    pub fn toggle_search(&mut self, cx: &mut Context<Self>) {
-        let open = !self.focus.search().is_open;
-        self.focus.search_mut().is_open = open;
-        if open {
-            self.toggle_panel(PanelKind::Filter, cx);
-        }
-        cx.notify();
-    }
-
     /// Focus the search field and make sure the active query is surfaced
     /// (match navigator, ruler marks, highlight).
     pub fn activate_search(&mut self, window: &mut Window, cx: &mut Context<Self>) {

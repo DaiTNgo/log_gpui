@@ -79,6 +79,8 @@ pub enum ConfirmAction {
     DeleteScratchFile { space_id: String, file_id: String },
     /// Clear Remote Files whose lines carry `markers` Markers.
     ClearFiles { file_ids: Vec<String>, markers: usize },
+    DeleteServer { server_id: String },
+    RemoveProject { project_id: String },
 }
 
 pub struct AppView {

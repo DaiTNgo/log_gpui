@@ -44,6 +44,7 @@ impl Render for AppView {
         self.sync_raw_color_bar(window, cx);
         self.sync_new_space_dialog(window, cx);
         self.sync_secret_prompt(window, cx);
+        self.sync_sign_in_dialog(window, cx);
         self.sync_server_dialog(window, cx);
         self.sync_remote_picker(window, cx);
         self.sync_open_in_full(window, cx);
@@ -105,6 +106,7 @@ impl Render for AppView {
         let custom_load = self.render_custom_load(cx);
         let host_key_dialog = self.render_host_key_dialog(cx);
         let secret_dialog = self.render_secret_dialog(cx);
+        let sign_in_dialog = self.render_sign_in_dialog(cx);
         let servers_dialog = self.render_servers_dialog(cx);
         let remote_picker = self.render_remote_picker(cx);
         let download_panel = self.render_download(cx);
@@ -203,7 +205,6 @@ impl Render for AppView {
             .child(command_palette)
             .child(project_switcher)
             .child(new_space_dialog)
-            .child(confirm)
             .child(custom_load)
             .child(servers_dialog)
             .child(remote_picker)
@@ -212,6 +213,9 @@ impl Render for AppView {
             .child(download_options)
             .child(secret_dialog)
             .child(host_key_dialog)
+            .child(sign_in_dialog)
+            // Above every dialog: a Confirm can be asked from one.
+            .child(confirm)
             .children(color_bar)
     }
 }
