@@ -62,6 +62,8 @@ pub enum BreakKind {
     ReadRotated,
     /// Older lines of a Remote Copy were left out to fit the Full Read Limit.
     OlderNotRead,
+    /// Load More read lines from before the Starting Time.
+    BeforeStartTime,
 }
 
 impl BreakKind {
@@ -87,6 +89,7 @@ impl BreakKind {
             BreakKind::ReadLimit => "stopped at Full Read Limit",
             BreakKind::ReadRotated => "file rotated while reading",
             BreakKind::OlderNotRead => "older lines were not read",
+            BreakKind::BeforeStartTime => "lines before the Starting Time loaded",
         }
     }
 
@@ -285,7 +288,9 @@ pub enum SourceEvent {
     /// Lines older than what is held, read because the user asked for more
     /// (`LoadMore`), to go above the oldest held line, whose number is
     /// `first_line_no`.
-    Older { generation: u32, lines: Vec<String>, bytes: Vec<u32>, reached_start: bool },
+    /// `before_start_time`: the lines are from before the Starting Time the
+    /// file was opened with.
+    Older { generation: u32, lines: Vec<String>, bytes: Vec<u32>, reached_start: bool, before_start_time: bool },
     /// Load More could not read the lines above (the file changed, or the
     /// Generation is not the one being read).
     OlderUnavailable,
@@ -315,7 +320,20 @@ pub enum SourceCommand {
     /// Read `lines` lines above `end_offset` of `generation`. `first_hash` is
     /// the hash of the line that starts at `end_offset` (`None` when no line
     /// is held there).
-    LoadMore { generation: u32, end_offset: u64, lines: usize, first_hash: Option<u64> },
+    ///
+    /// For a Generation older than the one being read (a Rotated File):
+    /// `held_bytes` is how many bytes of it the app holds (from its end),
+    /// `first_line_no` the number of its oldest held line and `inode` the
+    /// inode it was read with, to find the Rotated File it became.
+    LoadMore {
+        generation: u32,
+        end_offset: u64,
+        lines: usize,
+        first_hash: Option<u64>,
+        held_bytes: u64,
+        first_line_no: Option<usize>,
+        inode: Option<u64>,
+    },
     /// Load the lines of the next Rotated File above the oldest line held:
     /// at most `room` lines (what the Live Window has left).
     LoadEarlier { room: usize },

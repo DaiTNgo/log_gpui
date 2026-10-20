@@ -97,8 +97,11 @@ impl AppView {
         let id = |name: &str| SharedString::from(format!("raw-{name}-{}", section.file_id));
         let (clear_file, more_file, back_file) =
             (section.file_id.clone(), section.file_id.clone(), section.file_id.clone());
+        let at_limit = info.load_more_off == Some(crate::app::live_more::AT_FULL_READ_LIMIT);
         let load_label = if info.loading {
             "Loading…".to_string()
+        } else if at_limit {
+            "Open in full…".to_string()
         } else {
             format!("Load more ({})", info.amount_label(step))
         };
@@ -125,7 +128,7 @@ impl AppView {
                     .ghost()
                     .xsmall()
                     .label(load_label)
-                    .disabled(info.loading || info.load_more_off.is_some())
+                    .disabled(info.loading || (info.load_more_off.is_some() && !at_limit))
                     .tooltip(info.load_more_off.unwrap_or("Read older lines from the Server"))
                     .on_click(cx.listener(move |this, _, _, cx| this.load_more(&more_file, None, cx))),
             );

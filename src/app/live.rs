@@ -502,9 +502,11 @@ impl AppView {
                     buffer.apply_backfill_with(&mut parsed, &lines, &bytes);
                     delta.structural = true;
                 }
-                SourceEvent::Older { lines, bytes, reached_start, .. } => {
+                SourceEvent::Older { lines, bytes, reached_start, before_start_time, .. } => {
                     self.live.loading_more.remove(file_id);
-                    if buffer.apply_older(&mut parsed, &lines, &bytes, reached_start) && !lines.is_empty() {
+                    if buffer.apply_older_with(&mut parsed, &lines, &bytes, reached_start, before_start_time)
+                        && !lines.is_empty()
+                    {
                         delta.structural = true;
                     }
                 }
@@ -515,11 +517,16 @@ impl AppView {
                     if buffer.apply_earlier(&mut parsed, start.as_ref(), &lines, &bytes, last_line_no) {
                         self.shift_generations_for(file_id);
                     }
+                    // More than the Live Window now: the file keeps it.
+                    if parsed.entries.len() > window {
+                        buffer.hold = crate::live::HoldMode::Extended;
+                    }
                     delta.structural = true;
                 }
                 SourceEvent::EarlierAvailable(file) => {
                     self.live.loading_earlier.remove(file_id);
-                    let full = parsed.entries.len() >= window;
+                    // "Open in full…" only when nothing more fits in memory.
+                    let full = parsed.entries.len() >= self.live.full_read_limit;
                     buffer.set_earlier_available(&mut parsed, file.as_ref(), full);
                     match file {
                         Some(file) => self.live.earlier.insert(file_id.to_string(), file),

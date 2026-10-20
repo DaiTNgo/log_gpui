@@ -266,7 +266,7 @@ fn load_more_reads_older_lines_above_the_oldest_held_one() {
     assert_eq!(lines.first().unwrap(), "line 11001");
     let oldest = end_offset - bytes.iter().map(|b| u64::from(*b)).sum::<u64>();
     let hash = log_gpui::workspace::log_space::line_hash("line 11001");
-    h.send(SourceCommand::LoadMore { generation: 0, end_offset: oldest, lines: 500, first_hash: Some(hash) });
+    h.send(SourceCommand::LoadMore { generation: 0, end_offset: oldest, lines: 500, first_hash: Some(hash), held_bytes: 0, first_line_no: None, inode: None });
     let SourceEvent::Older { lines, bytes, reached_start, .. } =
         next(&h, |e| matches!(e, SourceEvent::Older { .. } | SourceEvent::OlderUnavailable)) else {
             panic!("Load More was refused")
@@ -281,7 +281,7 @@ fn load_more_reads_older_lines_above_the_oldest_held_one() {
         generation: 0,
         end_offset: oldest,
         lines: 10,
-        first_hash: Some(log_gpui::workspace::log_space::line_hash("line 1")),
+        first_hash: Some(log_gpui::workspace::log_space::line_hash("line 1")), held_bytes: 0, first_line_no: None, inode: None
     });
     assert_eq!(
         next(&h, |e| matches!(e, SourceEvent::Older { .. } | SourceEvent::OlderUnavailable)),
@@ -290,7 +290,7 @@ fn load_more_reads_older_lines_above_the_oldest_held_one() {
 
     // Up to the start of the file.
     let from = numbered(1..=300).len() as u64;
-    h.send(SourceCommand::LoadMore { generation: 0, end_offset: from, lines: 5_000, first_hash: None });
+    h.send(SourceCommand::LoadMore { generation: 0, end_offset: from, lines: 5_000, first_hash: None, held_bytes: 0, first_line_no: None, inode: None });
     let SourceEvent::Older { lines, reached_start, .. } =
         next(&h, |e| matches!(e, SourceEvent::Older { .. } | SourceEvent::OlderUnavailable)) else {
             panic!("Load More was refused")
@@ -335,7 +335,7 @@ fn cancel_drops_a_load_more_that_has_not_started() {
         unreachable!()
     };
     let oldest = end_offset - bytes.iter().map(|b| u64::from(*b)).sum::<u64>();
-    h.send(SourceCommand::LoadMore { generation: 0, end_offset: oldest, lines: 100, first_hash: None });
+    h.send(SourceCommand::LoadMore { generation: 0, end_offset: oldest, lines: 100, first_hash: None, held_bytes: 0, first_line_no: None, inode: None });
     h.send(SourceCommand::CancelLoadMore);
     // Either the batch was read before the cancel arrived (kept), or an empty
     // answer says it was dropped: the app stops waiting in both cases.
@@ -362,7 +362,7 @@ fn load_more_after_clear_reads_the_cleared_lines_again() {
     };
     assert_eq!(lines, vec!["new 1", "new 2"]);
     let hash = log_gpui::workspace::log_space::line_hash("new 1");
-    h.send(SourceCommand::LoadMore { generation: 0, end_offset, lines: 200, first_hash: Some(hash) });
+    h.send(SourceCommand::LoadMore { generation: 0, end_offset, lines: 200, first_hash: Some(hash), held_bytes: 0, first_line_no: None, inode: None });
     let SourceEvent::Older { lines, reached_start, .. } =
         next(&h, |e| matches!(e, SourceEvent::Older { .. } | SourceEvent::OlderUnavailable)) else {
             panic!("Load More was refused")
@@ -375,7 +375,7 @@ fn load_more_after_clear_reads_the_cleared_lines_again() {
 }
 
 #[test]
-fn load_more_after_a_rotation_only_reads_the_generation_being_read() {
+fn load_more_after_a_rotation_reads_the_old_generation_from_the_rotated_file_and_the_new_one_from_the_file() {
     let Some(env) = env() else { return };
     let path = env.dir.path().join("rot.log");
     std::fs::write(&path, numbered(1..=3_000)).unwrap();
@@ -388,24 +388,130 @@ fn load_more_after_a_rotation_only_reads_the_generation_being_read() {
     std::fs::write(&path, numbered(1..=50)).unwrap();
     next(&h, |e| *e == SourceEvent::Break { kind: BreakKind::Rotated });
     next(&h, |e| matches!(e, SourceEvent::Append { .. }));
-    // The held lines of the old Generation are in a Rotated File now: not
-    // read here.
-    h.send(SourceCommand::LoadMore { generation: 0, end_offset: old_start, lines: 100, first_hash: None });
-    assert_eq!(
-        next(&h, |e| matches!(e, SourceEvent::Older { .. } | SourceEvent::OlderUnavailable)),
-        SourceEvent::OlderUnavailable
-    );
+    // The held lines of the old Generation are in a Rotated File now: they are
+    // read from there (`old_start` means nothing for it; the bytes held do).
+    h.send(SourceCommand::LoadMore {
+        generation: 0,
+        end_offset: old_start,
+        lines: 100,
+        first_hash: None,
+        held_bytes: 0,
+        first_line_no: None,
+        inode: None,
+    });
+    let SourceEvent::Older { lines, .. } =
+        next(&h, |e| matches!(e, SourceEvent::Older { .. } | SourceEvent::OlderUnavailable)) else {
+            panic!("the Rotated File was not read")
+        };
+    assert_eq!(lines.last().unwrap(), "line 3000");
     // The new Generation reads up to its first line and says so.
     h.send(SourceCommand::LoadMore {
         generation: 1,
         end_offset: numbered(1..=10).len() as u64,
         lines: 100,
-        first_hash: None,
+        first_hash: None, held_bytes: 0, first_line_no: None, inode: None
     });
     let SourceEvent::Older { lines, reached_start, .. } =
         next(&h, |e| matches!(e, SourceEvent::Older { .. } | SourceEvent::OlderUnavailable)) else {
             panic!("Load More was refused")
         };
     assert_eq!((lines.len(), reached_start), (10, true));
+    h.close();
+}
+
+/// A file whose first 3,000 lines were rotated away: the app holds the last
+/// 1,000 of them (Generation 0), the file now has fresh lines (Generation 1).
+fn rotated_env(env: &Env, name: &str, gzip: bool) -> (SourceHandle, u64, usize) {
+    let path = env.dir.path().join(name);
+    std::fs::write(&path, numbered(1..=3_000)).unwrap();
+    let (h, _) = env.source(name, 1_000);
+    let SourceEvent::Tail { bytes, .. } = next(&h, |e| matches!(e, SourceEvent::Tail { .. })) else {
+        unreachable!()
+    };
+    let held: u64 = bytes.iter().map(|b| u64::from(*b)).sum();
+    let rotated = env.dir.path().join(format!("{name}.1"));
+    std::fs::rename(&path, &rotated).unwrap();
+    std::fs::write(&path, numbered(1..=5)).unwrap();
+    if gzip {
+        assert!(std::process::Command::new("gzip").arg(&rotated).status().unwrap().success());
+    }
+    next(&h, |e| *e == SourceEvent::Break { kind: BreakKind::Rotated });
+    (h, held, 2_001)
+}
+
+#[test]
+fn load_more_reads_a_plain_rotated_file_and_offers_the_next_one_at_its_start() {
+    let Some(env) = env() else { return };
+    std::fs::write(env.dir.path().join("rot_plain.log.2"), numbered(1..=10)).unwrap();
+    let (h, held, first_no) = rotated_env(&env, "rot_plain.log", false);
+    let hash = log_gpui::workspace::log_space::line_hash("line 2001");
+    let ask = |lines: usize| SourceCommand::LoadMore {
+        generation: 0,
+        end_offset: 0,
+        lines,
+        first_hash: Some(hash),
+        held_bytes: held,
+        first_line_no: Some(first_no),
+        inode: None,
+    };
+    h.send(ask(500));
+    let SourceEvent::Older { lines, reached_start, generation, .. } =
+        next(&h, |e| matches!(e, SourceEvent::Older { .. } | SourceEvent::OlderUnavailable)) else {
+            panic!("Load More of the Rotated File was refused")
+        };
+    assert_eq!((generation, lines.len(), reached_start), (0, 500, false));
+    assert_eq!(lines.first().unwrap(), "line 1501");
+    assert_eq!(lines.last().unwrap(), "line 2000");
+
+    // A line other than the held one: not the file the lines came from.
+    h.send(SourceCommand::LoadMore {
+        generation: 0,
+        end_offset: 0,
+        lines: 10,
+        first_hash: Some(log_gpui::workspace::log_space::line_hash("line 1")),
+        held_bytes: held,
+        first_line_no: Some(first_no),
+        inode: None,
+    });
+    assert_eq!(
+        next(&h, |e| matches!(e, SourceEvent::Older { .. } | SourceEvent::OlderUnavailable)),
+        SourceEvent::OlderUnavailable
+    );
+
+    // Up to its first line: the next Rotated File is offered.
+    h.send(ask(5_000));
+    let SourceEvent::Older { lines, reached_start, .. } =
+        next(&h, |e| matches!(e, SourceEvent::Older { .. } | SourceEvent::OlderUnavailable)) else {
+            panic!("Load More of the Rotated File was refused")
+        };
+    assert_eq!((lines.len(), reached_start), (2_000, true));
+    let SourceEvent::EarlierAvailable(next_file) = next(&h, |e| matches!(e, SourceEvent::EarlierAvailable(_))) else {
+        unreachable!()
+    };
+    assert_eq!(next_file.map(|f| f.name), Some("rot_plain.log.2".to_string()));
+    h.close();
+}
+
+#[test]
+fn load_more_decodes_a_compressed_rotated_file_and_keeps_the_lines_before_the_held_ones() {
+    let Some(env) = env() else { return };
+    let (h, held, first_no) = rotated_env(&env, "rot_gz.log", true);
+    let hash = log_gpui::workspace::log_space::line_hash("line 2001");
+    h.send(SourceCommand::LoadMore {
+        generation: 0,
+        end_offset: 0,
+        lines: 300,
+        first_hash: Some(hash),
+        held_bytes: held,
+        first_line_no: Some(first_no),
+        inode: None,
+    });
+    let SourceEvent::Older { lines, reached_start, .. } =
+        next(&h, |e| matches!(e, SourceEvent::Older { .. } | SourceEvent::OlderUnavailable)) else {
+            panic!("Load More of the compressed file was refused")
+        };
+    assert_eq!((lines.len(), reached_start), (300, false));
+    assert_eq!(lines.first().unwrap(), "line 1701");
+    assert_eq!(lines.last().unwrap(), "line 2000");
     h.close();
 }

@@ -772,26 +772,72 @@ impl LiveBuffer {
         bytes: &[u32],
         reached_start: bool,
     ) -> bool {
-        if parsed.entries.first().is_some_and(|e| e.generation != self.generation) {
-            return false;
-        }
-        // The lines are continuous now: the Break that said older lines were
-        // left out above the oldest one goes.
+        self.apply_older_with(parsed, lines, bytes, reached_start, false)
+    }
+
+    /// `apply_older`. The lines may belong to a Rotated File (an older
+    /// Generation than the one being read) when that is what the oldest held
+    /// line is of. `before_start_time`: they are from before the Starting
+    /// Time the file was opened with, which a Break says.
+    pub fn apply_older_with(
+        &mut self,
+        parsed: &mut ParsedFile,
+        lines: &[String],
+        bytes: &[u32],
+        reached_start: bool,
+        before_start_time: bool,
+    ) -> bool {
+        let top_generation = parsed.entries.first().map(|e| e.generation);
+        // The lines are continuous now: what said older lines were left out
+        // or offered above the oldest one goes.
         if let Some(first) = parsed.entries.first_mut() {
-            if first.break_before.as_ref().is_some_and(|m| {
-                matches!(m.kind, BreakKind::LeftWindow | BreakKind::StartOfLoaded)
-            }) {
+            if !lines.is_empty()
+                && first.break_before.as_ref().is_some_and(|m| {
+                    matches!(
+                        m.kind,
+                        BreakKind::LeftWindow
+                            | BreakKind::StartOfLoaded
+                            | BreakKind::EarlierAvailable
+                            | BreakKind::EarlierWindowFull
+                            | BreakKind::StartTimeOverflow
+                    )
+                })
+            {
                 first.break_before = None;
                 parsed.raw_breaks.remove(&0);
             }
         }
-        self.apply_backfill_with(parsed, lines, bytes);
+        match top_generation {
+            Some(g) if g != self.generation => {
+                let first = parsed.entries[0].index.saturating_sub(lines.len());
+                if !lines.is_empty() {
+                    self.insert_above(parsed, g, 0, first, lines, bytes);
+                }
+            }
+            _ => self.apply_backfill_with(parsed, lines, bytes),
+        }
         if !lines.is_empty() {
             self.hold = HoldMode::Extended;
         }
+        if before_start_time && !lines.is_empty() {
+            if let Some(joined) = parsed.entries.get_mut(lines.len()) {
+                if joined.break_before.is_none() {
+                    let mark = Arc::new(BreakMark {
+                        kind: BreakKind::BeforeStartTime,
+                        label: format!(
+                            "{} {} lines before the Starting Time loaded",
+                            self.name,
+                            group(lines.len())
+                        ),
+                    });
+                    joined.break_before = Some(mark.clone());
+                    parsed.raw_breaks.insert(lines.len(), mark);
+                }
+            }
+        }
         if !reached_start && !lines.is_empty() {
             if let Some(first) = parsed.entries.get_mut(0) {
-                if first.break_before.is_none() && first.generation == self.generation {
+                if first.break_before.is_none() {
                     let mark = Arc::new(BreakMark {
                         kind: BreakKind::StartOfLoaded,
                         label: format!("{} {}", self.name, BreakKind::StartOfLoaded.label()),
@@ -802,6 +848,14 @@ impl LiveBuffer {
             }
         }
         true
+    }
+
+    /// Bytes in the file of the lines held of the Generation of the oldest
+    /// one (they are the first lines held).
+    pub fn top_generation_bytes(&self, parsed: &ParsedFile) -> u64 {
+        let Some(top) = parsed.entries.first() else { return 0 };
+        let n = parsed.entries.iter().take_while(|e| e.generation == top.generation).count();
+        self.byte_lens.iter().take(n).map(|b| u64::from(*b)).sum()
     }
 
     /// Load More found the file changed under the lines held: a Break above

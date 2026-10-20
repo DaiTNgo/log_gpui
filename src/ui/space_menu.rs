@@ -343,7 +343,10 @@ fn remote_file_live_items(menu: PopupMenu, file: &FileRef, cx: &App) -> PopupMen
     let more = file.clone();
     let back = file.clone();
     let extended = info.extended;
-    let load_off = info.load_more_off.is_some() || info.loading;
+    // At the Full Read Limit the button opens the whole file instead.
+    let load_off = (info.load_more_off.is_some()
+        && info.load_more_off != Some(crate::app::live_more::AT_FULL_READ_LIMIT))
+        || info.loading;
     let loading = info.loading;
     let cancel = file.clone();
     let custom = file.clone();

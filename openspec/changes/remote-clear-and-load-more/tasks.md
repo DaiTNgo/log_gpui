@@ -24,10 +24,10 @@
 - [x] 3.2 Kiểm tra `line_hash` của dòng ngay dưới `end_offset` khớp dòng cũ nhất đang giữ; không khớp thì không chèn và vẽ Break "earlier lines of this generation are no longer on the Server"
 - [x] 3.3 App chèn lô `Older` phía trên qua đường `apply_backfill`, giữ vị trí đọc, đánh số dòng thật lùi từ `first_line_no` (số tạm nếu chưa có `TotalLines`), rồi chuyển file sang `Extended`
 - [x] 3.4 Load more sau Clear đọc từ `ClearMark.offset`; Break "cleared" giữ nguyên chỗ; Marker cũ không quay lại
-- [ ] 3.5 Generation cũ: tìm Rotated File theo inode qua `rotated.rs`, rồi theo khoảng cách Generation + `line_hash`; file nén thì giải nén theo luồng giữ N dòng cuối trước `first_line_no`, nút ghi số byte phải đọc lại
-- [ ] 3.6 `reached_start`: Break đầu file đổi sang "Load earlier generation" của `remote-full-read`; nút đó nạp vừa chỗ trống khi file là `Window` còn chỗ, còn lại nạp Load More Step và chuyển sang `Extended`
-- [ ] 3.7 Giới hạn Full Read Limit: lô chỉ đọc phần còn lại; đủ giới hạn thì nút thành "Open in full…"
-- [ ] 3.8 Load more bỏ qua Starting Time; Break ghi "N lines before Starting Time loaded"
+- [x] 3.5 Generation cũ: tìm Rotated File theo inode qua `rotated.rs`, rồi theo khoảng cách Generation + `line_hash`; file nén thì giải nén theo luồng giữ N dòng cuối trước `first_line_no`, nút ghi số byte phải đọc lại
+- [x] 3.6 `reached_start`: Break đầu file đổi sang "Load earlier generation" của `remote-full-read`; nút đó nạp vừa chỗ trống khi file là `Window` còn chỗ, còn lại nạp Load More Step và chuyển sang `Extended`
+- [x] 3.7 Giới hạn Full Read Limit: lô chỉ đọc phần còn lại; đủ giới hạn thì nút thành "Open in full…"
+- [x] 3.8 Load more bỏ qua Starting Time; Break ghi "N lines before Starting Time loaded"
 - [x] 3.9 Trạng thái nút: "Loading…" + Cancel (giữ phần đã nhận), một Load more mỗi file một lúc, tắt khi Disconnected
 - [x] 3.10 Lối vào: nút trên Break đầu file, menu Remote File, Command Palette, phím `Cmd+Shift+↑` (nạp Load More Step)
 - [x] 3.11 Nút tách đôi: phần chính nạp Load More Step, menu 1.000 / 10.000 / 100.000 / "Custom…" (1 – Full Read Limit) chỉ cho lần đó; cùng lựa chọn trong menu Remote File; ghi "(up to N)" khi gần Full Read Limit
@@ -47,7 +47,7 @@
 
 - [x] 6.1 Setting `load_more_step` (mặc định 10.000, 1.000–1.000.000, `#[serde(default)]`) trong Settings, ghi "≈13 MB per step"
 - [x] 6.2 Tooltip Remote File ở sidebar và header File Section: "N lines held (≈X MB)" kèm "· Extended"
-- [ ] 6.3 Tiến độ Load more trên Generation nén ở status bar, dùng chung với Load earlier generation
+- [x] 6.3 Tiến độ Load more trên Generation nén ở status bar, dùng chung với Load earlier generation
 
 ## 7. Kiểm thử
 

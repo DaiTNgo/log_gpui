@@ -98,6 +98,9 @@ struct LoadMoreRequest {
     end_offset: u64,
     lines: usize,
     first_hash: Option<u64>,
+    held_bytes: u64,
+    first_line_no: Option<usize>,
+    inode: Option<u64>,
 }
 
 /// What the app asked for, kept until the source can act on it (it may be
@@ -142,8 +145,16 @@ impl Ctl {
                     self.cancelled = true;
                 }
             }
-            SourceCommand::LoadMore { generation, end_offset, lines, first_hash } => {
-                self.load_more = Some(LoadMoreRequest { generation, end_offset, lines, first_hash });
+            SourceCommand::LoadMore { generation, end_offset, lines, first_hash, held_bytes, first_line_no, inode } => {
+                self.load_more = Some(LoadMoreRequest {
+                    generation,
+                    end_offset,
+                    lines,
+                    first_hash,
+                    held_bytes,
+                    first_line_no,
+                    inode,
+                });
             }
         }
         Flow::Go
@@ -425,28 +436,25 @@ impl RemoteFileSource {
                     lines: Vec::new(),
                     bytes: Vec::new(),
                     reached_start: false,
+                    before_start_time: false,
                 });
             }
             if let Some(request) = ctl.load_more.take() {
-                match file.as_mut() {
-                    Some(handle) => match self.load_older(handle, &request, mem, events).await {
-                        Ok(()) => {}
-                        Err(Kind::Lost) => {
-                            // Nothing was read: the app stops waiting and the
-                            // lines it holds stay as they are.
-                            let _ = events.try_send(SourceEvent::Older {
-                                generation: request.generation,
-                                lines: Vec::new(),
-                                bytes: Vec::new(),
-                                reached_start: false,
-                            });
-                            return Served::Lost;
-                        }
-                        Err(_) => {
-                            let _ = events.try_send(SourceEvent::OlderUnavailable);
-                        }
-                    },
-                    None => {
+                match self.load_older(&sftp, session, file.as_mut(), &request, mem, events).await {
+                    Ok(()) => {}
+                    Err(Kind::Lost) => {
+                        // Nothing was read: the app stops waiting and the
+                        // lines it holds stay as they are.
+                        let _ = events.try_send(SourceEvent::Older {
+                            generation: request.generation,
+                            lines: Vec::new(),
+                            bytes: Vec::new(),
+                            reached_start: false,
+                            before_start_time: false,
+                        });
+                        return Served::Lost;
+                    }
+                    Err(_) => {
                         let _ = events.try_send(SourceEvent::OlderUnavailable);
                     }
                 }
@@ -1025,37 +1033,187 @@ impl RemoteFileSource {
         Ok(())
     }
 
-    /// Load More: the lines above `end_offset`, read backwards. The line at
-    /// `end_offset` has to be the one the app holds, or the file changed.
+    /// Load More: the lines above the oldest line the app holds, read
+    /// backwards. The line there has to be the one the app holds, or the
+    /// file changed. A Generation older than the one being read is a Rotated
+    /// File: found by inode, else by how many Generations back it is.
+    #[allow(clippy::too_many_arguments)]
     async fn load_older(
         &self,
-        file: &mut russh_sftp::client::fs::File,
+        sftp: &SftpSession,
+        session: &Arc<RemoteSession>,
+        file: Option<&mut russh_sftp::client::fs::File>,
         request: &LoadMoreRequest,
         mem: &Memory,
         events: &Sender<SourceEvent>,
     ) -> Result<(), Kind> {
-        if request.generation != mem.generation {
+        let unavailable = || {
             let _ = events.try_send(SourceEvent::OlderUnavailable);
+        };
+        if request.generation > mem.generation {
+            unavailable();
             return Ok(());
         }
-        if let Some(expected) = request.first_hash {
-            let found = read_line_at(file, request.end_offset).await?;
-            if found.map(|l| line_hash(&l)) != Some(expected) {
-                let _ = events.try_send(SourceEvent::OlderUnavailable);
+        let before_start_time = mem.stop_reached;
+        let distance = (mem.generation - request.generation) as usize;
+        let (lines, bytes, reached_start) = if distance == 0 {
+            let Some(file) = file else {
+                unavailable();
                 return Ok(());
+            };
+            if let Some(expected) = request.first_hash {
+                let found = read_line_at(file, request.end_offset).await?;
+                if found.map(|l| line_hash(&l)) != Some(expected) {
+                    unavailable();
+                    return Ok(());
+                }
             }
-        }
-        let mut backward = BackwardLines::new(request.end_offset, BLOCK);
-        let (lines, bytes) = read_backward(file, &mut backward, request.lines).await?;
-        let reached_start = backward.is_done();
+            let mut backward = BackwardLines::new(request.end_offset, BLOCK);
+            let (lines, bytes) = read_backward(file, &mut backward, request.lines).await?;
+            (lines, bytes, backward.is_done())
+        } else {
+            let Some(read) = self.read_older_generation(sftp, session, request, distance, events).await? else {
+                unavailable();
+                return Ok(());
+            };
+            read
+        };
         let _ = events.try_send(SourceEvent::Older {
             generation: request.generation,
             lines,
             bytes,
             reached_start,
+            before_start_time,
         });
+        // Held up to the first line of the oldest Generation held: the next
+        // Rotated File is offered.
+        if reached_start && distance == mem.earlier_next {
+            self.announce_earlier(sftp, mem, events).await?;
+        }
         Ok(())
     }
+
+    /// The lines above the oldest held line of a Rotated File (`distance`
+    /// Generations back). `None` when the file cannot be found or is not
+    /// the one the lines came from.
+    async fn read_older_generation(
+        &self,
+        sftp: &SftpSession,
+        session: &Arc<RemoteSession>,
+        request: &LoadMoreRequest,
+        distance: usize,
+        events: &Sender<SourceEvent>,
+    ) -> Result<Option<(Vec<String>, Vec<u32>, bool)>, Kind> {
+        let list = list_rotated(sftp, &self.path).await.map_err(|_| Kind::Lost)?;
+        let dir = dirname(&self.path);
+        let by_inode = match request.inode {
+            Some(inode) => rotated_by_inode(session, &dir, &list, inode).await,
+            None => None,
+        };
+        let Some(target) = by_inode.or(Some(distance - 1)).and_then(|i| list.get(i)).cloned() else {
+            return Ok(None);
+        };
+        if !target.compression.is_supported() {
+            return Ok(None);
+        }
+        let path = join(&dir, &target.name);
+        if !target.compression.is_compressed() {
+            let Some(end) = target.size.checked_sub(request.held_bytes) else { return Ok(None) };
+            let mut file = sftp.open(path).await.map_err(|e| classify(&e))?;
+            if let Some(expected) = request.first_hash {
+                let found = read_line_at(&mut file, end).await?;
+                if found.map(|l| line_hash(&l)) != Some(expected) {
+                    return Ok(None);
+                }
+            }
+            let mut backward = BackwardLines::new(end, BLOCK);
+            let (lines, bytes) = read_backward(&mut file, &mut backward, request.lines).await?;
+            return Ok(Some((lines, bytes, backward.is_done())));
+        }
+        // Compressed: decoded from its start; only the last lines before the
+        // oldest held one are kept.
+        let (Some(first_no), Some(expected)) = (request.first_line_no, request.first_hash) else {
+            return Ok(None);
+        };
+        let file = sftp.open(path).await.map_err(|e| classify(&e))?;
+        let handle = tokio::runtime::Handle::current();
+        let (kind, size, what, progress_events) =
+            (target.compression, target.size, target.name.clone(), events.clone());
+        let done = Arc::new(std::sync::atomic::AtomicU64::new(0));
+        let counter = done.clone();
+        let wanted = request.lines.max(1);
+        let job = tokio::task::spawn_blocking(move || -> std::io::Result<Option<(VecDeque<(String, u32)>, usize)>> {
+            use std::io::BufRead;
+            let bridge = CountRead { inner: AsyncBridge::buffered(handle, file), count: counter.clone() };
+            let mut reader = std::io::BufReader::with_capacity(256 * 1024, decoder(kind, bridge)?);
+            let mut ring: VecDeque<(String, u32)> = VecDeque::new();
+            let mut number = 0usize;
+            let mut buf = Vec::new();
+            let mut last_report = Instant::now() - Duration::from_secs(1);
+            loop {
+                buf.clear();
+                let n = reader.read_until(b'\n', &mut buf)?;
+                if n == 0 {
+                    return Ok(None);
+                }
+                number += 1;
+                let text = buf.strip_suffix(b"\n").unwrap_or(&buf);
+                let line = super::splitter::decode_line(text);
+                if number == first_no {
+                    return Ok((line_hash(&line) == expected).then_some((ring, number - 1)));
+                }
+                ring.push_back((line, n as u32));
+                if ring.len() > wanted {
+                    ring.pop_front();
+                }
+                if last_report.elapsed() > Duration::from_millis(250) {
+                    last_report = Instant::now();
+                    if progress_events.is_closed() {
+                        return Err(std::io::Error::new(std::io::ErrorKind::Interrupted, "closed"));
+                    }
+                    let _ = progress_events.try_send(SourceEvent::Progress(Some(ReadProgress {
+                        what: what.clone(),
+                        done: counter.load(std::sync::atomic::Ordering::Relaxed),
+                        total: Some(size),
+                    })));
+                }
+            }
+        });
+        let _ = events.try_send(SourceEvent::Progress(Some(ReadProgress {
+            what: target.name.clone(),
+            done: 0,
+            total: Some(target.size),
+        })));
+        let outcome = job.await;
+        let _ = events.try_send(SourceEvent::Progress(None));
+        let read = match outcome {
+            Ok(Ok(read)) => read,
+            Ok(Err(e)) => return Err(Kind::Other(e.to_string())),
+            Err(e) => return Err(Kind::Other(e.to_string())),
+        };
+        Ok(read.map(|(ring, before)| {
+            let reached_start = ring.len() == before;
+            let (lines, bytes): (Vec<String>, Vec<u32>) = ring.into_iter().unzip();
+            (lines, bytes, reached_start)
+        }))
+    }
+}
+
+/// The index in `list` of the Rotated File with this inode, when the Server's
+/// `stat` says so.
+async fn rotated_by_inode(session: &Arc<RemoteSession>, dir: &str, list: &[RotatedFile], inode: u64) -> Option<usize> {
+    if list.is_empty() {
+        return None;
+    }
+    let names: Vec<String> = list.iter().take(32).map(|f| shell_quote(&join(dir, &f.name))).collect();
+    let command = format!(
+        "for f in {}; do stat -c '%i' \"$f\" 2>/dev/null || stat -f '%i' \"$f\" 2>/dev/null || echo 0; done",
+        names.join(" ")
+    );
+    let out = tokio::time::timeout(Duration::from_secs(10), session.exec(&command)).await.ok()?.ok()?;
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .position(|l| l.trim().parse::<u64>().ok() == Some(inode))
 }
 
 /// What loading a Rotated File gave.

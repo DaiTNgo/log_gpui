@@ -12,6 +12,9 @@ use crate::workspace::log_space::line_hash;
 use gpui::{AppContext as _, Context};
 use std::collections::HashSet;
 
+/// Why Load more is off when the file holds as much as it may.
+pub const AT_FULL_READ_LIMIT: &str = "At the Full Read Limit";
+
 /// Bytes of memory one held line takes, as measured.
 pub const BYTES_PER_LINE: usize = 1_320;
 
@@ -144,9 +147,7 @@ impl AppView {
         } else if !matches!(status, Some(SourceStatus::Live)) {
             Some("Disconnected")
         } else if parsed.entries.len() >= self.live.full_read_limit {
-            Some("At the Full Read Limit")
-        } else if buffer.held_start(parsed).offset.is_none() {
-            Some("The oldest line is in an older generation")
+            Some(AT_FULL_READ_LIMIT)
         } else {
             None
         };
@@ -259,6 +260,11 @@ impl AppView {
         if info.loading {
             return;
         }
+        if info.load_more_off == Some(AT_FULL_READ_LIMIT) {
+            // Nothing more fits: the way on is the whole file.
+            self.request_open_in_full(file_id, cx);
+            return;
+        }
         if let Some(reason) = info.load_more_off {
             self.notice = Some(format!("Load more: {reason}"));
             cx.notify();
@@ -267,7 +273,16 @@ impl AppView {
         let Some(parsed) = self.parsed_files.get(file_id) else { return };
         let Some(buffer) = parsed.live.as_ref() else { return };
         let start = buffer.held_start(parsed);
-        let Some(end_offset) = start.offset else { return };
+        // Where the oldest held line starts in the file being read; for a
+        // Rotated File the source works from how many bytes are held.
+        let end_offset = start.offset.unwrap_or(0);
+        let held_bytes = buffer.top_generation_bytes(parsed);
+        let first_line_no = parsed
+            .entries
+            .first()
+            .map(|e| e.index)
+            .filter(|n| crate::live::is_real_line_number(*n));
+        let inode = buffer.inode_of(start.generation);
         let remaining = self.live.full_read_limit.saturating_sub(parsed.entries.len());
         let wanted = lines.unwrap_or(self.live.load_more_step).max(1);
         let n = wanted.min(remaining).max(1);
@@ -283,6 +298,9 @@ impl AppView {
             end_offset,
             lines: n,
             first_hash,
+            held_bytes,
+            first_line_no,
+            inode,
         });
         self.live.loading_more.insert(file_id.to_string());
         cx.notify();
@@ -295,7 +313,17 @@ impl AppView {
             return;
         }
         let Some(parsed) = self.parsed_files.get(file_id) else { return };
-        let room = self.live.window.saturating_sub(parsed.entries.len());
+        // The Live Window's room first; a file with none (or one that
+        // already holds more) takes a Load More Step, up to the Full Read
+        // Limit, and holds it from then on.
+        let held = parsed.entries.len();
+        let extended = parsed.live.as_ref().is_some_and(|b| b.hold == HoldMode::Extended);
+        let window_room = if extended { 0 } else { self.live.window.saturating_sub(held) };
+        let room = if window_room > 0 {
+            window_room
+        } else {
+            self.live.load_more_step.min(self.live.full_read_limit.saturating_sub(held))
+        };
         if room == 0 {
             self.request_open_in_full(file_id, cx);
             return;

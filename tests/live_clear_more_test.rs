@@ -253,3 +253,35 @@ fn clearing_one_of_two_interleaved_files_keeps_the_other_and_moves_to_the_next_r
     assert_eq!(b.entries.len(), 5);
     assert_eq!(b.entries[0].index, 1, "the other file is untouched");
 }
+
+#[test]
+fn older_lines_go_above_an_earlier_generation_and_say_when_they_are_before_the_starting_time() {
+    use log_gpui::live::source::EarlierStart;
+    let mut parsed = ParsedFile::from_text("");
+    let mut buf = LiveBuffer::remote("web1:/a.log");
+    let current: Vec<String> = (1..=10).map(|i| format!("2026-09-05 11:00:{i:02} INFO now {i}")).collect();
+    buf.apply_tail_with(&mut parsed, &current, 0, &[], 0);
+    buf.apply_total(&mut parsed, Some(10));
+    // A Rotated File's last ten lines (numbers 91–100) come above.
+    let earlier: Vec<String> = (91..=100).map(|i| format!("2026-09-05 10:00:{:02} INFO old {i}", i % 60)).collect();
+    let start = EarlierStart { name: "a.log.1".into(), modified: None };
+    assert!(buf.apply_earlier(&mut parsed, Some(&start), &earlier, &[], Some(100)));
+    assert_eq!((parsed.entries[0].generation, parsed.entries[0].index), (0, 91));
+    assert_eq!(buf.held_start(&parsed).generation, 0);
+    assert_eq!(buf.held_start(&parsed).offset, None, "a Rotated File's offset comes from the bytes held");
+
+    let more: Vec<String> = (86..=90).map(|i| format!("2026-09-05 10:00:{:02} INFO old {i}", i % 60)).collect();
+    assert!(buf.apply_older_with(&mut parsed, &more, &[], false, true));
+    assert_eq!(parsed.entries.len(), 25);
+    assert_eq!((parsed.entries[0].generation, parsed.entries[0].index), (0, 86));
+    assert_eq!((parsed.entries[5].generation, parsed.entries[5].index), (0, 91));
+    assert_eq!(parsed.entries[0].break_before.as_ref().unwrap().kind, BreakKind::StartOfLoaded);
+    let joined = parsed.entries[5].break_before.as_ref().unwrap();
+    assert_eq!(
+        (joined.kind, joined.label.as_str()),
+        (BreakKind::BeforeStartTime, "web1:/a.log 5 lines before the Starting Time loaded")
+    );
+    // The Rotated Generation's Break between the two is where it was.
+    assert_eq!(parsed.entries[15].break_before.as_ref().unwrap().kind, BreakKind::Rotated);
+    assert_eq!(buf.hold, HoldMode::Extended);
+}
