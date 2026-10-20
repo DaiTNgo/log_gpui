@@ -9,10 +9,11 @@ use gpui::{
     Window, WindowBounds, WindowHandle, WindowOptions, div, px, size,
 };
 use gpui_component::input::{InputEvent, InputState};
-use gpui_component::{ActiveTheme as _, Root};
+use gpui_component::{ActiveTheme as _, Root, TitleBar, v_flex};
 
 const WINDOW_WIDTH: f32 = 1000.0;
 const WINDOW_HEIGHT: f32 = 600.0;
+const WINDOW_TITLE: &str = "Focus Pane";
 
 pub struct FocusWindowView {
     app: Entity<AppView>,
@@ -153,14 +154,24 @@ impl Render for FocusWindowView {
             (colors, empty)
         });
 
-        div()
+        let v_close = self.app.clone();
+        let title_bar = TitleBar::new()
+            // Linux draws the close button itself; it sends the pane home as
+            // the system close button does elsewhere.
+            .on_close_window(move |_, window, cx| {
+                v_close.update(cx, |this, cx| this.move_focus_back(window, cx));
+            })
+            .child(div().text_sm().text_color(cx.theme().muted_foreground).child(WINDOW_TITLE));
+
+        v_flex()
             .id("focus-window")
             .size_full()
             .bg(colors.background)
             .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
                 this.handle_key_down(event, window, cx);
             }))
-            .child(body)
+            .child(title_bar)
+            .child(div().flex_1().min_h(px(0.0)).child(body))
     }
 }
 
@@ -178,11 +189,14 @@ impl AppView {
                 size(px(WINDOW_WIDTH), px(WINDOW_HEIGHT)),
                 cx,
             ))),
+            // The same drawn title bar as the main window, so it keeps the
+            // app's theme on every platform instead of the system's.
             titlebar: Some(gpui::TitlebarOptions {
-                title: Some("Focus Pane".into()),
-                ..Default::default()
+                title: Some(WINDOW_TITLE.into()),
+                ..TitleBar::title_bar_options()
             }),
-            ..Default::default()
+            window_decorations: Some(gpui::WindowDecorations::Client),
+            ..TitleBar::window_options()
         };
         // The new window draws at once and reads the app, so it opens after
         // this update has ended.
@@ -255,7 +269,7 @@ impl AppView {
             search.is_open = true;
         }
         self.search_input_dirty = true;
-        self.run_search(cx);
+        self.search_text_changed(cx);
     }
 
     /// The Focus Find field of the Focus Window changed.

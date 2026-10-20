@@ -31,6 +31,8 @@ impl AppView {
     }
 
     pub fn run_search(&mut self, cx: &mut Context<Self>) {
+        // Found here and now: a scan under way is not needed.
+        self.search_generation += 1;
         if self.view_mode == ViewMode::Raw {
             // Raw View ignores Filter: look at every line of every section.
             self.run_raw_search(cx);
@@ -38,7 +40,7 @@ impl AppView {
         }
         self.focus
             .search_mut()
-            .update_matches(&self.all_entries, &self.filter_pass);
+            .update_matches(&self.all_entries, &self.visible_indices);
         self.refresh_focus();
         if let Some(entry_ix) = self.focus.search().current_match_pos() {
             self.goto_entry(entry_ix, Origin::Jump, cx);
@@ -99,4 +101,92 @@ impl AppView {
         search.is_open = true;
         self.run_search(cx);
     }
+
+    /// The text of the Search field changed, as the user types. The Matches
+    /// are found on a worker thread once the typing pauses (`SEARCH_DEBOUNCE`),
+    /// and only for the last text: until then the Matches are those of the
+    /// text before it, and the typed expression already highlights.
+    pub fn search_text_changed(&mut self, cx: &mut Context<Self>) {
+        if self.view_mode == ViewMode::Raw {
+            return self.run_search(cx);
+        }
+        let search = self.focus.search_mut();
+        if !search.reparse() && search.parse_error.is_some() {
+            // Half typed: the expression before it stays in use.
+            cx.notify();
+            return;
+        }
+        if search.matcher.is_none() {
+            // Nothing to scan for: the Matches go at once.
+            return self.run_search(cx);
+        }
+        search.pending = true;
+        self.search_generation += 1;
+        let generation = self.search_generation;
+        cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(SEARCH_DEBOUNCE).await;
+            this.update(cx, |this, cx| this.start_search_scan(generation, cx)).ok();
+        })
+        .detach();
+        cx.notify();
+    }
+
+    /// Type `text` in the Search field, as the user would.
+    pub fn type_search_query(&mut self, text: &str, cx: &mut Context<Self>) {
+        let search = self.focus.search_mut();
+        search.query = text.to_string();
+        search.is_open = true;
+        self.search_text_changed(cx);
+    }
+
+    /// Look for the Matches among every row on a worker thread. The rows are
+    /// read by the worker from a copy of their texts, so Live lines can go on
+    /// arriving.
+    fn start_search_scan(&mut self, generation: u64, cx: &mut Context<Self>) {
+        if generation != self.search_generation {
+            return;
+        }
+        let Some(matcher) = self.focus.search().matcher.clone() else { return };
+        let lines: Vec<gpui::SharedString> = self.all_entries.iter().map(|e| e.raw_line.clone()).collect();
+        let (epoch, scanned) = (self.rows_epoch, lines.len());
+        self.refreshes.scans += 1;
+        cx.spawn(async move |this, cx| {
+            let found = cx
+                .background_executor()
+                .spawn(async move {
+                    let rows: Vec<usize> = (0..lines.len()).collect();
+                    crate::par::filter(&rows, |ix| matcher.is_match(&lines[ix]))
+                })
+                .await;
+            this.update(cx, |this, cx| this.finish_search_scan(generation, epoch, scanned, found, cx)).ok();
+        })
+        .detach();
+    }
+
+    fn finish_search_scan(
+        &mut self,
+        generation: u64,
+        epoch: u64,
+        scanned: usize,
+        found: Vec<usize>,
+        cx: &mut Context<Self>,
+    ) {
+        if generation != self.search_generation {
+            return;
+        }
+        if epoch != self.rows_epoch {
+            // Rows left or moved while it ran: look again.
+            return self.start_search_scan(generation, cx);
+        }
+        self.focus.search_mut().set_scanned_matches(found, &self.all_entries, scanned);
+        self.refresh_focus();
+        if let Some(entry_ix) = self.focus.search().current_match_pos() {
+            self.goto_entry(entry_ix, Origin::Jump, cx);
+        }
+        self.schedule_session_save(cx);
+        cx.notify();
+    }
 }
+
+/// How long the Search field stays still before the Matches are looked for.
+pub const SEARCH_DEBOUNCE: std::time::Duration = std::time::Duration::from_millis(100);

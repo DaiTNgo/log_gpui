@@ -28,7 +28,7 @@ fn matches_and_highlights_survive_a_filter_change(cx: &mut TestAppContext) {
     });
     let (matches, paints, counts, total) = h.view.read_with(&h.cx, |app, _| {
         (
-            app.focus.search().matched_shared.clone(),
+            app.focus.search().matched_visible_indices.clone(),
             app.highlight_paints.clone(),
             app.rule_counts.clone(),
             app.focus.search().total_matches(),
@@ -38,7 +38,7 @@ fn matches_and_highlights_survive_a_filter_change(cx: &mut TestAppContext) {
 
     h.view.update(&mut h.cx, |app, cx| app.filter_toggle_value("level", "error", cx));
     h.view.read_with(&h.cx, |app, _| {
-        assert!(Arc::ptr_eq(&matches, &app.focus.search().matched_shared), "Matches were not recomputed");
+        assert!(Arc::ptr_eq(&matches, &app.focus.search().matched_visible_indices), "Matches were not recomputed");
         assert!(Arc::ptr_eq(&paints, &app.highlight_paints), "paints were not recomputed");
         assert_eq!(counts, app.rule_counts);
         assert_eq!(app.focus.search().total_matches(), total);
@@ -51,7 +51,7 @@ fn matches_and_highlights_survive_a_filter_change(cx: &mut TestAppContext) {
 
     h.view.update(&mut h.cx, |app, cx| app.filter_clear_all(cx));
     h.view.read_with(&h.cx, |app, _| {
-        assert!(Arc::ptr_eq(&matches, &app.focus.search().matched_shared));
+        assert!(Arc::ptr_eq(&matches, &app.focus.search().matched_visible_indices));
         assert_eq!(app.filter_pass.len(), 40);
     });
 }

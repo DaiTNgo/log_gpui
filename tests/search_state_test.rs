@@ -24,7 +24,7 @@ fn matches_the_whole_raw_line() {
     let mut s = SearchState::new();
     s.query = "error".into();
     s.update_matches(&e, &all(4));
-    assert_eq!(s.matched_visible_indices, vec![1]);
+    assert_eq!(*s.matched_visible_indices, vec![1]);
 }
 
 #[test]
@@ -33,25 +33,25 @@ fn boolean_expression() {
     let mut s = SearchState::new();
     s.query = "(refused || timeout) && db".into();
     s.update_matches(&e, &all(4));
-    assert_eq!(s.matched_visible_indices, vec![1, 2]);
+    assert_eq!(*s.matched_visible_indices, vec![1, 2]);
 }
 
 #[test]
-fn lines_failing_filter_are_not_matches() {
-    // 5 DEBUG lines and 12 other lines contain `timeout`; Filter hides DEBUG.
+fn lines_failing_filter_are_still_matches() {
+    // 5 DEBUG lines and 12 other lines contain `timeout`; Filter would hide DEBUG in the pane only.
     let mut e = Vec::new();
     for i in 0..17 {
         let level = if i < 5 { "DEBUG" } else { "INFO" };
         e.push(entry(i, &format!("{level} db timeout {i}")));
     }
-    let pass: Vec<usize> = (5..17).collect();
+    let rows: Vec<usize> = (0..17).collect();
     let mut s = SearchState::new();
     s.query = "timeout".into();
-    s.update_matches(&e, &pass);
-    assert_eq!(s.total_matches(), 12);
-    // The view still has every line; a Match is the entry's own position.
-    assert_eq!(s.matched_visible_indices.first(), Some(&5));
-    assert!(!s.matched_visible_indices.contains(&2));
+    s.update_matches(&e, &rows);
+    assert_eq!(s.total_matches(), 17);
+    // Filter does not touch the view's Matches; a Match is the entry's own position.
+    assert_eq!(s.matched_visible_indices.first(), Some(&0));
+    assert!(s.matched_visible_indices.contains(&2));
 }
 
 #[test]
@@ -60,19 +60,19 @@ fn invalid_expression_keeps_last_matches_and_reports_error() {
     let mut s = SearchState::new();
     s.query = "timeout".into();
     s.update_matches(&e, &all(4));
-    assert_eq!(s.matched_visible_indices, vec![1, 2]);
+    assert_eq!(*s.matched_visible_indices, vec![1, 2]);
     s.next_match();
 
     s.query = "timeout ||".into();
     s.update_matches(&e, &all(4));
     assert!(s.parse_error.is_some());
-    assert_eq!(s.matched_visible_indices, vec![1, 2]);
+    assert_eq!(*s.matched_visible_indices, vec![1, 2]);
     assert_eq!(s.current_match_idx, 1);
 
     s.query = "timeout || refused".into();
     s.update_matches(&e, &all(4));
     assert!(s.parse_error.is_none());
-    assert_eq!(s.matched_visible_indices, vec![0, 1, 2]);
+    assert_eq!(*s.matched_visible_indices, vec![0, 1, 2]);
     assert_eq!(s.current_match_idx, 0);
 }
 

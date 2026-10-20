@@ -48,8 +48,10 @@ impl FilterUi {
                 input,
                 window,
                 |this: &mut AppView, _, event: &InputEvent, _window, cx| {
-                    if matches!(event, InputEvent::Change | InputEvent::PressEnter { .. }) {
-                        this.on_time_inputs_changed(cx);
+                    match event {
+                        InputEvent::Change => this.on_time_inputs_typed(cx),
+                        InputEvent::PressEnter { .. } => this.on_time_inputs_changed(cx),
+                        _ => {}
                     }
                 },
             ));
@@ -74,6 +76,9 @@ impl AppView {
     /// pane.
     pub fn apply_filters_and_refresh(&mut self, cx: &mut Context<Self>) {
         self.refreshes.full += 1;
+        // The Matches are found again below: a scan under way is stale.
+        self.rows_epoch += 1;
+        self.search_generation += 1;
         self.evaluate_filter_pass();
         if self.visible_indices.len() != self.all_entries.len() {
             // Always every row in order: grow or cut the list where it is, not
@@ -134,9 +139,12 @@ impl AppView {
         if !self.extend_highlight_paints(from) {
             self.recompute_highlight_paints();
         }
-        let matches_before = self.focus.search().total_matches();
-        self.focus.search_mut().extend_matches(&self.all_entries, from);
-        self.extend_focus(matches_before, pass_before);
+        // A scan under way takes the new rows in when it is done.
+        if !self.focus.search().pending {
+            let matches_before = self.focus.search().total_matches();
+            self.focus.search_mut().extend_matches(&self.all_entries, from);
+            self.extend_focus(matches_before, pass_before);
+        }
         self.clamp_selected_row();
         self.schedule_session_save(cx);
         cx.notify();
@@ -249,9 +257,46 @@ impl AppView {
 
     /// The From/To inputs changed: store the typed bounds and re-filter.
     pub fn on_time_inputs_changed(&mut self, cx: &mut Context<Self>) {
+        self.time_range_generation += 1;
+        self.apply_time_inputs(cx);
+    }
+
+    /// The From/To inputs changed as the user types: the Filter follows once
+    /// the typing pauses, and only when the bounds typed can be read and are
+    /// not the bounds already in use. Half-typed text waits.
+    pub fn on_time_inputs_typed(&mut self, cx: &mut Context<Self>) {
+        let (from, to) = self.typed_time_range(cx);
+        let anchor = self.filter_index.anchor_day();
+        let (Ok(new_from), Ok(new_to)) = (parse_time_bound(&from, anchor), parse_time_bound(&to, anchor)) else {
+            return;
+        };
+        if (new_from, new_to) == self.filter_state.time_range.bounds(anchor) {
+            // The same bounds, maybe written another way: remember the text.
+            self.filter_state.set_time_range(&from, &to);
+            return;
+        }
+        self.time_range_generation += 1;
+        let generation = self.time_range_generation;
+        cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(super::search::SEARCH_DEBOUNCE).await;
+            this.update(cx, |this, cx| {
+                if this.time_range_generation == generation {
+                    this.apply_time_inputs(cx);
+                }
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    fn typed_time_range(&self, cx: &Context<Self>) -> (String, String) {
         let from = self.filter_ui.from_input.read(cx).value().to_string();
         let to = self.filter_ui.to_input.read(cx).value().to_string();
-        let (from, to) = (from.trim().to_string(), to.trim().to_string());
+        (from.trim().to_string(), to.trim().to_string())
+    }
+
+    fn apply_time_inputs(&mut self, cx: &mut Context<Self>) {
+        let (from, to) = self.typed_time_range(cx);
         if from == self.filter_state.time_range.from && to == self.filter_state.time_range.to {
             return;
         }

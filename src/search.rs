@@ -12,15 +12,17 @@ pub struct SearchState {
     pub is_open: bool,
     #[serde(skip)]
     pub query: String,
-    /// Indices of matching rows in the `visible_indices` list
+    /// Indices of matching rows in the `visible_indices` list: the one list
+    /// of the Matches, shared with the canvas.
     #[serde(skip)]
-    pub matched_visible_indices: Vec<usize>,
+    pub matched_visible_indices: Arc<Vec<usize>>,
+    /// A newer Search Expression is waiting for its scan: the Matches are
+    /// those of the one before it, and rows that arrive are left to the scan.
+    #[serde(skip)]
+    pub pending: bool,
     /// Current selected match position in `matched_visible_indices` (0-based)
     #[serde(skip)]
     pub current_match_idx: usize,
-    /// Same list as `matched_visible_indices`, shared cheaply with the canvas.
-    #[serde(skip)]
-    pub matched_shared: Arc<Vec<usize>>,
     /// Matcher compiled from the last Search Expression that parsed cleanly.
     /// It stays in place while the typed text is incomplete or invalid.
     #[serde(skip)]
@@ -105,23 +107,32 @@ impl SearchState {
     /// match with them).
     pub fn update_matches(&mut self, entries: &[LogEntry], rows: &[usize]) {
         let replaced = self.reparse();
-        self.matched_visible_indices.clear();
+        self.pending = false;
         if replaced {
             self.current_match_idx = 0;
         }
         let Some(matcher) = &self.matcher else {
             self.current_match_idx = 0;
-            self.matched_shared = Arc::new(Vec::new());
+            self.matched_visible_indices = Arc::new(Vec::new());
             return;
         };
 
-        self.matched_visible_indices = crate::par::filter(rows, |entry_ix| {
+        self.matched_visible_indices = Arc::new(crate::par::filter(rows, |entry_ix| {
             entries.get(entry_ix).is_some_and(|entry| matcher.is_match(&entry.raw_line))
-        });
+        }));
         if self.current_match_idx >= self.matched_visible_indices.len() {
             self.current_match_idx = 0;
         }
-        self.matched_shared = Arc::new(self.matched_visible_indices.clone());
+    }
+
+    /// The Matches among the first rows were found elsewhere (`found`, the
+    /// rows of a scan on a worker thread): they are the Matches now, and the
+    /// rows from `scanned` on, which arrived meanwhile, are searched here.
+    pub fn set_scanned_matches(&mut self, found: Vec<usize>, entries: &[LogEntry], scanned: usize) {
+        self.pending = false;
+        self.current_match_idx = 0;
+        self.matched_visible_indices = Arc::new(found);
+        self.extend_matches(entries, scanned);
     }
 
     /// Rows from `from` on were appended after the rows the Matches were
@@ -132,8 +143,7 @@ impl SearchState {
         let rows: Vec<usize> = (from..entries.len()).collect();
         let found = crate::par::filter(&rows, |ix| matcher.is_match(&entries[ix].raw_line));
         if !found.is_empty() {
-            self.matched_visible_indices.extend_from_slice(&found);
-            Arc::make_mut(&mut self.matched_shared).extend(found);
+            Arc::make_mut(&mut self.matched_visible_indices).extend(found);
         }
     }
 

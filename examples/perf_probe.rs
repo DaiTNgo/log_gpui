@@ -169,8 +169,11 @@ fn app_probe(n: usize) {
     });
     state(&mut h, "Live append batch (1,000 lines)");
 
-    time("app Search keystroke ('user=4')", || {
-        h.view.update(&mut h.cx, |app, cx| app.trigger_search_query("user=4", cx));
+    time("app Search keystroke, UI thread ('user=4')", || {
+        h.view.update(&mut h.cx, |app, cx| app.type_search_query("user=4", cx));
+    });
+    time("app Search Matches after the pause", || {
+        h.cx.executor().advance_clock(std::time::Duration::from_millis(150));
         h.cx.run_until_parked();
     });
     state(&mut h, "Search keystroke ('user=4')");

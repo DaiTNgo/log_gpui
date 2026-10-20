@@ -104,6 +104,8 @@ pub struct RefreshCounts {
     pub appended: usize,
     /// The rows built again from every file (`rebuild_open_view_without`).
     pub rebuilds: usize,
+    /// Search scans started on a worker thread.
+    pub scans: usize,
 }
 
 pub struct AppView {
@@ -183,6 +185,14 @@ pub struct AppView {
     pub column_layout: ColumnLayoutState,
     /// Live reading: sources, Follow and Pause.
     pub live: live::LiveRuntime,
+    /// The newest Search scan asked for: an older one that finishes is
+    /// dropped.
+    pub search_generation: u64,
+    /// Bumped whenever rows left or moved in the open view (not when rows
+    /// were only added at the end): a scan of the rows before that is stale.
+    pub rows_epoch: u64,
+    /// The newest Time Range edit waiting for its debounce.
+    pub time_range_generation: u64,
     /// How often the view was refreshed each way (tests and the perf probe
     /// read it to see which path a change took).
     pub refreshes: RefreshCounts,
@@ -375,7 +385,7 @@ impl AppView {
                     if !search.query.trim().is_empty() {
                         search.is_open = true;
                     }
-                    this.run_search(cx);
+                    this.search_text_changed(cx);
                 }
                 InputEvent::PressEnter { shift, .. } => {
                     if *shift {
@@ -475,6 +485,9 @@ impl AppView {
             column_layout,
             live: live::LiveRuntime::new(),
             refreshes: RefreshCounts::default(),
+            search_generation: 0,
+            rows_epoch: 0,
+            time_range_generation: 0,
             remote,
             server_dialog: None,
             workspace_state,

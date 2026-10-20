@@ -326,6 +326,7 @@ impl AppView {
         self.focus_find_dirty = true;
         match self.view_mode {
             ViewMode::Parsed => {
+                self.search_generation += 1;
                 self.active_search_mut().reparse();
                 self.focus.search_mut().update_matches(&self.all_entries, &self.visible_indices);
             }

@@ -16,7 +16,7 @@ fn test_search_find_modes() {
     search.update_matches(&entries, &visible_indices);
     // Finds row 0 and 1 (case insensitive)
     assert_eq!(search.total_matches(), 2);
-    assert_eq!(search.matched_visible_indices, vec![0, 1]);
+    assert_eq!(*search.matched_visible_indices, vec![0, 1]);
 
     // Test navigation next/prev
     assert_eq!(search.current_match_idx, 0);

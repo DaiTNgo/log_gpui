@@ -66,6 +66,8 @@ impl AppView {
         let break_before = first.break_before.clone();
 
         let anchor = self.top_row_anchor();
+        // A scan of the rows under way is stale: it starts again.
+        self.rows_epoch += 1;
         let selected = self.selected_row_pos.and_then(|p| shifted(p, &dropped));
 
         // What counted these rows stops counting them.
@@ -103,8 +105,9 @@ impl AppView {
                 .iter()
                 .filter(|p| dropped.binary_search(p).is_ok())
                 .count();
-            shift_sorted(&mut search.matched_visible_indices, &dropped);
-            search.matched_shared = Arc::new(search.matched_visible_indices.clone());
+            let mut matches = std::mem::take(Arc::make_mut(&mut search.matched_visible_indices));
+            shift_sorted(&mut matches, &dropped);
+            search.matched_visible_indices = Arc::new(matches);
             search.current_match_idx = current.saturating_sub(lost_before);
             if search.current_match_idx >= search.matched_visible_indices.len() {
                 search.current_match_idx = 0;

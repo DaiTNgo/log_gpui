@@ -17,6 +17,8 @@ fn lines() -> Vec<String> {
 fn type_search(h: &mut Harness, text: &str) {
     h.view.update_in(&mut h.cx, |app, window, cx| app.activate_search(window, cx));
     h.cx.simulate_input(text);
+    // The Matches are looked for once the typing pauses.
+    h.cx.executor().advance_clock(std::time::Duration::from_millis(150));
     h.cx.run_until_parked();
 }
 

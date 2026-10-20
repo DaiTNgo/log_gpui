@@ -233,7 +233,7 @@ impl LogCanvas {
             colors: state.colors,
             selected_pos: state.selected_row_pos,
             search_matcher: state.search_state.matcher.clone(),
-            matched_positions: state.search_state.matched_shared.clone(),
+            matched_positions: state.search_state.matched_visible_indices.clone(),
             current_match_pos: state.search_state.current_match_pos(),
             scroll_handle: state.scroll_handle.clone(),
             layout: state.column_layout.clone(),
@@ -265,7 +265,7 @@ impl LogCanvas {
         let colors = state.colors;
         let minimap_view = state.view.clone();
         let minimap_visible = state.visible_indices.clone();
-        let minimap_matches = state.search_state.matched_shared.clone();
+        let minimap_matches = state.search_state.matched_visible_indices.clone();
         let minimap_selected = state.selected_row_pos;
         let minimap_handle = state.scroll_handle.clone();
         let minimap_current = state.search_state.current_match_pos();
