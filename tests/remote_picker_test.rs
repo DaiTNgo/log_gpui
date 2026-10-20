@@ -62,7 +62,7 @@ fn picker_dir(h: &mut Harness) -> String {
 }
 
 fn loaded(app: &log_gpui::app::AppView) -> bool {
-    app.remote.picker.as_ref().is_some_and(|p| !p.loading)
+    app.remote.picker.as_ref().is_some_and(|p| p.busy.is_none())
 }
 
 #[gpui::test]
