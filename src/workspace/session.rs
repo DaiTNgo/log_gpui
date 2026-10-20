@@ -24,6 +24,8 @@ pub struct SessionManifest {
     /// Lines one Load More reads.
     #[serde(default = "crate::workspace::state::default_load_more_step")]
     pub load_more_step: usize,
+    #[serde(default = "crate::workspace::state::default_full_read_limit")]
+    pub full_read_limit_lines: usize,
     #[serde(default = "crate::workspace::state::default_glob_limit")]
     pub live_glob_limit: usize,
     #[serde(default = "crate::workspace::state::default_glob_interval")]
@@ -92,6 +94,7 @@ impl SessionManifest {
             match_colors: ws.match_colors,
             live_window: ws.live_window,
             load_more_step: ws.load_more_step,
+            full_read_limit_lines: ws.full_read_limit_lines,
             live_glob_limit: ws.live_glob_limit,
             live_glob_interval: ws.live_glob_interval,
             density: ws.density,
@@ -122,6 +125,7 @@ impl SessionManifest {
         ws.match_colors = self.match_colors;
         ws.live_window = self.live_window;
         ws.load_more_step = self.load_more_step;
+        ws.full_read_limit_lines = self.full_read_limit_lines;
         ws.live_glob_limit = self.live_glob_limit;
         ws.live_glob_interval = self.live_glob_interval;
         ws.density = self.density;

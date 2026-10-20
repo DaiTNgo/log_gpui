@@ -46,6 +46,22 @@ pub enum BreakKind {
     StartOfLoaded,
     /// Load More found the file on the Server changed under the held lines.
     Changed,
+    /// An earlier Generation, a Rotated File, can be loaded above the oldest
+    /// line held. Drawn at the top of the lines of the file, with a button.
+    EarlierAvailable,
+    /// Like `EarlierAvailable`, but the Live Window is full: only Open in
+    /// full can read it.
+    EarlierWindowFull,
+    /// The lines since the Starting Time do not fit the Live Window.
+    StartTimeOverflow,
+    /// The read of a Remote Copy was cancelled; the lines end here.
+    ReadCancelled,
+    /// The read of a Remote Copy stopped at the Full Read Limit.
+    ReadLimit,
+    /// The file was rotated while a Remote Copy read it.
+    ReadRotated,
+    /// Older lines of a Remote Copy were left out to fit the Full Read Limit.
+    OlderNotRead,
 }
 
 impl BreakKind {
@@ -65,6 +81,12 @@ impl BreakKind {
             BreakKind::Cleared => "cleared",
             BreakKind::StartOfLoaded => "start of loaded lines",
             BreakKind::Changed => "earlier lines of this generation are no longer on the Server",
+            BreakKind::EarlierAvailable | BreakKind::EarlierWindowFull => "earlier generation",
+            BreakKind::StartTimeOverflow => "lines since the Starting Time do not fit the Live Window",
+            BreakKind::ReadCancelled => "read cancelled",
+            BreakKind::ReadLimit => "stopped at Full Read Limit",
+            BreakKind::ReadRotated => "file rotated while reading",
+            BreakKind::OlderNotRead => "older lines were not read",
         }
     }
 
@@ -200,9 +222,56 @@ impl FromIterator<Stream> for StreamMask {
     }
 }
 
+/// A Rotated File that can be loaded above the lines held.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EarlierFile {
+    pub name: String,
+    pub size: u64,
+    pub compressed: bool,
+}
+
+/// A Rotated File whose lines arrive as an earlier Generation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EarlierStart {
+    pub name: String,
+    /// When the file was last written, as `YYYY-MM-DD HH:MM:SS` (on the Server's
+    /// clock as it reports it), for the Break label.
+    pub modified: Option<String>,
+}
+
+/// How far a long read has come.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReadProgress {
+    /// What is read, e.g. `web1:/app/app.log.2.gz`.
+    pub what: String,
+    pub done: u64,
+    pub total: Option<u64>,
+}
+
 /// What a source sends to the app.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SourceEvent {
+    /// Lines of a Rotated File, an earlier Generation of the file, inserted
+    /// above everything held. `start` is given with the first batch of a
+    /// Rotated File: it begins the Generation and draws the Break between it
+    /// and the one below; later batches of the same file only add lines at
+    /// its top. `last_line_no` is the number in the Rotated File of the last
+    /// line of the batch when `start` is given (`None`: not known).
+    Earlier {
+        start: Option<EarlierStart>,
+        lines: Vec<String>,
+        bytes: Vec<u32>,
+        last_line_no: Option<usize>,
+        reached_start: bool,
+    },
+    /// The next Rotated File that could be loaded, or none (told whenever the
+    /// lines held reach the start of the oldest Generation held).
+    EarlierAvailable(Option<EarlierFile>),
+    /// The Live Window filled before the Starting Time was reached: how many
+    /// lines there are since it (`None`: not counted), and the time as typed.
+    StartTimeOverflow { lines: Option<usize>, since: String },
+    /// A long read is under way (`None`: it ended).
+    Progress(Option<ReadProgress>),
     /// The last lines of the file, shown at once. `bytes` is the length of
     /// each line in the file, line end included (empty when not known), and
     /// `end_offset` the offset just after the last of them.
@@ -247,6 +316,9 @@ pub enum SourceCommand {
     /// the hash of the line that starts at `end_offset` (`None` when no line
     /// is held there).
     LoadMore { generation: u32, end_offset: u64, lines: usize, first_hash: Option<u64> },
+    /// Load the lines of the next Rotated File above the oldest line held:
+    /// at most `room` lines (what the Live Window has left).
+    LoadEarlier { room: usize },
     /// Drop a Load More that was not started yet (a batch being read is
     /// kept: it arrives as `Older`).
     CancelLoadMore,

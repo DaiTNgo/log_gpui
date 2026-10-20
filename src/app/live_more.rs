@@ -5,7 +5,7 @@
 //! than the Live Window (`HoldMode::Extended`) until Back to Live Window.
 
 use super::AppView;
-use super::live::{FULL_READ_LIMIT, now_label};
+use super::live::now_label;
 use crate::app::ConfirmAction;
 use crate::live::{HoldMode, SourceCommand, SourceStatus};
 use crate::workspace::log_space::line_hash;
@@ -143,7 +143,7 @@ impl AppView {
             Some("Already at the first line")
         } else if !matches!(status, Some(SourceStatus::Live)) {
             Some("Disconnected")
-        } else if parsed.entries.len() >= FULL_READ_LIMIT {
+        } else if parsed.entries.len() >= self.live.full_read_limit {
             Some("At the Full Read Limit")
         } else if buffer.held_start(parsed).offset.is_none() {
             Some("The oldest line is in an older generation")
@@ -155,7 +155,7 @@ impl AppView {
             extended: buffer.hold == HoldMode::Extended,
             at_start,
             loading: self.live.loading_more.contains(file_id),
-            remaining: FULL_READ_LIMIT.saturating_sub(parsed.entries.len()),
+            remaining: self.live.full_read_limit.saturating_sub(parsed.entries.len()),
             load_more_off,
             command,
         })
@@ -268,7 +268,7 @@ impl AppView {
         let Some(buffer) = parsed.live.as_ref() else { return };
         let start = buffer.held_start(parsed);
         let Some(end_offset) = start.offset else { return };
-        let remaining = FULL_READ_LIMIT.saturating_sub(parsed.entries.len());
+        let remaining = self.live.full_read_limit.saturating_sub(parsed.entries.len());
         let wanted = lines.unwrap_or(self.live.load_more_step).max(1);
         let n = wanted.min(remaining).max(1);
         // The line the batch has to end just above: a different one means the
@@ -288,6 +288,24 @@ impl AppView {
         cx.notify();
     }
 
+    /// Load the next Rotated File above the lines the file holds, as many
+    /// lines as the Live Window has room for.
+    pub fn load_earlier(&mut self, file_id: &str, cx: &mut Context<Self>) {
+        if self.live.loading_earlier.contains(file_id) {
+            return;
+        }
+        let Some(parsed) = self.parsed_files.get(file_id) else { return };
+        let room = self.live.window.saturating_sub(parsed.entries.len());
+        if room == 0 {
+            self.request_open_in_full(file_id, cx);
+            return;
+        }
+        let Some(source) = self.live.sources.get(file_id) else { return };
+        source.handle.send(SourceCommand::LoadEarlier { room });
+        self.live.loading_earlier.insert(file_id.to_string());
+        cx.notify();
+    }
+
     /// Drop a Load More that has not started reading.
     pub fn cancel_load_more(&mut self, file_id: &str) {
         if let Some(source) = self.live.sources.get(file_id) {
@@ -297,7 +315,7 @@ impl AppView {
 
     /// Ask for a number of lines to load.
     pub fn open_custom_load(&mut self, file_id: &str, window: &mut gpui::Window, cx: &mut Context<Self>) {
-        let remaining = self.hold_info(file_id).map_or(FULL_READ_LIMIT, |i| i.remaining);
+        let remaining = self.hold_info(file_id).map_or(self.live.full_read_limit, |i| i.remaining);
         let input = cx.new(|cx| {
             gpui_component::input::InputState::new(window, cx)
                 .placeholder(format!("1 – {}", group_digits(remaining)))
@@ -321,7 +339,7 @@ impl AppView {
         match digits.parse::<usize>() {
             Ok(n) if n >= 1 => {
                 self.custom_load = None;
-                self.load_more(&file_id, Some(n.min(FULL_READ_LIMIT)), cx);
+                self.load_more(&file_id, Some(n.min(self.live.full_read_limit)), cx);
             }
             _ => {
                 self.notice = Some("Type a number of lines, 1 or more".to_string());
@@ -370,6 +388,13 @@ impl AppView {
     }
 
     // ── Settings ────────────────────────────────────────────────────────────
+
+    pub fn set_full_read_limit(&mut self, lines: usize, cx: &mut Context<Self>) {
+        self.live.full_read_limit = lines.clamp(10_000, 20_000_000);
+        self.workspace_state.full_read_limit_lines = self.live.full_read_limit;
+        self.schedule_session_save(cx);
+        cx.notify();
+    }
 
     pub fn set_load_more_step(&mut self, step: usize, cx: &mut Context<Self>) {
         self.live.load_more_step = step.clamp(1_000, 1_000_000);

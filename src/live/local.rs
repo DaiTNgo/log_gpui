@@ -93,6 +93,7 @@ impl LocalFileSource {
                 | Ok(SourceCommand::Reconnect)
                 | Ok(SourceCommand::Clear)
                 | Ok(SourceCommand::CancelLoadMore)
+                | Ok(SourceCommand::LoadEarlier { .. })
                 | Ok(SourceCommand::LoadMore { .. })
                 | Ok(SourceCommand::Restart)
                 | Ok(SourceCommand::SetRestartOnExit(_)) => {}

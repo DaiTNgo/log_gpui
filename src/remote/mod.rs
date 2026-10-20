@@ -2,7 +2,11 @@
 
 pub mod browse;
 pub mod command;
+pub mod compress;
+pub mod copy;
 pub mod download;
+pub mod estimate;
+pub mod full_read;
 pub mod glob_plan;
 pub mod glob_watcher;
 pub mod health;
@@ -13,6 +17,7 @@ pub mod quick;
 pub mod rotated;
 pub mod secrets;
 pub mod server;
+pub mod starting_time;
 pub mod server_search;
 pub mod ssh_config;
 

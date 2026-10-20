@@ -28,6 +28,38 @@ impl AppView {
         Some((label, list))
     }
 
+    /// The Remote Copy of the open Log Space being read: its file and the
+    /// progress text for the status bar.
+    fn copy_read_progress(&self) -> Option<(String, String)> {
+        let space = self.active_space()?;
+        space.files.iter().find_map(|f| {
+            let read = self.live.copy_reads.get(&f.file_id)?;
+            let mut text = read.progress_text(&f.display_name);
+            if read.numbers_unavailable {
+                text.push_str(" — line numbers unavailable");
+            }
+            Some((f.file_id.clone(), text))
+        })
+    }
+
+    /// "Reading app.log.2.gz 45% (17 / 38 MB)" for a long read of a file of
+    /// the open Log Space.
+    fn read_progress_text(&self) -> Option<String> {
+        let space = self.active_space()?;
+        let progress = space.files.iter().find_map(|f| self.live.progress.get(&f.file_id))?;
+        let size = crate::live::buffer::size_text;
+        Some(match progress.total.filter(|t| *t > 0) {
+            Some(total) => format!(
+                "Reading {} {}% ({} / {})",
+                progress.what,
+                (progress.done.min(total) * 100 / total),
+                size(progress.done),
+                size(total)
+            ),
+            None => format!("Reading {} ({})", progress.what, size(progress.done)),
+        })
+    }
+
     /// The plain labels on the left of the status bar, in order.
     pub fn status_bar_labels(&self) -> Vec<String> {
         let total_count = self.all_entries.len();
@@ -77,6 +109,22 @@ impl AppView {
                     .label(pending[0].clone())
                     .tooltip(pending.join("\n")),
             );
+        }
+        if let Some((file_id, text)) = self.copy_read_progress() {
+            bar = bar
+                .right(Button::new("status-read-progress").ghost().xsmall().label(text))
+                .right(
+                    Button::new("status-read-cancel")
+                        .ghost()
+                        .xsmall()
+                        .label("Cancel")
+                        .on_click(cx.listener(move |this, _, _window, cx| {
+                            this.cancel_copy_read(&file_id);
+                            cx.notify();
+                        })),
+                );
+        } else if let Some(text) = self.read_progress_text() {
+            bar = bar.right(Button::new("status-read-progress").ghost().xsmall().label(text));
         }
         if let Some((label, action)) = self.connect_button() {
             bar = bar.right(

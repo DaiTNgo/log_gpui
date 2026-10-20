@@ -84,6 +84,47 @@ impl ParsedFile {
         Self::from_text("")
     }
 
+    /// A Remote Copy read from its folder: the Generations oldest first with
+    /// a Break "rotated" between them, numbered as in their files on the
+    /// Server. A folder without `meta.json` (the app closed during the read)
+    /// is read as what it holds, cancelled.
+    pub fn from_remote_copy(dir: &Path, name: &str) -> std::io::Result<Self> {
+        use crate::live::BreakKind;
+        use crate::remote::copy::{self, StopReason};
+        let meta = match copy::read_meta(dir) {
+            Ok(meta) => meta,
+            Err(_) => copy::recover_meta(dir)?,
+        };
+        let mut parsed = Self::empty();
+        let mut buffer = LiveBuffer::command(name);
+        let count = meta.generations.len();
+        for (i, generation) in meta.generations.iter().enumerate() {
+            let text = copy::read_generation(dir, generation).unwrap_or_default();
+            let lines: Vec<String> = String::from_utf8_lossy(&text).lines().map(str::to_string).collect();
+            let label = format!("{name} rotated");
+            buffer.begin_copy_generation(generation.first_line_no, i == 0, &label);
+            let at = parsed.entries.len();
+            buffer.apply_append_with(&mut parsed, &lines, &[]);
+            if i == 0 && generation.older_not_read {
+                buffer.mark_older_not_read(&mut parsed, &format!("{name}: older lines were not read"));
+            }
+            if let Some(stop) = generation.stop {
+                let kind = match stop {
+                    StopReason::Cancelled => BreakKind::ReadCancelled,
+                    StopReason::FullReadLimit => BreakKind::ReadLimit,
+                    StopReason::RotatedWhileReading => BreakKind::ReadRotated,
+                    StopReason::OlderNotRead => BreakKind::OlderNotRead,
+                };
+                if parsed.entries.len() > at {
+                    buffer.mark_read_end(&mut parsed, kind, &stop.label(meta.limit_lines));
+                }
+            }
+            let _ = count;
+        }
+        parsed.live = Some(buffer);
+        Ok(parsed)
+    }
+
     /// An empty file that could not be read, and why.
     pub fn failed(error: String) -> Self {
         Self { load_error: Some(error), ..Self::empty() }

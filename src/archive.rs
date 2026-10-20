@@ -2,6 +2,7 @@
 //! listed entry by entry and read straight into memory. Nothing is ever
 //! extracted to disk and the Archive itself is never changed.
 
+use crate::remote::compress::{Compression, decoder};
 use flate2::read::GzDecoder;
 use std::collections::HashMap;
 use std::fmt;
@@ -22,6 +23,30 @@ pub enum ArchiveKind {
     Tar,
     TarGz,
     Gz,
+    /// One file packed by zstd, xz or bzip2 (a Rotated File downloaded as it
+    /// was on the Server).
+    Zstd,
+    Xz,
+    Bzip2,
+}
+
+impl ArchiveKind {
+    /// A lone packed file (`.gz`, `.zst`, `.xz`, `.bz2`): one entry, named
+    /// after the file without the suffix.
+    pub fn is_single_file(self) -> bool {
+        self.single().is_some()
+    }
+
+    /// The compression of a lone packed file, `None` for the others.
+    fn single(self) -> Option<Compression> {
+        match self {
+            ArchiveKind::Gz => Some(Compression::Gzip),
+            ArchiveKind::Zstd => Some(Compression::Zstd),
+            ArchiveKind::Xz => Some(Compression::Xz),
+            ArchiveKind::Bzip2 => Some(Compression::Bzip2),
+            _ => None,
+        }
+    }
 }
 
 /// A file inside an Archive.
@@ -154,13 +179,28 @@ pub fn detect(path: &Path) -> Option<ArchiveKind> {
         let inner = read_up_to(&mut GzDecoder::new(&mut file), 512).unwrap_or_default();
         return Some(if has_ustar(&inner) { ArchiveKind::TarGz } else { ArchiveKind::Gz });
     }
+    match Compression::detect(&head) {
+        Compression::Zstd => return Some(ArchiveKind::Zstd),
+        Compression::Xz => return Some(ArchiveKind::Xz),
+        Compression::Bzip2 => return Some(ArchiveKind::Bzip2),
+        _ => {}
+    }
     has_ustar(&head).then_some(ArchiveKind::Tar)
 }
 
-/// The name a lone `.gz` shows: the Archive's file name without `.gz`.
+/// The suffixes of a lone packed file.
+pub const SINGLE_SUFFIXES: [&str; 4] = [".gz", ".zst", ".xz", ".bz2"];
+
+/// The name a lone packed file (`.gz`, `.zst`, `.xz`, `.bz2`) shows: the
+/// Archive's file name without the suffix.
 pub fn gz_entry_name(path: &Path) -> String {
     let name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
-    name.strip_suffix(".gz").filter(|n| !n.is_empty()).unwrap_or(&name).to_string()
+    SINGLE_SUFFIXES
+        .iter()
+        .find_map(|s| name.strip_suffix(s))
+        .filter(|n| !n.is_empty())
+        .unwrap_or(&name)
+        .to_string()
 }
 
 /// Entries that are never offered: macOS resource forks and Finder files.
@@ -196,8 +236,8 @@ pub fn list(path: &Path, kind: ArchiveKind) -> Result<Vec<EntryInfo>, ArchiveErr
         ArchiveKind::Zip => list_zip(path),
         ArchiveKind::Tar => list_tar(open_reader(path)?),
         ArchiveKind::TarGz => list_tar(GzDecoder::new(open_reader(path)?)),
-        ArchiveKind::Gz => {
-            let mut decoder = GzDecoder::new(open_reader(path)?);
+        ArchiveKind::Gz | ArchiveKind::Zstd | ArchiveKind::Xz | ArchiveKind::Bzip2 => {
+            let mut decoder = single_decoder(path, kind)?;
             let head = head_of(&mut decoder)?;
             // Drain the rest to find the real size and any damage.
             let rest = io::copy(&mut (&mut decoder).take(MAX_UNCOMPRESSED_BYTES), &mut io::sink())
@@ -205,6 +245,11 @@ pub fn list(path: &Path, kind: ArchiveKind) -> Result<Vec<EntryInfo>, ArchiveErr
             Ok(vec![EntryInfo { name: gz_entry_name(path), size: head.len() as u64 + rest, head }])
         }
     }
+}
+
+fn single_decoder(path: &Path, kind: ArchiveKind) -> Result<Box<dyn Read + Send>, ArchiveError> {
+    let compression = kind.single().expect("a lone packed file");
+    decoder(compression, open_reader(path)?).map_err(io_err)
 }
 
 fn list_zip(path: &Path) -> Result<Vec<EntryInfo>, ArchiveError> {
@@ -275,9 +320,9 @@ pub fn read_entries(
         ArchiveKind::TarGz => {
             read_tar_entries(GzDecoder::new(open_reader(path)?), entries, limit, &mut out)?
         }
-        ArchiveKind::Gz => {
-            // The entry name is not needed: a `.gz` holds exactly one file.
-            let content = read_bounded(GzDecoder::new(open_reader(path)?), limit, limit);
+        ArchiveKind::Gz | ArchiveKind::Zstd | ArchiveKind::Xz | ArchiveKind::Bzip2 => {
+            // The entry name is not needed: a lone packed file holds exactly one.
+            let content = read_bounded(single_decoder(path, kind)?, limit, limit);
             let mut content = Some(content);
             for name in entries {
                 out.insert((*name).to_string(), content.take().unwrap_or(Err(ArchiveError::TooLarge)));

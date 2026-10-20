@@ -146,7 +146,7 @@ impl State {
             SourceCommand::Reconnect => return Wake::Reconnect,
             // The app drops the lines it holds; the command goes on, numbers
             // keep counting. A command has no older lines to load.
-            SourceCommand::Clear | SourceCommand::CancelLoadMore => {}
+            SourceCommand::Clear | SourceCommand::CancelLoadMore | SourceCommand::LoadEarlier { .. } => {}
             SourceCommand::LoadMore { .. } => {
                 let _ = events.try_send(SourceEvent::OlderUnavailable);
             }

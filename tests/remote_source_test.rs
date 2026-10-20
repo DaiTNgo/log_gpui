@@ -41,6 +41,7 @@ impl Env {
             path: path.clone(),
             name: format!("web1:{path}"),
             window,
+            start_time: None,
         }
         .spawn();
         (handle, path)

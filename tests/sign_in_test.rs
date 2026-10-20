@@ -462,6 +462,7 @@ fn a_source_waits_for_connect_instead_of_asking_and_asks_only_after_it() {
         path: "/var/log/app.log".into(),
         name: "web1:/var/log/app.log".into(),
         window: 100,
+        start_time: None,
     }
     .spawn();
     let wait = |want: &dyn Fn(&SourceEvent) -> bool| {

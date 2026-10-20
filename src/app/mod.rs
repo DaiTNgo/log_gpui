@@ -9,11 +9,13 @@ mod commands;
 mod filter;
 mod focus;
 mod focus_window;
+pub mod full_read;
 pub mod globs;
 mod highlights;
 mod keyboard;
 pub mod live;
 pub mod live_more;
+pub mod open_in_full;
 mod marking;
 mod persist;
 pub mod remote;
@@ -453,6 +455,7 @@ impl AppView {
         });
         this.live.window = this.workspace_state.live_window.max(1_000);
         this.live.load_more_step = this.workspace_state.load_more_step.clamp(1_000, 1_000_000);
+        this.live.full_read_limit = this.workspace_state.full_read_limit_lines.clamp(10_000, 20_000_000);
         this.live.glob_limit = this.workspace_state.live_glob_limit.clamp(1, 500);
         this.live.glob_interval = this.workspace_state.live_glob_interval.clamp(2, 300);
         this.density = this.workspace_state.density;
@@ -460,6 +463,9 @@ impl AppView {
         this.show_minimap = this.workspace_state.show_minimap;
         this.raw.soft_wrap = this.workspace_state.raw_soft_wrap;
         this.restore_active_session(cx);
+        // Remote Copies no Log Space holds any more (the app closed in the
+        // middle of removing one) are cleared away.
+        crate::remote::copy::sweep(&this.copies_root(), &this.copy_dirs_in_use());
         this.start_live_pump(cx);
         this
     }

@@ -58,12 +58,23 @@ pub struct LiveRuntime {
     pub window: usize,
     /// Lines one Load More reads when the user gives no number.
     pub load_more_step: usize,
+    /// Most lines one Open in full reads, and the most a Remote File holds
+    /// once Load More made its window longer.
+    pub full_read_limit: usize,
     /// Most files one Live Glob reads at once.
     pub glob_limit: usize,
     /// Seconds between two checks of a Live Glob's folder.
     pub glob_interval: u64,
     /// Files with a Load More being read.
     pub loading_more: HashSet<String>,
+    /// The next Rotated File each file could load above its lines.
+    pub earlier: HashMap<String, crate::live::source::EarlierFile>,
+    /// Files with a Rotated File being loaded.
+    pub loading_earlier: HashSet<String>,
+    /// Long reads under way, by file.
+    pub progress: HashMap<String, crate::live::source::ReadProgress>,
+    /// Remote Copies being read, by file.
+    pub copy_reads: HashMap<String, super::full_read::CopyRead>,
     /// The Live Globs' watchers and what they found.
     pub globs: super::globs::GlobRuntime,
     pub pump_started: bool,
@@ -80,9 +91,14 @@ impl LiveRuntime {
             unseen: 0,
             window: DEFAULT_LIVE_WINDOW,
             load_more_step: 10_000,
+            full_read_limit: FULL_READ_LIMIT,
             glob_limit: 50,
             glob_interval: 5,
             loading_more: HashSet::new(),
+            earlier: HashMap::new(),
+            loading_earlier: HashSet::new(),
+            progress: HashMap::new(),
+            copy_reads: HashMap::new(),
             globs: super::globs::GlobRuntime::new(),
             pump_started: false,
             batches_since_release: 0,
@@ -118,16 +134,16 @@ struct TopAnchor {
 
 /// What a batch did to one file.
 #[derive(Default)]
-struct FileDelta {
+pub(crate) struct FileDelta {
     /// Positions in the file's entries of the lines appended at the end.
-    appended: Option<Range<usize>>,
+    pub(crate) appended: Option<Range<usize>>,
     /// Lines were inserted above, dropped, or renumbered.
-    structural: bool,
-    trimmed: Option<Trimmed>,
-    renumbered: Option<isize>,
-    generation: u32,
+    pub(crate) structural: bool,
+    pub(crate) trimmed: Option<Trimmed>,
+    pub(crate) renumbered: Option<isize>,
+    pub(crate) generation: u32,
     /// The last line already shown was replaced by its finished version.
-    replaced_last: bool,
+    pub(crate) replaced_last: bool,
 }
 
 pub(crate) fn now_label() -> String {
@@ -231,6 +247,7 @@ impl AppView {
                             path,
                             &file.name,
                             file.from_glob.as_deref(),
+                            remote.start_time.clone(),
                             cx,
                         ),
                         RemoteTarget::Command { .. } => {
@@ -341,6 +358,7 @@ impl AppView {
                 source.handle.send(if pause { SourceCommand::Pause } else { SourceCommand::Resume });
             }
         }
+        self.set_copy_reads_paused(&space.id, pause);
         // Paused, a Live Glob adds nothing; resumed, its folder is listed at once.
         self.sync_glob_watchers(cx);
         cx.notify();
@@ -367,7 +385,7 @@ impl AppView {
             if let Some(parsed) = self.parsed_files.get_mut(&file_id) {
                 if let Some(mut buffer) = parsed.live.take() {
                     // A smaller window drops at once, not after 10% more.
-                    let limit = buffer.limit(window, FULL_READ_LIMIT);
+                    let limit = buffer.limit(window, self.live.full_read_limit);
                     let trimmed = buffer.trim_to_window(parsed, limit);
                     parsed.live = Some(buffer);
                     if let Some(trimmed) = trimmed {
@@ -387,6 +405,7 @@ impl AppView {
 
     /// Drain every source and apply what arrived, once.
     pub fn pump_live(&mut self, cx: &mut Context<Self>) {
+        self.pump_copy_reads(cx);
         if self.live.sources.is_empty() {
             return;
         }
@@ -403,6 +422,7 @@ impl AppView {
                             SourceEvent::Tail { lines, .. }
                             | SourceEvent::Backfill { lines, .. }
                             | SourceEvent::Older { lines, .. }
+                            | SourceEvent::Earlier { lines, .. }
                             | SourceEvent::Append { lines, .. } => lines.len().max(1),
                             _ => 1,
                         });
@@ -488,6 +508,35 @@ impl AppView {
                         delta.structural = true;
                     }
                 }
+                SourceEvent::Earlier { start, lines, bytes, last_line_no, reached_start } => {
+                    if reached_start || start.is_none() && lines.is_empty() {
+                        self.live.loading_earlier.remove(file_id);
+                    }
+                    if buffer.apply_earlier(&mut parsed, start.as_ref(), &lines, &bytes, last_line_no) {
+                        self.shift_generations_for(file_id);
+                    }
+                    delta.structural = true;
+                }
+                SourceEvent::EarlierAvailable(file) => {
+                    self.live.loading_earlier.remove(file_id);
+                    let full = parsed.entries.len() >= window;
+                    buffer.set_earlier_available(&mut parsed, file.as_ref(), full);
+                    match file {
+                        Some(file) => self.live.earlier.insert(file_id.to_string(), file),
+                        None => self.live.earlier.remove(file_id),
+                    };
+                    delta.structural = true;
+                }
+                SourceEvent::StartTimeOverflow { lines, since } => {
+                    buffer.set_start_overflow(&mut parsed, lines, &since);
+                    delta.structural = true;
+                }
+                SourceEvent::Progress(progress) => {
+                    match progress {
+                        Some(p) => self.live.progress.insert(file_id.to_string(), p),
+                        None => self.live.progress.remove(file_id),
+                    };
+                }
                 SourceEvent::OlderUnavailable => {
                     self.live.loading_more.remove(file_id);
                     buffer.mark_changed(&mut parsed);
@@ -527,7 +576,8 @@ impl AppView {
                         // Only the label changes; rows do not.
                     }
                 }
-                SourceEvent::Run { .. } | SourceEvent::Problem(_) => {}
+                SourceEvent::Problem(message) => self.notice = Some(message),
+                SourceEvent::Run { .. } => {}
                 SourceEvent::Status(status) => {
                     if std::env::var_os("LOG_GPUI_LIVE_TRACE").is_some() {
                         eprintln!("live status: {file_id}: {}", status.label());
@@ -539,7 +589,7 @@ impl AppView {
             }
         }
         if remote {
-            let limit = buffer.limit(window, FULL_READ_LIMIT);
+            let limit = buffer.limit(window, self.live.full_read_limit);
             if let Some(trimmed) = buffer.trim_to_window(&mut parsed, limit) {
                 delta.structural = true;
                 delta.trimmed = Some(trimmed);
@@ -564,6 +614,18 @@ impl AppView {
         }
     }
 
+    /// The file gained an earlier Generation below all it held: its own count
+    /// moves up with the buffer's, and Markers keep their distance.
+    pub(crate) fn shift_generations_for(&mut self, file_id: &str) {
+        if let Some(project) = self.active_project_mut() {
+            for space in &mut project.log_spaces {
+                if let Some(file) = space.file_mut(file_id) {
+                    file.begin_earlier_generation();
+                }
+            }
+        }
+    }
+
     /// Lines left the Live Window: their Markers go with them.
     pub(crate) fn drop_markers_for(&mut self, file_id: &str, trimmed: &Trimmed) {
         if let Some(project) = self.active_project_mut() {
@@ -576,7 +638,7 @@ impl AppView {
     }
 
     /// Show a batch in the open view.
-    fn apply_deltas(&mut self, deltas: Vec<(String, FileDelta)>, cx: &mut Context<Self>) {
+    pub(crate) fn apply_deltas(&mut self, deltas: Vec<(String, FileDelta)>, cx: &mut Context<Self>) {
         // Numbers that moved: stored Markers and current lines follow them.
         for (file_id, delta) in &deltas {
             if let Some(by) = delta.renumbered {
@@ -625,7 +687,8 @@ impl AppView {
         if self.live.follow {
             self.live.unseen = 0;
             self.scroll_to_newest();
-        } else {
+        } else if !relevant.iter().all(|(id, _)| self.live.copy_reads.contains_key(id)) {
+            // A Remote Copy being read is not news: it is all there to read.
             self.live.unseen += grew;
         }
         cx.notify();

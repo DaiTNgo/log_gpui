@@ -70,6 +70,10 @@ pub struct FileRef {
     pub no_timestamps: bool,
     /// The file is a Live Glob's and no longer exists on its Server.
     pub gone: bool,
+    /// The file is a Remote Copy, read whole from a Server.
+    pub is_copy: bool,
+    /// Tooltip of a Remote Copy: when it was read and what.
+    pub copy_tip: Option<String>,
     /// Shown under a Live Glob row.
     pub in_glob: bool,
     pub rename_input: Option<Entity<InputState>>,
@@ -165,6 +169,7 @@ pub fn space_menu(
             let download = space.clone();
             let add_command = space.clone();
             let clear_all = space.clone();
+            let full = space.clone();
             menu.item(PopupMenuItem::new("Add remote files…").on_click(move |_, _, app| {
                 let id = add.space_id.clone();
                 add.view.update(app, |this, cx| this.add_remote_files_dialog(&id, cx));
@@ -172,6 +177,10 @@ pub fn space_menu(
             .item(PopupMenuItem::new("Add remote command…").on_click(move |_, _, app| {
                 let id = add_command.space_id.clone();
                 add_command.view.update(app, |this, cx| this.add_remote_command_dialog(&id, cx));
+            }))
+            .item(PopupMenuItem::new("Open in full…").on_click(move |_, _, app| {
+                let id = full.space_id.clone();
+                full.view.update(app, |this, cx| this.open_in_full_space(&id, cx));
             }))
             .item(PopupMenuItem::new("Download all").on_click(move |_, _, app| {
                 let id = download.space_id.clone();
@@ -215,6 +224,15 @@ fn file_menu(menu: PopupMenu, file: &FileRef, cx: &mut App) -> PopupMenu {
         LogSpaceKind::Imported => {
             let remove = file.clone();
             let reveal = file.clone();
+            let again = file.clone();
+            let menu = if file.is_copy {
+                menu.item(PopupMenuItem::new("Read again").on_click(move |_, _, app| {
+                    let id = again.file_id.clone();
+                    again.view.update(app, |this, cx| this.read_again(&id, cx));
+                }))
+            } else {
+                menu
+            };
             let menu = menu.item(PopupMenuItem::new("Remove from Log Space").on_click(
                 move |_, _, app| {
                     let (space, id) = (remove.space_id.clone(), remove.file_id.clone());
@@ -256,8 +274,13 @@ fn file_menu(menu: PopupMenu, file: &FileRef, cx: &mut App) -> PopupMenu {
         LogSpaceKind::Remote => {
             let remove = file.clone();
             let download = file.clone();
+            let full = file.clone();
             let menu = remote_file_live_items(menu, file, cx);
-            menu.item(PopupMenuItem::new("Download").on_click(move |_, _, app| {
+            menu.item(PopupMenuItem::new("Open in full…").on_click(move |_, _, app| {
+                let (space, id) = (full.space_id.clone(), full.file_id.clone());
+                full.view.update(app, |this, cx| this.open_in_full_file(&space, &id, cx));
+            }))
+            .item(PopupMenuItem::new("Download").on_click(move |_, _, app| {
                 let (space, id) = (download.space_id.clone(), download.file_id.clone());
                 download.view.update(app, |this, cx| this.download_file(&space, &id, cx));
             }))
@@ -527,8 +550,20 @@ pub fn push_file(list: MenuList, file: FileRef, active: bool) -> MenuList {
     let hold_view = file.view.clone();
     let hold_file = file.file_id.clone();
     let remote = file.kind == LogSpaceKind::Remote;
+    let copy_tip = file.copy_tip.clone();
     let item = SidebarMenuItem::new(file.display_name.clone())
-        .icon(IconName::File)
+        .icon(if file.is_copy { IconName::Copy } else { IconName::File })
+        .when_some(copy_tip, |item, tip| {
+            item.suffix(move |_, cx| {
+                let tip = tip.clone();
+                div()
+                    .id("remote-copy-badge")
+                    .text_xs()
+                    .text_color(cx.theme().muted_foreground)
+                    .child("copy")
+                    .tooltip(move |window, cx| gpui_component::tooltip::Tooltip::new(tip.clone()).build(window, cx))
+            })
+        })
         .when(no_timestamps, |item| {
             item.suffix(|_, cx| {
                 h_flex()

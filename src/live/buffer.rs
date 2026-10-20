@@ -223,29 +223,43 @@ impl LiveBuffer {
         if lines.is_empty() {
             return;
         }
-        let count = lines.len();
-        let first = self.first_index.saturating_sub(count);
+        let first = self.first_index.saturating_sub(lines.len());
         // The Generation's first loaded line is where the new lines go.
         let at = parsed
             .entries
             .iter()
             .position(|e| e.generation == self.generation)
             .unwrap_or(parsed.entries.len());
+        self.insert_above(parsed, self.generation, at, first, lines, bytes);
+        self.first_index = first;
+    }
+
+    /// Insert `lines` of `generation` at `at`, numbered from `first`. Lines at
+    /// the top of what was loaded in that Generation that continued a line not
+    /// yet known now continue the last line with a time of the new lines.
+    fn insert_above(
+        &mut self,
+        parsed: &mut ParsedFile,
+        generation: u32,
+        at: usize,
+        first: usize,
+        lines: &[String],
+        bytes: &[u32],
+    ) {
+        let count = lines.len();
         let mut parser = LineParser::new();
         let mut entries: Vec<_> = lines
             .iter()
             .enumerate()
             .map(|(i, line)| {
                 let mut entry = parser.parse(first + i, line);
-                entry.generation = self.generation;
+                entry.generation = generation;
                 entry
             })
             .collect();
-        // Lines at the top of what was loaded that continued a line not yet
-        // known now continue the last line with a time of the new lines.
         let last_parent = entries.iter().rev().find(|e| e.has_time).map(|e| e.index);
         for entry in parsed.entries[at..].iter_mut() {
-            if entry.generation != self.generation || entry.has_time || entry.parent.is_some() {
+            if entry.generation != generation || entry.has_time || entry.parent.is_some() {
                 break;
             }
             match last_parent {
@@ -263,7 +277,184 @@ impl LiveBuffer {
         self.sync_byte_lens(parsed.entries.len() - count);
         self.byte_lens.splice(at..at, (0..count).map(|i| bytes.get(i).copied().unwrap_or(0)));
         parsed.shift_breaks_from(at, count as isize);
-        self.first_index = first;
+    }
+
+    /// Lines of a Rotated File, an earlier Generation, above everything held.
+    /// With `start` they begin a new Generation: every Generation held moves
+    /// one up and a Break "rotated" goes between. Without it they are more
+    /// lines at the top of the Generation loaded last. Returns whether the
+    /// Generations moved (the app moves the file's own count with them).
+    pub fn apply_earlier(
+        &mut self,
+        parsed: &mut ParsedFile,
+        start: Option<&super::source::EarlierStart>,
+        lines: &[String],
+        bytes: &[u32],
+        last_line_no: Option<usize>,
+    ) -> bool {
+        if lines.is_empty() && start.is_none() {
+            return false;
+        }
+        let count = lines.len();
+        let moved = start.is_some();
+        let (generation, first) = match start {
+            Some(_) => {
+                for entry in parsed.entries.iter_mut() {
+                    entry.generation += 1;
+                }
+                self.generation += 1;
+                for (g, _) in self.inodes.iter_mut() {
+                    *g += 1;
+                }
+                if let Some(mark) = self.clear_mark.as_mut() {
+                    mark.generation += 1;
+                }
+                // The first line after the Break loses what said it was the
+                // top of the lines.
+                let first = match last_line_no {
+                    Some(last) => (last + 1).saturating_sub(count),
+                    None => PROVISIONAL_BASE,
+                };
+                (0, first)
+            }
+            None => match parsed.entries.first() {
+                Some(top) => (top.generation, top.index.saturating_sub(count)),
+                None => return false,
+            },
+        };
+        if let Some(top) = parsed.entries.first_mut() {
+            if top.break_before.as_ref().is_some_and(|m| {
+                matches!(
+                    m.kind,
+                    BreakKind::LeftWindow
+                        | BreakKind::StartOfLoaded
+                        | BreakKind::EarlierAvailable
+                        | BreakKind::EarlierWindowFull
+                        | BreakKind::StartTimeOverflow
+                )
+            }) {
+                top.break_before = None;
+                parsed.raw_breaks.remove(&0);
+            }
+        }
+        if count > 0 {
+            self.insert_above(parsed, generation, 0, first, lines, bytes);
+        }
+        if let Some(start) = start {
+            // The Break sits above the first line of the newer Generation.
+            if let Some(newer) = parsed.entries.get_mut(count) {
+                let when = start.modified.as_deref().map(|m| format!(" {m}")).unwrap_or_default();
+                let mark = Arc::new(BreakMark {
+                    kind: BreakKind::Rotated,
+                    label: format!("{} rotated{when}", self.name),
+                });
+                newer.break_before = Some(mark.clone());
+                parsed.raw_breaks.insert(count, mark);
+            }
+        }
+        moved
+    }
+
+    /// The Live Window filled before the Starting Time: a Break on top of the
+    /// lines says how many lines there are since it.
+    pub fn set_start_overflow(&mut self, parsed: &mut ParsedFile, lines: Option<usize>, since: &str) {
+        let Some(top) = parsed.entries.first_mut() else { return };
+        let count = lines.map(|n| format!("{} lines", group(n))).unwrap_or_else(|| "Lines".to_string());
+        let mark = Arc::new(BreakMark {
+            kind: BreakKind::StartTimeOverflow,
+            label: format!("{count} since {since} do not fit the Live Window"),
+        });
+        top.break_before = Some(mark.clone());
+        parsed.raw_breaks.insert(0, mark);
+    }
+
+    // ── Remote Copy ─────────────────────────────────────────────────────────
+
+    /// A Generation of a Remote Copy begins: the first one just numbers its
+    /// lines; a later one is a new Generation with a Break `label` above its
+    /// first line. `first_line_no` is the number of its first line in its
+    /// file, or `None` while that is being counted (the lines carry
+    /// provisional numbers until `set_first_line_no`).
+    pub fn begin_copy_generation(&mut self, first_line_no: Option<usize>, first: bool, label: &str) {
+        if !first {
+            self.begin_generation_state();
+            self.add_pending(BreakMark { kind: BreakKind::Rotated, label: label.to_string() });
+        }
+        let base = first_line_no.unwrap_or(PROVISIONAL_BASE);
+        self.first_index = base;
+        self.next_index = base;
+        self.numbers_known = first_line_no.is_some();
+        self.tail_last_index = None;
+    }
+
+    /// The number of the first line of the Generation is known now. Returns
+    /// how far every number of the Generation moved.
+    pub fn set_first_line_no(&mut self, parsed: &mut ParsedFile, first_line_no: usize) -> Option<isize> {
+        if self.numbers_known {
+            return None;
+        }
+        let delta = first_line_no as isize - self.first_index as isize;
+        let generation = self.generation;
+        for entry in parsed.entries.iter_mut().filter(|e| e.generation == generation) {
+            entry.index = (entry.index as isize + delta) as usize;
+            entry.parent = entry.parent.map(|p| (p as isize + delta) as usize);
+        }
+        self.first_index = (self.first_index as isize + delta) as usize;
+        self.next_index = (self.next_index as isize + delta) as usize;
+        self.numbers_known = true;
+        Some(delta)
+    }
+
+    /// The lines of the Remote Copy end here, short of the end of the file:
+    /// a Break is drawn below the last line.
+    pub fn mark_read_end(&mut self, parsed: &mut ParsedFile, kind: BreakKind, label: &str) {
+        if let Some(last) = parsed.entries.last_mut() {
+            last.break_after = Some(Arc::new(BreakMark { kind, label: label.to_string() }));
+        }
+    }
+
+    /// Older lines were not read: a Break above the first line says so.
+    pub fn mark_older_not_read(&mut self, parsed: &mut ParsedFile, label: &str) {
+        if let Some(top) = parsed.entries.first_mut() {
+            let mark = Arc::new(BreakMark { kind: BreakKind::OlderNotRead, label: label.to_string() });
+            top.break_before = Some(mark.clone());
+            parsed.raw_breaks.insert(0, mark);
+        }
+    }
+
+    /// Draw (or take away) the Break at the top of the lines that offers the
+    /// next Rotated File. It only exists while the top line is the first line
+    /// of its Generation.
+    pub fn set_earlier_available(
+        &mut self,
+        parsed: &mut ParsedFile,
+        file: Option<&super::source::EarlierFile>,
+        window_full: bool,
+    ) {
+        let Some(top) = parsed.entries.first_mut() else { return };
+        let is_ours =
+            |m: &Arc<BreakMark>| matches!(m.kind, BreakKind::EarlierAvailable | BreakKind::EarlierWindowFull);
+        match file {
+            Some(file) => {
+                if top.break_before.is_none() {
+                    let size = size_text(file.size);
+                    let (kind, label) = if window_full {
+                        (BreakKind::EarlierWindowFull, format!("Live Window is full; earlier generation: {}, {size}", file.name))
+                    } else {
+                        (BreakKind::EarlierAvailable, format!("Load earlier generation ({}, {size})", file.name))
+                    };
+                    let mark = Arc::new(BreakMark { kind, label });
+                    top.break_before = Some(mark.clone());
+                    parsed.raw_breaks.insert(0, mark);
+                }
+            }
+            None => {
+                if top.break_before.as_ref().is_some_and(is_ours) {
+                    top.break_before = None;
+                    parsed.raw_breaks.remove(&0);
+                }
+            }
+        }
     }
 
     /// New lines at the end. Returns the positions of the new entries.
@@ -647,6 +838,30 @@ impl LiveBuffer {
     pub fn at_generation_start(&self, parsed: &ParsedFile) -> bool {
         self.numbers_known && self.held_start(parsed).line_no <= 1
     }
+}
+
+fn group(n: usize) -> String {
+    let digits = n.to_string();
+    let mut out = String::new();
+    for (i, c) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i).is_multiple_of(3) {
+            out.push(',');
+        }
+        out.push(c);
+    }
+    out
+}
+
+/// `38 MB`, `1.4 GB`, `812 B`.
+pub fn size_text(bytes: u64) -> String {
+    const UNITS: [&str; 4] = ["B", "KB", "MB", "GB"];
+    let mut value = bytes as f64;
+    let mut unit = 0;
+    while value >= 1024.0 && unit + 1 < UNITS.len() {
+        value /= 1024.0;
+        unit += 1;
+    }
+    if unit == 0 || value >= 10.0 { format!("{} {}", value.round() as u64, UNITS[unit]) } else { format!("{value:.1} {}", UNITS[unit]) }
 }
 
 fn continuation_of(entry: &crate::model::LogEntry, parent: usize) -> crate::model::LogEntry {

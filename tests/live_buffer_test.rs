@@ -170,3 +170,92 @@ fn filter_counts_follow_the_lines_the_window_keeps() {
     assert_eq!(count(&parsed, "cron"), None, "no cron line is left");
     assert_eq!(count(&parsed, "db"), Some(60));
 }
+
+mod earlier {
+    use super::*;
+    use log_gpui::live::source::{EarlierFile, EarlierStart};
+
+    fn start(name: &str) -> EarlierStart {
+        EarlierStart { name: name.into(), modified: Some("2026-10-18 03:00:01".into()) }
+    }
+
+    fn current_file() -> (ParsedFile, LiveBuffer) {
+        let mut parsed = ParsedFile::empty();
+        let mut buf = LiveBuffer::remote("web1:/app/app.log");
+        buf.apply_tail(&mut parsed, &lines(1..=3), 0);
+        buf.apply_total(&mut parsed, Some(3));
+        (parsed, buf)
+    }
+
+    #[test]
+    fn a_rotated_file_becomes_an_earlier_generation_with_its_own_numbers() {
+        let (mut parsed, mut buf) = current_file();
+        let moved = buf.apply_earlier(&mut parsed, Some(&start("app.log.1")), &lines(8..=10), &[], Some(10));
+        assert!(moved);
+        let seen: Vec<(u32, usize)> = parsed.entries.iter().map(|e| (e.generation, e.index)).collect();
+        assert_eq!(seen, [(0, 8), (0, 9), (0, 10), (1, 1), (1, 2), (1, 3)]);
+        assert_eq!(buf.generation, 1);
+        let mark = parsed.entries[3].break_before.as_ref().unwrap();
+        assert_eq!(mark.kind, BreakKind::Rotated);
+        assert_eq!(mark.label, "web1:/app/app.log rotated 2026-10-18 03:00:01");
+        assert_eq!(parsed.lines.len(), 6);
+        assert!(parsed.raw_breaks.contains_key(&3));
+    }
+
+    #[test]
+    fn more_lines_go_above_the_same_earlier_generation() {
+        let (mut parsed, mut buf) = current_file();
+        buf.apply_earlier(&mut parsed, Some(&start("app.log.1")), &lines(8..=10), &[], Some(10));
+        let moved = buf.apply_earlier(&mut parsed, None, &lines(5..=7), &[], None);
+        assert!(!moved);
+        let seen: Vec<(u32, usize)> = parsed.entries.iter().map(|e| (e.generation, e.index)).collect();
+        assert_eq!(seen[..6], [(0, 5), (0, 6), (0, 7), (0, 8), (0, 9), (0, 10)]);
+        // The Break still sits above the current file's first line.
+        assert!(parsed.entries[6].break_before.is_some());
+    }
+
+    #[test]
+    fn a_second_rotated_file_moves_every_generation_up_again() {
+        let (mut parsed, mut buf) = current_file();
+        buf.apply_earlier(&mut parsed, Some(&start("app.log.1")), &lines(8..=10), &[], Some(10));
+        buf.apply_earlier(&mut parsed, Some(&start("app.log.2.gz")), &lines(1..=2), &[], Some(2));
+        let seen: Vec<(u32, usize)> = parsed.entries.iter().map(|e| (e.generation, e.index)).collect();
+        assert_eq!(seen, [(0, 1), (0, 2), (1, 8), (1, 9), (1, 10), (2, 1), (2, 2), (2, 3)]);
+        assert_eq!(buf.generation, 2);
+        assert!(parsed.entries[2].break_before.is_some() && parsed.entries[5].break_before.is_some());
+    }
+
+    #[test]
+    fn unknown_numbers_are_not_real() {
+        let (mut parsed, mut buf) = current_file();
+        buf.apply_earlier(&mut parsed, Some(&start("app.log.1")), &lines(1..=2), &[], None);
+        assert!(!is_real_line_number(parsed.entries[0].index));
+        assert!(is_real_line_number(parsed.entries[2].index));
+    }
+
+    #[test]
+    fn the_button_break_goes_on_top_and_leaves_with_the_next_load() {
+        let (mut parsed, mut buf) = current_file();
+        let next = EarlierFile { name: "app.log.2.gz".into(), size: 38 * 1024 * 1024, compressed: true };
+        buf.set_earlier_available(&mut parsed, Some(&next), false);
+        let mark = parsed.entries[0].break_before.as_ref().unwrap();
+        assert_eq!(mark.kind, BreakKind::EarlierAvailable);
+        assert_eq!(mark.label, "Load earlier generation (app.log.2.gz, 38 MB)");
+        buf.apply_earlier(&mut parsed, Some(&start("app.log.2.gz")), &lines(1..=2), &[], Some(2));
+        // The Break between the Generations replaced it.
+        assert_eq!(parsed.entries[2].break_before.as_ref().unwrap().kind, BreakKind::Rotated);
+        assert!(parsed.entries[0].break_before.is_none());
+        buf.set_earlier_available(&mut parsed, None, false);
+        assert!(parsed.entries[0].break_before.is_none());
+    }
+
+    #[test]
+    fn a_full_window_offers_open_in_full_instead() {
+        let (mut parsed, mut buf) = current_file();
+        let next = EarlierFile { name: "app.log.1".into(), size: 2048, compressed: false };
+        buf.set_earlier_available(&mut parsed, Some(&next), true);
+        let mark = parsed.entries[0].break_before.as_ref().unwrap();
+        assert_eq!(mark.kind, BreakKind::EarlierWindowFull);
+        assert!(mark.label.contains("app.log.1, 2.0 KB"));
+    }
+}

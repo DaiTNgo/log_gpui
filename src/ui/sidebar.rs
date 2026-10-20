@@ -116,6 +116,11 @@ fn file_ref(
         can_delete: space.files.len() > 1,
         no_timestamps: no_timestamp_files.contains(&file.file_id),
         gone: globs.gone_files.contains(&file.file_id),
+        is_copy: file.is_remote_copy(),
+        copy_tip: file.copy.as_deref().and_then(|dir| {
+            let meta = crate::remote::copy::read_meta(std::path::Path::new(dir)).ok()?;
+            Some(format!("Read {} · {}", meta.read_at, meta.span_text()))
+        }),
         in_glob,
         rename_input: file_rename_input(renaming, &project.id, &space.id, &file.file_id),
     }

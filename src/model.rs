@@ -209,6 +209,10 @@ pub struct LogEntry {
     /// Not part of the line; it has no line number and is never copied.
     #[serde(skip)]
     pub break_before: Option<std::sync::Arc<crate::live::BreakMark>>,
+    /// A Break drawn just below this row: the lines of a Remote Copy end here
+    /// before the end of the file (the read was cancelled or hit a limit).
+    #[serde(skip)]
+    pub break_after: Option<std::sync::Arc<crate::live::BreakMark>>,
     /// `file_id` of the Source File when the entry belongs to a Log Space.
     #[serde(skip)]
     pub file_id: Option<std::sync::Arc<str>>,
@@ -248,6 +252,7 @@ impl LogEntry {
             json_fields: Vec::new(),
             generation: 0,
             break_before: None,
+            break_after: None,
             file_id: None,
             source: None,
         }

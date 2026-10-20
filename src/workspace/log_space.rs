@@ -98,6 +98,10 @@ pub enum RemoteTarget {
 pub struct RemoteRef {
     pub server_id: String,
     pub target: RemoteTarget,
+    /// Starting Time of a Remote File as typed (a span or a time): older
+    /// lines are not read. Empty: read the last lines as usual.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start_time: Option<String>,
 }
 
 /// `RemoteRef` as stored: the older form has a `path` and no `target`.
@@ -108,6 +112,8 @@ struct RemoteRefRepr {
     path: Option<String>,
     #[serde(default)]
     target: Option<RemoteTarget>,
+    #[serde(default)]
+    start_time: Option<String>,
 }
 
 impl TryFrom<RemoteRefRepr> for RemoteRef {
@@ -119,13 +125,13 @@ impl TryFrom<RemoteRefRepr> for RemoteRef {
             (None, Some(path)) => RemoteTarget::File { path },
             (None, None) => return Err("a remote member has neither a path nor a target".into()),
         };
-        Ok(RemoteRef { server_id: repr.server_id, target })
+        Ok(RemoteRef { server_id: repr.server_id, target, start_time: repr.start_time })
     }
 }
 
 impl RemoteRef {
     pub fn file(server_id: &str, path: &str) -> Self {
-        Self { server_id: server_id.to_string(), target: RemoteTarget::File { path: path.to_string() } }
+        Self { server_id: server_id.to_string(), target: RemoteTarget::File { path: path.to_string() }, start_time: None }
     }
 
     /// The path of a Remote File.
@@ -168,6 +174,9 @@ pub struct LogFile {
     /// by its path).
     #[serde(default)]
     pub from_glob: Option<String>,
+    /// For a Remote Copy, the folder in the app's data folder that holds it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub copy: Option<String>,
     /// The file's current Generation, counted from 0 each time it is opened
     /// and raised on every rotation, truncation or deletion.
     #[serde(skip)]
@@ -185,6 +194,7 @@ impl LogFile {
             remote: None,
             entry: None,
             from_glob: None,
+            copy: None,
             generation: 0,
         }
     }
@@ -201,6 +211,7 @@ impl LogFile {
             remote: Some(RemoteRef::file(server_id, path)),
             entry: None,
             from_glob: None,
+            copy: None,
             generation: 0,
         }
     }
@@ -226,9 +237,11 @@ impl LogFile {
                     preset: unedited_preset(command, preset),
                     restart_on_exit: false,
                 },
+                start_time: None,
             }),
             entry: None,
             from_glob: None,
+            copy: None,
             generation: 0,
         }
     }
@@ -253,8 +266,23 @@ impl LogFile {
             remote: None,
             entry: None,
             from_glob: None,
+            copy: None,
             generation: 0,
         }
+    }
+
+    /// A Remote Copy: the content of a Remote File and its Rotated Files read
+    /// whole into `dir`. It is shown as `<server>:<path>`.
+    pub fn remote_copy(dir: &str, server_name: &str, path: &str) -> Self {
+        let id = Path::new(dir).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+        let mut file = Self::new(format!("remote-copy:{id}"), format!("{server_name}:{path}"));
+        file.copy = Some(dir.to_string());
+        file
+    }
+
+    /// Whether the file is a Remote Copy.
+    pub fn is_remote_copy(&self) -> bool {
+        self.copy.is_some()
     }
 
     /// A file inside an Archive. Its identity is the Archive and the entry;
@@ -266,7 +294,7 @@ impl LogFile {
             .file_name()
             .map(|n| n.to_string_lossy().to_string())
             .unwrap_or_else(|| archive.to_string());
-        let lone_gz = archive_name.ends_with(".gz") && entry == crate::archive::gz_entry_name(archive_path);
+        let lone_gz = crate::archive::SINGLE_SUFFIXES.iter().any(|s| archive_name.ends_with(s)) && entry == crate::archive::gz_entry_name(archive_path);
         Self {
             file_id: format!("{archive}!/{entry}"),
             display_name: if lone_gz { entry.to_string() } else { format!("{archive_name} › {entry}") },
@@ -276,6 +304,7 @@ impl LogFile {
             remote: None,
             entry: Some(entry.to_string()),
             from_glob: None,
+            copy: None,
             generation: 0,
         }
     }
@@ -307,6 +336,21 @@ impl LogFile {
         for m in &mut self.markers {
             m.generations_ago += 1;
         }
+    }
+
+    /// Set the Starting Time of a Remote File (`None`: read as usual).
+    pub fn set_start_time(&mut self, start: Option<String>) {
+        if let Some(remote) = self.remote.as_mut() {
+            remote.start_time = start.filter(|s| !s.trim().is_empty());
+        }
+    }
+
+    /// A Rotated File was loaded above everything held: it is a Generation
+    /// before all the others. The file's own count moves with the lines'
+    /// Generations, so Markers keep their distance (and the new Generation is
+    /// one further back than the oldest held).
+    pub fn begin_earlier_generation(&mut self) {
+        self.generation += 1;
     }
 
     /// How many Generations back a line read in `generation` is.
@@ -671,6 +715,18 @@ impl LogSpace {
     /// Whether the Source Column is shown.
     pub fn source_column_shown(&self) -> bool {
         self.show_source.unwrap_or(self.files.len() >= 2)
+    }
+
+    /// Add a Remote Copy (from `LogFile::remote_copy`) to an Imported Log
+    /// Space. It comes only through Open in full.
+    pub fn add_remote_copy(&mut self, mut file: LogFile) -> Result<String, WrongKind> {
+        if self.kind != LogSpaceKind::Imported || !file.is_remote_copy() {
+            return Err(WrongKind);
+        }
+        file.added_seq = self.take_seq();
+        let id = file.file_id.clone();
+        self.files.push(file);
+        Ok(id)
     }
 
     /// Import files by path into an Imported Log Space. Paths the space

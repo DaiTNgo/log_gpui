@@ -285,6 +285,10 @@ impl AppView {
     pub(crate) fn ensure_space_loaded(&mut self, space: &LogSpace) {
         self.ensure_archive_entries_loaded(space);
         for file in &space.files {
+            if file.is_remote_copy() {
+                self.ensure_copy_loaded(file);
+                continue;
+            }
             match space.kind {
                 LogSpaceKind::Scratch => self.ensure_file_loaded(file),
                 LogSpaceKind::Remote => {
