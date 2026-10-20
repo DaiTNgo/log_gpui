@@ -9,6 +9,8 @@ use gpui_component::button::{Button, ButtonGroup, ButtonVariants as _};
 use gpui_component::checkbox::Checkbox;
 use gpui_kit::assets::IconName;
 use gpui_component::input::Input;
+use gpui_component::Icon;
+use crate::app::server_dialog::{AgentChoice, AuthKind, test_lines};
 use crate::remote::ServerField;
 use gpui_component::{ActiveTheme as _, Disableable as _, Selectable as _, Sizable as _, h_flex, v_flex};
 use gpui::StatefulInteractiveElement as _;
@@ -41,23 +43,36 @@ impl AppView {
         let (bg, border, muted, danger) = (theme.popover, theme.border, theme.muted_foreground, theme.danger);
         let error = dialog.error.clone();
         let info = dialog.info.clone();
-        let body = if dialog.form.is_some() {
+        let search = dialog.search.clone();
+        let query = search.as_ref().map(|i| i.read(cx).value().to_string()).unwrap_or_default();
+        let has_imported = self
+            .remote
+            .servers
+            .servers
+            .iter()
+            .any(|s| matches!(s.origin, Some(crate::remote::Origin::SshConfig { .. })));
+        let body = if dialog.import.is_some() {
+            self.render_import_dialog(cx)
+        } else if dialog.form.is_some() {
             self.render_server_form(cx)
         } else {
-            let mut list = v_flex().id("servers-list").gap_1().max_h(px(320.0)).overflow_y_scroll();
-            if self.remote.servers.servers.is_empty() {
-                list = list.child(div().text_sm().text_color(muted).child("No Servers yet."));
-            }
-            for server in &self.remote.servers.servers {
-                let id = server.id.clone();
-                let (edit_id, del_id, forget_id) = (id.clone(), id.clone(), id.clone());
-                let jump = server
-                    .jump_server_id
-                    .as_deref()
-                    .and_then(|j| self.remote.servers.get(j))
-                    .map(|j| format!(" via {}", j.name))
-                    .unwrap_or_default();
-                list = list.child(
+            let jump_names: std::collections::HashMap<String, String> =
+                self.remote.servers.servers.iter().map(|s| (s.id.clone(), s.name.clone())).collect();
+            let rows = self.render_server_list(
+                "servers",
+                &query,
+                super::server_list::ListLayout::Rows,
+                None,
+                |server, cx| {
+                    let id = server.id.clone();
+                    let (edit_id, del_id, forget_id) = (id.clone(), id.clone(), id.clone());
+                    let jump = server
+                        .jump_server_id
+                        .as_deref()
+                        .and_then(|j| jump_names.get(j))
+                        .map(|j| format!(" via {j}"))
+                        .unwrap_or_default();
+                    let tags = if server.tags.is_empty() { String::new() } else { format!(" \u{b7} {}", server.tags.join(", ")) };
                     h_flex()
                         .gap_2()
                         .items_center()
@@ -72,8 +87,8 @@ impl AppView {
                                 .min_w(px(0.0))
                                 .child(div().text_sm().font_weight(gpui::FontWeight::SEMIBOLD).child(server.name.clone()))
                                 .child(div().text_xs().text_color(muted).child(format!(
-                                    "{}@{}:{}{}",
-                                    server.user, server.host, server.port, jump
+                                    "{}@{}:{}{}{}",
+                                    server.user, server.host, server.port, jump, tags
                                 ))),
                         )
                         .child(
@@ -96,11 +111,17 @@ impl AppView {
                                 .xsmall()
                                 .label("Delete")
                                 .on_click(cx.listener(move |this, _, _, cx| this.request_delete_server(&del_id, cx))),
-                        ),
-                );
-            }
+                        )
+                        .into_any_element()
+                },
+                cx,
+            );
+            let list = v_flex().id("servers-list").gap_1().max_h(px(320.0)).overflow_y_scroll().child(rows);
             v_flex()
                 .gap_3()
+                .when_some(search.filter(|_| self.remote.servers.servers.len() > 1), |this, input| {
+                    this.child(Input::new(&input))
+                })
                 .child(list)
                 .when_some(error.clone(), |this, e| this.child(div().text_xs().text_color(danger).child(e)))
                 .when_some(info.clone(), |this, m| this.child(div().text_xs().text_color(muted).child(m)))
@@ -108,10 +129,28 @@ impl AppView {
                     h_flex()
                         .justify_between()
                         .child(
-                            Button::new("server-add")
-                                .small()
-                                .label("Add Server")
-                                .on_click(cx.listener(|this, _, _, cx| this.new_server_form(cx))),
+                            h_flex()
+                                .gap_2()
+                                .child(
+                                    Button::new("server-add")
+                                        .small()
+                                        .label("Add Server")
+                                        .on_click(cx.listener(|this, _, _, cx| this.new_server_form(cx))),
+                                )
+                                .child(
+                                    Button::new("server-import")
+                                        .small()
+                                        .label("Import from ~/.ssh/config\u{2026}")
+                                        .on_click(cx.listener(|this, _, _, cx| this.open_ssh_import(cx))),
+                                )
+                                .when(has_imported, |this| {
+                                    this.child(
+                                        Button::new("server-refresh")
+                                            .small()
+                                            .label("Refresh from ~/.ssh/config")
+                                            .on_click(cx.listener(|this, _, _, cx| this.open_ssh_import(cx))),
+                                    )
+                                }),
                         )
                         .child(
                             Button::new("servers-close")
@@ -126,7 +165,7 @@ impl AppView {
         Self::modal_backdrop()
             .child(
                 v_flex()
-                    .w(px(560.0))
+                    .w(px(640.0))
                     .gap_3()
                     .p_4()
                     .bg(bg)
@@ -144,9 +183,27 @@ impl AppView {
         let Some(dialog) = self.server_dialog.as_ref() else { return div().into_any_element() };
         let Some(form) = dialog.form.as_ref() else { return div().into_any_element() };
         let theme = cx.theme();
-        let (muted, danger) = (theme.muted_foreground, theme.danger);
+        let (muted, danger, theme_success) = (theme.muted_foreground, theme.danger, theme.success);
         let Some(fields) = form.fields.as_ref() else { return div().into_any_element() };
-        let (use_key, remember, current_jump, editing) = (form.use_key, form.remember, form.jump.clone(), form.id.clone());
+        let (auth, agent, remember, current_jump, editing) =
+            (form.auth, form.agent, form.remember, form.jump.clone(), form.id.clone());
+        let use_key = auth == AuthKind::Key;
+        let has_secret = matches!(auth, AuthKind::Key | AuthKind::Password);
+        let extra = form.extra.as_ref();
+        let (group_input, tags_input, agent_path_input, preferred_input) = (
+            extra.map(|e| e.group.clone()),
+            extra.map(|e| e.tags.clone()),
+            extra.map(|e| e.agent_path.clone()),
+            extra.map(|e| e.preferred_key.clone()),
+        );
+        let test_running = form.test.as_ref().is_some_and(|t| t.running);
+        let test_lines_now = form.test.as_ref().map(|t| test_lines(&t.steps)).unwrap_or_default();
+        let test_error = form.test.as_ref().and_then(|t| t.error.clone());
+        let test_started = form.test.is_some();
+        let group_suggestions = crate::remote::server_search::group_names(&self.remote.servers.servers);
+        let jump_search = form.jump_search.clone();
+        let jump_query = jump_search.as_ref().map(|i| i.read(cx).value().to_string()).unwrap_or_default();
+        let agent_presets = crate::remote::AgentSocket::available_presets();
         let new_jump = form.new_jump.as_ref().map(|j| (j.use_key, j.fields.is_some()));
         // Errors about the Server as a whole (a failed save); field errors
         // show under their field.
@@ -166,45 +223,53 @@ impl AppView {
                 )
                 .when_some(error, |this, e| this.child(field_error(e)))
         };
+        let row_extra = |text: &'static str, input: Option<&gpui::Entity<gpui_component::input::InputState>>| {
+            h_flex()
+                .gap_2()
+                .items_center()
+                .child(label(text))
+                .child(div().flex_1().when_some(input.cloned(), |this, input| this.child(Input::new(&input))))
+        };
         let jump_errors: Vec<String> =
             field_errors.iter().filter(|(f, _)| *f == ServerField::JumpServer).map(|(_, m)| m.clone()).collect();
 
-        // Jump Server: none, or one of the other Servers.
-        let others: Vec<(String, String)> = self
-            .remote
-            .servers
-            .servers
-            .iter()
-            .filter(|s| Some(&s.id) != editing.as_ref())
-            .map(|s| (s.id.clone(), s.name.clone()))
-            .collect();
-        let mut jump_choices = h_flex().gap_1().flex_wrap();
-        let none_selected = current_jump.is_none();
-        jump_choices = jump_choices.child(
-            Button::new("jump-none")
-                .xsmall()
-                .label("None")
-                .selected(none_selected)
-                .on_click(cx.listener(|this, _, _, cx| this.set_server_jump(None, cx))),
-        );
-        jump_choices = jump_choices.child(
-            Button::new("jump-new")
-                .xsmall()
-                .label("New…")
-                .selected(new_jump.is_some())
-                .on_click(cx.listener(|this, _, _, cx| this.toggle_new_jump(cx))),
-        );
-        for (id, name) in others {
-            let selected = current_jump.as_deref() == Some(id.as_str());
-            let pick = id.clone();
-            jump_choices = jump_choices.child(
+        // Jump Server: none, a new one, or one of the other Servers.
+        let jump_buttons = h_flex()
+            .gap_1()
+            .child(
+                Button::new("jump-none")
+                    .xsmall()
+                    .label("None")
+                    .selected(current_jump.is_none())
+                    .on_click(cx.listener(|this, _, _, cx| this.set_server_jump(None, cx))),
+            )
+            .child(
+                Button::new("jump-new")
+                    .xsmall()
+                    .label("New\u{2026}")
+                    .selected(new_jump.is_some())
+                    .on_click(cx.listener(|this, _, _, cx| this.toggle_new_jump(cx))),
+            );
+        let chosen_jump = current_jump.clone();
+        let jump_list = self.render_server_list(
+            "jump",
+            &jump_query,
+            super::server_list::ListLayout::Wrap,
+            editing.as_deref(),
+            |server, cx| {
+                let id = server.id.clone();
+                let selected = chosen_jump.as_deref() == Some(id.as_str());
+                let pick = id.clone();
                 Button::new(SharedString::from(format!("jump-{id}")))
                     .xsmall()
-                    .label(name)
+                    .label(server.name.clone())
                     .selected(selected)
-                    .on_click(cx.listener(move |this, _, _, cx| this.set_server_jump(Some(pick.clone()), cx))),
-            );
-        }
+                    .on_click(cx.listener(move |this, _, _, cx| this.set_server_jump(Some(pick.clone()), cx)))
+                    .into_any_element()
+            },
+            cx,
+        );
+        let jump_choices = v_flex().gap_1().child(jump_buttons).child(jump_list);
 
         v_flex()
             .gap_2()
@@ -214,51 +279,145 @@ impl AppView {
             .child(row("User", &fields.user, ServerField::User))
             .child(row("Keepalive (s)", &fields.keepalive_secs, ServerField::KeepaliveInterval))
             .child(row("Missed allowed", &fields.keepalive_missed, ServerField::KeepaliveMissed))
+            .child(row_extra("Server Group", group_input.as_ref()))
+            .when(!group_suggestions.is_empty(), |this| {
+                let mut suggestions = h_flex().gap_1().flex_wrap().pl(px(118.0));
+                for (ix, name) in group_suggestions.iter().enumerate() {
+                    let pick = name.clone();
+                    suggestions = suggestions.child(
+                        Button::new(("group-suggestion", ix))
+                            .ghost()
+                            .xsmall()
+                            .label(name.clone())
+                            .on_click(cx.listener(move |this, _, window, cx| this.set_server_group(&pick, window, cx))),
+                    );
+                }
+                this.child(suggestions)
+            })
+            .child(row_extra("Tags", tags_input.as_ref()))
             .child(
                 h_flex().gap_2().items_center().child(label("Login")).child(
                     ButtonGroup::new("server-auth")
                         .small()
-                        .child(Button::new("auth-key").label("Private key").selected(use_key))
-                        .child(Button::new("auth-password").label("Password").selected(!use_key))
+                        .child(Button::new("auth-key").label("Private key").selected(auth == AuthKind::Key))
+                        .child(Button::new("auth-password").label("Password").selected(auth == AuthKind::Password))
+                        .child(Button::new("auth-agent").label("Agent").selected(auth == AuthKind::Agent))
+                        .child(
+                            Button::new("auth-interactive")
+                                .label("Keyboard-interactive")
+                                .selected(auth == AuthKind::Interactive),
+                        )
                         .on_click(cx.listener(move |this, ix: &Vec<usize>, _, cx| {
-                            let want_key = ix.first() == Some(&0);
-                            let is_key = this
-                                .server_dialog
-                                .as_ref()
-                                .and_then(|d| d.form.as_ref())
-                                .is_some_and(|f| f.use_key);
-                            if want_key != is_key {
-                                this.toggle_server_auth(cx);
-                            }
+                            let kind = match ix.first() {
+                                Some(0) => AuthKind::Key,
+                                Some(1) => AuthKind::Password,
+                                Some(2) => AuthKind::Agent,
+                                _ => AuthKind::Interactive,
+                            };
+                            this.set_server_auth(kind, cx);
                         })),
                 ),
             )
             .when(use_key, |this| {
                 this.child(h_flex().gap_2().items_center().child(label("Key file")).child(div().flex_1().child(Input::new(&fields.key_path))))
             })
+            .when(auth == AuthKind::Agent, |this| {
+                let mut sockets = h_flex().gap_1().flex_wrap();
+                let choice = |id: &'static str, text: &'static str, which: AgentChoice, cx: &mut gpui::Context<Self>| {
+                    Button::new(id)
+                        .xsmall()
+                        .label(text)
+                        .selected(agent == which)
+                        .on_click(cx.listener(move |this, _, _, cx| this.set_agent_choice(which, cx)))
+                };
+                sockets = sockets.child(choice("agent-system", "System", AgentChoice::System, cx));
+                if agent_presets.contains(&crate::remote::AgentSocket::OnePassword) || agent == AgentChoice::OnePassword {
+                    sockets = sockets.child(choice("agent-1password", "1Password", AgentChoice::OnePassword, cx));
+                }
+                if agent_presets.contains(&crate::remote::AgentSocket::Secretive) || agent == AgentChoice::Secretive {
+                    sockets = sockets.child(choice("agent-secretive", "Secretive", AgentChoice::Secretive, cx));
+                }
+                sockets = sockets.child(choice("agent-path", "Path\u{2026}", AgentChoice::Path, cx));
+                let socket_now = match agent {
+                    AgentChoice::System => crate::remote::AgentSocket::System,
+                    AgentChoice::OnePassword => crate::remote::AgentSocket::OnePassword,
+                    AgentChoice::Secretive => crate::remote::AgentSocket::Secretive,
+                    AgentChoice::Path => crate::remote::AgentSocket::Path(String::new()),
+                };
+                this.child(h_flex().gap_2().items_start().child(label("Agent socket")).child(div().flex_1().child(sockets)))
+                    .when(agent != AgentChoice::Path, |this| {
+                        this.child(
+                            h_flex()
+                                .gap_2()
+                                .child(label(""))
+                                .child(div().text_xs().text_color(muted).child(socket_now.describe())),
+                        )
+                    })
+                    .when_some(agent_path_input.filter(|_| agent == AgentChoice::Path), |this, input| {
+                        this.child(h_flex().gap_2().items_center().child(label("Socket path")).child(div().flex_1().child(Input::new(&input))))
+                    })
+                    .when_some(preferred_input, |this, input| {
+                        this.child(h_flex().gap_2().items_center().child(label("Preferred key")).child(div().flex_1().child(Input::new(&input))))
+                    })
+            })
+            .when(has_secret, |this| {
+                this.child(
+                    h_flex()
+                        .gap_2()
+                        .items_center()
+                        .child(label(if use_key { "Passphrase" } else { "Password" }))
+                        .child(div().flex_1().child(Input::new(&fields.secret))),
+                )
+                .child(
+                    h_flex().gap_2().child(label("")).child(
+                        Checkbox::new("server-remember")
+                            .label(crate::ui::platform::REMEMBER_SECRET)
+                            .checked(remember)
+                            .on_click(cx.listener(|this, _, _, cx| this.toggle_server_remember(cx))),
+                    ),
+                )
+            })
             .child(
-                h_flex()
-                    .gap_2()
-                    .items_center()
-                    .child(label(if use_key { "Passphrase" } else { "Password" }))
-                    .child(div().flex_1().child(Input::new(&fields.secret))),
-            )
-            .child(
-                h_flex().gap_2().child(label("")).child(
-                    Checkbox::new("server-remember")
-                        .label(crate::ui::platform::REMEMBER_SECRET)
-                        .checked(remember)
-                        .on_click(cx.listener(|this, _, _, cx| this.toggle_server_remember(cx))),
+                h_flex().gap_2().items_start().child(label("Jump Server")).child(
+                    v_flex()
+                        .flex_1()
+                        .gap_1()
+                        .when_some(jump_search.filter(|_| self.remote.servers.servers.len() > 4), |this, input| {
+                            this.child(Input::new(&input))
+                        })
+                        .child(jump_choices),
                 ),
             )
-            .child(h_flex().gap_2().items_start().child(label("Jump Server")).child(div().flex_1().child(jump_choices)))
             .children(jump_errors.into_iter().map(field_error))
             .when_some(self.render_new_jump_form(new_jump, cx), |this, block| this.child(block))
             .when_some(error, |this, e| this.child(div().text_xs().text_color(danger).child(e)))
+            .when(test_started, |this| {
+                let success = theme_success;
+                let mut results = v_flex().gap_0p5().pl(px(118.0));
+                for (line, ok) in test_lines_now {
+                    results = results.child(div().text_xs().text_color(if ok { success } else { danger }).child(line));
+                }
+                if test_running {
+                    results = results.child(div().text_xs().text_color(muted).child("Testing\u{2026}"));
+                }
+                if let Some(e) = test_error {
+                    results = results.child(div().text_xs().text_color(danger).child(e));
+                }
+                this.child(results)
+            })
             .child(
                 h_flex()
                     .justify_end()
                     .gap_2()
+                    .child(if test_running {
+                        Button::new("server-test")
+                            .label("Cancel test")
+                            .on_click(cx.listener(|this, _, _, cx| this.cancel_server_test(cx)))
+                    } else {
+                        Button::new("server-test")
+                            .label("Test connection")
+                            .on_click(cx.listener(|this, _, _, cx| this.test_server_connection(cx)))
+                    })
                     .child(
                         Button::new("server-cancel")
                             .label("Cancel")
@@ -272,6 +431,251 @@ impl AppView {
                     ),
             )
             .into_any_element()
+    }
+
+    /// "Import from ~/.ssh/config": the hosts to take, what changed in the
+    /// ones taken before, and what was left out.
+    fn render_import_dialog(&mut self, cx: &mut gpui::Context<Self>) -> gpui::AnyElement {
+        let Some(import) = self.server_dialog.as_ref().and_then(|d| d.import.as_ref()) else {
+            return div().into_any_element();
+        };
+        let theme = cx.theme();
+        let (muted, danger, border) = (theme.muted_foreground, theme.danger, theme.border);
+        if !import.config_found {
+            return v_flex()
+                .gap_3()
+                .child(div().text_sm().child("No ~/.ssh/config found"))
+                .child(
+                    h_flex().justify_end().child(
+                        Button::new("import-back")
+                            .label("Back")
+                            .on_click(cx.listener(|this, _, _, cx| this.close_ssh_import(cx))),
+                    ),
+                )
+                .into_any_element();
+        }
+        let mut rows = v_flex().id("import-rows").gap_1().max_h(px(300.0)).overflow_y_scroll();
+        for (ix, candidate) in import.new.iter().enumerate() {
+            let alias = candidate.alias.clone();
+            let ticked = import.ticked.contains(&alias);
+            let disabled = candidate.error.is_some();
+            let summary = format!(
+                "{}@{}:{} \u{b7} {}{}",
+                candidate.server.user,
+                candidate.server.host,
+                candidate.server.port,
+                auth_label(&candidate.server.auth),
+                if candidate.hops.is_empty() {
+                    String::new()
+                } else {
+                    format!(" \u{b7} via {}", candidate.hops.iter().map(|h| h.describe()).collect::<Vec<_>>().join(" \u{2192} "))
+                }
+            );
+            let mut notes: Vec<String> = candidate.warnings.clone();
+            notes.extend(candidate.error.clone());
+            let name_input = import.name_inputs.get(&alias).cloned();
+            rows = rows.child(
+                v_flex()
+                    .gap_0p5()
+                    .px_2()
+                    .py_1()
+                    .rounded_md()
+                    .border_1()
+                    .border_color(border)
+                    .child(
+                        h_flex()
+                            .gap_2()
+                            .items_center()
+                            .child({
+                                let toggle = alias.clone();
+                                Checkbox::new(("import-row", ix))
+                                    .checked(ticked)
+                                    .disabled(disabled)
+                                    .on_click(cx.listener(move |this, _, _, cx| this.toggle_import_row(&toggle, cx)))
+                            })
+                            .child(
+                                v_flex()
+                                    .flex_1()
+                                    .min_w(px(0.0))
+                                    .child(div().text_sm().font_weight(gpui::FontWeight::SEMIBOLD).child(alias.clone()))
+                                    .child(div().text_xs().text_color(muted).child(summary)),
+                            )
+                            .when_some(name_input, |this, input| this.child(div().w(px(160.0)).child(Input::new(&input)))),
+                    )
+                    .children(notes.into_iter().map(|n| div().pl(px(26.0)).text_xs().text_color(danger).child(n))),
+            );
+        }
+        let mut changes = v_flex().gap_1();
+        let mut any_changes = false;
+        let mut gone: Vec<String> = Vec::new();
+        for row in &import.known {
+            match row {
+                crate::remote::ssh_config::RefreshRow::Changed { server_id, name, changes: list } => {
+                    for (ix, change) in list.iter().enumerate() {
+                        any_changes = true;
+                        let (id, field) = (server_id.clone(), change.field);
+                        let ticked = import.ticked_changes.contains(&(id.clone(), field));
+                        changes = changes.child(
+                            Checkbox::new(SharedString::from(format!("import-change-{server_id}-{ix}")))
+                                .label(format!("{name}: {}", crate::app::ssh_import::change_text(change)))
+                                .checked(ticked)
+                                .on_click(cx.listener(move |this, _, _, cx| this.toggle_import_change(&id, field, cx))),
+                        );
+                    }
+                }
+                crate::remote::ssh_config::RefreshRow::Gone { name, .. } => {
+                    gone.push(format!("{name}: No longer in ~/.ssh/config"))
+                }
+                crate::remote::ssh_config::RefreshRow::Same { .. } => {}
+            }
+        }
+        let skipped = import.skipped.clone();
+        let group_input = import.group_input.clone();
+        let has_work = import.has_work();
+        let empty = import.new.is_empty() && !any_changes && gone.is_empty();
+        v_flex()
+            .gap_3()
+            .when(!import.new.is_empty(), |this| {
+                this.child(div().text_xs().text_color(muted).child("Hosts in ~/.ssh/config")).child(rows)
+            })
+            .when(any_changes, |this| {
+                this.child(div().text_xs().text_color(muted).child("Changed since they were imported"))
+                    .child(changes)
+            })
+            .when(!gone.is_empty(), |this| {
+                this.children(gone.into_iter().map(|g| div().text_xs().text_color(muted).child(g)))
+            })
+            .when(empty, |this| this.child(div().text_sm().text_color(muted).child("Everything in ~/.ssh/config is already imported")))
+            .when(!skipped.is_empty(), |this| {
+                this.child(div().text_xs().text_color(muted).child("Skipped")).child(
+                    v_flex().gap_0p5().children(
+                        skipped.into_iter().map(|s| div().text_xs().text_color(muted).child(format!("{}: {}", s.what, s.why))),
+                    ),
+                )
+            })
+            .when_some(group_input.filter(|_| !import.new.is_empty()), |this, input| {
+                this.child(h_flex().gap_2().items_center().child(div().w(px(110.0)).text_sm().text_color(muted).child("Server Group")).child(div().flex_1().child(Input::new(&input))))
+            })
+            .child(
+                h_flex()
+                    .justify_end()
+                    .gap_2()
+                    .child(
+                        Button::new("import-cancel")
+                            .label("Cancel")
+                            .on_click(cx.listener(|this, _, _, cx| this.close_ssh_import(cx))),
+                    )
+                    .child(
+                        Button::new("import-apply")
+                            .primary()
+                            .label("Import")
+                            .disabled(!has_work)
+                            .on_click(cx.listener(|this, _, _, cx| this.apply_ssh_import(cx))),
+                    ),
+            )
+            .into_any_element()
+    }
+
+    /// The Quick Connect field, the Servers it made that are not saved yet,
+    /// and the small sign-in form when the agent was refused.
+    fn render_quick_connect(&self, cx: &mut gpui::Context<Self>) -> gpui::AnyElement {
+        let Some(picker) = self.remote.picker.as_ref() else { return div().into_any_element() };
+        let theme = cx.theme();
+        let (muted, danger) = (theme.muted_foreground, theme.danger);
+        let selected = picker.server_id.clone();
+        let mut block = v_flex().gap_1().child(
+            h_flex()
+                .gap_2()
+                .items_center()
+                .child(div().text_xs().text_color(muted).child("Quick Connect"))
+                .child(div().flex_1().when_some(picker.quick_input.clone(), |this, input| this.child(Input::new(&input)))),
+        );
+        if !picker.quick_servers.is_empty() {
+            let mut made = h_flex().gap_1().flex_wrap().items_center().child(
+                div().text_xs().text_color(muted).child("New, saved when a file is added:"),
+            );
+            for server in &picker.quick_servers {
+                let id = server.id.clone();
+                let pick = id.clone();
+                made = made.child(
+                    Button::new(SharedString::from(format!("picker-quick-{id}")))
+                        .xsmall()
+                        .label(server.name.clone())
+                        .selected(selected.as_deref() == Some(id.as_str()))
+                        .on_click(cx.listener(move |this, _, _, cx| this.picker_select_server(&pick, cx))),
+                );
+            }
+            block = block.child(made);
+        }
+        if let Some(login) = picker.quick_login.as_ref() {
+            let (use_key, remember) = (login.use_key, login.remember);
+            let label = |text: &'static str| div().w(px(90.0)).flex_shrink_0().text_sm().text_color(muted).child(text);
+            block = block.child(
+                v_flex()
+                    .gap_2()
+                    .p_2()
+                    .border_1()
+                    .border_color(theme.border)
+                    .rounded_md()
+                    .child(div().text_sm().child(format!(
+                        "Sign in to {} with password or key file",
+                        login.server_name
+                    )))
+                    .child(
+                        h_flex().gap_1().child(
+                            ButtonGroup::new("quick-login-kind")
+                                .xsmall()
+                                .child(Button::new("quick-login-password").label("Password").selected(!use_key))
+                                .child(Button::new("quick-login-key").label("Key file").selected(use_key))
+                                .on_click(cx.listener(|this, ix: &Vec<usize>, _, cx| {
+                                    this.quick_login_set_key(ix.first() == Some(&1), cx)
+                                })),
+                        ),
+                    )
+                    .when(use_key, |this| {
+                        this.child(
+                            h_flex()
+                                .gap_2()
+                                .items_center()
+                                .child(label("Key file"))
+                                .child(div().flex_1().when_some(login.key_path.clone(), |t, i| t.child(Input::new(&i)))),
+                        )
+                    })
+                    .child(
+                        h_flex()
+                            .gap_2()
+                            .items_center()
+                            .child(label(if use_key { "Passphrase" } else { "Password" }))
+                            .child(div().flex_1().when_some(login.secret.clone(), |t, i| t.child(Input::new(&i)))),
+                    )
+                    .child(
+                        Checkbox::new("quick-login-remember")
+                            .label(crate::ui::platform::REMEMBER_SECRET)
+                            .checked(remember)
+                            .on_click(cx.listener(|this, _, _, cx| this.quick_login_toggle_remember(cx))),
+                    )
+                    .when_some(login.error.clone(), |this, e| this.child(div().text_xs().text_color(danger).child(e)))
+                    .child(
+                        h_flex()
+                            .justify_end()
+                            .gap_2()
+                            .child(
+                                Button::new("quick-login-cancel")
+                                    .xsmall()
+                                    .label("Cancel")
+                                    .on_click(cx.listener(|this, _, _, cx| this.quick_login_cancel(cx))),
+                            )
+                            .child(
+                                Button::new("quick-login-submit")
+                                    .xsmall()
+                                    .primary()
+                                    .label("Sign in")
+                                    .on_click(cx.listener(|this, _, _, cx| this.quick_login_submit(cx))),
+                            ),
+                    ),
+            );
+        }
+        block.into_any_element()
     }
 
     /// The Jump Server typed together with the Server, indented under it.
@@ -338,29 +742,47 @@ impl AppView {
             _ => None,
         };
         let Some(picker) = self.remote.picker.as_ref() else { return div().into_any_element() };
-        let theme = cx.theme();
-        let (bg, border, muted, danger) = (theme.popover, theme.border, theme.muted_foreground, theme.danger);
         let server_id = picker.server_id.clone();
 
-        let mut servers = h_flex().gap_1().flex_wrap();
-        for server in &self.remote.servers.servers {
-            let id = server.id.clone();
-            let selected = server_id.as_deref() == Some(id.as_str());
-            servers = servers.child(
+        let server_search = picker.server_search.clone();
+        let query = server_search.as_ref().map(|i| i.read(cx).value().to_string()).unwrap_or_default();
+        let many_servers = self.remote.servers.servers.len() > 6;
+        let selected_server = server_id.clone();
+        let chooser = self.render_server_list(
+            "picker-servers",
+            &query,
+            super::server_list::ListLayout::Wrap,
+            None,
+            |server, cx| {
+                let id = server.id.clone();
+                let selected = selected_server.as_deref() == Some(id.as_str());
                 Button::new(SharedString::from(format!("picker-server-{id}")))
                     .xsmall()
                     .label(server.name.clone())
                     .selected(selected)
-                    .on_click(cx.listener(move |this, _, _, cx| this.picker_select_server(&id, cx))),
-            );
-        }
-        servers = servers.child(
-            Button::new("picker-manage")
-                .xsmall()
-                .ghost()
-                .label("Manage…")
-                .on_click(cx.listener(|this, _, _, cx| this.open_servers_dialog(cx))),
+                    .on_click(cx.listener(move |this, _, _, cx| this.picker_select_server(&id, cx)))
+                    .into_any_element()
+            },
+            cx,
         );
+        let servers = v_flex()
+            .gap_1()
+            .when_some(server_search.filter(|_| many_servers), |this, input| this.child(Input::new(&input)))
+            .child(v_flex().id("picker-server-list").max_h(px(120.0)).overflow_y_scroll().child(chooser))
+            .child(
+                h_flex().child(
+                    Button::new("picker-manage")
+                        .xsmall()
+                        .ghost()
+                        .label("Manage\u{2026}")
+                        .on_click(cx.listener(|this, _, _, cx| this.open_servers_dialog(cx))),
+                ),
+            );
+        let quick = self.render_quick_connect(cx);
+        // The picker is borrowed again below; take what it needs now.
+        let Some(picker) = self.remote.picker.as_ref() else { return div().into_any_element() };
+        let theme = cx.theme();
+        let (bg, border, muted, danger) = (theme.popover, theme.border, theme.muted_foreground, theme.danger);
 
         let sort = picker.sort;
         let visible = picker.visible_entries();
@@ -388,10 +810,14 @@ impl AppView {
             .child(div().w(px(120.0)).child(header_cell("picker-sort-modified", "Modified", SortKey::Modified, cx)));
 
         let mut list = v_flex().id("picker-list").h(px(240.0)).overflow_y_scroll();
-        if picker.loading {
-            list = list.child(div().p_2().text_sm().text_color(muted).child("Loading…"));
-        }
-        list = list.child(
+        let shows_rows = picker.shows_rows();
+        let list_notice = picker.list_notice();
+        let resolving = match &picker.busy {
+            Some(busy @ crate::app::remote_picker::PickerBusy::Resolving(_)) => Some(busy.label()),
+            _ => None,
+        };
+        let info = picker.info.clone();
+        list = list.when(shows_rows, |list| list.child(
             h_flex()
                 .id("picker-entry-up")
                 .gap_2()
@@ -401,9 +827,14 @@ impl AppView {
                 .cursor_pointer()
                 .hover(|s| s.bg(border.opacity(0.4)))
                 .on_click(cx.listener(|this, _, _, cx| this.picker_up(cx)))
+                .child(Icon::new(IconName::FolderOpen).size_3().text_color(muted))
                 .child(".."),
-        );
-        for (ix, entry) in visible.iter().take(MAX_PICKER_ROWS).enumerate() {
+        ));
+        if let Some(notice) = list_notice {
+            list = list.child(div().p_2().text_sm().text_color(muted).child(notice));
+        }
+        let rows = if shows_rows { visible.len() } else { 0 };
+        for (ix, entry) in visible.iter().take(MAX_PICKER_ROWS.min(rows)).enumerate() {
             let name = entry.name.clone();
             if entry.is_dir {
                 let open = name.clone();
@@ -418,6 +849,7 @@ impl AppView {
                         .cursor_pointer()
                         .hover(|s| s.bg(border.opacity(0.4)))
                         .on_click(cx.listener(move |this, _, _, cx| this.picker_open_dir(&open, cx)))
+                        .child(Icon::new(IconName::Folder).size_3().text_color(muted))
                         .child(div().flex_1().child(format!("{name}/")))
                         .child(div().w(px(72.0)))
                         .child(div().text_xs().text_color(muted).w(px(120.0)).child(format_time(entry.modified))),
@@ -438,6 +870,7 @@ impl AppView {
                                 .checked(staged)
                                 .on_click(cx.listener(move |this, _, _, cx| this.picker_toggle_file(&toggle, cx))),
                         )
+                        .child(Icon::new(IconName::File).size_3().text_color(muted))
                         .child(div().flex_1().child(name))
                         .child(div().text_xs().text_color(muted).w(px(72.0)).child(format_size(entry.size)))
                         .child(div().text_xs().text_color(muted).w(px(120.0)).child(format_time(entry.modified))),
@@ -458,7 +891,7 @@ impl AppView {
 
         let mut staged = v_flex().id("picker-staged").gap_0p5().max_h(px(96.0)).overflow_y_scroll();
         for (ix, item) in picker.staged.iter().enumerate() {
-            let name = self.remote.servers.get(item.server_id()).map(|s| s.name.clone()).unwrap_or_default();
+            let name = self.picker_server(item.server_id()).map(|s| s.name).unwrap_or_default();
             staged = staged.child(
                 h_flex()
                     .gap_2()
@@ -585,6 +1018,7 @@ impl AppView {
                                     .on_click(cx.listener(|this, _, _, cx| this.picker_set_tab(PickerTab::Command, cx))),
                             ),
                     )
+                    .when(on_files, |this| this.child(quick))
                     .child(servers)
                     .when_some(command_body, |this, body| this.child(body))
                     .when(on_files, |this| this
@@ -637,7 +1071,11 @@ impl AppView {
                                     .on_click(cx.listener(|this, _, _, cx| this.picker_add_typed(cx))),
                             ),
                     ))
-                    .when(on_files, |this| this.when_some(error, |this, e| this.child(div().text_xs().text_color(danger).child(e))))
+                    .when(on_files, |this| {
+                        this.when_some(resolving, |this, m| this.child(div().text_xs().text_color(muted).child(m)))
+                            .when_some(info, |this, m| this.child(div().text_xs().text_color(muted).child(m)))
+                            .when_some(error, |this, e| this.child(div().text_xs().text_color(danger).child(e)))
+                    })
                     .when(on_files && count > 0, |this| this.child(staged))
                     .child(
                         h_flex()
@@ -753,5 +1191,15 @@ impl AppView {
                     .child(body),
             )
             .into_any_element()
+    }
+}
+
+/// How a Server signs in, in a few words.
+fn auth_label(auth: &crate::remote::AuthMethod) -> String {
+    match auth {
+        crate::remote::AuthMethod::Key { path } => format!("key {path}"),
+        crate::remote::AuthMethod::Password => "password".into(),
+        crate::remote::AuthMethod::Agent { socket, .. } => format!("agent {}", socket.describe()),
+        crate::remote::AuthMethod::KeyboardInteractive => "keyboard-interactive".into(),
     }
 }

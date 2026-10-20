@@ -19,6 +19,8 @@ pub enum ServerState {
     Disconnected,
     /// Waiting for the user (password, host key).
     Waiting,
+    /// The agent is signing: waiting for a touch or an approval.
+    WaitingForAgent,
 }
 
 impl ServerState {
@@ -30,6 +32,7 @@ impl ServerState {
             ServerState::Reconnecting => "Reconnecting",
             ServerState::Disconnected => "Disconnected",
             ServerState::Waiting => "Waiting to connect",
+            ServerState::WaitingForAgent => "Waiting for agent approval",
         }
     }
 }

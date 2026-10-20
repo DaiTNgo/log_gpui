@@ -125,7 +125,13 @@ impl AppView {
                 MemberAction::Restart
             } else if matches!(
                 status,
-                Some(SourceStatus::Disconnected | SourceStatus::Error(_) | SourceStatus::NeedsSecret | SourceStatus::Reconnecting)
+                Some(
+                    SourceStatus::Disconnected
+                    | SourceStatus::Error(_)
+                    | SourceStatus::NeedsSecret
+                    | SourceStatus::Reconnecting
+                    | SourceStatus::SignInRequired(_)
+                )
             ) {
                 MemberAction::Reconnect
             } else {
@@ -145,6 +151,17 @@ impl AppView {
             });
         }
         (!servers.is_empty()).then_some(ConnectionSnapshot { servers })
+    }
+
+    /// A Server of the open Log Space whose agent is being waited for (a
+    /// touch or an approval).
+    pub fn server_waiting_for_agent(&self) -> Option<String> {
+        let hub = self.remote.hub.as_ref()?;
+        let space = self.active_space()?;
+        space.files.iter().filter_map(|f| f.remote.as_ref()).find_map(|remote| {
+            let waiting = hub.health().get(&remote.server_id).state == crate::remote::ServerState::WaitingForAgent;
+            waiting.then(|| self.remote.servers.get(&remote.server_id).map(|s| s.name.clone())).flatten()
+        })
     }
 
     /// The latency of the slowest Server of the open Log Space, once every

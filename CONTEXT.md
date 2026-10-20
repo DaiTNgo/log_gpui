@@ -75,8 +75,20 @@ The newest lines a Remote Log Space holds, up to a set number of lines. Lines ol
 _Avoid_: Buffer, cache, history limit.
 
 **Server**:
-The saved details for reaching one machine over SSH: address, port, user, how to sign in, and optionally a Jump Server. Servers are shared by every Project.
+The saved details for reaching one machine over SSH: address, port, user, how to sign in (key, password, or ssh-agent, optionally followed by questions the server asks such as a one-time code), and optionally a Jump Server. A Server may belong to one Server Group and carry tags. Servers are shared by every Project.
 _Avoid_: Host, connection, remote, SSH profile.
+
+**Server Group**:
+A named heading that Servers are listed under in the Servers list and the Server chooser, such as `prod` or `staging`. A Server belongs to at most one.
+_Avoid_: Folder, environment, cluster.
+
+**Quick Connect**:
+Adding a Remote File by typing `user@host[:port]:/path` in one field. It reuses a matching Server or saves a new one.
+_Avoid_: Ad-hoc connection, temporary server.
+
+**Sign-in Prompt**:
+A question the server asks while signing in (keyboard-interactive), such as a password or a one-time code, shown to the user as asked. Answers are never stored.
+_Avoid_: 2FA dialog, OTP box.
 
 **Jump Server**:
 A Server that the app connects through to reach another Server that is not directly reachable.
@@ -263,7 +275,7 @@ L2. **Follow Tracks The Scroll**: Scrolling away from the newest line turns Foll
 L3. **Live Starts Fresh**: A Remote or Imported Log Space always opens following and not paused; Follow and Pause are not remembered. A Scratch Log Space has neither.
 L4. **Remote Opens At The End**: A Remote File first shows its last lines at once, then fills its Live Window with older lines in the background while it stays readable and live. There is no loading of lines beyond the Live Window. Line numbers are always the line's real number in its Generation on its Server.
 L5. **Rotation Keeps History**: When a file is rotated, truncated or deleted, the lines already read stay, a Break is drawn, and reading continues in the new file as a new Generation, waiting for it to appear if needed. A Marker belongs to one line of one Generation.
-L6. **Reconnect Without Loss**: A lost connection is retried by itself and reading resumes where it stopped, with a Break marking the outage. After a long outage the app stops retrying and waits for the user.
+L6. **Reconnect Without Loss**: A lost connection is retried by itself and reading resumes where it stopped, with a Break marking the outage. After a long outage the app stops retrying and waits for the user, and a Server that needs Sign-in Prompts is not retried by itself at all (L17).
 L7. **Live Status In The Status Bar**: The connection state of a Remote Log Space, and the Follow and Pause switches, are shown in the status bar only.
 L8. **Remote Clocks Are Not Adjusted**: Rule 19 holds across Servers: times from different Servers are compared as written, with no timezone or clock-skew correction.
 L9. **Readable Without Elevation**: A Remote File is read with the Server's own user. A file that user cannot read shows a permission error; the app never asks for elevated rights.
@@ -273,6 +285,10 @@ L12. **Leaving The Window**: A line that leaves the Live Window loses its Marker
 L13. **Window Per Remote File**: The Live Window size is one app-wide setting applied to each Remote File separately, so a busy file never pushes a quiet file's lines out. Imported Log Spaces have no Live Window, even while their files grow.
 L14. **Download For Full Reading**: A Remote File, or every file of a Remote Log Space at once, can be downloaded to a chosen folder and then opened as a new Imported Log Space. Only the current file is downloaded, not its rotated predecessors.
 L15. **Servers In Use Stay**: A Server cannot be deleted while a Remote Log Space or another Server's Jump Server uses it; the app lists what uses it instead.
+L16. **Config Is Imported, Not Followed**: Servers can be imported from `~/.ssh/config` and refreshed on request; the app never reads it while connecting, and an imported Server is an ordinary Server the user can edit.
+L17. **Sign-in Prompts Need The User**: Answers to Sign-in Prompts are never stored. A Server that needs them is never reconnected by itself — after a lost connection or on reopening a Project it waits for the user to press Connect.
+L18. **Quick Connect Saves A Server**: A Remote File always belongs to a saved Server. Quick Connect reuses the Server matching the typed user, host and port (or the typed Server name) and otherwise saves a new one when the file is added.
+L19. **Agent Keys Stay In The Agent**: With ssh-agent sign-in the app never sees or stores the private key; it only asks the agent to sign.
 L20. **Globs Stay Live**: A Live Glob keeps adding the files that come to match it while the Log Space is open and when it is reopened. A matching file is never added twice; a Rotated File is never added as its own Remote File, since it is an earlier Generation of the file it belongs to (see Rotated File); a file already read under another name is never read again; and a file removed by the user is not added again by its Live Glob unless the user adds that exact path again. How many files one Live Glob reads at once and how often its folder is checked are app-wide settings. Each file it brings has its own Live Window (L13).
 L21. **Gone Is Not An Error**: A file of a Live Glob that disappears from its Server becomes Gone: its lines stay, a Break is drawn, and it does not count toward the worst state in the status bar. If a file appears again at the same path it continues as a new Generation (L5).
 L22. **One Pick, Many Servers**: A path or Live Glob picked once can be added on several Servers at once; each Server gets its own Remote File or Live Glob, named `<server>:<path>`.

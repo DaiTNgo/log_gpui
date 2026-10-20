@@ -57,9 +57,25 @@ pub struct PickerState {
     pub sort: SortOrder,
     #[serde(default)]
     pub servers: HashMap<String, ServerPicker>,
+    /// Server Groups folded in the Server lists (`""` is "Ungrouped").
+    #[serde(default)]
+    pub collapsed_groups: Vec<String>,
 }
 
 impl PickerState {
+    pub fn is_group_collapsed(&self, group: &str) -> bool {
+        self.collapsed_groups.iter().any(|g| g == group)
+    }
+
+    /// Fold or unfold a Server Group in the Server lists.
+    pub fn toggle_group(&mut self, group: &str) {
+        if let Some(pos) = self.collapsed_groups.iter().position(|g| g == group) {
+            self.collapsed_groups.remove(pos);
+        } else {
+            self.collapsed_groups.push(group.to_string());
+        }
+    }
+
     /// A missing or unreadable file is an empty state.
     pub fn load(path: &Path) -> Self {
         std::fs::read_to_string(path)

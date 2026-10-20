@@ -10,6 +10,7 @@ mod focus_pane;
 mod highlights_panel;
 mod raw_view;
 mod remote_dialogs;
+mod server_list;
 mod server_views;
 mod status_bar;
 mod tab_bar;

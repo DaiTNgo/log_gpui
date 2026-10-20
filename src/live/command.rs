@@ -224,11 +224,14 @@ impl RemoteCommandSource {
         };
         let mut backoff = Duration::from_secs(1);
         let mut failing_since: Option<Instant> = None;
+        // Only a press of Connect lets a Server ask Sign-in Prompts.
+        let mut interactive = false;
         let _ = events.try_send(SourceEvent::Status(SourceStatus::Connecting));
         loop {
             let store = self.servers.lock().unwrap().clone();
-            match self.hub.session(&store, &self.server_id).await {
+            match self.hub.session_with(&store, &self.server_id, interactive).await {
                 Ok(session) => {
+                    interactive = false;
                     backoff = Duration::from_secs(1);
                     failing_since = None;
                     match self.serve(&session, &mut st, &events, &commands).await {
@@ -247,6 +250,7 @@ impl RemoteCommandSource {
                             if !self.wait_for_reconnect(&commands, &mut st, &events).await {
                                 return;
                             }
+                        interactive = true;
                             let _ = events.try_send(SourceEvent::Status(SourceStatus::Connecting));
                         }
                     }
@@ -255,6 +259,9 @@ impl RemoteCommandSource {
                     let status = match &e {
                         ConnectError::NeedsSecret { .. } => Some(SourceStatus::NeedsSecret),
                         ConnectError::AuthFailed { .. } => Some(SourceStatus::AuthFailed),
+                        ConnectError::SignInRequired { server_name, .. } => {
+                            Some(SourceStatus::SignInRequired(server_name.clone()))
+                        }
                         ConnectError::Network(_) | ConnectError::Other(_) => None,
                         other => Some(SourceStatus::Error(other.message())),
                     };
@@ -263,6 +270,7 @@ impl RemoteCommandSource {
                         if !self.wait_for_reconnect(&commands, &mut st, &events).await {
                             return;
                         }
+                        interactive = true;
                         let _ = events.try_send(SourceEvent::Status(SourceStatus::Connecting));
                         continue;
                     }
@@ -278,6 +286,7 @@ impl RemoteCommandSource {
                         if !self.wait_for_reconnect(&commands, &mut st, &events).await {
                             return;
                         }
+                        interactive = true;
                         let _ = events.try_send(SourceEvent::Status(SourceStatus::Connecting));
                         continue;
                     }
