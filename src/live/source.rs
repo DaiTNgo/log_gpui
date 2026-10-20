@@ -123,6 +123,9 @@ pub enum SourceStatus {
     /// The Server refused the password or passphrase; waits for the user to
     /// type it again.
     AuthFailed,
+    /// The Server asks Sign-in Prompts (names it): waits for the user to
+    /// press Connect or Reconnect.
+    SignInRequired(String),
     Error(String),
 }
 
@@ -136,6 +139,7 @@ impl SourceStatus {
             SourceStatus::WaitingForFile => 2,
             SourceStatus::Exited(_) => 3,
             SourceStatus::NeedsSecret => 4,
+            SourceStatus::SignInRequired(_) => 4,
             SourceStatus::Reconnecting => 4,
             SourceStatus::AuthFailed => 5,
             SourceStatus::Disconnected => 5,
@@ -164,6 +168,7 @@ impl SourceStatus {
             SourceStatus::Gone => "Gone".into(),
             SourceStatus::NeedsSecret => "Waiting to connect".into(),
             SourceStatus::AuthFailed => "Authentication failed".into(),
+            SourceStatus::SignInRequired(server) => format!("Sign-in required: {server}"),
             SourceStatus::Error(message) => message.clone(),
         }
     }

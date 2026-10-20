@@ -29,6 +29,103 @@ impl AppView {
         prompt.input = Some(input);
     }
 
+    /// Take the next Sign-in Prompt and create one field per question.
+    pub fn sync_sign_in_dialog(&mut self, window: &mut Window, cx: &mut gpui::Context<Self>) {
+        if self.remote.sign_in_dialog.is_some() {
+            return;
+        }
+        let Some(request) = self.remote.sign_in_prompts.pop_front() else { return };
+        let inputs: Vec<_> = request
+            .prompts
+            .iter()
+            .map(|(label, echo)| {
+                let placeholder = label.trim().trim_end_matches(':').to_string();
+                let masked = !echo;
+                let input = cx.new(|cx| InputState::new(window, cx).masked(masked).placeholder(placeholder));
+                cx.subscribe_in(&input, window, |this: &mut Self, _input, event: &InputEvent, _window, cx| {
+                    if let InputEvent::PressEnter { .. } = event {
+                        this.submit_sign_in(cx);
+                    }
+                })
+                .detach();
+                input
+            })
+            .collect();
+        if let Some(first) = inputs.first() {
+            first.update(cx, |state, cx| state.focus(window, cx));
+        }
+        self.remote.sign_in_dialog = Some(super::super::remote::SignInDialog { request, inputs });
+    }
+
+    /// Send what is typed in the Sign-in Prompt.
+    pub fn submit_sign_in(&mut self, cx: &mut gpui::Context<Self>) {
+        let Some(dialog) = self.remote.sign_in_dialog.as_ref() else { return };
+        let answers: Vec<String> = dialog.inputs.iter().map(|i| i.read(cx).value().to_string()).collect();
+        self.answer_sign_in(Some(answers), cx);
+    }
+
+    /// "Sign in to web1": the questions the Server sent, as it sent them.
+    pub(super) fn render_sign_in_dialog(&mut self, cx: &mut gpui::Context<Self>) -> gpui::AnyElement {
+        let Some(dialog) = self.remote.sign_in_dialog.as_ref() else {
+            return div().into_any_element();
+        };
+        let (server, name, instructions) = (
+            dialog.request.server_name.clone(),
+            dialog.request.name.clone(),
+            dialog.request.instructions.clone(),
+        );
+        let fields: Vec<(String, gpui::Entity<InputState>)> = dialog
+            .request
+            .prompts
+            .iter()
+            .map(|(label, _)| label.clone())
+            .zip(dialog.inputs.iter().cloned())
+            .collect();
+        let theme = cx.theme();
+        let (bg, border, muted) = (theme.popover, theme.border, theme.muted_foreground);
+        Self::modal_backdrop()
+            .child(
+                v_flex()
+                    .w(px(420.0))
+                    .gap_3()
+                    .p_4()
+                    .bg(bg)
+                    .border_1()
+                    .border_color(border)
+                    .rounded_lg()
+                    .shadow_2xl()
+                    .child(div().text_base().font_weight(gpui::FontWeight::SEMIBOLD).child(format!("Sign in to {server}")))
+                    .when(!name.trim().is_empty(), |this| this.child(div().text_sm().child(name.clone())))
+                    .when(!instructions.trim().is_empty(), |this| {
+                        this.child(div().text_sm().text_color(muted).child(instructions.clone()))
+                    })
+                    .children(fields.into_iter().map(|(label, input)| {
+                        v_flex()
+                            .gap_1()
+                            .child(div().text_xs().text_color(muted).child(label))
+                            .child(Input::new(&input))
+                    }))
+                    .child(
+                        h_flex()
+                            .justify_end()
+                            .gap_2()
+                            .child(
+                                Button::new("signin-cancel")
+                                    .label("Cancel")
+                                    .on_click(cx.listener(|this, _, _, cx| this.answer_sign_in(None, cx))),
+                            )
+                            .child(
+                                Button::new("signin-submit")
+                                    .primary()
+                                    .small()
+                                    .label("Sign in")
+                                    .on_click(cx.listener(|this, _, _, cx| this.submit_sign_in(cx))),
+                            ),
+                    ),
+            )
+            .into_any_element()
+    }
+
     /// "Trust this host?": the fingerprint of a key never seen before. The
     /// first question waiting is shown.
     pub(super) fn render_host_key_dialog(&mut self, cx: &mut gpui::Context<Self>) -> gpui::AnyElement {

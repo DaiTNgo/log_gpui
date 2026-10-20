@@ -13,12 +13,16 @@ impl AppView {
     pub fn close_top_dialog(&mut self, cx: &mut Context<Self>) -> bool {
         if self.confirm.is_some() {
             self.cancel_confirm(cx);
+        } else if self.remote.sign_in_dialog.is_some() {
+            self.answer_sign_in(None, cx);
         } else if !self.remote.host_prompts.is_empty() {
             self.answer_host_key(false, cx);
         } else if self.remote.secret_prompt.is_some() {
             self.cancel_secret_prompt(cx);
         } else if let Some(dialog) = self.server_dialog.as_ref() {
-            if dialog.form.is_some() {
+            if dialog.import.is_some() {
+                self.close_ssh_import(cx);
+            } else if dialog.form.is_some() {
                 self.cancel_server_form(cx);
             } else {
                 self.close_servers_dialog(cx);

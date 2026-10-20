@@ -6,7 +6,7 @@ use super::AppView;
 use crate::remote::browse::{
     DirEntry, Resolved, SortKey, SortOrder, dirname, filter_entries, join, list_dir, resolve_input, sort_entries,
 };
-use crate::remote::{ConnectError, ServerStore};
+use crate::remote::{ConnectError, Server, ServerStore};
 use gpui::{AppContext as _, Context, Entity, Window};
 use gpui_component::input::{InputEvent, InputState};
 use std::collections::HashSet;
@@ -42,6 +42,12 @@ impl Staged {
     pub fn is_glob(&self) -> bool {
         matches!(self, Staged::Glob { .. })
     }
+
+    pub fn set_server_id(&mut self, id: &str) {
+        match self {
+            Staged::File { server_id, .. } | Staged::Glob { server_id, .. } => *server_id = id.to_string(),
+        }
+    }
 }
 
 /// The most rows of a folder drawn at once; the filter narrows the rest.
@@ -55,16 +61,42 @@ pub enum PickerTab {
     Command,
 }
 
+/// The small sign-in form shown when the agent was refused by a Server
+/// made by Quick Connect: a password or a key file typed here.
+pub struct QuickLogin {
+    pub server_id: String,
+    pub server_name: String,
+    pub use_key: bool,
+    pub remember: bool,
+    /// Password, or key passphrase (created while rendering).
+    pub secret: Option<Entity<InputState>>,
+    pub key_path: Option<Entity<InputState>>,
+    pub error: Option<String>,
+}
+
 pub struct RemotePicker {
     pub tab: PickerTab,
+    /// The Quick Connect field.
+    pub quick_input: Option<Entity<InputState>>,
+    /// Servers made by Quick Connect and not saved yet; saved when a file of
+    /// theirs is added with Done.
+    pub quick_servers: Vec<Server>,
+    /// Typed secrets of those Servers, with "Remember", for the save.
+    pub quick_secrets: std::collections::HashMap<String, (String, bool)>,
+    /// What to add once the Quick Connect Server is connected.
+    pub quick_pending: Option<String>,
+    pub quick_login: Option<QuickLogin>,
     /// The Command tab.
     pub command: super::remote_command::CommandForm,
     pub target: PickerTarget,
     pub server_id: Option<String>,
     pub dir: String,
     pub entries: Vec<DirEntry>,
-    pub loading: bool,
+    /// What the picker is waiting on, if anything.
+    pub busy: Option<PickerBusy>,
     pub error: Option<String>,
+    /// What the last add did ("Added 3 files"), shown muted.
+    pub info: Option<String>,
     /// What was chosen so far, on any Server.
     pub staged: Vec<Staged>,
     /// Servers ticked next to the Add button, besides the selected one.
@@ -78,6 +110,8 @@ pub struct RemotePicker {
     /// Starting Time for the files added, as typed (empty: the last lines).
     pub start_time: String,
     pub start_input: Option<Entity<InputState>>,
+    /// The search field of the Server chooser.
+    pub server_search: Option<Entity<InputState>>,
     /// The fields are emptied at the next render (it needs a window).
     pub clear_input: bool,
     pub clear_filter: bool,
@@ -85,7 +119,74 @@ pub struct RemotePicker {
     request: u64,
 }
 
+/// What the picker waits on, said in the words the user sees.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PickerBusy {
+    /// Listing a folder (`None`: the home folder). Its rows are hidden
+    /// meanwhile, so a row of the folder being left cannot be clicked.
+    Listing(Option<String>),
+    /// Checking what was typed: a path, or a glob to match.
+    Resolving(String),
+}
+
+impl PickerBusy {
+    pub fn label(&self) -> String {
+        match self {
+            PickerBusy::Listing(Some(dir)) => format!("Listing {dir}\u{2026}"),
+            PickerBusy::Listing(None) => "Listing the home folder\u{2026}".into(),
+            PickerBusy::Resolving(text) if is_glob(text) => format!("Matching {}\u{2026}", text.trim()),
+            PickerBusy::Resolving(text) => format!("Checking {}\u{2026}", text.trim()),
+        }
+    }
+}
+
+fn is_glob(text: &str) -> bool {
+    text.contains(['*', '?', '['])
+}
+
+/// What one add did, for the line under the path field.
+pub fn added_message(added_files: usize, skipped_files: usize, added_globs: usize, skipped_globs: usize) -> Option<String> {
+    let plural = |n: usize, one: &str, many: &str| if n == 1 { format!("1 {one}") } else { format!("{n} {many}") };
+    let mut parts = Vec::new();
+    if added_files > 0 {
+        parts.push(plural(added_files, "file", "files"));
+    }
+    if added_globs > 0 {
+        parts.push(plural(added_globs, "Live Glob", "Live Globs"));
+    }
+    let skipped = skipped_files + skipped_globs;
+    let already = (skipped > 0).then(|| format!("{skipped} already chosen"));
+    match (parts.is_empty(), already) {
+        (true, None) => None,
+        (true, Some(already)) => Some(format!("Nothing new: {already}")),
+        (false, None) => Some(format!("Added {}", parts.join(" and "))),
+        (false, Some(already)) => Some(format!("Added {} ({already})", parts.join(" and "))),
+    }
+}
+
 impl RemotePicker {
+    /// The line the file list shows instead of rows, if any: what it is
+    /// loading, or why it is empty.
+    pub fn list_notice(&self) -> Option<String> {
+        match &self.busy {
+            Some(busy @ PickerBusy::Listing(_)) => return Some(busy.label()),
+            _ => {}
+        }
+        if !self.visible_entries().is_empty() {
+            return None;
+        }
+        if self.entries.is_empty() {
+            Some("This folder is empty".into())
+        } else {
+            Some("Nothing in this folder matches the filter".into())
+        }
+    }
+
+    /// Whether the folder's rows are drawn (not while another is listed).
+    pub fn shows_rows(&self) -> bool {
+        !matches!(self.busy, Some(PickerBusy::Listing(_)))
+    }
+
     pub fn is_staged(&self, server_id: &str, path: &str) -> bool {
         self.staged
             .iter()
@@ -147,12 +248,18 @@ impl AppView {
         let first = self.remote.servers.servers[0].id.clone();
         self.remote.picker = Some(RemotePicker {
             tab: PickerTab::Files,
+            quick_input: None,
+            quick_servers: Vec::new(),
+            quick_secrets: Default::default(),
+            quick_pending: None,
+            quick_login: None,
             command: Default::default(),
             target,
             server_id: None,
             dir: "/".into(),
             entries: Vec::new(),
-            loading: false,
+            busy: None,
+            info: None,
             error: None,
             staged: Vec::new(),
             checked: HashSet::new(),
@@ -162,6 +269,7 @@ impl AppView {
             filter_input: None,
             start_time: String::new(),
             start_input: None,
+            server_search: None,
             clear_input: false,
             clear_filter: false,
             request: 0,
@@ -177,6 +285,7 @@ impl AppView {
     /// Create the fields of a freshly opened picker, and empty them when asked.
     pub fn sync_remote_picker(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.sync_command_form(window, cx);
+        self.sync_quick_connect(window, cx);
         let Some(picker) = self.remote.picker.as_mut() else { return };
         if picker.clear_input {
             picker.clear_input = false;
@@ -200,6 +309,23 @@ impl AppView {
             })
             .detach();
             picker.input = Some(input);
+        }
+        if picker.server_search.is_none() {
+            let input = cx.new(|cx| InputState::new(window, cx).placeholder("Search Servers"));
+            cx.subscribe_in(&input, window, |this: &mut Self, input, event: &InputEvent, _window, cx| match event {
+                InputEvent::Change => cx.notify(),
+                InputEvent::PressEnter { .. } => {
+                    let query = input.read(cx).value().to_string();
+                    let first = crate::remote::server_search::first_match(&this.remote.servers.servers, &query)
+                        .map(|s| s.id.clone());
+                    if let Some(id) = first {
+                        this.picker_select_server(&id, cx);
+                    }
+                }
+                _ => {}
+            })
+            .detach();
+            picker.server_search = Some(input);
         }
         if picker.filter_input.is_none() {
             let input = cx.new(|cx| InputState::new(window, cx).placeholder("Filter this folder"));
@@ -283,12 +409,12 @@ impl AppView {
     fn load_picker_dir(&mut self, dir: Option<String>, kind: LoadKind, cx: &mut Context<Self>) {
         let Some(picker) = self.remote.picker.as_mut() else { return };
         let Some(server_id) = picker.server_id.clone() else { return };
-        picker.loading = true;
+        picker.busy = Some(PickerBusy::Listing(dir.clone()));
         picker.error = None;
         picker.request += 1;
         let request = picker.request;
         let hub = self.remote_hub(cx);
-        let store: ServerStore = self.remote.servers.clone();
+        let store: ServerStore = self.picker_store();
         let task = hub.spawn({
             let hub = hub.clone();
             let server_id = server_id.clone();
@@ -322,7 +448,7 @@ impl AppView {
                 if picker.request != request {
                     return;
                 }
-                picker.loading = false;
+                picker.busy = None;
                 match result {
                     Ok(Ok(Listing::Dir { dir, entries, unavailable })) => {
                         let changed = picker.dir != dir || picker.server_id != server;
@@ -334,8 +460,14 @@ impl AppView {
                         }
                         picker.error = unavailable.map(|old| format!("{old} is no longer available"));
                         if let Some(server_id) = server {
-                            this.remote.picker_state.set_last_dir(&server_id, &dir);
-                            this.save_picker_state();
+                            if !crate::remote::quick::is_temporary(&server_id) {
+                                this.remote.picker_state.set_last_dir(&server_id, &dir);
+                                this.save_picker_state();
+                            }
+                            // A Quick Connect string waits for this connection.
+                            if let Some(path) = this.remote.picker.as_mut().and_then(|p| p.quick_pending.take()) {
+                                this.picker_add_text_on(path, vec![server_id], cx);
+                            }
                         }
                     }
                     Ok(Err((message, connect))) => {
@@ -343,8 +475,18 @@ impl AppView {
                             picker.entries.clear();
                         }
                         picker.error = Some(message);
-                        if let (Some(ConnectError::NeedsSecret { server_id, .. }), Some(_)) = (connect, server) {
-                            this.open_secret_prompt(&server_id, cx);
+                        match (connect, server) {
+                            (Some(ConnectError::NeedsSecret { server_id, .. }), Some(_)) => {
+                                if !crate::remote::quick::is_temporary(&server_id) {
+                                    this.open_secret_prompt(&server_id, cx);
+                                }
+                            }
+                            (Some(ConnectError::AgentRejected { .. } | ConnectError::AgentUnavailable { .. }), Some(sid))
+                                if crate::remote::quick::is_temporary(&sid) =>
+                            {
+                                this.open_quick_login(&sid);
+                            }
+                            _ => {}
                         }
                     }
                     Err(e) => {
@@ -476,10 +618,19 @@ impl AppView {
                 .map(|s| s.id.clone())
                 .filter(|id| *id != selected && picker.checked.contains(id)),
         );
-        picker.loading = true;
+        self.picker_add_text_on(text, targets, cx);
+    }
+
+    /// Like `picker_add_text`, on exactly these Servers (the first is the
+    /// selected one).
+    pub fn picker_add_text_on(&mut self, text: String, targets: Vec<String>, cx: &mut Context<Self>) {
+        let Some(picker) = self.remote.picker.as_mut() else { return };
+        let Some(selected) = targets.first().cloned() else { return };
+        picker.busy = Some(PickerBusy::Resolving(text.clone()));
         picker.error = None;
+        picker.info = None;
         let hub = self.remote_hub(cx);
-        let store: ServerStore = self.remote.servers.clone();
+        let store: ServerStore = self.picker_store();
         let tasks: Vec<_> = targets
             .into_iter()
             .map(|sid| {
@@ -488,6 +639,11 @@ impl AppView {
                     async move {
                         let session = hub.session(&store, &sid).await.map_err(describe)?;
                         let sftp = session.open_sftp().await?;
+                        // `~/…` is the user's home folder on that Server.
+                        let text = match text.trim().strip_prefix("~/") {
+                            Some(rest) => join(&home_dir(&sftp).await.map_err(|e| e.0)?, rest),
+                            None => text,
+                        };
                         resolve_input(&sftp, &text).await
                     }
                 });
@@ -505,8 +661,10 @@ impl AppView {
         cx.notify();
     }
 
+    /// What checking the typed text found on each Server: files and Live
+    /// Globs go to the waiting list, a folder of the selected Server opens.
     #[allow(clippy::type_complexity)]
-    fn picker_resolved(
+    pub fn picker_resolved(
         &mut self,
         selected: &str,
         results: Vec<(String, Result<Result<Resolved, String>, tokio::task::JoinError>)>,
@@ -514,14 +672,16 @@ impl AppView {
     ) {
         let names: Vec<(String, String)> = results
             .iter()
-            .map(|(sid, _)| (sid.clone(), self.remote.servers.get(sid).map(|s| s.name.clone()).unwrap_or_default()))
+            .map(|(sid, _)| (sid.clone(), self.picker_server(sid).map(|s| s.name).unwrap_or_default()))
             .collect();
         let name_of = |sid: &str| names.iter().find(|(s, _)| s == sid).map(|(_, n)| n.clone()).unwrap_or_default();
         let Some(picker) = self.remote.picker.as_mut() else { return };
-        picker.loading = false;
+        if matches!(picker.busy, Some(PickerBusy::Resolving(_))) {
+            picker.busy = None;
+        }
         let mut errors = Vec::new();
         let mut open_dir = None;
-        let mut staged_any = false;
+        let (mut added_files, mut skipped_files, mut added_globs, mut skipped_globs) = (0, 0, 0, 0);
         for (sid, result) in results {
             match result {
                 Ok(Ok(Resolved::Dir(dir))) => {
@@ -532,25 +692,32 @@ impl AppView {
                 Ok(Ok(Resolved::Files(paths))) => {
                     for path in paths {
                         let item = Staged::File { server_id: sid.clone(), path };
-                        if !picker.staged.contains(&item) {
+                        if picker.staged.contains(&item) {
+                            skipped_files += 1;
+                        } else {
                             picker.staged.push(item);
+                            added_files += 1;
                         }
-                        staged_any = true;
                     }
                 }
                 Ok(Ok(Resolved::Glob { dir, pattern })) => {
                     let item = Staged::Glob { server_id: sid.clone(), dir, pattern };
-                    if !picker.staged.contains(&item) {
+                    if picker.staged.contains(&item) {
+                        skipped_globs += 1;
+                    } else {
                         picker.staged.push(item);
+                        added_globs += 1;
                     }
-                    staged_any = true;
                 }
                 Ok(Err(message)) => errors.push(format!("{}: {message}", name_of(&sid))),
                 Err(e) => errors.push(format!("{}: Could not reach the server: {e}", name_of(&sid))),
             }
         }
         picker.error = (!errors.is_empty()).then(|| errors.join("\n"));
-        if staged_any || open_dir.is_some() {
+        picker.info = added_message(added_files, skipped_files, added_globs, skipped_globs);
+        // The typed text stays after an add, to be tweaked; opening a folder
+        // empties it.
+        if open_dir.is_some() {
             picker.clear_input = true;
         }
         if let Some(dir) = open_dir {
@@ -573,6 +740,10 @@ impl AppView {
         }
         let Some(picker) = self.remote.picker.take() else { return };
         let start = picker.start_time.trim().to_string();
+        let server_name = |sid: &str| self.remote.servers.get(sid).map(|s| s.name.clone());
+        let _ = &server_name;
+        let mut picker = picker;
+        self.save_quick_servers(&mut picker, cx);
         let server_name = |sid: &str| self.remote.servers.get(sid).map(|s| s.name.clone());
         let mut files: Vec<(String, String, String)> = Vec::new();
         let mut globs: Vec<(String, String, String, String)> = Vec::new();

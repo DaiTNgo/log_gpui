@@ -4,7 +4,7 @@
 use super::AppView;
 use crate::live::{LineSource, RemoteCommandSource, RemoteFileSource, SourceCommand, SourceStatus};
 use crate::remote::{
-    AuthMethod, HostKeyRequest, Keychain, KnownHosts, RemoteHub, SecretStore, Server, ServerError, ServerStore,
+    AuthMethod, HostKeyRequest, Keychain, SignInRequest, KnownHosts, RemoteHub, SecretStore, Server, ServerError, ServerStore,
 };
 use crate::workspace::log_space::{LogSpaceKind, RemoteTarget};
 use crate::workspace::session::app_data_dir;
@@ -33,6 +33,13 @@ pub struct SecretPrompt {
     pub input: Option<Entity<InputState>>,
 }
 
+/// A question of the Server on top of the Sign-in Prompts, with its answer
+/// fields (created while rendering, where a window exists).
+pub struct SignInDialog {
+    pub request: SignInRequest,
+    pub inputs: Vec<Entity<InputState>>,
+}
+
 /// Servers, the hub and the dialogs that go with them.
 pub struct RemoteUi {
     pub servers: ServerStore,
@@ -43,6 +50,9 @@ pub struct RemoteUi {
     /// Host keys waiting for the user's answer, the first one shown.
     pub host_prompts: VecDeque<HostKeyRequest>,
     pub secret_prompt: Option<SecretPrompt>,
+    /// Sign-in Prompts waiting for the user, the first one shown.
+    pub sign_in_prompts: VecDeque<SignInRequest>,
+    pub sign_in_dialog: Option<SignInDialog>,
     pub picker: Option<super::remote_picker::RemotePicker>,
     pub download: Option<DownloadState>,
     /// The Rotated Files to tick before a download.
@@ -83,6 +93,8 @@ impl RemoteUi {
             known_hosts: Arc::new(Mutex::new(KnownHosts::load(known))),
             host_prompts: VecDeque::new(),
             secret_prompt: None,
+            sign_in_prompts: VecDeque::new(),
+            sign_in_dialog: None,
             picker: None,
             download: None,
             full_dialog: None,
@@ -128,7 +140,13 @@ impl AppView {
         let changes = hub.health().changes();
         cx.spawn(async move |this, cx| {
             while changes.recv().await.is_ok() {
-                if this.update(cx, |_, cx| cx.notify()).is_err() {
+                if this
+                    .update(cx, |this, cx| {
+                        this.sync_sign_in_flags();
+                        cx.notify();
+                    })
+                    .is_err()
+                {
                     break;
                 }
             }
@@ -148,7 +166,58 @@ impl AppView {
             }
         })
         .detach();
+        let sign_ins = hub.sign_in_requests();
+        cx.spawn(async move |this, cx| {
+            while let Ok(request) = sign_ins.recv().await {
+                if this
+                    .update(cx, |this, cx| {
+                        this.remote.sign_in_prompts.push_back(request);
+                        cx.notify();
+                    })
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        })
+        .detach();
         hub
+    }
+
+    /// Answer the Sign-in Prompt on top (`None` cancels the connection to
+    /// that Server). The answers are only passed on, never kept.
+    pub fn answer_sign_in(&mut self, answers: Option<Vec<String>>, cx: &mut Context<Self>) {
+        if let Some(dialog) = self.remote.sign_in_dialog.take() {
+            let _ = dialog.request.reply.send(answers);
+        }
+        cx.notify();
+    }
+
+    /// Save in the Servers which of them needed Sign-in Prompts at their last
+    /// connection (so a lost connection or a reopened Project waits for
+    /// Connect instead of asking by itself).
+    fn sync_sign_in_flags(&mut self) {
+        let Some(hub) = self.remote.hub.clone() else { return };
+        let changed: Vec<(String, bool)> = self
+            .remote
+            .servers
+            .servers
+            .iter()
+            .filter_map(|s| {
+                let now = hub.needs_sign_in_prompt(s);
+                (now != s.needs_sign_in_prompt).then(|| (s.id.clone(), now))
+            })
+            .collect();
+        if changed.is_empty() {
+            return;
+        }
+        for (id, flag) in changed {
+            if let Some(server) = self.remote.servers.servers.iter_mut().find(|s| s.id == id) {
+                server.needs_sign_in_prompt = flag;
+            }
+        }
+        let _ = self.remote.servers.save_to(&servers_path());
+        *self.remote.shared_servers.lock().unwrap() = self.remote.servers.clone();
     }
 
     /// The user answered the host key question on top.
@@ -352,7 +421,7 @@ impl AppView {
             self.live
                 .sources
                 .get(&f.file_id)
-                .is_some_and(|s| matches!(s.status, SourceStatus::Disconnected | SourceStatus::Error(_)))
+                .is_some_and(|s| matches!(s.status, SourceStatus::Disconnected | SourceStatus::Error(_) | SourceStatus::SignInRequired(_)))
         });
         stuck.then(|| ("Reconnect".into(), ConnectAction::Reconnect(space.id.clone())))
     }
@@ -369,7 +438,7 @@ impl AppView {
                     .unwrap_or_default();
                 for id in files {
                     if let Some(source) = self.live.sources.get(&id) {
-                        if matches!(source.status, SourceStatus::Disconnected | SourceStatus::Error(_)) {
+                        if matches!(source.status, SourceStatus::Disconnected | SourceStatus::Error(_) | SourceStatus::SignInRequired(_)) {
                             source.handle.send(SourceCommand::Reconnect);
                         }
                     }

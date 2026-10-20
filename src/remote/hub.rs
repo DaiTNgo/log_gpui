@@ -7,8 +7,11 @@ use super::health::{HealthBoard, ServerState};
 use super::known_hosts::{HostKeyStatus, KnownHosts};
 use super::secrets::SecretStore;
 use super::server::{AuthMethod, Server, ServerStore};
-use russh::client::{self, Handle};
-use russh::keys::{HashAlg, PrivateKeyWithHashAlg, PublicKeyOrCertificate, load_secret_key};
+use russh::client::{self, Handle, KeyboardInteractiveAuthResponse};
+use russh::keys::agent::AgentIdentity;
+use russh::keys::agent::client::AgentClient;
+use russh::keys::{HashAlg, PrivateKeyWithHashAlg, PublicKey, PublicKeyOrCertificate, load_public_key, load_secret_key};
+use russh::MethodKind;
 use russh_sftp::client::SftpSession;
 use std::collections::HashMap;
 use std::future::Future;
@@ -27,6 +30,13 @@ pub enum ConnectError {
     HostKeyChanged { address: String },
     /// The user did not trust a new host key.
     HostKeyRejected { address: String },
+    /// The Server asks questions (Sign-in Prompts) and the user is not
+    /// there to answer, or cancelled the dialog: waits for Connect.
+    SignInRequired { server_id: String, server_name: String },
+    /// The ssh-agent socket is missing or does not answer.
+    AgentUnavailable { server_name: String, path: String },
+    /// No key of the agent was accepted (or the agent did not sign).
+    AgentRejected { server_name: String, detail: String },
     Network(String),
     Other(String),
 }
@@ -38,6 +48,9 @@ impl ConnectError {
             ConnectError::AuthFailed { .. } => "Authentication failed".into(),
             ConnectError::HostKeyChanged { .. } => "Host key changed".into(),
             ConnectError::HostKeyRejected { .. } => "Host key not trusted".into(),
+            ConnectError::SignInRequired { server_name, .. } => format!("Sign-in required: {server_name}"),
+            ConnectError::AgentUnavailable { path, .. } => format!("ssh-agent not available at {path}"),
+            ConnectError::AgentRejected { detail, .. } => format!("Authentication failed: {detail}"),
             ConnectError::Network(e) | ConnectError::Other(e) => e.clone(),
         }
     }
@@ -52,7 +65,56 @@ pub struct HostKeyRequest {
     pub reply: tokio::sync::oneshot::Sender<bool>,
 }
 
+/// A question the Server asks while signing in (keyboard-interactive); the
+/// app shows it and answers. `reply` gets `None` when the user cancels.
+pub struct SignInRequest {
+    pub server_id: String,
+    pub server_name: String,
+    /// The name and instructions the server sent (either may be empty).
+    pub name: String,
+    pub instructions: String,
+    /// Each question and whether the answer is shown while typing.
+    pub prompts: Vec<(String, bool)>,
+    pub reply: tokio::sync::oneshot::Sender<Option<Vec<String>>>,
+}
+
+/// One step of Test connection, for one Server of the chain.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TestStepKind {
+    Tcp,
+    HostKey,
+    Auth,
+    Sftp,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TestStep {
+    /// Index in the chain, outermost Jump Server first.
+    pub hop: usize,
+    pub server_name: String,
+    pub kind: TestStepKind,
+    pub result: Result<String, String>,
+    pub elapsed: Duration,
+}
+
+type Reporter<'a> = Option<&'a (dyn Fn(TestStep) + Send + Sync)>;
+
+/// Most keys of an agent tried for one sign-in (a server cuts the connection
+/// after `MaxAuthTries`, 6 by default).
+const MAX_AGENT_KEYS: usize = 5;
+/// How long the agent gets to sign (a touch, a 1Password or Touch ID approval).
+const AGENT_SIGN_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// Overwrite a secret in place before it is dropped.
+fn wipe(secret: &mut String) {
+    // SAFETY: writing zeros keeps the string valid UTF-8.
+    unsafe { secret.as_bytes_mut() }.fill(0);
+    secret.clear();
+}
+
 struct ClientHandler {
+    /// Set once the Server's host key was presented (the TCP connection works).
+    key_checked: Arc<std::sync::atomic::AtomicBool>,
     address: String,
     server_name: String,
     known: Arc<Mutex<KnownHosts>>,
@@ -65,6 +127,7 @@ impl client::Handler for ClientHandler {
     type Error = russh::Error;
 
     async fn check_server_key(&mut self, key: &PublicKeyOrCertificate) -> Result<bool, Self::Error> {
+        self.key_checked.store(true, Ordering::SeqCst);
         let PublicKeyOrCertificate::PublicKey { key, .. } = key else {
             return Ok(false);
         };
@@ -239,6 +302,11 @@ pub struct RemoteHub {
     secrets: Arc<dyn SecretStore>,
     known_hosts: Arc<Mutex<KnownHosts>>,
     prompts: async_channel::Sender<HostKeyRequest>,
+    sign_ins: async_channel::Sender<SignInRequest>,
+    sign_in_requests: async_channel::Receiver<SignInRequest>,
+    /// Servers that needed Sign-in Prompts at their last connection (from
+    /// the saved flag, updated on every successful connection).
+    prompted: Mutex<HashMap<String, bool>>,
     /// One session per Server id, shared by every file on it.
     sessions: Arc<tokio::sync::Mutex<HashMap<String, Arc<RemoteSession>>>>,
     /// Secrets typed this run and not remembered.
@@ -258,6 +326,7 @@ impl RemoteHub {
         known_hosts: Arc<Mutex<KnownHosts>>,
     ) -> (Arc<Self>, async_channel::Receiver<HostKeyRequest>) {
         let (prompts, requests) = async_channel::unbounded();
+        let (sign_ins, sign_in_requests) = async_channel::unbounded();
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(2)
             .thread_name("remote-hub")
@@ -269,6 +338,9 @@ impl RemoteHub {
             secrets,
             known_hosts,
             prompts,
+            sign_ins,
+            sign_in_requests,
+            prompted: Mutex::default(),
             sessions: Arc::default(),
             typed_secrets: Arc::default(),
             health: HealthBoard::new(),
@@ -276,6 +348,17 @@ impl RemoteHub {
             connecting: Mutex::default(),
         });
         (hub, requests)
+    }
+
+    /// The Sign-in Prompts to show the user (answer each through `reply`).
+    pub fn sign_in_requests(&self) -> async_channel::Receiver<SignInRequest> {
+        self.sign_in_requests.clone()
+    }
+
+    /// Whether the Server needed Sign-in Prompts last time (the app saves
+    /// this in the Server).
+    pub fn needs_sign_in_prompt(&self, server: &Server) -> bool {
+        self.prompted.lock().unwrap().get(&server.id).copied().unwrap_or(server.needs_sign_in_prompt)
     }
 
     /// How many commands are still running through the hub's sessions: a
@@ -353,6 +436,18 @@ impl RemoteHub {
 
     /// The shared session to a Server, connecting if needed.
     pub async fn session(&self, store: &ServerStore, server_id: &str) -> Result<Arc<RemoteSession>, ConnectError> {
+        self.session_with(store, server_id, true).await
+    }
+
+    /// Like `session`; with `interactive` false a Server that needs Sign-in
+    /// Prompts is not asked but reported as `SignInRequired` (a connection
+    /// made by itself must not pop up questions).
+    pub async fn session_with(
+        &self,
+        store: &ServerStore,
+        server_id: &str,
+        interactive: bool,
+    ) -> Result<Arc<RemoteSession>, ConnectError> {
         if let Some(session) = self.live_session(server_id).await {
             return Ok(session);
         }
@@ -371,7 +466,7 @@ impl RemoteHub {
         self.health.update(server_id, |h| {
             h.state = if h.ever_connected { ServerState::Reconnecting } else { ServerState::Connecting };
         });
-        let session = match self.connect_chain(&chain).await {
+        let session = match self.connect_chain(&chain, server_id, interactive, None).await {
             Ok(session) => Arc::new(session),
             Err(e) => {
                 self.health.update(server_id, |h| {
@@ -379,6 +474,7 @@ impl RemoteHub {
                         ConnectError::NeedsSecret { .. }
                         | ConnectError::HostKeyChanged { .. }
                         | ConnectError::HostKeyRejected { .. }
+                        | ConnectError::SignInRequired { .. }
                         | ConnectError::AuthFailed { .. } => ServerState::Waiting,
                         _ => ServerState::Disconnected,
                     };
@@ -465,7 +561,24 @@ impl RemoteHub {
         });
     }
 
-    async fn connect_chain(&self, chain: &[Server]) -> Result<RemoteSession, ConnectError> {
+    async fn connect_chain(
+        &self,
+        chain: &[Server],
+        target_id: &str,
+        interactive: bool,
+        report: Reporter<'_>,
+    ) -> Result<RemoteSession, ConnectError> {
+        if !interactive {
+            // Before any network traffic: nobody is there to answer.
+            if let Some(server) = chain.iter().find(|s| self.needs_sign_in_prompt(s)) {
+                return Err(ConnectError::SignInRequired { server_id: server.id.clone(), server_name: server.name.clone() });
+            }
+        }
+        let say = |hop: usize, server: &Server, kind: TestStepKind, started: Instant, result: Result<String, String>| {
+            if let Some(report) = report {
+                report(TestStep { hop, server_name: server.name.clone(), kind, result, elapsed: started.elapsed() });
+            }
+        };
         let mut hops: Vec<Handle<ClientHandler>> = Vec::new();
         for (i, server) in chain.iter().enumerate() {
             // Each hop keeps itself alive with its own Server's settings.
@@ -476,33 +589,59 @@ impl RemoteHub {
                 ..Default::default()
             });
             let refused = Arc::new(Mutex::new(None));
+            let key_checked = Arc::new(std::sync::atomic::AtomicBool::new(false));
             let handler = ClientHandler {
+                key_checked: key_checked.clone(),
                 address: server.address(),
                 server_name: server.name.clone(),
                 known: self.known_hosts.clone(),
                 prompts: self.prompts.clone(),
                 refused: refused.clone(),
             };
+            let started = Instant::now();
             let connecting = match hops.last() {
                 None => client::connect(config.clone(), (server.host.as_str(), server.port), handler).await,
                 Some(previous) => {
-                    let channel = previous
+                    let channel = match previous
                         .channel_open_direct_tcpip(server.host.clone(), u32::from(server.port), "127.0.0.1", 0)
                         .await
-                        .map_err(|e| ConnectError::Network(format!("{}: {e}", server.name)))?;
+                    {
+                        Ok(channel) => channel,
+                        Err(e) => {
+                            say(i, server, TestStepKind::Tcp, started, Err(e.to_string()));
+                            return Err(ConnectError::Network(format!("{}: {e}", server.name)));
+                        }
+                    };
                     client::connect_stream(config.clone(), channel.into_stream(), handler).await
                 }
             };
             let mut handle = match connecting {
                 Ok(handle) => handle,
                 Err(e) => {
-                    if let Some(refusal) = refused.lock().unwrap().take() {
+                    let refusal = refused.lock().unwrap().take();
+                    if key_checked.load(Ordering::SeqCst) {
+                        say(i, server, TestStepKind::Tcp, started, Ok("connected".into()));
+                        let why = refusal.as_ref().map_or_else(|| e.to_string(), ConnectError::message);
+                        say(i, server, TestStepKind::HostKey, started, Err(why));
+                    } else {
+                        say(i, server, TestStepKind::Tcp, started, Err(network_text(&e)));
+                    }
+                    if let Some(refusal) = refusal {
                         return Err(refusal);
                     }
-                    return Err(ConnectError::Network(format!("{}: {e}", server.name)));
+                    return Err(ConnectError::Network(format!("{}: {}", server.name, network_text(&e))));
                 }
             };
-            self.authenticate(&mut handle, server).await?;
+            say(i, server, TestStepKind::Tcp, started, Ok("connected".into()));
+            say(i, server, TestStepKind::HostKey, started, Ok("host key trusted".into()));
+            let auth_started = Instant::now();
+            match self.authenticate(&mut handle, server, target_id, interactive).await {
+                Ok(()) => say(i, server, TestStepKind::Auth, auth_started, Ok("signed in".into())),
+                Err(e) => {
+                    say(i, server, TestStepKind::Auth, auth_started, Err(e.message()));
+                    return Err(e);
+                }
+            }
             if i + 1 == chain.len() {
                 return Ok(RemoteSession { server: server.clone(), connected_at: Instant::now(), runs: self.runs.clone(), handle, _hops: hops });
             }
@@ -511,51 +650,279 @@ impl RemoteHub {
         Err(ConnectError::Other("empty chain".into()))
     }
 
-    async fn authenticate(&self, handle: &mut Handle<ClientHandler>, server: &Server) -> Result<(), ConnectError> {
-        let needs_secret = || ConnectError::NeedsSecret { server_id: server.id.clone(), server_name: server.name.clone() };
+    /// Try the Server's own sign-in, then whatever the Server still asks for
+    /// (keyboard-interactive after a key or the agent).
+    async fn authenticate(
+        &self,
+        handle: &mut Handle<ClientHandler>,
+        server: &Server,
+        target_id: &str,
+        interactive: bool,
+    ) -> Result<(), ConnectError> {
+        let auth_failed = || ConnectError::AuthFailed { server_name: server.name.clone() };
         let result = match &server.auth {
-            AuthMethod::Password => {
-                let password = self.secret_for(server).ok_or_else(needs_secret)?;
-                handle
-                    .authenticate_password(server.user.clone(), password)
-                    .await
-                    .map_err(|e| ConnectError::Network(e.to_string()))?
+            AuthMethod::Password => self.auth_password(handle, server).await?,
+            AuthMethod::Key { path } => self.auth_key(handle, server, path).await?,
+            AuthMethod::Agent { socket, preferred_key } => {
+                self.auth_agent(handle, server, target_id, &socket.resolve(), &socket.describe(), preferred_key.as_deref())
+                    .await?
             }
-            AuthMethod::Key { path } => {
-                let passphrase = self.secret_for(server);
-                let key = match load_secret_key(path, passphrase.as_deref()) {
-                    Ok(key) => key,
-                    Err(e) => {
-                        // An encrypted key without its passphrase asks for it.
-                        let text = e.to_string().to_lowercase();
-                        if passphrase.is_none() && (text.contains("encrypted") || text.contains("passphrase")) {
-                            return Err(needs_secret());
-                        }
-                        let unreadable = text.contains("no such file") || text.contains("permission") || text.contains("not found");
-                        if passphrase.is_some() && !unreadable {
-                            self.forget_secret(server);
-                            return Err(ConnectError::AuthFailed { server_name: server.name.clone() });
-                        }
-                        return Err(ConnectError::Other(format!("Could not read the key {path}: {e}")));
-                    }
-                };
-                let hash = handle
-                    .best_supported_rsa_hash()
-                    .await
-                    .map_err(|e| ConnectError::Network(e.to_string()))?
-                    .flatten();
-                handle
-                    .authenticate_publickey(server.user.clone(), PrivateKeyWithHashAlg::new(Arc::new(key), hash))
-                    .await
-                    .map_err(|e| ConnectError::Network(e.to_string()))?
+            AuthMethod::KeyboardInteractive => {
+                self.auth_keyboard_interactive(handle, server, interactive).await?;
+                self.prompted.lock().unwrap().insert(server.id.clone(), true);
+                return Ok(());
             }
         };
-        if result.success() {
-            Ok(())
-        } else {
-            self.forget_secret(server);
-            Err(ConnectError::AuthFailed { server_name: server.name.clone() })
+        match result {
+            russh::client::AuthResult::Success => {
+                self.prompted.lock().unwrap().insert(server.id.clone(), false);
+                Ok(())
+            }
+            russh::client::AuthResult::Failure { remaining_methods, partial_success: true }
+                if remaining_methods.contains(&MethodKind::KeyboardInteractive) =>
+            {
+                self.auth_keyboard_interactive(handle, server, interactive).await?;
+                self.prompted.lock().unwrap().insert(server.id.clone(), true);
+                Ok(())
+            }
+            russh::client::AuthResult::Failure { .. } => {
+                if server.has_secret() {
+                    self.forget_secret(server);
+                }
+                Err(auth_failed())
+            }
         }
+    }
+
+    async fn auth_password(
+        &self,
+        handle: &mut Handle<ClientHandler>,
+        server: &Server,
+    ) -> Result<russh::client::AuthResult, ConnectError> {
+        let password = self.secret_for(server).ok_or_else(|| needs_secret(server))?;
+        handle
+            .authenticate_password(server.user.clone(), password)
+            .await
+            .map_err(|e| ConnectError::Network(e.to_string()))
+    }
+
+    async fn auth_key(
+        &self,
+        handle: &mut Handle<ClientHandler>,
+        server: &Server,
+        path: &str,
+    ) -> Result<russh::client::AuthResult, ConnectError> {
+        let passphrase = self.secret_for(server);
+        let key = match load_secret_key(path, passphrase.as_deref()) {
+            Ok(key) => key,
+            Err(e) => {
+                // An encrypted key without its passphrase asks for it.
+                let text = e.to_string().to_lowercase();
+                if passphrase.is_none() && (text.contains("encrypted") || text.contains("passphrase")) {
+                    return Err(needs_secret(server));
+                }
+                let unreadable = text.contains("no such file") || text.contains("permission") || text.contains("not found");
+                if passphrase.is_some() && !unreadable {
+                    self.forget_secret(server);
+                    return Err(ConnectError::AuthFailed { server_name: server.name.clone() });
+                }
+                return Err(ConnectError::Other(format!("Could not read the key {path}: {e}")));
+            }
+        };
+        let hash = handle
+            .best_supported_rsa_hash()
+            .await
+            .map_err(|e| ConnectError::Network(e.to_string()))?
+            .flatten();
+        handle
+            .authenticate_publickey(server.user.clone(), PrivateKeyWithHashAlg::new(Arc::new(key), hash))
+            .await
+            .map_err(|e| ConnectError::Network(e.to_string()))
+    }
+
+    /// Ask the agent to sign with its keys, one after another (at most
+    /// `MAX_AGENT_KEYS`; the one named by `preferred` alone when set). The
+    /// private keys never leave the agent.
+    async fn auth_agent(
+        &self,
+        handle: &mut Handle<ClientHandler>,
+        server: &Server,
+        target_id: &str,
+        socket: &Option<String>,
+        shown_path: &str,
+        preferred: Option<&str>,
+    ) -> Result<russh::client::AuthResult, ConnectError> {
+        let unavailable = || ConnectError::AgentUnavailable { server_name: server.name.clone(), path: shown_path.to_string() };
+        let rejected = |detail: &str| ConnectError::AgentRejected { server_name: server.name.clone(), detail: detail.to_string() };
+        let path = socket.as_deref().ok_or_else(unavailable)?;
+        let mut agent = AgentClient::connect_uds(path).await.map_err(|_| unavailable())?;
+        let identities = agent.request_identities().await.map_err(|_| unavailable())?;
+        let mut keys: Vec<PublicKey> = identities
+            .into_iter()
+            .filter_map(|i| match i {
+                AgentIdentity::PublicKey { key, .. } => Some(key),
+                AgentIdentity::Certificate { .. } => None,
+            })
+            .collect();
+        if let Some(wanted) = preferred.map(str::trim).filter(|w| !w.is_empty()) {
+            let wanted_fingerprint = preferred_fingerprint(wanted);
+            keys.retain(|k| Some(k.fingerprint(HashAlg::Sha256).to_string()) == wanted_fingerprint);
+            if keys.is_empty() {
+                return Err(rejected("the preferred key is not in the agent"));
+            }
+        }
+        if keys.is_empty() {
+            return Err(rejected("the agent has no keys"));
+        }
+        let more_than_tried = keys.len() > MAX_AGENT_KEYS;
+        let hash = handle.best_supported_rsa_hash().await.map_err(|e| ConnectError::Network(e.to_string()))?.flatten();
+        for key in keys.into_iter().take(MAX_AGENT_KEYS) {
+            self.health.update(target_id, |h| h.state = ServerState::WaitingForAgent);
+            let signing = tokio::time::timeout(
+                AGENT_SIGN_TIMEOUT,
+                handle.authenticate_publickey_with(server.user.clone(), key, hash, &mut agent),
+            )
+            .await;
+            self.health.update(target_id, |h| {
+                if h.state == ServerState::WaitingForAgent {
+                    h.state = ServerState::Connecting;
+                }
+            });
+            match signing {
+                Err(_) => return Err(rejected("the agent did not answer within 60 seconds")),
+                Ok(Err(e)) => return Err(ConnectError::Network(e.to_string())),
+                Ok(Ok(russh::client::AuthResult::Failure { partial_success: false, .. })) => continue,
+                Ok(Ok(result)) => return Ok(result),
+            }
+        }
+        Err(rejected(if more_than_tried {
+            "no agent key accepted (only the first 5 were tried; set a Preferred key)"
+        } else {
+            "no agent key accepted"
+        }))
+    }
+
+    /// Show the Server's questions to the user until it accepts or refuses.
+    /// Not interactive, or the dialog cancelled: `SignInRequired`.
+    async fn auth_keyboard_interactive(
+        &self,
+        handle: &mut Handle<ClientHandler>,
+        server: &Server,
+        interactive: bool,
+    ) -> Result<(), ConnectError> {
+        let required = || ConnectError::SignInRequired { server_id: server.id.clone(), server_name: server.name.clone() };
+        if !interactive {
+            return Err(required());
+        }
+        let network = |e: russh::Error| ConnectError::Network(e.to_string());
+        let mut response = handle
+            .authenticate_keyboard_interactive_start(server.user.clone(), None)
+            .await
+            .map_err(network)?;
+        loop {
+            match response {
+                KeyboardInteractiveAuthResponse::Success => return Ok(()),
+                KeyboardInteractiveAuthResponse::Failure { .. } => {
+                    return Err(ConnectError::AuthFailed { server_name: server.name.clone() });
+                }
+                KeyboardInteractiveAuthResponse::InfoRequest { name, instructions, prompts } => {
+                    if prompts.is_empty() {
+                        response = handle.authenticate_keyboard_interactive_respond(Vec::new()).await.map_err(network)?;
+                        continue;
+                    }
+                    let (reply, answer) = tokio::sync::oneshot::channel();
+                    let request = SignInRequest {
+                        server_id: server.id.clone(),
+                        server_name: server.name.clone(),
+                        name,
+                        instructions,
+                        prompts: prompts.into_iter().map(|p| (p.prompt, p.echo)).collect(),
+                        reply,
+                    };
+                    if self.sign_ins.send(request).await.is_err() {
+                        return Err(required());
+                    }
+                    let Some(mut answers) = answer.await.ok().flatten() else { return Err(required()) };
+                    response = handle
+                        .authenticate_keyboard_interactive_respond(answers.clone())
+                        .await
+                        .map_err(network)?;
+                    answers.iter_mut().for_each(wipe);
+                }
+            }
+        }
+    }
+
+    /// Connect through the chain with the values given (not the shared
+    /// sessions) and report each step of each Server; the connection is
+    /// closed at the end. `secrets` are typed secrets by Server id, kept for
+    /// this test only. Host key and Sign-in Prompts are asked as for a real
+    /// connection.
+    pub async fn test_chain(
+        &self,
+        chain: Vec<Server>,
+        secrets: HashMap<String, String>,
+        report: &(dyn Fn(TestStep) + Send + Sync),
+    ) -> Result<(), ConnectError> {
+        // The typed secrets live only as long as this test, even when it is
+        // dropped half way (cancelled).
+        struct Typed {
+            map: Arc<Mutex<HashMap<String, String>>>,
+            ids: Vec<String>,
+        }
+        impl Drop for Typed {
+            fn drop(&mut self) {
+                let mut map = self.map.lock().unwrap();
+                for id in &self.ids {
+                    map.remove(id);
+                }
+            }
+        }
+        let _typed = Typed { map: self.typed_secrets.clone(), ids: secrets.keys().cloned().collect() };
+        self.typed_secrets.lock().unwrap().extend(secrets);
+        let target = chain.last().map(|s| s.id.clone()).unwrap_or_default();
+        let outcome = self.connect_chain(&chain, &target, true, Some(report)).await;
+        // Keep what the real connection of an existing Server knows apart.
+        for server in &chain {
+            self.prompted.lock().unwrap().remove(&server.id);
+        }
+        let session = outcome?;
+        let last = chain.len().saturating_sub(1);
+        let name = chain[last].name.clone();
+        let started = Instant::now();
+        let sftp = match session.open_sftp().await {
+            Ok(sftp) => {
+                let _ = sftp.close().await;
+                Ok("SFTP available".to_string())
+            }
+            Err(_) => Err("SFTP not available".to_string()),
+        };
+        report(TestStep { hop: last, server_name: name, kind: TestStepKind::Sftp, result: sftp, elapsed: started.elapsed() });
+        let _ = session.handle.disconnect(russh::Disconnect::ByApplication, "", "en").await;
+        Ok(())
+    }
+}
+
+fn needs_secret(server: &Server) -> ConnectError {
+    ConnectError::NeedsSecret { server_id: server.id.clone(), server_name: server.name.clone() }
+}
+
+/// The SHA256 fingerprint a Preferred key names: a `SHA256:` fingerprint as
+/// typed, or the fingerprint of the `.pub` file at the path.
+fn preferred_fingerprint(wanted: &str) -> Option<String> {
+    if wanted.starts_with("SHA256:") {
+        return Some(wanted.to_string());
+    }
+    let path = super::server::expand_home(wanted);
+    load_public_key(path).ok().map(|k| k.fingerprint(HashAlg::Sha256).to_string())
+}
+
+/// A connection error in words (refused, not found…), without the library's
+/// own prefix.
+fn network_text(e: &russh::Error) -> String {
+    match e {
+        russh::Error::IO(io) if io.kind() == std::io::ErrorKind::ConnectionRefused => "Connection refused".into(),
+        other => other.to_string(),
     }
 }
 

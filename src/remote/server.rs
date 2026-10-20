@@ -16,6 +16,81 @@ pub enum AuthMethod {
     Key { path: String },
     /// A password kept in the Keychain when the user asked to remember it.
     Password,
+    /// Keys held by an ssh-agent; the app only asks the agent to sign.
+    Agent {
+        #[serde(default)]
+        socket: AgentSocket,
+        /// A `.pub` path or `SHA256:` fingerprint; when set, only that key
+        /// is tried.
+        #[serde(default)]
+        preferred_key: Option<String>,
+    },
+    /// Only the questions the server asks (Sign-in Prompts).
+    KeyboardInteractive,
+}
+
+/// Which ssh-agent socket an `Agent` sign-in talks to.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AgentSocket {
+    /// `SSH_AUTH_SOCK` of the app's process.
+    #[default]
+    System,
+    OnePassword,
+    Secretive,
+    Path(String),
+}
+
+impl AgentSocket {
+    const ONE_PASSWORD: &'static str = "~/Library/Group Containers/2BUA8C4S2C.com.1password/t/agent.sock";
+    const SECRETIVE: &'static str = "~/Library/Containers/com.maxgoedjen.Secretive.SecretAgent/Data/socket.ssh";
+
+    /// The socket path, `~` expanded; `None` when `System` and
+    /// `SSH_AUTH_SOCK` is not set.
+    pub fn resolve(&self) -> Option<String> {
+        match self {
+            AgentSocket::System => std::env::var("SSH_AUTH_SOCK").ok().filter(|s| !s.is_empty()),
+            AgentSocket::OnePassword => Some(expand_home(Self::ONE_PASSWORD)),
+            AgentSocket::Secretive => Some(expand_home(Self::SECRETIVE)),
+            AgentSocket::Path(p) => Some(expand_home(p)),
+        }
+    }
+
+    /// Text for messages: the path, or `SSH_AUTH_SOCK` when it is unset.
+    pub fn describe(&self) -> String {
+        self.resolve().unwrap_or_else(|| "$SSH_AUTH_SOCK".into())
+    }
+
+    /// The presets whose socket exists on this machine.
+    pub fn available_presets() -> Vec<AgentSocket> {
+        let mut found = Vec::new();
+        for preset in [AgentSocket::System, AgentSocket::OnePassword, AgentSocket::Secretive] {
+            if preset.resolve().is_some_and(|p| Path::new(&p).exists()) {
+                found.push(preset);
+            }
+        }
+        found
+    }
+}
+
+/// `~` or `~/…` as the home directory.
+pub fn expand_home(path: &str) -> String {
+    let home = std::env::var("HOME").unwrap_or_default();
+    if path == "~" {
+        home
+    } else if let Some(rest) = path.strip_prefix("~/") {
+        format!("{home}/{rest}")
+    } else {
+        path.to_string()
+    }
+}
+
+/// Where a Server came from, when not typed in by hand.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Origin {
+    /// Imported from this `Host` alias of `~/.ssh/config`.
+    SshConfig { alias: String },
+    /// Made by typing a Quick Connect string.
+    QuickConnect,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -41,6 +116,17 @@ pub struct Server {
     /// (`KEEPALIVE_MISSED_RANGE`).
     #[serde(default = "default_keepalive_missed")]
     pub keepalive_max_missed: u32,
+    /// The Server Group it is listed under.
+    #[serde(default)]
+    pub group: Option<String>,
+    #[serde(default)]
+    pub tags: Vec<String>,
+    #[serde(default)]
+    pub origin: Option<Origin>,
+    /// Set when the last connection needed Sign-in Prompts: such a Server is
+    /// never reconnected by itself.
+    #[serde(default)]
+    pub needs_sign_in_prompt: bool,
 }
 
 /// Allowed keepalive intervals, in seconds.
@@ -73,7 +159,16 @@ impl Server {
             remember_secret: false,
             keepalive_interval_secs: default_keepalive_secs(),
             keepalive_max_missed: default_keepalive_missed(),
+            group: None,
+            tags: Vec::new(),
+            origin: None,
+            needs_sign_in_prompt: false,
         }
+    }
+
+    /// Whether this sign-in uses a password or passphrase from the Keychain.
+    pub fn has_secret(&self) -> bool {
+        matches!(self.auth, AuthMethod::Password | AuthMethod::Key { .. })
     }
 
     /// `host:port`, the identity of a host key.
@@ -85,7 +180,9 @@ impl Server {
     pub fn secret_account(&self) -> String {
         match self.auth {
             AuthMethod::Password => format!("{}:password", self.id),
-            AuthMethod::Key { .. } => format!("{}:passphrase", self.id),
+            AuthMethod::Key { .. } | AuthMethod::Agent { .. } | AuthMethod::KeyboardInteractive => {
+                format!("{}:passphrase", self.id)
+            }
         }
     }
 }
@@ -335,8 +432,32 @@ impl ServerStore {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
+        self.back_up_before_new_sign_in(path);
         let json = serde_json::to_string_pretty(self)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
         std::fs::write(path, json)
+    }
+
+    /// The first time a Server using Agent or keyboard-interactive is about
+    /// to be written, keep the file as the previous version could read it
+    /// (`servers.v1.json`, next to it) so removing this feature can restore
+    /// it. Never overwrites an existing backup.
+    fn back_up_before_new_sign_in(&self, path: &Path) {
+        let uses_new = self
+            .servers
+            .iter()
+            .any(|s| matches!(s.auth, AuthMethod::Agent { .. } | AuthMethod::KeyboardInteractive));
+        if !uses_new {
+            return;
+        }
+        let backup = path.with_file_name("servers.v1.json");
+        if backup.exists() {
+            return;
+        }
+        let Ok(old) = std::fs::read_to_string(path) else { return };
+        if old.contains("\"Agent\"") || old.contains("KeyboardInteractive") {
+            return;
+        }
+        let _ = std::fs::write(backup, old);
     }
 }

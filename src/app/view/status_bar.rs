@@ -13,6 +13,10 @@ impl AppView {
     /// The live state of the open Log Space as one label: the worst status of
     /// its files with how many have it, and the list of every file.
     fn live_status_label(&self) -> Option<(String, String)> {
+        if let Some(server) = self.server_waiting_for_agent() {
+            let text = format!("Waiting for agent approval: {server}");
+            return Some((text.clone(), text));
+        }
         let (worst, count, total) = self.worst_live_status()?;
         let label = crate::live::connection_label(&worst, count, total, self.slowest_server_latency());
         let list = self
