@@ -68,13 +68,12 @@ impl FilterUi {
 }
 
 impl AppView {
-    /// Re-evaluate the Filter on the whole file, then refresh Search and the
-    /// Focus Pane. The view keeps every line: Filter only narrows the pane.
+    /// The rows changed (loaded, appended, rebuilt): evaluate the Filter on
+    /// them, then refresh everything that reads the rows: highlights, Search
+    /// and the Focus Pane. The view keeps every line: Filter only narrows the
+    /// pane.
     pub fn apply_filters_and_refresh(&mut self, cx: &mut Context<Self>) {
-        let pass = self
-            .filter_state
-            .evaluate(&self.filter_index, &mut self.all_entries);
-        self.filter_pass = std::sync::Arc::new(pass);
+        self.evaluate_filter_pass();
         if self.visible_indices.len() != self.all_entries.len() {
             // Always every row in order: grow or cut the list where it is, not
             // a new one of the size of the file for every batch of live lines.
@@ -96,20 +95,40 @@ impl AppView {
         self.recompute_highlight_paints();
         self.focus
             .search_mut()
-            .update_matches(&self.all_entries, &self.filter_pass);
+            .update_matches(&self.all_entries, &self.visible_indices);
         self.refresh_focus();
-
-        if let Some(pos) = self.selected_row_pos {
-            if pos >= self.visible_indices.len() {
-                self.selected_row_pos = if self.visible_indices.is_empty() {
-                    None
-                } else {
-                    Some(0)
-                };
-            }
-        }
+        self.clamp_selected_row();
         self.schedule_session_save(cx);
         cx.notify();
+    }
+
+    /// The Filter changed (a Value, Hide Mode, a Custom Value, the Time
+    /// Range) and the rows did not: only the Focus Pane follows. Matches,
+    /// highlight paints and rule counts read every row of the view (Search
+    /// matches the whole view, ADR 0012), so they stay as they are.
+    pub fn apply_filter_change(&mut self, cx: &mut Context<Self>) {
+        self.evaluate_filter_pass();
+        self.text_selection = None;
+        self.selecting = false;
+        self.refresh_focus();
+        self.clamp_selected_row();
+        self.schedule_session_save(cx);
+        cx.notify();
+    }
+
+    fn evaluate_filter_pass(&mut self) {
+        let pass = self
+            .filter_state
+            .evaluate(&self.filter_index, &mut self.all_entries);
+        self.filter_pass = std::sync::Arc::new(pass);
+    }
+
+    fn clamp_selected_row(&mut self) {
+        if let Some(pos) = self.selected_row_pos {
+            if pos >= self.visible_indices.len() {
+                self.selected_row_pos = if self.visible_indices.is_empty() { None } else { Some(0) };
+            }
+        }
     }
 
     /// Detect the columns and values of the loaded file. Call whenever
@@ -147,7 +166,7 @@ impl AppView {
 
     pub fn filter_toggle_value(&mut self, key: &str, value: &str, cx: &mut Context<Self>) {
         self.filter_state.toggle_value(key, value);
-        self.apply_filters_and_refresh(cx);
+        self.apply_filter_change(cx);
     }
 
     /// Add the typed text as a Custom Value of the expanded column.
@@ -157,19 +176,19 @@ impl AppView {
         };
         let added = self.filter_state.add_custom(&key, text);
         if added {
-            self.apply_filters_and_refresh(cx);
+            self.apply_filter_change(cx);
         }
         added
     }
 
     pub fn filter_remove_custom(&mut self, key: &str, text: &str, cx: &mut Context<Self>) {
         self.filter_state.remove_custom(key, text);
-        self.apply_filters_and_refresh(cx);
+        self.apply_filter_change(cx);
     }
 
     pub fn filter_set_hide(&mut self, key: &str, hide: bool, cx: &mut Context<Self>) {
         self.filter_state.set_hide(key, hide);
-        self.apply_filters_and_refresh(cx);
+        self.apply_filter_change(cx);
     }
 
     pub fn filter_clear_column(&mut self, key: &str, cx: &mut Context<Self>) {
@@ -177,14 +196,14 @@ impl AppView {
         if self.filter_ui.expanded.as_deref() == Some(key) {
             self.filter_ui.expanded = None;
         }
-        self.apply_filters_and_refresh(cx);
+        self.apply_filter_change(cx);
     }
 
     pub fn filter_clear_all(&mut self, cx: &mut Context<Self>) {
         self.filter_state.clear();
         self.filter_ui.expanded = None;
         self.filter_ui.inputs_dirty = true;
-        self.apply_filters_and_refresh(cx);
+        self.apply_filter_change(cx);
     }
 
     /// The From/To inputs changed: store the typed bounds and re-filter.
@@ -196,7 +215,7 @@ impl AppView {
             return;
         }
         self.filter_state.set_time_range(&from, &to);
-        self.apply_filters_and_refresh(cx);
+        self.apply_filter_change(cx);
     }
 
     /// Whether a typed time bound can be read; empty text is fine.

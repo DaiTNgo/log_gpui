@@ -180,11 +180,13 @@ fn app_probe(n: usize) {
     });
     state(&mut h, "Filter Value toggle (level=error)");
 
+    // Typed in the From input, as the user does.
+    let from_input = h.view.read_with(&h.cx, |app, _| app.filter_ui.from_input.clone());
+    h.cx.update(|window, cx| {
+        from_input.update(cx, |state, cx| state.set_value("2026-09-10 00:00", window, cx));
+    });
     time("app Time Range change (From)", || {
-        h.view.update(&mut h.cx, |app, cx| {
-            app.filter_state.set_time_range("2026-09-10 00:00", "");
-            app.apply_filters_and_refresh(cx);
-        });
+        h.view.update(&mut h.cx, |app, cx| app.on_time_inputs_changed(cx));
     });
     state(&mut h, "Time Range change (From)");
 
