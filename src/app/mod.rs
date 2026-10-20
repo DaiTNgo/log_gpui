@@ -102,6 +102,8 @@ pub struct RefreshCounts {
     pub filter: usize,
     /// Rows appended after the last one (`apply_rows_appended`).
     pub appended: usize,
+    /// The rows built again from every file (`rebuild_open_view_without`).
+    pub rebuilds: usize,
 }
 
 pub struct AppView {

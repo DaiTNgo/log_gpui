@@ -475,6 +475,22 @@ impl FilterIndex {
         }
     }
 
+    /// `append` for rows of which some belong to a file with no time at all
+    /// (`untimed`): they have none, instead of the time of the row above.
+    pub fn append_marking_untimed(&mut self, new_entries: &[LogEntry], untimed: impl Fn(&LogEntry) -> bool) {
+        for entry in new_entries {
+            self.push_row(entry);
+            if untimed(entry) {
+                if let Some(last) = self.effective_ts.last_mut() {
+                    *last = f64::NAN;
+                }
+            }
+        }
+        for col in &mut self.columns {
+            col.finalize_display();
+        }
+    }
+
     /// Forget the rows after the first `kept.len()`; `removed` are the
     /// entries of those rows. They are meant to be added again with
     /// [`append`](Self::append), in a new order and with new rows among them,

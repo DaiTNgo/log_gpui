@@ -793,9 +793,6 @@ impl AppView {
     /// the rows. Returns false when the view has to be built again.
     fn append_to_open_view(&mut self, relevant: &[&(String, FileDelta)], cx: &mut Context<Self>) -> bool {
         let Some(target) = self.active_target() else { return false };
-        if !self.no_timestamp_files.is_empty() {
-            return false;
-        }
         let is_space = matches!(target, TabTarget::LogSpace { .. });
         let Some(space) = self.active_space().cloned() else { return false };
         let order: HashMap<&str, usize> = space
@@ -804,9 +801,21 @@ impl AppView {
             .enumerate()
             .map(|(i, f)| (f.file_id.as_str(), i))
             .collect();
+        // The files whose lines have no time: their rows come after every
+        // row with one, each file's rows together in file order. A File View
+        // of a file read so far without a time is one of them.
+        let untimed: HashSet<String> = if is_space {
+            self.no_timestamp_files.clone()
+        } else if self.filter_index.timed_lines() == 0 {
+            relevant.iter().map(|(id, _)| id.clone()).collect()
+        } else {
+            HashSet::new()
+        };
 
         // New rows with the time they sort by and where they came from.
         struct NewRow {
+            /// 0 for a row sorted by its time, 1 for a row of a file with none.
+            class: u8,
             ts: f64,
             file: usize,
             pos: usize,
@@ -820,45 +829,58 @@ impl AppView {
             let file_ix = order.get(file_id.as_str()).copied().unwrap_or(0);
             let name: Arc<str> = Arc::from(file.display_name.as_str());
             let id: Arc<str> = Arc::from(file_id.as_str());
+            let file_untimed = untimed.contains(file_id);
             // A file whose time goes backwards is not a sorted lane.
             let mut lane_ts = f64::NEG_INFINITY;
-            if let Some(before) = range.start.checked_sub(1) {
+            if let (Some(before), false) = (range.start.checked_sub(1), file_untimed) {
                 let Some(prev) = effective_ts_at(&parsed.entries, before) else { return false };
                 lane_ts = prev;
             }
             for pos in range {
                 let Some(entry) = parsed.entries.get(pos) else { return false };
-                let Some(ts) = effective_ts_at(&parsed.entries, pos) else { return false };
-                if ts < lane_ts {
-                    return false;
-                }
-                lane_ts = ts;
+                let ts = if file_untimed {
+                    // A line with a time in a file that had none: the file
+                    // sorts another way now.
+                    if entry.has_time && entry.timestamp.is_finite() && entry.timestamp > 0.0 {
+                        return false;
+                    }
+                    0.0
+                } else {
+                    let Some(ts) = effective_ts_at(&parsed.entries, pos) else { return false };
+                    if ts < lane_ts {
+                        return false;
+                    }
+                    lane_ts = ts;
+                    ts
+                };
                 let mut entry = entry.clone();
                 entry.file_id = Some(id.clone());
                 if is_space {
                     entry.source = Some(name.clone());
                 }
-                rows.push(NewRow { ts, file: file_ix, pos, entry });
+                rows.push(NewRow { class: u8::from(file_untimed), ts, file: file_ix, pos, entry });
             }
         }
         if rows.is_empty() {
             return true;
         }
-        // Lines of one file stay in order; files interleave by time.
+        // Lines of one file stay in order; files interleave by time; files
+        // with no time come last.
         rows.sort_by(|a, b| {
-            a.ts.partial_cmp(&b.ts)
-                .unwrap_or(std::cmp::Ordering::Equal)
+            a.class
+                .cmp(&b.class)
+                .then(a.ts.partial_cmp(&b.ts).unwrap_or(std::cmp::Ordering::Equal))
                 .then(a.file.cmp(&b.file))
                 .then(a.pos.cmp(&b.pos))
         });
-        // The view is sorted by (time, file): the new rows go where the first
-        // of them belongs, and only the rows from there on move. A line that
-        // replaced the last one already shown, or a file whose time goes
-        // backwards, needs the view built again.
+        // The view is sorted by (class, time, file): the new rows go where
+        // the first of them belongs, and only the rows from there on move. A
+        // line that replaced the last one already shown, or a file whose time
+        // goes backwards, needs the view built again.
         if relevant.iter().any(|(_, d)| d.replaced_last) {
             return false;
         }
-        let first_key = (rows[0].ts, rows[0].file);
+        let first_key = (rows[0].class, rows[0].ts, rows[0].file);
         let view_file = |entry: &LogEntry| -> usize {
             entry
                 .file_id
@@ -867,13 +889,11 @@ impl AppView {
                 .unwrap_or(0)
         };
         let ts_index = &self.filter_index;
-        let from = partition_rows(self.all_entries.len(), |r| match ts_index.effective_timestamp(r) {
-            Some(ts) => (ts, view_file(&self.all_entries[r])) <= first_key,
-            None => true,
-        });
-        if (0..self.all_entries.len().saturating_sub(from)).any(|i| ts_index.effective_timestamp(from + i).is_none()) {
-            return false;
-        }
+        let key_of = |r: usize, entry: &LogEntry| match ts_index.effective_timestamp(r) {
+            Some(ts) => (0u8, ts, view_file(entry)),
+            None => (1u8, 0.0, view_file(entry)),
+        };
+        let from = partition_rows(self.all_entries.len(), |r| key_of(r, &self.all_entries[r]) <= first_key);
         let selected = self.selected_row_pos.filter(|pos| *pos >= from).and_then(|pos| self.line_ref_of_entry(pos));
         let anchor = self.top_row_anchor().filter(|a| a.row >= from);
 
@@ -883,16 +903,15 @@ impl AppView {
         // Rows that all sort after the last one only add to the view.
         let at_end = from == self.all_entries.len();
         let tail: Vec<LogEntry> = self.all_entries.split_off(from);
-        let tail_ts: Vec<f64> = (0..tail.len())
-            .map(|i| self.filter_index.effective_timestamp(from + i).unwrap_or(0.0))
-            .collect();
+        let tail_keys: Vec<(u8, f64, usize)> =
+            tail.iter().enumerate().map(|(i, e)| key_of(from + i, e)).collect();
         self.filter_index.truncate(&self.all_entries, &tail);
         let mut merged: Vec<LogEntry> = Vec::with_capacity(tail.len() + rows.len());
-        let mut old = tail.into_iter().zip(tail_ts).peekable();
+        let mut old = tail.into_iter().zip(tail_keys).peekable();
         let mut new = rows.into_iter().peekable();
         loop {
             let take_old = match (old.peek(), new.peek()) {
-                (Some((entry, ts)), Some(n)) => (*ts, view_file(entry)) <= (n.ts, n.file),
+                (Some((_, key)), Some(n)) => *key <= (n.class, n.ts, n.file),
                 (Some(_), None) => true,
                 (None, Some(_)) => false,
                 (None, None) => break,
@@ -911,7 +930,9 @@ impl AppView {
             eprintln!("live insert: {} rows from row {grew_from} of {}", merged.len(), grew_from + merged.len());
         }
         self.all_entries.extend(merged);
-        self.filter_index.append(&self.all_entries[grew_from..]);
+        self.filter_index.append_marking_untimed(&self.all_entries[grew_from..], |e| {
+            e.file_id.as_deref().is_some_and(|id| untimed.contains(id))
+        });
         if at_end {
             self.apply_rows_appended(grew_from, cx);
         } else {
@@ -947,6 +968,7 @@ impl AppView {
     /// cleared: the top row, the selected line and the current line of every
     /// Focus Tab that were in them move to the line right after them.
     pub(crate) fn rebuild_open_view_without(&mut self, gone: &HashSet<String>, cx: &mut Context<Self>) {
+        self.refreshes.rebuilds += 1;
         let mut anchor = self.top_row_anchor();
         let mut selected = self
             .selected_row_pos

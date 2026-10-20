@@ -11,6 +11,8 @@
 //! refuses to run if the config dir is not inside it.
 #![allow(dead_code)]
 
+pub mod fake_live;
+
 use gpui::{AppContext as _, Entity, TestAppContext, VisualTestContext};
 use gpui_component::Root;
 use log_gpui::app::AppView;
