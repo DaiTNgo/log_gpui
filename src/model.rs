@@ -536,7 +536,7 @@ impl LogEntry {
         let mut entry = LogEntry::new(event.index, event.timestamp, String::new(), String::new(), level, String::new(), String::new());
         entry.own = None;
         entry.raw_line = raw_line;
-        entry.spans = Spans::from_map(&event.spans);
+        entry.spans = event.spans.to_spans();
         entry.parent = event.parent;
         entry.has_time = event.has_time;
         entry.request_id = request_id;

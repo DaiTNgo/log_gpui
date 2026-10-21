@@ -47,6 +47,45 @@ impl LogValue {
     }
 }
 
+/// The byte range in the line of each field read from it, by name, while an
+/// event is being built: a short list over interned names, not a map of
+/// owned strings.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct SpanList(Vec<(&'static str, Range<usize>)>);
+
+impl SpanList {
+    pub fn from_map(map: &HashMap<String, Range<usize>>) -> Self {
+        Self(map.iter().map(|(name, range)| (crate::model::intern(name), range.clone())).collect())
+    }
+
+    pub fn get(&self, name: &str) -> Option<&Range<usize>> {
+        self.0.iter().find(|(n, _)| *n == name).map(|(_, r)| r)
+    }
+
+    /// Set the range of `name`, replacing the one it had.
+    pub fn insert(&mut self, name: &str, range: Range<usize>) {
+        match self.0.iter_mut().find(|(n, _)| *n == name) {
+            Some(slot) => slot.1 = range,
+            None => self.0.push((crate::model::intern(name), range)),
+        }
+    }
+
+    pub fn remove(&mut self, name: &str) {
+        self.0.retain(|(n, _)| *n != name);
+    }
+
+    pub fn clear(&mut self) {
+        self.0.clear();
+    }
+
+    /// The spans of an entry, in the order of their names.
+    pub fn to_spans(&self) -> crate::model::Spans {
+        let mut pairs = self.0.clone();
+        pairs.sort_by(|a, b| a.0.cmp(b.0));
+        crate::model::Spans::from_pairs(pairs)
+    }
+}
+
 /// A schema-typed log line. `fields` holds dynamically-discovered values drawn
 /// from the per-file `LogSchema` — never hard-coded onto the event.
 #[derive(Debug, Clone, PartialEq)]
@@ -69,7 +108,7 @@ pub struct LogEvent {
     /// Byte range in `raw_line` of each field read from the line
     /// (`timestamp`, `level`, `module`, `message` and JSON keys). The text a
     /// cell shows is always `raw_line[span]`.
-    pub spans: HashMap<String, Range<usize>>,
+    pub spans: SpanList,
     /// Line number of the Parent Line when this is a Continuation Line.
     pub parent: Option<usize>,
 }
@@ -90,7 +129,7 @@ impl LogEvent {
             message,
             raw_line,
             has_time: timestamp.is_finite() && timestamp > 0.0,
-            spans: HashMap::new(),
+            spans: SpanList::default(),
             parent: None,
         }
     }
@@ -125,7 +164,7 @@ impl LogEvent {
     /// Record the byte range of a field in `raw_line`.
     pub fn with_span(mut self, name: &str, range: Option<Range<usize>>) -> Self {
         if let Some(range) = range {
-            self.spans.insert(name.to_string(), range);
+            self.spans.insert(name, range);
         }
         self
     }
@@ -138,7 +177,7 @@ impl LogEvent {
         self.fields.clear();
         self.message = self.raw_line.clone();
         self.spans.clear();
-        self.spans.insert("message".to_string(), 0..self.raw_line.len());
+        self.spans.insert("message", 0..self.raw_line.len());
         self
     }
 

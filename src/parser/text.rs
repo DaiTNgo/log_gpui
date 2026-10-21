@@ -1,5 +1,5 @@
 use crate::model::{LogEntry, LogLevel};
-use crate::parser::event::{json_to_log_value, LogEvent, LogValue};
+use crate::parser::event::{json_to_log_value, LogEvent, LogValue, SpanList};
 use crate::parser::schema::{FieldType, LogSchema, QueryField};
 use chrono::{DateTime, NaiveDateTime};
 use regex::Regex;
@@ -235,7 +235,7 @@ fn parse_with_format(index: usize, raw_line: &str, format: &CompiledFormat) -> O
     if !spans.contains_key("message") {
         spans.insert("message".to_string(), 0..raw_line.len());
     }
-    event.spans = spans;
+    event.spans = SpanList::from_map(&spans);
     Some(if parsed.is_some() { event } else { event.without_time() })
 }
 
@@ -567,7 +567,7 @@ fn parse_json_log_event(
 
     // Insert every raw JSON key as a dynamic field. A `null` value is no
     // value: its key has no span.
-    event.spans = key_spans.clone();
+    event.spans = SpanList::from_map(&key_spans);
     if let Value::Object(map) = json {
         for (key, value) in map {
             if value.is_null() {
@@ -581,14 +581,14 @@ fn parse_json_log_event(
     let canonical = [("timestamp", time_key), ("level", level_key), ("module", tag_key), ("message", msg_key)];
     for (name, key) in canonical {
         if let Some(range) = key.and_then(|k| key_spans.get(k)) {
-            event.spans.insert(name.to_string(), range.clone());
+            event.spans.insert(name, range.clone());
             if name != "timestamp" {
                 event.set_field(name, LogValue::Str(raw_line[range.clone()].to_string()));
             }
         }
     }
     if msg_key.is_none() {
-        event.spans.insert("message".to_string(), 0..raw_line.len());
+        event.spans.insert("message", 0..raw_line.len());
     }
     if !event.time_str.is_empty() {
         event.set_field("time", LogValue::Str(event.time_str.clone()));
