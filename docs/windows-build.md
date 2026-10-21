@@ -15,6 +15,10 @@ clone needs no Cargo config.
 - Agent sign-in: russh only talks to an ssh-agent over a Unix socket, so on
   Windows an Agent Server fails with "ssh-agent not available at ..." (the
   `AgentUnavailable` error). The Windows named-pipe agent is a later ticket.
+- Home folder and local user: `workspace::session::home_dir()` / `user_name()`
+  read `HOME`/`USER`, falling back to `USERPROFILE`/`USERNAME` on Windows. Use
+  them instead of reading the variables directly (ssh config, `~` expansion,
+  Quick Connect default user).
 - Tests that need Unix tools or APIs (`ssh-agent`, `kill`, file permissions)
   are `#[cfg(unix)]`. The SSH integration tests skip themselves without
   `SSH_TEST_DIR`, as everywhere.
