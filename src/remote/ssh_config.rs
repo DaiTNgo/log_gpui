@@ -48,8 +48,8 @@ pub struct Env {
 impl Env {
     pub fn current() -> Self {
         Self {
-            home: std::env::var("HOME").unwrap_or_default(),
-            local_user: std::env::var("USER").unwrap_or_default(),
+            home: crate::workspace::session::home_dir().map(|h| h.display().to_string()).unwrap_or_default(),
+            local_user: crate::workspace::session::user_name().unwrap_or_default(),
         }
     }
 

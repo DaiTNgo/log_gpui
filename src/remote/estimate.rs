@@ -178,11 +178,44 @@ pub fn free_bytes(dir: &std::path::Path) -> Option<u64> {
         let available_kb: u64 = line.split_whitespace().nth(3)?.parse().ok()?;
         Some(available_kb.saturating_mul(1024))
     }
-    #[cfg(not(unix))]
+    #[cfg(windows)]
+    {
+        windows_free_bytes(dir)
+    }
+    #[cfg(not(any(unix, windows)))]
     {
         let _ = dir;
         None
     }
+}
+
+/// `GetDiskFreeSpaceExW`: the bytes available to this user on the disk that
+/// holds `dir`. `None` when the call fails, so the caller never refuses on a guess.
+#[cfg(windows)]
+fn windows_free_bytes(dir: &std::path::Path) -> Option<u64> {
+    use std::os::windows::ffi::OsStrExt;
+
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn GetDiskFreeSpaceExW(
+            directory: *const u16,
+            free_to_caller: *mut u64,
+            total: *mut u64,
+            total_free: *mut u64,
+        ) -> i32;
+    }
+
+    let wide: Vec<u16> = dir.as_os_str().encode_wide().chain(std::iter::once(0)).collect();
+    let mut free_to_caller = 0u64;
+    let ok = unsafe {
+        GetDiskFreeSpaceExW(
+            wide.as_ptr(),
+            &mut free_to_caller,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+        )
+    };
+    (ok != 0).then_some(free_to_caller)
 }
 
 #[cfg(test)]
@@ -281,8 +314,15 @@ mod tests {
     #[test]
     fn the_disk_of_a_folder_has_some_free_space() {
         let dir = tempfile::tempdir().unwrap();
-        if let Some(free) = free_bytes(dir.path()) {
-            assert!(free > 0);
+        let free = free_bytes(dir.path());
+        if cfg!(any(unix, windows)) {
+            assert!(free.expect("free space is readable here") > 0);
         }
+    }
+
+    #[test]
+    fn a_folder_that_is_not_there_has_no_known_free_space() {
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(free_bytes(&dir.path().join("missing").join("deeper")), None);
     }
 }

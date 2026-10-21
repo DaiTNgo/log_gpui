@@ -119,7 +119,7 @@ impl AgentSocket {
 
 /// `~` or `~/…` as the home directory.
 pub fn expand_home(path: &str) -> String {
-    let home = std::env::var("HOME").unwrap_or_default();
+    let home = crate::workspace::session::home_dir().map(|h| h.display().to_string()).unwrap_or_default();
     if path == "~" {
         home
     } else if let Some(rest) = path.strip_prefix("~/") {

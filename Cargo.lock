@@ -4125,6 +4125,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "unicode-normalization",
+ "windows-sys 0.61.2",
  "zip",
 ]
 
