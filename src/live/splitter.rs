@@ -22,9 +22,15 @@ impl LineSplitter {
         let mut lens = Vec::new();
         let mut rest = bytes;
         while let Some(pos) = rest.iter().position(|b| *b == b'\n') {
-            self.pending.extend_from_slice(&rest[..pos]);
-            lens.push((self.pending.len() + 1) as u32);
-            lines.push(decode_line(&std::mem::take(&mut self.pending)));
+            if self.pending.is_empty() {
+                // Nothing held over: decode from the bytes, no copy first.
+                lens.push((pos + 1) as u32);
+                lines.push(decode_line(&rest[..pos]));
+            } else {
+                self.pending.extend_from_slice(&rest[..pos]);
+                lens.push((self.pending.len() + 1) as u32);
+                lines.push(decode_line(&std::mem::take(&mut self.pending)));
+            }
             rest = &rest[pos + 1..];
         }
         self.pending.extend_from_slice(rest);

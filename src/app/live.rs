@@ -408,7 +408,7 @@ impl AppView {
         cx.notify();
     }
 
-    /// Every Remote File is told the new Live Window.
+    /// Every live file is told the new Live Window.
     pub fn set_live_window(&mut self, window: usize, cx: &mut Context<Self>) {
         self.live.window = window.max(1_000);
         self.workspace_state.live_window = self.live.window;
@@ -421,9 +421,8 @@ impl AppView {
         let remote_ids: Vec<String> = self
             .live
             .sources
-            .iter()
-            .filter(|(_, s)| s.remote)
-            .map(|(id, _)| id.clone())
+            .keys()
+            .cloned()
             .collect();
         for file_id in remote_ids {
             if let Some(parsed) = self.parsed_files.get_mut(&file_id) {
@@ -631,7 +630,6 @@ impl AppView {
 
     fn apply_file_events(&mut self, file_id: &str, events: Vec<SourceEvent>) -> FileDelta {
         let mut delta = FileDelta::default();
-        let remote = self.live.sources.get(file_id).is_some_and(|s| s.remote);
         let window = self.live.window;
         let time = now_label();
         let Some(mut parsed) = self.parsed_files.remove(file_id) else { return delta };
@@ -755,7 +753,7 @@ impl AppView {
                 }
             }
         }
-        if remote {
+        {
             let limit = buffer.limit(window, self.live.full_read_limit);
             // Not structural: the oldest rows of the file leave the view in
             // place (`trim_open_view`).
