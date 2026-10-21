@@ -110,6 +110,19 @@ pub fn line_and_byte<S: AsRef<str>>(lines: &[S], cursor: usize) -> Option<(usize
     None
 }
 
+/// `line_and_byte` read from the editor's own text instead of walking every
+/// line: `lines` is how many lines the editor holds. The editor's rope finds
+/// the line in time that grows with the log of the text, so a caret at the
+/// end of a million lines costs no more than one at the top.
+pub fn line_and_byte_in_rope(rope: &gpui_component::input::Rope, cursor: usize, lines: usize) -> Option<(usize, usize)> {
+    use gpui_component::input::RopeExt as _;
+    if cursor > rope.len() {
+        return None;
+    }
+    let row = rope.offset_to_position(cursor).line as usize;
+    (row < lines).then(|| (row + 1, cursor - rope.line_start_offset(row)))
+}
+
 /// Byte offset in the editor text of the start of each line.
 pub fn line_starts<S: AsRef<str>>(lines: &[S]) -> Vec<usize> {
     let mut offset = 0usize;

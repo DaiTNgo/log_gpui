@@ -175,6 +175,8 @@ pub struct RemoteSession {
     runs: Arc<AtomicUsize>,
     /// Bytes received on the SFTP channels of the hub.
     sftp_bytes: Arc<AtomicU64>,
+    /// Processes started through this session.
+    execs: AtomicUsize,
     handle: Handle<ClientHandler>,
     /// The sessions the channel to this one runs through.
     _hops: Vec<Handle<ClientHandler>>,
@@ -225,6 +227,11 @@ pub struct ExecOutput {
 }
 
 impl RemoteSession {
+    /// How many processes this session started on the Server.
+    pub fn exec_count(&self) -> usize {
+        self.execs.load(Ordering::SeqCst)
+    }
+
     pub fn is_closed(&self) -> bool {
         self.handle.is_closed()
     }
@@ -249,14 +256,21 @@ impl RemoteSession {
     }
 
     async fn open_sftp_with(&self, cfg: russh_sftp::client::Config) -> Result<SftpSession, String> {
+        let stream = CountingStream { inner: self.open_sftp_stream().await?, count: self.sftp_bytes.clone() };
+        SftpSession::new_with_config(stream, cfg).await.map_err(|e| e.to_string())
+    }
+
+    /// The byte stream of a new `sftp` subsystem channel (for a raw SFTP
+    /// session that wants to choose its own read sizes).
+    pub async fn open_sftp_stream(&self) -> Result<russh::ChannelStream<client::Msg>, String> {
         let channel = self.handle.channel_open_session().await.map_err(|e| e.to_string())?;
         channel.request_subsystem(true, "sftp").await.map_err(|e| e.to_string())?;
-        let stream = CountingStream { inner: channel.into_stream(), count: self.sftp_bytes.clone() };
-        SftpSession::new_with_config(stream, cfg).await.map_err(|e| e.to_string())
+        Ok(channel.into_stream())
     }
 
     /// Run a command and collect its output.
     pub async fn exec(&self, command: &str) -> Result<ExecOutput, String> {
+        self.execs.fetch_add(1, Ordering::SeqCst);
         let mut channel = self.handle.channel_open_session().await.map_err(|e| e.to_string())?;
         channel.exec(true, command).await.map_err(|e| e.to_string())?;
         let mut out = ExecOutput::default();
@@ -274,6 +288,7 @@ impl RemoteSession {
     /// Start a command and read its output as it comes: no terminal, and its
     /// input is closed at once so a command that reads it sees the end.
     pub async fn exec_stream(&self, command: &str) -> Result<ExecStream, String> {
+        self.execs.fetch_add(1, Ordering::SeqCst);
         let channel = self.handle.channel_open_session().await.map_err(|e| e.to_string())?;
         channel.exec(true, command).await.map_err(|e| e.to_string())?;
         channel.eof().await.map_err(|e| e.to_string())?;
@@ -710,7 +725,7 @@ impl RemoteHub {
                 }
             }
             if i + 1 == chain.len() {
-                return Ok(RemoteSession { server: server.clone(), connected_at: Instant::now(), runs: self.runs.clone(), sftp_bytes: self.sftp_bytes.clone(), handle, _hops: hops });
+                return Ok(RemoteSession { server: server.clone(), connected_at: Instant::now(), runs: self.runs.clone(), sftp_bytes: self.sftp_bytes.clone(), execs: AtomicUsize::new(0), handle, _hops: hops });
             }
             hops.push(handle);
         }

@@ -3,8 +3,10 @@
 //! Opening shows the last ~1,000 lines at once, then older lines are read in
 //! the background up to the Live Window. New lines come from polling every
 //! 500 ms and reading from the remembered offset, so a lost connection
-//! carries on exactly where it stopped. Rotation is told by the inode (read
-//! with `stat` through exec); a smaller size is a truncation.
+//! carries on exactly where it stopped. The size is polled with one SFTP
+//! request; rotation is told by the inode (read with `stat` through exec
+//! every few seconds, and when the size shrinks); a smaller size is a
+//! truncation.
 
 use super::backward::{BackwardLines, cut_before_start};
 use super::line_time::newest_timestamp;
@@ -30,6 +32,10 @@ use tokio::io::{AsyncReadExt, AsyncSeekExt};
 
 /// How often the file is checked for new bytes.
 pub const REMOTE_POLL_INTERVAL: Duration = Duration::from_millis(500);
+/// How often the inode is read through exec while the size only grows.
+const INODE_CHECK_INTERVAL: Duration = Duration::from_secs(3);
+/// How long the size request may take before the connection counts as lost.
+const SFTP_STAT_TIMEOUT: Duration = Duration::from_secs(5);
 /// How often a Gone file's path is looked at again.
 const GONE_POLL_INTERVAL: Duration = Duration::from_secs(5);
 /// Lines shown at once when a file opens.
@@ -137,7 +143,7 @@ impl Ctl {
             SourceCommand::Resume => self.paused = false,
             SourceCommand::SetWindow(n) => self.window = n,
             // For a Remote Command only.
-            SourceCommand::Restart | SourceCommand::SetRestartOnExit(_) | SourceCommand::Replace { .. } => {}
+            SourceCommand::Restart | SourceCommand::SetRestartOnExit(_) => {}
             SourceCommand::Clear => self.clear = true,
             SourceCommand::LoadEarlier { room } => self.load_earlier = Some(room),
             SourceCommand::CancelLoadMore => {
@@ -174,6 +180,8 @@ struct Memory {
     loaded: usize,
     /// Whether `stat` through exec works on this server.
     exec_stat: Option<bool>,
+    /// When the inode was last read through exec.
+    inode_checked: Option<Instant>,
     /// Generation being read, counted like the app counts them.
     generation: u32,
     /// The user cleared the file: older lines are never read on their own.
@@ -351,6 +359,24 @@ impl RemoteFileSource {
         sftp: &SftpSession,
         mem: &mut Memory,
     ) -> Result<FileStat, Kind> {
+        // Between inode checks the size comes from one SFTP request, no
+        // process. A smaller size or a missing file asks the question again.
+        let recently_checked = mem.inode_checked.is_some_and(|at| at.elapsed() < INODE_CHECK_INTERVAL);
+        if mem.exec_stat == Some(true) && mem.opened && mem.ino.is_some() && recently_checked {
+            if session.is_closed() {
+                return Err(Kind::Lost);
+            }
+            let asked = tokio::time::timeout(SFTP_STAT_TIMEOUT, sftp.metadata(self.path.clone())).await;
+            match asked.unwrap_or(Err(SftpError::Timeout)) {
+                Ok(meta) => {
+                    let size = meta.size.unwrap_or(0);
+                    if size >= mem.offset {
+                        return Ok(FileStat { ino: mem.ino, size });
+                    }
+                }
+                Err(e) => return Err(classify(&e)),
+            }
+        }
         if mem.exec_stat != Some(false) {
             let command = format!(
                 "stat -c '%i %s' {q} 2>/dev/null || stat -f '%i %z' {q} 2>/dev/null",
@@ -364,6 +390,7 @@ impl RemoteFileSource {
                     parts.next().and_then(|p| p.parse::<u64>().ok()),
                 ) {
                     mem.exec_stat = Some(true);
+                    mem.inode_checked = Some(Instant::now());
                     return Ok(FileStat { ino: Some(ino), size });
                 }
                 if out.exit_status == Some(0) {

@@ -27,4 +27,3 @@ Full Read speed                    6 MB/s      20 MB/s
 
 Test transfers (180,000 lines, 18 MB file): Starting Time search near the end 19.6 MB before (more than the file) and under 2.5 MB after; Live tail + 8,000 lines backfill 5.4 MB before, under 2 MB after.
 
-Note: the base `perf-integration` did not compile (an earlier commit left `SourceCommand::Replace` unhandled in `live/{local,remote,command}.rs` and a call to a missing `release_unused_server` in `app/live.rs`); this branch adds no-op arms and drops that call.
