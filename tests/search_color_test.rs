@@ -218,3 +218,56 @@ fn with_keyword_colors_off_every_match_paints_the_one_shared_color() {
     assert_eq!(paints[0].fill, paints[1].fill);
     assert_eq!(paints[0].fill, shared.opacity(0.55));
 }
+
+// ---- Raw view: the same group colors as the Canvas ----
+
+fn shared_fill() -> log_gpui::ui::canvas::GroupFill {
+    log_gpui::ui::canvas::GroupFill {
+        normal: gpui::hsla(0.55, 0.85, 0.55, 0.35),
+        current: gpui::hsla(0.55, 0.9, 0.55, 0.7),
+    }
+}
+
+fn raw_paints(q: &str, line: &str, current: bool, keyword_colors: bool) -> Vec<(usize, usize, gpui::Hsla)> {
+    let m = matcher(q);
+    let fills = log_gpui::ui::canvas::search_group_fills(&m.group_keys(), Tone::Dark);
+    let fills = keyword_colors.then_some(fills.as_slice());
+    log_gpui::ui::canvas::line_match_paints(&m, line, current, fills, shared_fill())
+        .iter()
+        .map(|p| (p.start, p.end, p.fill))
+        .collect()
+}
+
+#[test]
+fn raw_view_paints_each_group_in_its_canvas_color() {
+    let fills = log_gpui::ui::canvas::search_group_fills(&matcher("a || b").group_keys(), Tone::Dark);
+    let p = raw_paints("a || b", "a b a", false, true);
+    assert_eq!(p, [(0, 1, fills[0].normal), (2, 3, fills[1].normal), (4, 5, fills[0].normal)]);
+    assert_ne!(fills[0].normal, fills[1].normal);
+}
+
+#[test]
+fn raw_view_current_match_uses_the_stronger_group_color() {
+    let fills = log_gpui::ui::canvas::search_group_fills(&matcher("a || b").group_keys(), Tone::Dark);
+    assert_eq!(raw_paints("a || b", "b", true, true), [(0, 1, fills[1].current)]);
+}
+
+#[test]
+fn raw_view_longer_phrase_wins_an_overlap() {
+    let q = "connection || connection refused";
+    let fills = log_gpui::ui::canvas::search_group_fills(&matcher(q).group_keys(), Tone::Dark);
+    assert_eq!(raw_paints(q, "connection refused", false, true), [(0, 18, fills[1].normal)]);
+}
+
+#[test]
+fn raw_view_toggle_off_paints_everything_in_the_old_single_color() {
+    let s = shared_fill();
+    assert_eq!(raw_paints("a || b", "a b", false, false), [(0, 1, s.normal), (2, 3, s.normal)]);
+    assert_eq!(raw_paints("a || b", "a b", true, false), [(0, 1, s.current), (2, 3, s.current)]);
+}
+
+#[test]
+fn raw_view_paints_nothing_on_a_line_that_fails_the_whole_expression() {
+    assert!(raw_paints("a && b", "only a here", false, true).is_empty());
+    assert!(raw_paints("a && b", "only a here", false, false).is_empty());
+}
