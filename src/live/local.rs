@@ -44,7 +44,9 @@ impl LineSource for LocalFileSource {
 
 struct Open {
     file: File,
-    ino: FileId,
+    /// `None` when the identity could not be read: unknown, never equal to
+    /// another identity (even another unknown one).
+    ino: Option<FileId>,
     offset: u64,
 }
 
@@ -54,8 +56,8 @@ struct Open {
 type FileId = u128;
 
 #[cfg(unix)]
-fn id_of_open(_file: &File, meta: &std::fs::Metadata) -> FileId {
-    std::os::unix::fs::MetadataExt::ino(meta) as FileId
+fn id_of_open(_file: &File, meta: &std::fs::Metadata) -> Option<FileId> {
+    Some(std::os::unix::fs::MetadataExt::ino(meta) as FileId)
 }
 
 /// The identity of whatever `path` names now; `None` when that cannot be told.
@@ -65,7 +67,7 @@ fn id_of_path(_path: &std::path::Path, meta: &std::fs::Metadata) -> Option<FileI
 }
 
 #[cfg(windows)]
-fn id_of_open(file: &File, _meta: &std::fs::Metadata) -> FileId {
+fn id_of_open(file: &File, _meta: &std::fs::Metadata) -> Option<FileId> {
     use std::os::windows::io::AsRawHandle;
     use windows_sys::Win32::Storage::FileSystem::{
         GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION,
@@ -74,11 +76,13 @@ fn id_of_open(file: &File, _meta: &std::fs::Metadata) -> FileId {
     unsafe {
         let mut info: BY_HANDLE_FILE_INFORMATION = std::mem::zeroed();
         if GetFileInformationByHandle(file.as_raw_handle() as _, &mut info) == 0 {
-            return 0;
+            return None;
         }
-        (FileId::from(info.dwVolumeSerialNumber) << 64)
-            | (FileId::from(info.nFileIndexHigh) << 32)
-            | FileId::from(info.nFileIndexLow)
+        Some(
+            (FileId::from(info.dwVolumeSerialNumber) << 64)
+                | (FileId::from(info.nFileIndexHigh) << 32)
+                | FileId::from(info.nFileIndexLow),
+        )
     }
 }
 
@@ -86,7 +90,16 @@ fn id_of_open(file: &File, _meta: &std::fs::Metadata) -> FileId {
 #[cfg(windows)]
 fn id_of_path(path: &std::path::Path, meta: &std::fs::Metadata) -> Option<FileId> {
     let file = File::open(path).ok()?;
-    Some(id_of_open(&file, meta))
+    id_of_open(&file, meta)
+}
+
+/// Whether the file at the path is another file than the one open. Only two
+/// known, different identities say so: an unreadable identity is unknown,
+/// and unknown never equals (or differs from) anything, so no false rotation
+/// is reported. The size checks still catch a truncation or a swap that
+/// shrinks the file.
+fn is_rotated(open: Option<FileId>, at_path: Option<FileId>) -> bool {
+    matches!((open, at_path), (Some(a), Some(b)) if a != b)
 }
 
 impl LocalFileSource {
@@ -177,7 +190,11 @@ impl LocalFileSource {
                 }
             }
             (Some(current), Some(meta)) => {
-                if id_of_path(&self.path, &meta).is_some_and(|id| id != current.ino) {
+                if current.ino.is_none() {
+                    // Retry: a failed read is not a final answer.
+                    current.ino = id_of_open(&current.file, &meta);
+                }
+                if is_rotated(current.ino, id_of_path(&self.path, &meta)) {
                     // Rotated: read the rest of the old file first.
                     drain(current, splitter, events);
                     splitter.clear();
@@ -218,5 +235,23 @@ fn drain(current: &mut Open, splitter: &mut LineSplitter, events: &Sender<Source
     let lines = splitter.push(&buf);
     if !lines.is_empty() {
         let _ = events.try_send(SourceEvent::Append { lines, bytes: Vec::new(), streams: None });
+    }
+}
+
+#[cfg(test)]
+mod identity_tests {
+    use super::is_rotated;
+
+    #[test]
+    fn two_different_known_identities_are_a_rotation() {
+        assert!(is_rotated(Some(1), Some(2)));
+        assert!(!is_rotated(Some(7), Some(7)));
+    }
+
+    #[test]
+    fn an_unknown_identity_is_never_a_rotation_nor_equal_to_another_unknown() {
+        assert!(!is_rotated(None, None));
+        assert!(!is_rotated(None, Some(3)));
+        assert!(!is_rotated(Some(3), None));
     }
 }

@@ -57,6 +57,15 @@ impl Os {
     }
 }
 
+/// Where an ssh-agent is reached. A distinct case for Pageant, so a user's
+/// socket path can never be mistaken for it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AgentTarget {
+    Pageant,
+    /// A Unix socket path or a Windows named pipe.
+    Socket(String),
+}
+
 /// What `resolve` returns for Pageant: a name, not a path.
 pub const PAGEANT: &str = "pageant";
 
@@ -88,6 +97,18 @@ impl AgentSocket {
         }
     }
 
+    /// What to connect to: Pageant, or a socket path / pipe name.
+    pub fn target(&self) -> Option<AgentTarget> {
+        self.target_on(Os::current(), std::env::var("SSH_AUTH_SOCK").ok())
+    }
+
+    pub fn target_on(&self, os: Os, ssh_auth_sock: Option<String>) -> Option<AgentTarget> {
+        match self {
+            AgentSocket::Pageant => Some(AgentTarget::Pageant),
+            other => other.resolve_on(os, ssh_auth_sock).map(AgentTarget::Socket),
+        }
+    }
+
     /// Text for messages: the path, or `SSH_AUTH_SOCK` when it is unset.
     pub fn describe(&self) -> String {
         match self {
@@ -105,13 +126,20 @@ impl AgentSocket {
         }
     }
 
-    /// The presets usable on this machine: those whose socket exists, and
-    /// Pageant (whose window cannot be probed cheaply) on Windows.
+    /// The presets usable on this machine.
     pub fn available_presets() -> Vec<AgentSocket> {
-        Self::candidate_presets(Os::current())
+        Self::available_presets_on(Os::current(), std::env::var("SSH_AUTH_SOCK").ok(), |p| Path::new(p).exists())
+    }
+
+    /// On Unix a preset is usable when its socket exists. On Windows the
+    /// agents are named pipes (which `exists()` can report absent while the
+    /// pipe is busy) or Pageant (a window, not probeable cheaply), so every
+    /// candidate is offered and a failed connection says so.
+    pub fn available_presets_on(os: Os, ssh_auth_sock: Option<String>, exists: impl Fn(&str) -> bool) -> Vec<AgentSocket> {
+        Self::candidate_presets(os)
             .into_iter()
             .filter(|preset| {
-                *preset == AgentSocket::Pageant || preset.resolve().is_some_and(|p| Path::new(&p).exists())
+                os == Os::Windows || preset.resolve_on(os, ssh_auth_sock.clone()).is_some_and(|p| exists(&p))
             })
             .collect()
     }
@@ -123,7 +151,7 @@ pub fn expand_home(path: &str) -> String {
     if path == "~" {
         home
     } else if let Some(rest) = path.strip_prefix("~/") {
-        format!("{home}/{rest}")
+        crate::local_path::join_like(&home, rest)
     } else {
         path.to_string()
     }
@@ -552,6 +580,35 @@ mod agent_socket_tests {
         let presets = AgentSocket::candidate_presets(Os::Unix);
         assert!(presets.contains(&AgentSocket::Secretive));
         assert!(!presets.contains(&AgentSocket::Pageant));
+    }
+
+    #[test]
+    fn windows_offers_every_preset_without_probing_the_filesystem() {
+        let presets = AgentSocket::available_presets_on(Os::Windows, None, |_| false);
+        assert_eq!(presets, AgentSocket::candidate_presets(Os::Windows));
+        assert!(presets.contains(&AgentSocket::OnePassword));
+    }
+
+    #[test]
+    fn unix_keeps_only_presets_whose_socket_exists() {
+        let presets = AgentSocket::available_presets_on(Os::Unix, Some("/run/agent".into()), |p| p == "/run/agent");
+        assert_eq!(presets, vec![AgentSocket::System]);
+    }
+
+    #[test]
+    fn pageant_is_a_target_of_its_own_and_a_path_named_pageant_is_not_it() {
+        assert_eq!(AgentSocket::Pageant.target_on(Os::Windows, None), Some(AgentTarget::Pageant));
+        assert_eq!(
+            AgentSocket::Path("pageant".into()).target_on(Os::Windows, None),
+            Some(AgentTarget::Socket("pageant".into()))
+        );
+    }
+
+    #[test]
+    fn home_joins_with_one_separator_style() {
+        use crate::local_path::join_like;
+        assert_eq!(join_like(r"C:\Users\me", ".ssh/id"), r"C:\Users\me\.ssh\id");
+        assert_eq!(join_like("/home/me", ".ssh/id"), "/home/me/.ssh/id");
     }
 
     #[test]

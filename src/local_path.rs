@@ -32,6 +32,17 @@ pub fn split_last(path: &str, style: PathStyle) -> Option<(&str, &str, char)> {
     Some((&path[..if is_root { at + 1 } else { at }], name, sep))
 }
 
+/// `rest` (written with `/`) appended to `base`, using `base`'s own
+/// separator: a Windows base (`C:\Users\me`) gets `\` throughout, so the
+/// result never mixes the two. Any other base is joined with `/`.
+pub fn join_like(base: &str, rest: &str) -> String {
+    if base.contains('\\') {
+        format!("{}\\{}", base.trim_end_matches('\\'), rest.replace('/', "\\"))
+    } else {
+        format!("{base}/{rest}")
+    }
+}
+
 /// The last component of `path` (`None` when it ends in a separator).
 pub fn file_name(path: &str, style: PathStyle) -> Option<&str> {
     let name = split_last(path, style).map_or(path, |(_, name, _)| name);

@@ -4,7 +4,7 @@
 //! are understood; the rest is listed as skipped.
 
 use super::browse::glob_match;
-use crate::local_path::{PathStyle, is_absolute, split_last};
+use crate::local_path::{PathStyle, is_absolute, join_like, split_last};
 use super::server::{AgentSocket, AuthMethod, MAX_JUMPS, Origin, Server, ServerStore};
 use std::collections::{HashMap, HashSet};
 
@@ -55,11 +55,11 @@ impl Env {
     }
 
     fn config_path(&self) -> String {
-        format!("{}/.ssh/config", self.home)
+        join_like(&self.home, ".ssh/config")
     }
 
     fn ssh_dir(&self) -> String {
-        format!("{}/.ssh", self.home)
+        join_like(&self.home, ".ssh")
     }
 }
 
@@ -170,7 +170,7 @@ fn read_items(fs: &dyn ConfigFs, env: &Env, text: &str, depth: usize, items: &mu
 /// `~/.ssh`, the file name part may be a glob.
 fn include_paths(fs: &dyn ConfigFs, env: &Env, pattern: &str, style: PathStyle) -> Vec<String> {
     let expanded = tilde(pattern, env);
-    let full = if is_absolute(&expanded, style) { expanded } else { format!("{}/{expanded}", env.ssh_dir()) };
+    let full = if is_absolute(&expanded, style) { expanded } else { join_like(&env.ssh_dir(), &expanded) };
     let Some((dir, name, sep)) = split_include_glob(&full, style) else { return Vec::new() };
     if !name.contains(['*', '?', '[']) {
         return if fs.exists(&full) { vec![full] } else { Vec::new() };
@@ -311,7 +311,7 @@ fn tilde(path: &str, env: &Env) -> String {
     if path == "~" {
         env.home.clone()
     } else if let Some(rest) = path.strip_prefix("~/") {
-        format!("{}/{rest}", env.home)
+        join_like(&env.home, rest)
     } else {
         path.to_string()
     }

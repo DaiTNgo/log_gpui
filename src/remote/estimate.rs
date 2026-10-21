@@ -207,6 +207,8 @@ fn windows_free_bytes(dir: &std::path::Path) -> Option<u64> {
 
     let wide: Vec<u16> = dir.as_os_str().encode_wide().chain(std::iter::once(0)).collect();
     let mut free_to_caller = 0u64;
+    // SAFETY: `wide` is NUL-terminated and outlives the call; the out-pointers
+    // are valid (or null, which the API allows) for the call's duration.
     let ok = unsafe {
         GetDiskFreeSpaceExW(
             wide.as_ptr(),

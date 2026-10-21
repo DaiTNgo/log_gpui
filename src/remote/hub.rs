@@ -6,7 +6,7 @@
 use super::health::{HealthBoard, ServerState};
 use super::known_hosts::{HostKeyStatus, KnownHosts};
 use super::secrets::SecretStore;
-use super::server::{AuthMethod, Server, ServerStore};
+use super::server::{AgentTarget, AuthMethod, Server, ServerStore};
 use russh::client::{self, Handle, KeyboardInteractiveAuthResponse};
 use russh::keys::agent::AgentIdentity;
 use russh::keys::agent::client::{AgentClient, AgentStream};
@@ -665,7 +665,7 @@ impl RemoteHub {
             AuthMethod::Password => self.auth_password(handle, server).await?,
             AuthMethod::Key { path } => self.auth_key(handle, server, path).await?,
             AuthMethod::Agent { socket, preferred_key } => {
-                self.auth_agent(handle, server, target_id, &socket.resolve(), &socket.describe(), preferred_key.as_deref())
+                self.auth_agent(handle, server, target_id, &socket.target(), &socket.describe(), preferred_key.as_deref())
                     .await?
             }
             AuthMethod::KeyboardInteractive => {
@@ -749,14 +749,14 @@ impl RemoteHub {
         handle: &mut Handle<ClientHandler>,
         server: &Server,
         target_id: &str,
-        socket: &Option<String>,
+        socket: &Option<AgentTarget>,
         shown_path: &str,
         preferred: Option<&str>,
     ) -> Result<russh::client::AuthResult, ConnectError> {
         let unavailable = || agent_unavailable(server, shown_path);
         let rejected = |detail: &str| ConnectError::AgentRejected { server_name: server.name.clone(), detail: detail.to_string() };
-        let path = socket.as_deref().ok_or_else(unavailable)?;
-        let mut agent = connect_agent(path).await.map_err(|_| unavailable())?;
+        let target = socket.as_ref().ok_or_else(unavailable)?;
+        let mut agent = connect_agent(target).await.map_err(|_| unavailable())?;
         let identities = agent.request_identities().await.map_err(|_| unavailable())?;
         let mut keys: Vec<PublicKey> = identities
             .into_iter()
@@ -913,20 +913,31 @@ type AgentConnection = AgentClient<Box<dyn AgentStream + Send + Unpin>>;
 
 /// Connect to the agent `target` names: a Unix socket path.
 #[cfg(unix)]
-async fn connect_agent(target: &str) -> Result<AgentConnection, russh::keys::Error> {
-    Ok(AgentClient::connect_uds(target).await?.dynamic())
+async fn connect_agent(target: &AgentTarget) -> Result<AgentConnection, russh::keys::Error> {
+    match target {
+        AgentTarget::Socket(path) => Ok(AgentClient::connect_uds(path).await?.dynamic()),
+        AgentTarget::Pageant => Err(std::io::Error::new(std::io::ErrorKind::Unsupported, "Pageant is Windows only").into()),
+    }
 }
 
-/// Connect to the agent `target` names: `PAGEANT`, or a named pipe path.
+/// Connect to the agent `target` names: Pageant, or a named pipe.
 #[cfg(windows)]
-async fn connect_agent(target: &str) -> Result<AgentConnection, russh::keys::Error> {
-    if target == super::server::PAGEANT {
-        return Ok(AgentClient::connect_pageant().await?.dynamic());
-    }
-    // `connect_named_pipe` retries for as long as the pipe is busy.
-    match tokio::time::timeout(Duration::from_secs(10), AgentClient::connect_named_pipe(target)).await {
-        Ok(client) => Ok(client?.dynamic()),
-        Err(_) => Err(std::io::Error::new(std::io::ErrorKind::TimedOut, "the agent pipe stayed busy").into()),
+async fn connect_agent(target: &AgentTarget) -> Result<AgentConnection, russh::keys::Error> {
+    let timed_out = |what: &str| -> russh::keys::Error { std::io::Error::new(std::io::ErrorKind::TimedOut, what.to_string()).into() };
+    match target {
+        AgentTarget::Pageant => {
+            match tokio::time::timeout(Duration::from_secs(10), AgentClient::connect_pageant()).await {
+                Ok(client) => Ok(client?.dynamic()),
+                Err(_) => Err(timed_out("Pageant did not answer")),
+            }
+        }
+        // `connect_named_pipe` retries for as long as the pipe is busy.
+        AgentTarget::Socket(pipe) => {
+            match tokio::time::timeout(Duration::from_secs(10), AgentClient::connect_named_pipe(pipe)).await {
+                Ok(client) => Ok(client?.dynamic()),
+                Err(_) => Err(timed_out("the agent pipe stayed busy")),
+            }
+        }
     }
 }
 
