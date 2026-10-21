@@ -205,3 +205,16 @@ fn colors_keep_text_readable_in_light_and_dark_for_every_hue() {
 fn current_match_is_stronger_than_other_matches() {
     assert!(search_color::CURRENT_MATCH_OPACITY > search_color::MATCH_OPACITY);
 }
+
+#[test]
+fn with_keyword_colors_off_every_match_paints_the_one_shared_color() {
+    use log_gpui::ui::canvas::shared_search_paints;
+    let m = matcher("a || b");
+    let ranges = m.find_group_ranges("a b");
+    let shared = gpui::hsla(0.1, 0.5, 0.5, 1.0);
+    let paints = shared_search_paints(&ranges, shared);
+    assert_eq!(paints.len(), 2);
+    assert_eq!((paints[0].start, paints[0].end, paints[1].start, paints[1].end), (0, 1, 2, 3));
+    assert_eq!(paints[0].fill, paints[1].fill);
+    assert_eq!(paints[0].fill, shared.opacity(0.55));
+}

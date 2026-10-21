@@ -73,6 +73,7 @@ impl Render for AppView {
                 selected_row_pos: self.selected_row_pos,
                 density: self.density,
                 show_minimap: self.show_minimap,
+                keyword_colors: self.keyword_colors(),
                 column_layout: &self.column_layout,
                 search_state: self.focus.search(),
                 bounds_sink: self.canvas_bounds.clone(),

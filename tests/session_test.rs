@@ -377,3 +377,18 @@ fn test_match_colors_survive_a_restart_and_default_to_the_theme() {
     let old = SessionManifest::from_json(&value.to_string()).unwrap().into_workspace();
     assert_eq!(old.match_colors.search, None);
 }
+
+#[test]
+fn test_keyword_colors_default_on_survive_a_restart_and_old_manifests_load_on() {
+    let mut ws = build_workspace();
+    assert!(ws.keyword_colors);
+    ws.keyword_colors = false;
+    let json = SessionManifest::from_workspace(&ws).to_json().unwrap();
+    let restored = SessionManifest::from_json(&json).unwrap().into_workspace();
+    assert!(!restored.keyword_colors);
+
+    let mut value: serde_json::Value = serde_json::from_str(&json).unwrap();
+    value.as_object_mut().unwrap().remove("keyword_colors");
+    let old = SessionManifest::from_json(&value.to_string()).unwrap().into_workspace();
+    assert!(old.keyword_colors);
+}

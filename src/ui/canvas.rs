@@ -97,6 +97,8 @@ pub struct CanvasViewState<'a> {
     pub density: Density,
     /// Whether the minimap shows beside the table.
     pub show_minimap: bool,
+    /// Whether Matches are painted per Color Group (else one shared color).
+    pub keyword_colors: bool,
     pub column_layout: &'a crate::column::ColumnLayoutState,
     pub search_state: &'a SearchState,
     pub colors: CanvasColors,
@@ -232,6 +234,7 @@ impl LogCanvas {
             view: state.view.clone(),
             colors: state.colors,
             selected_pos: state.selected_row_pos,
+            keyword_colors: state.keyword_colors,
             group_fills: Arc::new(
                 state
                     .search_state
@@ -775,6 +778,7 @@ fn header_menu(
 /// Everything one row needs to draw itself, cloned out of the view state so
 /// the virtualized list can build rows on its own.
 struct RowEnv {
+    keyword_colors: bool,
     /// Paint of each Color Group of the Search Expression.
     group_fills: Arc<Vec<GroupFill>>,
     visible: Arc<Vec<usize>>,
@@ -848,7 +852,11 @@ impl RowEnv {
             _ => Vec::new(),
         };
         let search_ranges: Vec<(usize, usize)> = group_ranges.iter().map(|r| (r.start, r.end)).collect();
-        let search_paints = search_paints(&group_ranges, &self.group_fills, is_current_match);
+        let search_paints = if self.keyword_colors {
+            search_paints(&group_ranges, &self.group_fills, is_current_match)
+        } else {
+            shared_search_paints(&group_ranges, colors.search)
+        };
         let hidden_match = crate::ui::cells::hidden_matches(entry, &search_ranges, &self.layout)
             .map(|hidden| crate::ui::cells::hidden_matches_tooltip(&hidden, &self.layout));
         let selected_in_line = self
@@ -1221,6 +1229,15 @@ pub fn search_paints(
             let fill = fills.get(r.group)?;
             Some(SearchPaint { start: r.start, end: r.end, fill: if current { fill.current } else { fill.normal } })
         })
+        .collect()
+}
+
+/// The Match ranges of a line, all in the one shared Match color (the
+/// look with keyword colors off).
+pub fn shared_search_paints(ranges: &[crate::search_expr::GroupRange], color: gpui::Hsla) -> Vec<SearchPaint> {
+    ranges
+        .iter()
+        .map(|r| SearchPaint { start: r.start, end: r.end, fill: color.opacity(0.55) })
         .collect()
 }
 
