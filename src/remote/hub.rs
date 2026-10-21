@@ -172,6 +172,8 @@ pub struct RemoteSession {
     /// Commands running through the hub's sessions, counted until their
     /// channel is closed.
     runs: Arc<AtomicUsize>,
+    /// Processes started through this session.
+    execs: AtomicUsize,
     handle: Handle<ClientHandler>,
     /// The sessions the channel to this one runs through.
     _hops: Vec<Handle<ClientHandler>>,
@@ -186,6 +188,11 @@ pub struct ExecOutput {
 }
 
 impl RemoteSession {
+    /// How many processes this session started on the Server.
+    pub fn exec_count(&self) -> usize {
+        self.execs.load(Ordering::SeqCst)
+    }
+
     pub fn is_closed(&self) -> bool {
         self.handle.is_closed()
     }
@@ -198,6 +205,7 @@ impl RemoteSession {
 
     /// Run a command and collect its output.
     pub async fn exec(&self, command: &str) -> Result<ExecOutput, String> {
+        self.execs.fetch_add(1, Ordering::SeqCst);
         let mut channel = self.handle.channel_open_session().await.map_err(|e| e.to_string())?;
         channel.exec(true, command).await.map_err(|e| e.to_string())?;
         let mut out = ExecOutput::default();
@@ -215,6 +223,7 @@ impl RemoteSession {
     /// Start a command and read its output as it comes: no terminal, and its
     /// input is closed at once so a command that reads it sees the end.
     pub async fn exec_stream(&self, command: &str) -> Result<ExecStream, String> {
+        self.execs.fetch_add(1, Ordering::SeqCst);
         let channel = self.handle.channel_open_session().await.map_err(|e| e.to_string())?;
         channel.exec(true, command).await.map_err(|e| e.to_string())?;
         channel.eof().await.map_err(|e| e.to_string())?;
@@ -643,7 +652,7 @@ impl RemoteHub {
                 }
             }
             if i + 1 == chain.len() {
-                return Ok(RemoteSession { server: server.clone(), connected_at: Instant::now(), runs: self.runs.clone(), handle, _hops: hops });
+                return Ok(RemoteSession { server: server.clone(), connected_at: Instant::now(), runs: self.runs.clone(), execs: AtomicUsize::new(0), handle, _hops: hops });
             }
             hops.push(handle);
         }
