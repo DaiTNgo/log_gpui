@@ -196,6 +196,10 @@ pub struct AppView {
     /// How often the view was refreshed each way (tests and the perf probe
     /// read it to see which path a change took).
     pub refreshes: RefreshCounts,
+    /// How often finding the row of a line walked every row (a stale
+    /// selected position), and the row that walk found.
+    pub entry_scans: std::cell::Cell<usize>,
+    entry_found: std::cell::Cell<Option<usize>>,
     /// Servers, the SSH hub and their dialogs.
     pub remote: remote::RemoteUi,
     pub server_dialog: Option<server_dialog::ServerDialog>,
@@ -485,6 +489,8 @@ impl AppView {
             column_layout,
             live: live::LiveRuntime::new(),
             refreshes: RefreshCounts::default(),
+            entry_scans: std::cell::Cell::new(0),
+            entry_found: std::cell::Cell::new(None),
             search_generation: 0,
             rows_epoch: 0,
             time_range_generation: 0,

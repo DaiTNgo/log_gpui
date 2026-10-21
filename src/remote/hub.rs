@@ -198,9 +198,15 @@ impl RemoteSession {
     }
 
     pub async fn open_sftp(&self) -> Result<SftpSession, String> {
+        SftpSession::new(self.open_sftp_stream().await?).await.map_err(|e| e.to_string())
+    }
+
+    /// The byte stream of a new `sftp` subsystem channel (for a raw SFTP
+    /// session that wants to choose its own read sizes).
+    pub async fn open_sftp_stream(&self) -> Result<russh::ChannelStream<client::Msg>, String> {
         let channel = self.handle.channel_open_session().await.map_err(|e| e.to_string())?;
         channel.request_subsystem(true, "sftp").await.map_err(|e| e.to_string())?;
-        SftpSession::new(channel.into_stream()).await.map_err(|e| e.to_string())
+        Ok(channel.into_stream())
     }
 
     /// Run a command and collect its output.

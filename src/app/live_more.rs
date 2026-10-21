@@ -256,6 +256,10 @@ impl AppView {
     /// Read `lines` older lines (the Load More Step when `None`) above the
     /// oldest line the file holds.
     pub fn load_more(&mut self, file_id: &str, lines: Option<usize>, cx: &mut Context<Self>) {
+        if self.live.sources.get(file_id).is_some_and(|s| !s.remote) {
+            self.load_more_local(file_id, lines, cx);
+            return;
+        }
         let Some(info) = self.hold_info(file_id) else { return };
         if info.loading {
             return;
@@ -301,6 +305,40 @@ impl AppView {
             held_bytes,
             first_line_no,
             inode,
+        });
+        self.live.loading_more.insert(file_id.to_string());
+        cx.notify();
+    }
+
+    /// Load More of a local file: the source finds the lines above the oldest
+    /// one held by its number in the file.
+    fn load_more_local(&mut self, file_id: &str, lines: Option<usize>, cx: &mut Context<Self>) {
+        if self.live.loading_more.contains(file_id) {
+            return;
+        }
+        let Some(parsed) = self.parsed_files.get(file_id) else { return };
+        let Some(first) = parsed.entries.first() else { return };
+        if first.index <= 1 || !crate::live::is_real_line_number(first.index) {
+            return;
+        }
+        let remaining = self.live.full_read_limit.saturating_sub(parsed.entries.len());
+        if remaining == 0 {
+            self.notice = Some(format!("Load more: {AT_FULL_READ_LIMIT}"));
+            cx.notify();
+            return;
+        }
+        let n = lines.unwrap_or(self.live.load_more_step).max(1).min(remaining);
+        let first_hash = parsed.lines.first().map(|t| line_hash(t));
+        let first_line_no = Some(first.index);
+        let Some(source) = self.live.sources.get(file_id) else { return };
+        source.handle.send(SourceCommand::LoadMore {
+            generation: first.generation,
+            end_offset: 0,
+            lines: n,
+            first_hash,
+            held_bytes: 0,
+            first_line_no,
+            inode: None,
         });
         self.live.loading_more.insert(file_id.to_string());
         cx.notify();
