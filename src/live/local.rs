@@ -100,7 +100,8 @@ impl LocalFileSource {
         // The file as the app loaded it.
         match File::open(&self.path).and_then(|f| f.metadata().map(|m| (f, m))) {
             Ok((file, meta)) => {
-                open = Some(Open { file, ino: id_of_open(&file, &meta), offset: self.start_offset.min(meta.len()) });
+                let ino = id_of_open(&file, &meta);
+                open = Some(Open { file, ino, offset: self.start_offset.min(meta.len()) });
                 let _ = events.try_send(SourceEvent::Status(SourceStatus::Live));
             }
             Err(_) => {
