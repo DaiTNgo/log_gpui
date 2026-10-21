@@ -239,8 +239,12 @@ One or more words typed next to each other with no operator between them, matche
 _Avoid_: String, literal.
 
 **Match**:
-A log line of the view whose raw line satisfies the Search Expression, with every Phrase occurrence in it highlighted. Filter does not affect Matches; a Match may be a line the Focus Pane does not list.
+A log line of the view whose raw line satisfies the Search Expression, with every Phrase occurrence in it highlighted in the color of its Color Group. The Current Match shows the same colors, stronger, plus an outline. Filter does not affect Matches; a Match may be a line the Focus Pane does not list.
 _Avoid_: Hit, result.
+
+**Color Group**:
+One top-level `||` branch of a Search Expression; all Phrases of the branch (joined by `&&` or held in parentheses) share one color, so `timeout && refused || panic` has two. The color is generated, not chosen: its hue comes from a hash of the group's first Phrase, case-folded, so the same keyword has the same color in every tab and every session, and nothing is stored. Hues closer than about 30 degrees are pushed apart in order of appearance (past about 12 groups closeness is accepted); lightness and saturation are fixed per light/dark theme. Where Phrases of different groups overlap, the longer Phrase's color wins. Not part of the Highlight Rules palette.
+_Avoid_: Keyword color, Search palette.
 
 **Filter**:
 Narrowing the lines of the Focus Pane by the values of the file's columns, in the Parsed View only. Columns and their values are detected when the file is loaded, and the user picks values to show or hide. The only place where the user asks about a specific column.

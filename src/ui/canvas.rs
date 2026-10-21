@@ -232,6 +232,14 @@ impl LogCanvas {
             view: state.view.clone(),
             colors: state.colors,
             selected_pos: state.selected_row_pos,
+            group_fills: Arc::new(
+                state
+                    .search_state
+                    .matcher
+                    .as_ref()
+                    .map(|m| search_group_fills(&m.group_keys(), state.colors.tone()))
+                    .unwrap_or_default(),
+            ),
             search_matcher: state.search_state.matcher.clone(),
             matched_positions: state.search_state.matched_visible_indices.clone(),
             current_match_pos: state.search_state.current_match_pos(),
@@ -767,6 +775,8 @@ fn header_menu(
 /// Everything one row needs to draw itself, cloned out of the view state so
 /// the virtualized list can build rows on its own.
 struct RowEnv {
+    /// Paint of each Color Group of the Search Expression.
+    group_fills: Arc<Vec<GroupFill>>,
     visible: Arc<Vec<usize>>,
     view: gpui::Entity<crate::app::AppView>,
     colors: CanvasColors,
@@ -833,10 +843,12 @@ impl RowEnv {
         };
         // Search matches the whole line; each shown cell paints the Matches
         // it holds, and a line whose Matches are all out of sight says so.
-        let search_ranges = match (&self.search_matcher, is_match) {
-            (Some(m), true) => m.find_ranges(&entry.raw_line),
+        let group_ranges = match (&self.search_matcher, is_match) {
+            (Some(m), true) => m.find_group_ranges(&entry.raw_line),
             _ => Vec::new(),
         };
+        let search_ranges: Vec<(usize, usize)> = group_ranges.iter().map(|r| (r.start, r.end)).collect();
+        let search_paints = search_paints(&group_ranges, &self.group_fills, is_current_match);
         let hidden_match = crate::ui::cells::hidden_matches(entry, &search_ranges, &self.layout)
             .map(|hidden| crate::ui::cells::hidden_matches_tooltip(&hidden, &self.layout));
         let selected_in_line = self
@@ -851,7 +863,8 @@ impl RowEnv {
             paint,
             search_ranges: &[],
             find_ranges: &[],
-            line_search: &search_ranges,
+            line_search: &[],
+            search_paints: &search_paints,
             selected: selected_in_line.as_ref(),
             tone: colors.tone(),
             rule_cell: paint.map(|p| self.rule_color(&p.color, Weight::Cell)),
@@ -1164,6 +1177,53 @@ pub(crate) fn render_break(
         .into_any_element()
 }
 
+/// The paint of one Color Group of the Search Expression: behind an ordinary
+/// Match, and behind the Current Match (the same color, stronger).
+#[derive(Debug, Clone, Copy)]
+pub struct GroupFill {
+    pub normal: gpui::Hsla,
+    pub current: gpui::Hsla,
+}
+
+/// One Match range of a line, painted in its Color Group's color.
+#[derive(Debug, Clone, Copy)]
+pub struct SearchPaint {
+    pub start: usize,
+    pub end: usize,
+    pub fill: gpui::Hsla,
+}
+
+/// The paint of every Color Group, from the `Matcher::group_keys` of a Search
+/// Expression, for the given theme. Hues are generated (see `search_color`).
+pub fn search_group_fills(keys: &[&str], tone: Tone) -> Vec<GroupFill> {
+    crate::search_color::group_hues(keys)
+        .into_iter()
+        .map(|hue| {
+            let color = hsla_of(crate::search_color::group_rgb(hue, tone));
+            GroupFill {
+                normal: color.opacity(crate::search_color::MATCH_OPACITY),
+                current: color.opacity(crate::search_color::CURRENT_MATCH_OPACITY),
+            }
+        })
+        .collect()
+}
+
+/// The Match ranges of a line (`Matcher::find_group_ranges`) with the paint
+/// of their groups; `current` picks the stronger paint of the Current Match.
+pub fn search_paints(
+    ranges: &[crate::search_expr::GroupRange],
+    fills: &[GroupFill],
+    current: bool,
+) -> Vec<SearchPaint> {
+    ranges
+        .iter()
+        .filter_map(|r| {
+            let fill = fills.get(r.group)?;
+            Some(SearchPaint { start: r.start, end: r.end, fill: if current { fill.current } else { fill.normal } })
+        })
+        .collect()
+}
+
 /// What a cell needs to know about its row.
 pub(crate) struct CellCtx<'a> {
     pub colors: &'a CanvasColors,
@@ -1177,6 +1237,9 @@ pub(crate) struct CellCtx<'a> {
     /// Matches of Search in bytes of the stored line (the Focus Pane, which
     /// finds them in the whole line), painted on whichever cell holds them.
     pub line_search: &'a [(usize, usize)],
+    /// Matches of Search in bytes of the stored line, each in the color of its
+    /// Color Group (see `search_paints`). Painted like `line_search`.
+    pub search_paints: &'a [SearchPaint],
     /// The selected part of the line, in bytes of the stored line.
     pub selected: Option<&'a std::ops::Range<usize>>,
     pub tone: Tone,
@@ -1222,6 +1285,15 @@ pub(crate) fn render_text_cell(ctx: &CellCtx, cell: TextCell) -> gpui::AnyElemen
                         color: None,
                     });
                 }
+            }
+        }
+        for paint in ctx.search_paints {
+            if let Some(part) = clip_to_span(&(paint.start..paint.end), span) {
+                layers.push(Layer {
+                    range: part.start - span.start..part.end - span.start,
+                    background: Some(paint.fill),
+                    color: None,
+                });
             }
         }
         for marker in &ctx.entry.markers {

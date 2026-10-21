@@ -558,6 +558,7 @@ impl PaneRows {
             search_ranges: cell_search,
             find_ranges: &find_ranges,
             line_search,
+            search_paints: &[],
             selected: selected_in_line.as_ref(),
             tone,
             rule_cell: None,

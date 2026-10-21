@@ -263,6 +263,32 @@ enum Node {
 #[derive(Debug, Clone)]
 pub struct Matcher {
     root: Node,
+    /// The Color Groups: one per top-level `||` branch, in order of appearance.
+    groups: Vec<ColorGroup>,
+}
+
+#[derive(Debug, Clone)]
+struct ColorGroup {
+    /// The group's first Phrase, case-folded: what the group's hue comes from.
+    key: String,
+    node: Node,
+}
+
+/// A byte range of a line that belongs to Color Group `group`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GroupRange {
+    pub start: usize,
+    pub end: usize,
+    pub group: usize,
+}
+
+fn first_phrase_key(expr: &SearchExpr) -> String {
+    match expr {
+        SearchExpr::Phrase(words) => crate::unicode_text::fold(&words.join(" ")),
+        SearchExpr::And(parts) | SearchExpr::Or(parts) => {
+            parts.first().map(first_phrase_key).unwrap_or_default()
+        }
+    }
 }
 
 impl Matcher {
@@ -276,12 +302,57 @@ impl Matcher {
                 SearchExpr::Or(parts) => Node::Or(parts.iter().map(build).collect()),
             }
         }
-        Self { root: build(expr) }
+        let branches: Vec<&SearchExpr> = match expr {
+            SearchExpr::Or(parts) => parts.iter().collect(),
+            other => vec![other],
+        };
+        let groups = branches
+            .into_iter()
+            .map(|b| ColorGroup { key: first_phrase_key(b), node: build(b) })
+            .collect();
+        Self { root: build(expr), groups }
+    }
+
+    /// The key of each Color Group, in order of appearance: its first Phrase,
+    /// case-folded. The group's color is generated from it.
+    pub fn group_keys(&self) -> Vec<&str> {
+        self.groups.iter().map(|g| g.key.as_str()).collect()
     }
 
     /// Whether `line` satisfies the expression.
     pub fn is_match(&self, line: &str) -> bool {
         eval(&self.root, line)
+    }
+
+    /// Byte ranges of every Phrase occurrence in `line`, each tagged with its
+    /// Color Group: sorted and not overlapping. Where Phrases of different
+    /// groups overlap the longer Phrase's group owns the shared bytes (a tie
+    /// goes to the earlier group). The union of the ranges is `find_ranges`.
+    pub fn find_group_ranges(&self, line: &str) -> Vec<GroupRange> {
+        let mut occurrences: Vec<(usize, usize, usize)> = Vec::new();
+        for (group, g) in self.groups.iter().enumerate() {
+            let mut found = Vec::new();
+            collect(&g.node, line, &mut found);
+            occurrences.extend(found.into_iter().map(|(s, e)| (s, e, group)));
+        }
+        let mut points: Vec<usize> = occurrences.iter().flat_map(|&(s, e, _)| [s, e]).collect();
+        points.sort_unstable();
+        points.dedup();
+        let mut out: Vec<GroupRange> = Vec::new();
+        for w in points.windows(2) {
+            let (start, end) = (w[0], w[1]);
+            let owner = occurrences
+                .iter()
+                .filter(|&&(s, e, _)| s <= start && end <= e)
+                .min_by_key(|&&(s, e, g)| (std::cmp::Reverse(e - s), g))
+                .map(|&(_, _, g)| g);
+            let Some(group) = owner else { continue };
+            match out.last_mut() {
+                Some(last) if last.group == group && last.end == start => last.end = end,
+                _ => out.push(GroupRange { start, end, group }),
+            }
+        }
+        out
     }
 
     /// Byte ranges of every occurrence of every phrase in `line`, sorted and
