@@ -176,3 +176,90 @@ fn deleting_a_format_in_use_asks_and_goes_back_to_auto_detect(cx: &mut TestAppCo
     assert!(h.view.read_with(&h.cx, |a, _| a.log_formats().is_empty()));
     assert!(!columns(&mut h).contains(&field("client")));
 }
+
+fn space_id(h: &mut Harness) -> String {
+    h.view.read_with(&h.cx, |a, _| a.workspace_state.active_project().unwrap().log_spaces[0].id.clone())
+}
+
+fn file_id_of(h: &mut Harness, name: &str) -> String {
+    h.view.read_with(&h.cx, |a, _| {
+        a.workspace_state.active_project().unwrap().log_spaces[0].files.iter().find(|f| f.display_name.contains(name)).unwrap().file_id.clone()
+    })
+}
+
+#[gpui::test]
+fn log_format_from_a_file_opens_the_format_that_applies_and_saving_changes_the_columns(cx: &mut TestAppContext) {
+    let mut h = open(cx);
+    let id = add_nginx(&mut h);
+    choose_for_access(&mut h, &id);
+    let (space, file) = (space_id(&mut h), access_id(&mut h));
+    h.view.update_in(&mut h.cx, |a, window, cx| a.edit_log_format(&space, Some(&file), window, cx));
+    h.cx.run_until_parked();
+    h.view.read_with(&h.cx, |a, cx| {
+        let e = a.format_editor.as_ref().unwrap();
+        assert_eq!(e.id.as_deref(), Some(id.as_str()));
+        assert_eq!(e.template_input.read(cx).value().to_string(), BUILT_IN[0].1);
+        assert!(e.preview.is_some());
+    });
+    h.view.update_in(&mut h.cx, |a, window, cx| {
+        let input = a.format_editor.as_ref().unwrap().template_input.clone();
+        input.update(cx, |s, cx| s.set_value(BUILT_IN[0].1.replace("client", "peer"), window, cx));
+    });
+    h.cx.run_until_parked();
+    h.view.update(&mut h.cx, |a, cx| a.save_format_editor(cx));
+    h.cx.run_until_parked();
+    let cols = columns(&mut h);
+    assert!(cols.contains(&field("peer")) && !cols.contains(&field("client")), "{cols:?}");
+}
+
+#[gpui::test]
+fn log_format_from_a_space_opens_the_format_chosen_for_it(cx: &mut TestAppContext) {
+    let mut h = open(cx);
+    let id = add_nginx(&mut h);
+    let space = space_id(&mut h);
+    h.view.update(&mut h.cx, |a, cx| a.set_space_format(&space, Some(FormatChoice::Format(id.clone())), cx));
+    h.cx.run_until_parked();
+    h.view.update_in(&mut h.cx, |a, window, cx| a.edit_log_format(&space, None, window, cx));
+    h.view.read_with(&h.cx, |a, _| assert_eq!(a.format_editor.as_ref().unwrap().id.as_deref(), Some(id.as_str())));
+}
+
+#[gpui::test]
+fn a_files_own_format_wins_over_its_log_spaces(cx: &mut TestAppContext) {
+    let mut h = open(cx);
+    let nginx = add_nginx(&mut h);
+    let other = h.view.update(&mut h.cx, |a, cx| a.save_log_format(None, "app", "%{TIMESTAMP:timestamp} %{GREEDY:message}", vec![], cx));
+    let space = space_id(&mut h);
+    h.view.update(&mut h.cx, |a, cx| a.set_space_format(&space, Some(FormatChoice::Format(other.clone())), cx));
+    choose_for_access(&mut h, &nginx);
+    let (access, app) = (access_id(&mut h), file_id_of(&mut h, "app.log"));
+    h.view.update_in(&mut h.cx, |a, window, cx| a.edit_log_format(&space, Some(&access), window, cx));
+    h.view.read_with(&h.cx, |a, _| assert_eq!(a.format_editor.as_ref().unwrap().id.as_deref(), Some(nginx.as_str())));
+    h.view.update_in(&mut h.cx, |a, window, cx| a.edit_log_format(&space, Some(&app), window, cx));
+    h.view.read_with(&h.cx, |a, _| assert_eq!(a.format_editor.as_ref().unwrap().id.as_deref(), Some(other.as_str())));
+}
+
+#[gpui::test]
+fn with_no_format_applied_the_editor_opens_new_with_a_sample_line_and_applies_to_the_file(cx: &mut TestAppContext) {
+    let mut h = open(cx);
+    let (space, app) = (space_id(&mut h), file_id_of(&mut h, "app.log"));
+    h.view.update_in(&mut h.cx, |a, window, cx| a.edit_log_format(&space, Some(&app), window, cx));
+    h.cx.run_until_parked();
+    h.view.read_with(&h.cx, |a, cx| {
+        let e = a.format_editor.as_ref().unwrap();
+        assert_eq!(e.id, None);
+        assert_eq!(e.template_input.read(cx).value().to_string(), "2026-10-20 10:00:02 [INFO] [api] order received");
+        assert_eq!(e.preview.as_ref().unwrap().matched(), 1);
+    });
+    h.view.update_in(&mut h.cx, |a, window, cx| {
+        let name = a.format_editor.as_ref().unwrap().name_input.clone();
+        name.update(cx, |s, cx| s.focus(window, cx));
+    });
+    h.cx.simulate_input("mine");
+    h.cx.run_until_parked();
+    h.view.update(&mut h.cx, |a, cx| a.save_format_editor(cx));
+    h.cx.run_until_parked();
+    h.view.read_with(&h.cx, |a, _| {
+        assert!(matches!(a.file_format_choice(&app), Some(FormatChoice::Format(_))), "applied to the file");
+        assert_eq!(a.space_format_choice(&space), None, "not to the whole Log Space");
+    });
+}
