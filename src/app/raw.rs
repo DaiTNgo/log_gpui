@@ -463,6 +463,7 @@ impl AppView {
 
     /// Forget everything cached about a file (it was removed).
     pub(crate) fn forget_file(&mut self, file_id: &str) {
+        self.live.backlog.remove(file_id);
         if let Some(source) = self.live.sources.remove(file_id) {
             source.handle.close();
         }

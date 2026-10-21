@@ -98,7 +98,7 @@ pub struct LiveRuntime {
     pub pump_started: bool,
     /// Events taken from a source that did not fit one pump, per file, in
     /// order, to be applied before what the source sends next.
-    backlog: HashMap<String, std::collections::VecDeque<SourceEvent>>,
+    pub(crate) backlog: HashMap<String, std::collections::VecDeque<SourceEvent>>,
     /// Files whose batch is being read on a worker thread, by the `seq` of
     /// their source; their events wait until it is applied.
     parsing: HashMap<String, u64>,
@@ -256,6 +256,7 @@ impl AppView {
             .cloned()
             .collect();
         for file_id in stale {
+            self.live.backlog.remove(&file_id);
             if let Some(source) = self.live.sources.remove(&file_id) {
                 source.handle.close();
             }
@@ -318,6 +319,8 @@ impl AppView {
             }
             self.live.next_source_seq += 1;
             let seq = self.live.next_source_seq;
+            // Events left over from a source this one replaces are not its.
+            self.live.backlog.remove(&file_id);
             self.live.sources.insert(
                 file_id,
                 LiveSourceState {
