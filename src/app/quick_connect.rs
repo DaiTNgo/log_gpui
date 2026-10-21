@@ -51,7 +51,7 @@ impl AppView {
                 return;
             }
         };
-        let local_user = std::env::var("USER").unwrap_or_default();
+        let local_user = crate::workspace::session::user_name().unwrap_or_default();
         let store = self.picker_store();
         let server_id = match quick::resolve(&store, &target, &local_user) {
             Resolution::Existing(id) => id,
