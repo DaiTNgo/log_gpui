@@ -12,7 +12,15 @@ Parent: `.scratch/performance/PRD.md`
 
 **Blocked by:** None (can start immediately).
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Each item has unchanged behaviour (existing tests pass).
-- [ ] The sidebar still updates Live status for background files after the notify change.
+- [x] Each item has unchanged behaviour (existing tests pass).
+- [x] The sidebar still updates Live status for background files after the notify change.
+
+## Comments
+
+- Filter index: `FilterIndex` keeps a `HashSet<FieldKey>` of fields that have a column (kept in `build_merged`, `rebuild_fields`, `push_row`) instead of scanning `columns` per field per row.
+- Live buffer: `byte_lens` is now a small `ByteLens` (Vec plus running total); `held_start` reads `total()` instead of summing. Unit test `byte_lens_tests`.
+- Ruler jump: `jump_to_match_by_entry` uses `binary_search` on the sorted `matched_visible_indices`.
+- Quit: the on-quit wait uses `cx.background_executor().timer(20ms).await` instead of `thread::sleep`.
+- Live batch: `FileDelta.shown` is set for every event but `Inode`. A batch whose files are not in the open view only calls `cx.notify()` when some delta has `shown`, appended, structural or trimmed set, so the sidebar still updates status and counts of background files.

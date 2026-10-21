@@ -7,7 +7,7 @@
 
 use crate::model::{FieldKey, LogEntry};
 use crate::unicode_text;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// A column with more distinct values than this cannot be filtered on.
 pub const MAX_DISTINCT: usize = 500;
@@ -338,6 +338,8 @@ pub struct FilterIndex {
     timed_lines: usize,
     /// Parent Lines whose message has each `key=value` key, read or not.
     kv_counts: HashMap<FieldKey, usize>,
+    /// The fields that have a column (a lookup, not a scan of `columns`).
+    field_cols: HashSet<FieldKey>,
 }
 
 /// A row has its own timestamp when it is a finite, positive number.
@@ -362,7 +364,9 @@ impl FilterIndex {
         if !entries.is_empty() {
             index.init_fixed_columns();
             for name in field_order {
-                index.columns.push(ColumnIndex::new(Source::Field(FieldKey::new(name)), 0));
+                let key = FieldKey::new(name);
+                index.field_cols.insert(key);
+                index.columns.push(ColumnIndex::new(Source::Field(key), 0));
             }
         }
         index.append(entries);
@@ -438,13 +442,14 @@ impl FilterIndex {
         debug_assert_eq!(entries.len(), self.rows);
         self.columns.retain(|c| c.field().is_none());
         let mut fields: Vec<ColumnIndex> = Vec::new();
+        self.field_cols.clear();
         let mut parent_row = 0;
         for (row, entry) in entries.iter().enumerate() {
             if entry.parent.is_none() {
                 parent_row = row;
             }
             for (name, _) in entry.fields() {
-                if !fields.iter().any(|c| c.source == Source::Field(name)) {
+                if self.field_cols.insert(name) {
                     fields.push(ColumnIndex::new(Source::Field(name), row));
                 }
             }
@@ -559,7 +564,7 @@ impl FilterIndex {
         }
         let parent_row = self.parent_row;
         for (name, _) in entry.fields() {
-            if !self.columns.iter().any(|c| c.source == Source::Field(name)) {
+            if self.field_cols.insert(name) {
                 self.columns.push(ColumnIndex::new(Source::Field(name), row));
             }
         }
