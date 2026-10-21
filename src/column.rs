@@ -255,9 +255,9 @@ impl FieldMaxChars {
     /// Updates running maximums with a single log entry in O(1).
     #[inline]
     pub fn record_entry(&mut self, entry: &LogEntry) {
-        self.timestamp = self.timestamp.max(entry.time_str.chars().count());
-        self.level = self.level.max(entry.level_text.chars().count());
-        self.module = self.module.max(entry.tag.chars().count());
+        self.timestamp = self.timestamp.max(entry.time_str().chars().count());
+        self.level = self.level.max(entry.level_text().chars().count());
+        self.module = self.module.max(entry.tag().chars().count());
         if let Some(source) = &entry.source {
             self.source = self.source.max(source.chars().count());
         }

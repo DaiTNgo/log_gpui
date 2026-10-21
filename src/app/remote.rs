@@ -123,15 +123,16 @@ impl AppView {
         // is closed asks its process to stop): wait for that, up to the
         // time the app gives a quitting app.
         let quit_hub = hub.clone();
-        cx.on_app_quit(move |this, _cx| {
+        cx.on_app_quit(move |this, cx| {
             for source in this.live.sources.values() {
                 source.handle.close();
             }
             let hub = quit_hub.clone();
+            let executor = cx.background_executor().clone();
             async move {
                 let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
                 while hub.running_commands() > 0 && std::time::Instant::now() < deadline {
-                    std::thread::sleep(std::time::Duration::from_millis(20));
+                    executor.timer(std::time::Duration::from_millis(20)).await;
                 }
             }
         })

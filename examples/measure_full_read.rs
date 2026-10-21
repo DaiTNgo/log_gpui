@@ -187,6 +187,11 @@ fn main() {
         first_lines_at.unwrap_or_default()
     );
     println!(
+        "  sftp bytes received: {:.0} MB for a file of {:.0} MB",
+        hub.sftp_bytes() as f64 / 1e6,
+        size as f64 / 1e6
+    );
+    println!(
         "  memory: {rss_before:.0} MB before, {peak:.0} MB peak, {:.0} MB after ({:.2} KB per line)",
         rss_mb(),
         (rss_mb() - rss_before) * 1024.0 / got.max(1) as f64

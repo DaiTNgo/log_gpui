@@ -21,9 +21,9 @@ pub struct ParsedFile {
     pub entries: Vec<LogEntry>,
     pub max_chars: FieldMaxChars,
     /// Every line of the file as stored, empty lines included.
-    pub lines: Arc<Vec<String>>,
+    pub lines: Arc<Vec<gpui::SharedString>>,
     /// Breaks of a live file, by position of the line they are drawn above.
-    pub raw_breaks: BTreeMap<usize, Arc<BreakMark>>,
+    pub raw_breaks: Arc<BTreeMap<usize, Arc<BreakMark>>>,
     /// What a live file keeps besides its lines.
     pub live: Option<LiveBuffer>,
     /// Why the file could not be read; it then counts as empty.
@@ -33,19 +33,21 @@ pub struct ParsedFile {
 }
 
 /// The lines of `text` as shown in the Raw View.
-pub fn split_lines(text: &str) -> Vec<String> {
-    text.lines().map(str::to_string).collect()
+pub fn split_lines(text: &str) -> Vec<gpui::SharedString> {
+    text.lines().map(gpui::SharedString::from).collect()
 }
 
 impl ParsedFile {
     pub fn from_bytes(bytes: &[u8]) -> Self {
         let parsed = parse_text_bytes_with_max_chars(bytes)
             .expect("parsing text bytes never fails");
+        // Every line is an entry: the Raw View's line is the entry's own text.
+        let lines = parsed.entries.iter().map(|e| e.raw_line.clone()).collect();
         Self {
             entries: parsed.entries,
             max_chars: parsed.max_chars.clone(),
-            lines: Arc::new(split_lines(&String::from_utf8_lossy(bytes))),
-            raw_breaks: BTreeMap::new(),
+            lines: Arc::new(lines),
+            raw_breaks: Arc::default(),
             live: None,
             load_error: None,
             format_id: None,
@@ -70,20 +72,20 @@ impl ParsedFile {
     }
 
     /// The lines, to change them in place.
-    pub fn lines_mut(&mut self) -> &mut Vec<String> {
+    pub fn lines_mut(&mut self) -> &mut Vec<gpui::SharedString> {
         Arc::make_mut(&mut self.lines)
     }
 
     /// Move the Breaks at line positions `from` and below by `by` lines;
     /// Breaks that move below position 0 are dropped.
     pub fn shift_breaks_from(&mut self, from: usize, by: isize) {
-        let moved: Vec<(usize, Arc<BreakMark>)> = std::mem::take(&mut self.raw_breaks)
+        let moved: Vec<(usize, Arc<BreakMark>)> = std::mem::take(Arc::make_mut(&mut self.raw_breaks))
             .into_iter()
             .collect();
         for (pos, mark) in moved {
             let pos = if pos >= from { pos as isize + by } else { pos as isize };
             if pos >= 0 {
-                self.raw_breaks.insert(pos as usize, mark);
+                Arc::make_mut(&mut self.raw_breaks).insert(pos as usize, mark);
             }
         }
     }

@@ -120,7 +120,7 @@ fn a_line_the_format_does_not_match_is_read_by_auto_detect() {
     let es = read("%{TIMESTAMP:timestamp} [%{LEVEL:level}] %{IP:client} %{GREEDY:message}", text);
     assert!(es[1].is_continuation(), "a stack trace line still continues its Parent Line");
     assert_eq!(es[1].parent, Some(1));
-    assert_eq!(es[1].payload.as_str(), es[1].raw_line.as_str());
+    assert_eq!(es[1].payload(), es[1].raw_line.as_str());
     assert!(es[1].span_text("client").is_none());
     assert_eq!(es[0].level, LogLevel::Error);
 }
@@ -162,8 +162,8 @@ fn every_built_in_template_reads_its_fixture_whole() {
     assert_eq!(es[1].span_text("status"), Some("201"));
     assert!(es.iter().all(|e| e.has_time), "the time of nginx sorts");
     let py = read(BUILT_IN[1].1, "ERROR:billing.gateway:timeout: retry 3");
-    assert_eq!(py[0].tag.as_str(), "billing.gateway");
-    assert_eq!(py[0].payload.as_str(), "timeout: retry 3");
+    assert_eq!(py[0].tag(), "billing.gateway");
+    assert_eq!(py[0].payload(), "timeout: retry 3");
 }
 
 // ─── Which format a file uses ────────────────────────────────────────────────

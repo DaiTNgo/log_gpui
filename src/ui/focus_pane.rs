@@ -79,7 +79,7 @@ pub struct PaneState<'a> {
     pub tabs: Vec<PaneTab>,
     pub can_close: bool,
     pub find_input: &'a gpui::Entity<InputState>,
-    pub find: FocusFind,
+    pub find: &'a FocusFind,
     pub search_matcher: Option<Matcher>,
     pub rows: Arc<Vec<FocusRow>>,
     pub source: PaneSource,
@@ -100,7 +100,7 @@ pub struct PaneState<'a> {
     /// In the Parsed View, the view's columns: the pane shows the same ones,
     /// in the same order and widths, under their Column Labels. `None` in the
     /// Raw View, where the pane shows each raw line.
-    pub columns: Option<crate::column::ColumnLayoutState>,
+    pub columns: Option<&'a crate::column::ColumnLayoutState>,
 }
 
 /// Width taken by the cells before the text of a row.
@@ -373,14 +373,13 @@ impl FocusPane {
         let view = state.view.clone();
         let menu_view = view.clone();
         let (v_down, v_move, v_up, v_up_out) = (view.clone(), view.clone(), view.clone(), view);
-        let header = state.columns.as_ref().map(|layout| render_column_header(layout, &scroll_handle, &state.colors));
+        let header = state.columns.map(|layout| render_column_header(layout, &scroll_handle, &state.colors));
         let env = PaneRows {
-            columns: state.columns.clone(),
+            columns: state.columns.is_some(),
             view: state.view.clone(),
             rows: state.rows,
             source: state.source,
             selected: state.selected,
-            find: state.find,
             search_matcher: state.search_matcher,
             show_source: state.show_source,
             colors: state.colors,
@@ -391,7 +390,7 @@ impl FocusPane {
         let list = uniform_list("focus_pane_list", count, move |range, _window, cx| {
             let mono_font = cx.theme().mono_font_family.clone();
             let this = env.view.read(cx);
-            range.filter_map(|i| env.row(i, &this.all_entries, &mono_font)).collect::<Vec<_>>()
+            range.filter_map(|i| env.row(i, this, &mono_font)).collect::<Vec<_>>()
         })
         .size_full()
         .with_width_from_item(Some(longest))
@@ -467,13 +466,14 @@ impl FocusPane {
 
 /// What the virtualized list needs to build the rows on its own.
 struct PaneRows {
-    /// The view's columns, in the Parsed View.
-    columns: Option<crate::column::ColumnLayoutState>,
+    /// Whether the rows are laid out in the view's columns (the Parsed View).
+    /// The layout and the Focus Find are read from the view when the rows
+    /// are built, so a frame copies neither.
+    columns: bool,
     view: gpui::Entity<AppView>,
     rows: Arc<Vec<FocusRow>>,
     source: PaneSource,
     selected: Option<usize>,
-    find: FocusFind,
     search_matcher: Option<Matcher>,
     show_source: bool,
     colors: CanvasColors,
@@ -486,9 +486,11 @@ impl PaneRows {
     fn row(
         &self,
         index: usize,
-        entries: &[LogEntry],
+        app: &AppView,
         mono_font: &gpui::SharedString,
     ) -> Option<gpui::Stateful<gpui::Div>> {
+        let entries = &app.all_entries;
+        let find = app.focus.find();
         let row = *self.rows.get(index)?;
         let colors = self.colors;
         // Each row is read as a `LogEntry`: the Parsed View has them, a Raw
@@ -511,8 +513,8 @@ impl PaneRows {
                         String::new(),
                         String::new(),
                         LogLevel::Unknown,
-                        text.clone(),
-                        text.clone(),
+                        text.to_string(),
+                        text.to_string(),
                     );
                     e.markers = markers
                         .get(&s.file_id)
@@ -534,14 +536,14 @@ impl PaneRows {
             None => colors.background,
         };
         let is_selected = self.selected == Some(index);
-        let is_find_current = self.find.current_row() == Some(index);
+        let is_find_current = find.current_row() == Some(index);
         let search_ranges = match &self.search_matcher {
             Some(m) if m.is_match(&entry.raw_line) => m.find_ranges(&entry.raw_line),
             _ => Vec::new(),
         };
-        let find_ranges = self.find.find_ranges(&entry.raw_line);
+        let find_ranges = find.find_ranges(&entry.raw_line);
         let selected_in_line = self.selection.and_then(|s| s.range_in_row(index, entry.raw_line.len()));
-        let columns = self.columns.as_ref().filter(|_| parsed);
+        let columns = (self.columns && parsed).then_some(&app.column_layout);
         let hidden_match = columns.and_then(|layout| {
             crate::ui::cells::hidden_matches(entry, &search_ranges, layout)
                 .map(|hidden| crate::ui::cells::hidden_matches_tooltip(&hidden, layout))

@@ -83,9 +83,6 @@ pub struct LiveRuntime {
     pub glob_interval: u64,
     /// The number the next source gets (`LiveSourceState::seq`).
     next_source_seq: u64,
-    /// A Remote Command that was edited onto another Server: the Server it
-    /// left, whose connection closes when its old Run has ended.
-    pub release_after_replace: HashMap<String, String>,
     /// Files with a Load More being read.
     pub loading_more: HashSet<String>,
     /// The next Rotated File each file could load above its lines.
@@ -101,7 +98,7 @@ pub struct LiveRuntime {
     pub pump_started: bool,
     /// Events taken from a source that did not fit one pump, per file, in
     /// order, to be applied before what the source sends next.
-    backlog: HashMap<String, std::collections::VecDeque<SourceEvent>>,
+    pub(crate) backlog: HashMap<String, std::collections::VecDeque<SourceEvent>>,
     /// Files whose batch is being read on a worker thread, by the `seq` of
     /// their source; their events wait until it is applied.
     parsing: HashMap<String, u64>,
@@ -126,7 +123,6 @@ impl LiveRuntime {
             glob_limit: 50,
             glob_interval: 5,
             next_source_seq: 0,
-            release_after_replace: HashMap::new(),
             loading_more: HashSet::new(),
             earlier: HashMap::new(),
             loading_earlier: HashSet::new(),
@@ -181,6 +177,10 @@ pub(crate) struct FileDelta {
     pub(crate) generation: u32,
     /// The last line already shown was replaced by its finished version.
     pub(crate) replaced_last: bool,
+    /// Something the app shows may have changed (lines, a status, a
+    /// progress, a notice): a batch with none needs no new frame when the
+    /// open view holds none of its files.
+    pub(crate) shown: bool,
 }
 
 pub(crate) fn now_label() -> String {
@@ -256,6 +256,7 @@ impl AppView {
             .cloned()
             .collect();
         for file_id in stale {
+            self.live.backlog.remove(&file_id);
             if let Some(source) = self.live.sources.remove(&file_id) {
                 source.handle.close();
             }
@@ -318,6 +319,8 @@ impl AppView {
             }
             self.live.next_source_seq += 1;
             let seq = self.live.next_source_seq;
+            // Events left over from a source this one replaces are not its.
+            self.live.backlog.remove(&file_id);
             self.live.sources.insert(
                 file_id,
                 LiveSourceState {
@@ -408,7 +411,7 @@ impl AppView {
         cx.notify();
     }
 
-    /// Every Remote File is told the new Live Window.
+    /// Every live file is told the new Live Window.
     pub fn set_live_window(&mut self, window: usize, cx: &mut Context<Self>) {
         self.live.window = window.max(1_000);
         self.workspace_state.live_window = self.live.window;
@@ -421,9 +424,8 @@ impl AppView {
         let remote_ids: Vec<String> = self
             .live
             .sources
-            .iter()
-            .filter(|(_, s)| s.remote)
-            .map(|(id, _)| id.clone())
+            .keys()
+            .cloned()
             .collect();
         for file_id in remote_ids {
             if let Some(parsed) = self.parsed_files.get_mut(&file_id) {
@@ -631,7 +633,6 @@ impl AppView {
 
     fn apply_file_events(&mut self, file_id: &str, events: Vec<SourceEvent>) -> FileDelta {
         let mut delta = FileDelta::default();
-        let remote = self.live.sources.get(file_id).is_some_and(|s| s.remote);
         let window = self.live.window;
         let time = now_label();
         let Some(mut parsed) = self.parsed_files.remove(file_id) else { return delta };
@@ -642,6 +643,9 @@ impl AppView {
         for event in events {
             if let Some(source) = self.live.sources.get_mut(file_id) {
                 source.health.observe(&event, std::time::SystemTime::now());
+            }
+            if !matches!(event, SourceEvent::Inode(_)) {
+                delta.shown = true;
             }
             match event {
                 SourceEvent::Tail { lines, generation, bytes, end_offset } => {
@@ -736,9 +740,6 @@ impl AppView {
                 SourceEvent::CommandChanged { from, to } => {
                     buffer.apply_command_changed(&from, &to, &time);
                     self.begin_generation_for(file_id);
-                    if let Some(old) = self.live.release_after_replace.remove(file_id) {
-                        self.release_unused_server(&old);
-                    }
                     if let Some(source) = self.live.sources.get_mut(file_id) {
                         source.name = to;
                     }
@@ -755,7 +756,7 @@ impl AppView {
                 }
             }
         }
-        if remote {
+        {
             let limit = buffer.limit(window, self.live.full_read_limit);
             // Not structural: the oldest rows of the file leave the view in
             // place (`trim_open_view`).
@@ -829,7 +830,11 @@ impl AppView {
             .filter(|(id, d)| space_files.contains(id) && (d.appended.is_some() || d.structural || d.trimmed.is_some()))
             .collect();
         if relevant.is_empty() {
-            cx.notify();
+            // Background files: the sidebar's status and counts are what a
+            // new frame would show.
+            if deltas.iter().any(|(_, d)| d.shown || d.appended.is_some() || d.structural || d.trimmed.is_some()) {
+                cx.notify();
+            }
             return;
         }
 

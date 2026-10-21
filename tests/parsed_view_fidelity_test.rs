@@ -19,16 +19,16 @@ fn cell<'a>(e: &'a LogEntry, field: &str) -> &'a str {
 #[test]
 fn abbreviated_level_is_shown_as_written() {
     let e = &entries("2026-10-18 10:00:01 err payment failed")[0];
-    assert_eq!(e.level_text, "err");
+    assert_eq!(e.level_text(), "err");
     assert_eq!(cell(e, "level"), "err");
     assert_eq!(e.level, LogLevel::Error, "meaning is still understood");
-    assert_eq!(e.payload, "payment failed");
+    assert_eq!(e.payload(), "payment failed");
 }
 
 #[test]
 fn timestamp_is_shown_verbatim() {
     let e = &entries("2026-10-18T10:32:02.441+07:00 [INFO] [api] hi")[0];
-    assert_eq!(e.time_str, "2026-10-18T10:32:02.441+07:00");
+    assert_eq!(e.time_str(), "2026-10-18T10:32:02.441+07:00");
     assert_eq!(cell(e, "timestamp"), "2026-10-18T10:32:02.441+07:00");
     assert!(e.has_time);
 }
@@ -57,8 +57,8 @@ fn json_strings_keep_their_escapes() {
 #[test]
 fn nothing_is_made_up_for_unreadable_lines() {
     let e = &entries("connection reset by peer")[0];
-    assert_eq!(e.tag, "", "no default module");
-    assert_eq!(e.level_text, "");
+    assert_eq!(e.tag(), "", "no default module");
+    assert_eq!(e.level_text(), "");
     assert_eq!(e.level, LogLevel::Unknown, "no level guessed from the words");
     assert_eq!(cell(e, "message"), "connection reset by peer");
 }
@@ -66,29 +66,29 @@ fn nothing_is_made_up_for_unreadable_lines() {
 #[test]
 fn a_word_that_is_not_a_level_stays_in_the_message() {
     let e = &entries("2026-10-18 10:00:01 Failed to connect")[0];
-    assert_eq!(e.level_text, "");
+    assert_eq!(e.level_text(), "");
     assert_eq!(cell(e, "message"), "Failed to connect");
 }
 
 #[test]
 fn module_without_level() {
     let e = &entries("2026-10-18 10:00:01 [api] started")[0];
-    assert_eq!(e.level_text, "");
-    assert_eq!(e.tag, "api");
+    assert_eq!(e.level_text(), "");
+    assert_eq!(e.tag(), "api");
 }
 
 #[test]
 fn logcat_level_letter_is_kept() {
     let e = &entries("09-05 12:34:56.789  1234  5678 E AndroidRuntime: boom")[0];
-    assert_eq!(e.level_text, "E");
+    assert_eq!(e.level_text(), "E");
     assert_eq!(e.level, LogLevel::Error);
-    assert_eq!(e.tag, "AndroidRuntime");
+    assert_eq!(e.tag(), "AndroidRuntime");
 }
 
 #[test]
 fn raw_and_parsed_agree_on_an_edited_line() {
     let parsed = ParsedFile::from_text("2026-10-18 10:00:01 err boom\n");
-    assert_eq!(parsed.entries[0].level_text, "err");
+    assert_eq!(parsed.entries[0].level_text(), "err");
 }
 
 // ─── Rows ────────────────────────────────────────────────────────────────────
@@ -113,8 +113,8 @@ fn continuation_lines_point_at_their_parent_line() {
     assert_eq!(es[4].parent, Some(3));
     assert_eq!(es[5].parent, None);
     // A continuation line only has its message, covering the whole line.
-    assert_eq!(es[3].level_text, "");
-    assert_eq!(es[3].tag, "");
+    assert_eq!(es[3].level_text(), "");
+    assert_eq!(es[3].tag(), "");
     assert_eq!(cell(&es[3], "message"), "    at A.b(A.java:1)");
     assert_eq!(es[3].spans.len(), 1);
 }
@@ -207,12 +207,12 @@ fn search_matches_the_text_of_the_continuation_line_itself() {
     let hits: Vec<usize> = es
         .iter()
         .enumerate()
-        .filter(|(_, e)| m.is_match(&e.payload))
+        .filter(|(_, e)| m.is_match(e.payload()))
         .map(|(i, _)| i)
         .collect();
     assert_eq!(hits, vec![2]);
     let underscore = Matcher::compile(&parse("_").unwrap().unwrap());
-    assert!(!underscore.is_match(&es[1].payload), "the dim `_` is not text");
+    assert!(!underscore.is_match(es[1].payload()), "the dim `_` is not text");
 }
 
 // ─── Time Range ──────────────────────────────────────────────────────────────

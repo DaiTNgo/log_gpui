@@ -48,6 +48,61 @@ pub enum HoldMode {
     Extended,
 }
 
+/// The length in the file of each held line, with their sum kept as lines
+/// come and go (the sum is asked for from render, so it is not recomputed).
+#[derive(Debug, Clone, Default)]
+struct ByteLens {
+    lens: Vec<u32>,
+    total: u64,
+}
+
+impl ByteLens {
+    fn total(&self) -> u64 {
+        self.total
+    }
+
+    fn iter(&self) -> std::slice::Iter<'_, u32> {
+        self.lens.iter()
+    }
+
+    fn push(&mut self, len: u32) {
+        self.total += u64::from(len);
+        self.lens.push(len);
+    }
+
+    fn resize(&mut self, len: usize, fill: u32) {
+        if len < self.lens.len() {
+            self.truncate(len);
+        } else {
+            self.total += u64::from(fill) * (len - self.lens.len()) as u64;
+            self.lens.resize(len, fill);
+        }
+    }
+
+    fn truncate(&mut self, len: usize) {
+        if len < self.lens.len() {
+            self.total -= self.lens[len..].iter().map(|b| u64::from(*b)).sum::<u64>();
+            self.lens.truncate(len);
+        }
+    }
+
+    fn insert_at(&mut self, at: usize, lens: impl Iterator<Item = u32>) {
+        let before = self.lens.len();
+        self.lens.splice(at..at, lens);
+        let added = self.lens.len() - before;
+        self.total += self.lens[at..at + added].iter().map(|b| u64::from(*b)).sum::<u64>();
+    }
+
+    fn drain_front(&mut self, n: usize) {
+        self.total -= self.lens[..n].iter().map(|b| u64::from(*b)).sum::<u64>();
+        self.lens.drain(..n);
+    }
+
+    fn shrink_to_fit(&mut self) {
+        self.lens.shrink_to_fit();
+    }
+}
+
 /// Where the oldest held line is in the file on the Server.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct HeldStart {
@@ -96,7 +151,7 @@ pub struct LiveBuffer {
     replace_last: bool,
     /// Length in the file of each held line, line end included, parallel to
     /// the entries of the cache (0 when not known: local files).
-    byte_lens: Vec<u32>,
+    byte_lens: ByteLens,
     /// Lines read ahead of the app applying them (`PrepareJob`), in the order
     /// they will be applied. An entry that does not fit what is applied is
     /// dropped and the lines are read again.
@@ -238,7 +293,7 @@ impl LiveBuffer {
             tail_last_index: None,
             local_offset: 0,
             replace_last: false,
-            byte_lens: Vec::new(),
+            byte_lens: ByteLens::default(),
             prepared: VecDeque::new(),
             next_offset: 0,
             hold: HoldMode::Window,
@@ -275,7 +330,7 @@ impl LiveBuffer {
             tail_last_index: None,
             local_offset: 0,
             replace_last: false,
-            byte_lens: Vec::new(),
+            byte_lens: ByteLens::default(),
             prepared: VecDeque::new(),
             next_offset: 0,
             hold: HoldMode::Window,
@@ -422,10 +477,10 @@ impl LiveBuffer {
         for entry in &entries {
             parsed.max_chars.record_entry(entry);
         }
-        parsed.lines_mut().splice(at..at, lines.iter().cloned());
+        parsed.lines_mut().splice(at..at, entries.iter().map(|e| e.raw_line.clone()));
         parsed.entries.splice(at..at, entries.drain(..));
         self.sync_byte_lens(parsed.entries.len() - count);
-        self.byte_lens.splice(at..at, (0..count).map(|i| bytes.get(i).copied().unwrap_or(0)));
+        self.byte_lens.insert_at(at, (0..count).map(|i| bytes.get(i).copied().unwrap_or(0)));
         parsed.shift_breaks_from(at, count as isize);
     }
 
@@ -484,7 +539,7 @@ impl LiveBuffer {
                 )
             }) {
                 top.break_before = None;
-                parsed.raw_breaks.remove(&0);
+                Arc::make_mut(&mut parsed.raw_breaks).remove(&0);
             }
         }
         if count > 0 {
@@ -499,7 +554,7 @@ impl LiveBuffer {
                     label: format!("{} rotated{when}", self.name),
                 });
                 newer.break_before = Some(mark.clone());
-                parsed.raw_breaks.insert(count, mark);
+                Arc::make_mut(&mut parsed.raw_breaks).insert(count, mark);
             }
         }
         moved
@@ -515,7 +570,7 @@ impl LiveBuffer {
             label: format!("{count} since {since} do not fit the Live Window"),
         });
         top.break_before = Some(mark.clone());
-        parsed.raw_breaks.insert(0, mark);
+        Arc::make_mut(&mut parsed.raw_breaks).insert(0, mark);
     }
 
     // ── Remote Copy ─────────────────────────────────────────────────────────
@@ -568,7 +623,7 @@ impl LiveBuffer {
         if let Some(top) = parsed.entries.first_mut() {
             let mark = Arc::new(BreakMark { kind: BreakKind::OlderNotRead, label: label.to_string() });
             top.break_before = Some(mark.clone());
-            parsed.raw_breaks.insert(0, mark);
+            Arc::make_mut(&mut parsed.raw_breaks).insert(0, mark);
         }
     }
 
@@ -595,13 +650,13 @@ impl LiveBuffer {
                     };
                     let mark = Arc::new(BreakMark { kind, label });
                     top.break_before = Some(mark.clone());
-                    parsed.raw_breaks.insert(0, mark);
+                    Arc::make_mut(&mut parsed.raw_breaks).insert(0, mark);
                 }
             }
             None => {
                 if top.break_before.as_ref().is_some_and(is_ours) {
                     top.break_before = None;
-                    parsed.raw_breaks.remove(&0);
+                    Arc::make_mut(&mut parsed.raw_breaks).remove(&0);
                 }
             }
         }
@@ -635,7 +690,7 @@ impl LiveBuffer {
             self.replace_last = false;
             if parsed.entries.pop().is_some() {
                 parsed.lines_mut().pop();
-                parsed.raw_breaks.remove(&parsed.entries.len());
+                Arc::make_mut(&mut parsed.raw_breaks).remove(&parsed.entries.len());
                 self.byte_lens.truncate(parsed.entries.len());
                 self.next_index -= 1;
             }
@@ -678,13 +733,14 @@ impl LiveBuffer {
             if let Some(mark) = self.pending.take() {
                 let mark = Arc::new(mark);
                 entry.break_before = Some(mark.clone());
-                parsed.raw_breaks.insert(parsed.entries.len(), mark);
+                Arc::make_mut(&mut parsed.raw_breaks).insert(parsed.entries.len(), mark);
             }
             self.next_index += 1;
             parsed.max_chars.record_entry(&entry);
             parsed.entries.push(entry);
         }
-        parsed.lines_mut().extend(lines.iter().cloned());
+        let added: Vec<gpui::SharedString> = parsed.entries[from..].iter().map(|e| e.raw_line.clone()).collect();
+        parsed.lines_mut().extend(added);
         from..parsed.entries.len()
     }
 
@@ -860,7 +916,7 @@ impl LiveBuffer {
         parsed.entries.drain(..removed);
         parsed.lines_mut().drain(..removed);
         self.sync_byte_lens(removed + keep);
-        self.byte_lens.drain(..removed);
+        self.byte_lens.drain_front(removed);
         parsed.shift_breaks_from(0, -(removed as isize));
         let first = parsed.entries.first_mut()?;
         let (generation, first_kept) = (first.generation, first.index);
@@ -869,7 +925,7 @@ impl LiveBuffer {
             label: format!("{} older lines left the window", self.name),
         });
         first.break_before = Some(mark.clone());
-        parsed.raw_breaks.insert(0, mark);
+        Arc::make_mut(&mut parsed.raw_breaks).insert(0, mark);
         if generation == self.generation {
             self.first_index = first_kept;
         }
@@ -890,9 +946,9 @@ impl LiveBuffer {
         // A new vector, not `clear`: the old one's memory is freed.
         parsed.entries = Vec::new();
         parsed.lines = Arc::new(Vec::new());
-        parsed.raw_breaks.clear();
+        Arc::make_mut(&mut parsed.raw_breaks).clear();
         parsed.max_chars = crate::column::FieldMaxChars::new();
-        self.byte_lens = Vec::new();
+        self.byte_lens = ByteLens::default();
         self.parser.reset();
         self.replace_last = false;
         self.hold = HoldMode::Window;
@@ -924,7 +980,7 @@ impl LiveBuffer {
         }
         // The lines of the current Generation are all the lines held, then
         // the offset is the end of the last minus their lengths.
-        let held: u64 = self.byte_lens.iter().map(|b| u64::from(*b)).sum();
+        let held = self.byte_lens.total();
         HeldStart {
             generation: first.generation,
             line_no: first.index,
@@ -974,7 +1030,7 @@ impl LiveBuffer {
                 })
             {
                 first.break_before = None;
-                parsed.raw_breaks.remove(&0);
+                Arc::make_mut(&mut parsed.raw_breaks).remove(&0);
             }
         }
         match top_generation {
@@ -1001,7 +1057,7 @@ impl LiveBuffer {
                         ),
                     });
                     joined.break_before = Some(mark.clone());
-                    parsed.raw_breaks.insert(lines.len(), mark);
+                    Arc::make_mut(&mut parsed.raw_breaks).insert(lines.len(), mark);
                 }
             }
         }
@@ -1013,7 +1069,7 @@ impl LiveBuffer {
                         label: format!("{} {}", self.name, BreakKind::StartOfLoaded.label()),
                     });
                     first.break_before = Some(mark.clone());
-                    parsed.raw_breaks.insert(0, mark);
+                    Arc::make_mut(&mut parsed.raw_breaks).insert(0, mark);
                 }
             }
         }
@@ -1038,7 +1094,7 @@ impl LiveBuffer {
         match parsed.entries.first_mut() {
             Some(first) => {
                 first.break_before = Some(mark.clone());
-                parsed.raw_breaks.insert(0, mark);
+                Arc::make_mut(&mut parsed.raw_breaks).insert(0, mark);
             }
             None => self.add_pending(BreakMark { kind: BreakKind::Changed, label: mark.label.clone() }),
         }
@@ -1091,7 +1147,30 @@ pub fn size_text(bytes: u64) -> String {
 fn continuation_of(entry: &crate::model::LogEntry, parent: usize) -> crate::model::LogEntry {
     let mut e = entry.clone();
     e.parent = Some(parent);
-    e.time_str = Default::default();
+    e.set_time_str("");
     e.has_time = false;
     e
+}
+
+#[cfg(test)]
+mod byte_lens_tests {
+    use super::ByteLens;
+
+    #[test]
+    fn total_follows_every_change() {
+        let mut b = ByteLens::default();
+        for n in [10, 20, 30] {
+            b.push(n);
+        }
+        b.insert_at(1, [5, 6].into_iter());
+        assert_eq!(b.total(), 71);
+        b.drain_front(2);
+        assert_eq!(b.total(), 56);
+        b.resize(5, 0);
+        b.truncate(2);
+        assert_eq!(b.total(), 26);
+        b.resize(4, 7);
+        assert_eq!(b.total(), 40);
+        assert_eq!(b.total(), b.iter().map(|x| u64::from(*x)).sum::<u64>());
+    }
 }

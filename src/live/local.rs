@@ -89,12 +89,14 @@ impl LocalFileSource {
                     Ok(SourceCommand::Close) => return,
                     Ok(SourceCommand::Pause) => paused = true,
                     Ok(SourceCommand::Resume) => paused = false,
+                    Ok(SourceCommand::LoadMore { lines, first_hash, first_line_no, .. }) => {
+                        super::local_older::send_older(&self.path, first_line_no, first_hash, lines, &events);
+                    }
                     Ok(SourceCommand::SetWindow(_))
                 | Ok(SourceCommand::Reconnect)
                 | Ok(SourceCommand::Clear)
                 | Ok(SourceCommand::CancelLoadMore)
                 | Ok(SourceCommand::LoadEarlier { .. })
-                | Ok(SourceCommand::LoadMore { .. })
                 | Ok(SourceCommand::Restart)
                 | Ok(SourceCommand::Replace { .. })
                 | Ok(SourceCommand::SetRestartOnExit(_)) => {}
@@ -179,18 +181,30 @@ impl LocalFileSource {
     }
 }
 
-/// Read everything after `current.offset` and send the completed lines.
+/// Most bytes one `Append` is read from.
+pub const CHUNK_BYTES: usize = 4 << 20;
+
+/// Read everything after `current.offset`, a chunk at a time, and send the
+/// completed lines of each chunk: a burst or a rewritten large file never
+/// makes one huge batch. Waits while the app is behind.
 fn drain(current: &mut Open, splitter: &mut LineSplitter, events: &Sender<SourceEvent>) {
     if current.file.seek(SeekFrom::Start(current.offset)).is_err() {
         return;
     }
     let mut buf = Vec::new();
-    if current.file.read_to_end(&mut buf).is_err() {
-        return;
-    }
-    current.offset += buf.len() as u64;
-    let lines = splitter.push(&buf);
-    if !lines.is_empty() {
-        let _ = events.try_send(SourceEvent::Append { lines, bytes: Vec::new(), streams: None });
+    loop {
+        buf.clear();
+        match (&mut current.file).take(CHUNK_BYTES as u64).read_to_end(&mut buf) {
+            Ok(0) | Err(_) => return,
+            Ok(_) => {}
+        }
+        current.offset += buf.len() as u64;
+        let lines = splitter.push(&buf);
+        if !lines.is_empty() {
+            let _ = events.try_send(SourceEvent::Append { lines, bytes: Vec::new(), streams: None });
+        }
+        while events.len() >= 4 && !events.is_closed() {
+            std::thread::sleep(Duration::from_millis(10));
+        }
     }
 }

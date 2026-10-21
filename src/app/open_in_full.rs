@@ -308,7 +308,7 @@ impl AppView {
             let hub = hub.clone();
             async move {
                 let session = hub.session(&store, &server_id).await.map_err(|e| e.message())?;
-                let sftp = session.open_sftp().await?;
+                let sftp = session.open_sftp_random().await?;
                 let size = sftp.metadata(path.clone()).await.map_err(|e| format!("{path}: {e}"))?.len();
                 let compression = sniff(&sftp, &path).await?;
                 let newest = end_time(&sftp, &path, size, compression).await?;
@@ -451,7 +451,7 @@ impl AppView {
                 let mut per_file: Vec<Vec<GenerationEstimate>> = vec![Vec::new(); count];
                 for (index, server_id, plan, start, to) in jobs {
                     let session = hub.session(&store, &server_id).await.map_err(|e: ConnectError| e.message())?;
-                    let sftp = session.open_sftp().await?;
+                    let sftp = session.open_sftp_random().await?;
                     per_file[index] = estimate_generations(&sftp, &plan, start, to).await?;
                 }
                 Ok::<_, String>(per_file)

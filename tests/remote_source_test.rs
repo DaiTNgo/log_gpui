@@ -515,3 +515,48 @@ fn load_more_decodes_a_compressed_rotated_file_and_keeps_the_lines_before_the_he
     assert_eq!(lines.last().unwrap(), "line 2000");
     h.close();
 }
+
+/// Processes started on the Server through the shared session so far.
+fn execs(env: &Env) -> usize {
+    let (hub, store, id) = (env.hub.clone(), env.store.clone(), env.server_id.clone());
+    hub.clone().handle().block_on(async move { hub.session(&store, &id).await.unwrap().exec_count() })
+}
+
+#[test]
+fn following_a_quiet_file_starts_no_process_on_the_server_for_each_poll() {
+    let Some(env) = env() else { return };
+    let path = env.dir.path().join("quiet.log");
+    std::fs::write(&path, numbered(1..=3)).unwrap();
+    let (h, _) = env.source("quiet.log", 100_000);
+    next(&h, |e| matches!(e, SourceEvent::Tail { .. }));
+    std::thread::sleep(Duration::from_millis(500));
+    let before = execs(&env);
+    // Six seconds is twelve polls; the inode is looked at only now and then.
+    std::thread::sleep(Duration::from_secs(6));
+    let during = execs(&env) - before;
+    assert!(during <= 3, "{during} processes started in 6 seconds");
+    // Growth is still followed.
+    let mut f = std::fs::OpenOptions::new().append(true).open(&path).unwrap();
+    f.write_all(b"more\n").unwrap();
+    assert_eq!(
+        next(&h, |e| matches!(e, SourceEvent::Append { .. })),
+        SourceEvent::Append { lines: vec!["more".into()], bytes: vec![5], streams: None }
+    );
+    h.close();
+}
+
+#[test]
+fn a_rotation_to_a_bigger_file_is_found_by_the_slower_inode_check() {
+    let Some(env) = env() else { return };
+    let path = env.dir.path().join("grow.log");
+    std::fs::write(&path, numbered(1..=3)).unwrap();
+    let (h, _) = env.source("grow.log", 100_000);
+    next(&h, |e| matches!(e, SourceEvent::Tail { .. }));
+    // The new file is already bigger than the old one: the size alone shows nothing.
+    std::fs::rename(&path, env.dir.path().join("grow.log.1")).unwrap();
+    std::fs::write(&path, numbered(100..=140)).unwrap();
+    next(&h, |e| *e == SourceEvent::Break { kind: BreakKind::Rotated });
+    let SourceEvent::Append { lines, .. } = next(&h, |e| matches!(e, SourceEvent::Append { .. })) else { unreachable!() };
+    assert_eq!(lines.first().map(String::as_str), Some("line 100"));
+    h.close();
+}

@@ -9,12 +9,12 @@ fn test_parse_text_logs() {
     assert_eq!(entries.len(), 2);
     assert_eq!(entries[0].index, 1);
     assert_eq!(entries[0].level, LogLevel::Warn);
-    assert_eq!(entries[0].tag, "NAVI");
-    assert_eq!(entries[0].payload, "GPS satellite count low");
+    assert_eq!(entries[0].tag(), "NAVI");
+    assert_eq!(entries[0].payload(), "GPS satellite count low");
 
     assert_eq!(entries[1].index, 2);
     assert_eq!(entries[1].level, LogLevel::Error);
-    assert_eq!(entries[1].tag, "BODY");
+    assert_eq!(entries[1].tag(), "BODY");
 }
 
 #[test]

@@ -67,7 +67,7 @@ impl ContextModal {
                 .child(
                     div()
                         .w(px(90.0))
-                        .child(entry.time_str.clone()),
+                        .child(entry.time_str().to_string()),
                 )
                 .child(
                     div()
@@ -79,13 +79,13 @@ impl ContextModal {
                     div()
                         .w(px(80.0))
                         .font_weight(gpui::FontWeight::SEMIBOLD)
-                        .child(entry.tag.clone()),
+                        .child(entry.tag().to_string()),
                 )
                 .child(
                     div()
                         .flex_1()
                         .truncate()
-                        .child(entry.payload.clone()),
+                        .child(entry.payload().to_string()),
                 )
                 .child(if is_selected {
                     div()

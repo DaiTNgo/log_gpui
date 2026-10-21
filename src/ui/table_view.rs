@@ -97,7 +97,7 @@ impl TableDelegate for LogTableDelegate {
                 .px_2()
                 .font_family(cx.theme().mono_font_family.clone())
                 .text_xs()
-                .child(entry.time_str.clone())
+                .child(entry.time_str().to_string())
                 .into_any_element(),
             2 => {
                 let delta_text = entry
@@ -117,7 +117,7 @@ impl TableDelegate for LogTableDelegate {
                 .text_xs()
                 .font_weight(gpui::FontWeight::SEMIBOLD)
                 .text_color(rgb(0xa78bfa))
-                .child(entry.tag.clone())
+                .child(entry.tag().to_string())
                 .into_any_element(),
             4 => {
                 let (color, bg) = match entry.level {
@@ -151,7 +151,7 @@ impl TableDelegate for LogTableDelegate {
                     .text_xs()
                     .text_color(text_color)
                     .truncate()
-                    .child(entry.payload.clone())
+                    .child(entry.payload().to_string())
                     .into_any_element()
             }
             _ => div().into_any_element(),

@@ -74,7 +74,7 @@ impl AppView {
     /// counter reflects the new position.
     pub fn jump_to_match_by_entry(&mut self, entry_ix: usize, cx: &mut Context<Self>) {
         let search = self.focus.search_mut();
-        if let Some(match_idx) = search.matched_visible_indices.iter().position(|&p| p == entry_ix) {
+        if let Ok(match_idx) = search.matched_visible_indices.binary_search(&entry_ix) {
             search.current_match_idx = match_idx;
         }
         self.jump_to_row(entry_ix, cx);

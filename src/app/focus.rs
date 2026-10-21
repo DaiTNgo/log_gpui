@@ -65,11 +65,16 @@ impl AppView {
         };
         // Called on every render (Inspector) and click: the selected row, or
         // the row a single file puts the line at, is almost always it.
-        let likely = [self.selected_row_pos, line.line.checked_sub(1)];
+        // The row the last scan found is checked too: when rows moved under
+        // a stale position, only the first call walks them.
+        let likely = [self.selected_row_pos, line.line.checked_sub(1), self.entry_found.get()];
         if let Some(ix) = likely.into_iter().flatten().find(|&ix| is_line(ix)) {
             return Some(ix);
         }
-        (0..self.all_entries.len()).find(|&ix| is_line(ix))
+        self.entry_scans.set(self.entry_scans.get() + 1);
+        let found = (0..self.all_entries.len()).find(|&ix| is_line(ix));
+        self.entry_found.set(found);
+        found
     }
 
     /// The row of the open view a line is: an entry of the Parsed View or a
@@ -112,7 +117,7 @@ impl AppView {
             FocusRow::Raw { section, line } => sections
                 .get(section)
                 .and_then(|s| s.lines.get(line))
-                .map_or("", String::as_str),
+                .map_or("", |l| l.as_str()),
         })
     }
 
@@ -558,11 +563,18 @@ impl AppView {
         Some(TextPos::new(row, byte))
     }
 
+    /// The view's columns when the pane shows them (the Parsed View), read
+    /// in place. What the pane draws does not depend on which are pinned.
+    pub fn pane_layout(&self) -> Option<&crate::column::ColumnLayoutState> {
+        (self.view_mode == ViewMode::Parsed).then_some(&self.column_layout)
+    }
+
     /// The columns the pane shows in the Parsed View: the view's, with none
-    /// pinned (the pane scrolls as one). `None` in the Raw View.
+    /// pinned (the pane scrolls as one). `None` in the Raw View. A copy: for
+    /// hit-testing a click, not for a frame.
     pub fn pane_columns(&self) -> Option<crate::column::ColumnLayoutState> {
-        (self.view_mode == ViewMode::Parsed).then(|| {
-            let mut layout = self.column_layout.clone();
+        self.pane_layout().map(|layout| {
+            let mut layout = layout.clone();
             layout.unpin_all();
             layout
         })

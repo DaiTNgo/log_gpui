@@ -43,7 +43,7 @@ impl AppView {
             ViewMode::Raw => {
                 let section = self.raw_sections().into_iter().find(|s| *s.file_id == *current.file_id)?;
                 let at = current.line.checked_sub(1)?;
-                let text = section.lines.get(at)?.clone();
+                let text = section.lines.get(at)?.to_string();
                 let mut lines = vec![text];
                 // A file edited since it was parsed has no reliable entries.
                 let parsed = self
@@ -59,7 +59,7 @@ impl AppView {
                     if is_parent {
                         for e in entries[start + 1..].iter().take_while(|e| e.is_continuation()) {
                             if let Some(t) = section.lines.get(e.index - 1) {
-                                lines.push(t.clone());
+                                lines.push(t.to_string());
                             }
                         }
                     }

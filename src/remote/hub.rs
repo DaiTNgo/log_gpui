@@ -15,7 +15,8 @@ use russh::MethodKind;
 use russh_sftp::client::SftpSession;
 use std::collections::HashMap;
 use std::future::Future;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio::runtime::Runtime;
@@ -172,9 +173,49 @@ pub struct RemoteSession {
     /// Commands running through the hub's sessions, counted until their
     /// channel is closed.
     runs: Arc<AtomicUsize>,
+    /// Bytes received on the SFTP channels of the hub.
+    sftp_bytes: Arc<AtomicU64>,
+    /// Processes started through this session.
+    execs: AtomicUsize,
     handle: Handle<ClientHandler>,
     /// The sessions the channel to this one runs through.
     _hops: Vec<Handle<ClientHandler>>,
+}
+
+/// Largest read of a random-access SFTP session.
+const RANDOM_READ_LEN: u32 = 64 * 1024;
+
+/// A stream that counts what it receives.
+struct CountingStream<S> {
+    inner: S,
+    count: Arc<AtomicU64>,
+}
+
+impl<S: AsyncRead + Unpin> AsyncRead for CountingStream<S> {
+    fn poll_read(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        let before = buf.filled().len();
+        let poll = std::pin::Pin::new(&mut self.inner).poll_read(cx, buf);
+        if poll.is_ready() {
+            self.count.fetch_add((buf.filled().len() - before) as u64, Ordering::Relaxed);
+        }
+        poll
+    }
+}
+
+impl<S: AsyncWrite + Unpin> AsyncWrite for CountingStream<S> {
+    fn poll_write(mut self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>, buf: &[u8]) -> std::task::Poll<std::io::Result<usize>> {
+        std::pin::Pin::new(&mut self.inner).poll_write(cx, buf)
+    }
+    fn poll_flush(mut self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<std::io::Result<()>> {
+        std::pin::Pin::new(&mut self.inner).poll_flush(cx)
+    }
+    fn poll_shutdown(mut self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<std::io::Result<()>> {
+        std::pin::Pin::new(&mut self.inner).poll_shutdown(cx)
+    }
 }
 
 /// What `exec` returned.
@@ -186,18 +227,50 @@ pub struct ExecOutput {
 }
 
 impl RemoteSession {
+    /// How many processes this session started on the Server.
+    pub fn exec_count(&self) -> usize {
+        self.execs.load(Ordering::SeqCst)
+    }
+
     pub fn is_closed(&self) -> bool {
         self.handle.is_closed()
     }
 
+    /// An SFTP session for reading a file from front to back: reads are
+    /// pipelined, so it must not be moved around (every seek throws away the
+    /// requests in flight, which the Server still sends).
     pub async fn open_sftp(&self) -> Result<SftpSession, String> {
+        self.open_sftp_with(russh_sftp::client::Config::default()).await
+    }
+
+    /// An SFTP session for reading blocks here and there (backward blocks,
+    /// timestamp probes): one request at a time and of one block at most,
+    /// so a read transfers about what it asks for.
+    pub async fn open_sftp_random(&self) -> Result<SftpSession, String> {
+        self.open_sftp_with(russh_sftp::client::Config {
+            max_packet_len: RANDOM_READ_LEN + 13,
+            max_concurrent_reads: 1,
+            ..Default::default()
+        })
+        .await
+    }
+
+    async fn open_sftp_with(&self, cfg: russh_sftp::client::Config) -> Result<SftpSession, String> {
+        let stream = CountingStream { inner: self.open_sftp_stream().await?, count: self.sftp_bytes.clone() };
+        SftpSession::new_with_config(stream, cfg).await.map_err(|e| e.to_string())
+    }
+
+    /// The byte stream of a new `sftp` subsystem channel (for a raw SFTP
+    /// session that wants to choose its own read sizes).
+    pub async fn open_sftp_stream(&self) -> Result<russh::ChannelStream<client::Msg>, String> {
         let channel = self.handle.channel_open_session().await.map_err(|e| e.to_string())?;
         channel.request_subsystem(true, "sftp").await.map_err(|e| e.to_string())?;
-        SftpSession::new(channel.into_stream()).await.map_err(|e| e.to_string())
+        Ok(channel.into_stream())
     }
 
     /// Run a command and collect its output.
     pub async fn exec(&self, command: &str) -> Result<ExecOutput, String> {
+        self.execs.fetch_add(1, Ordering::SeqCst);
         let mut channel = self.handle.channel_open_session().await.map_err(|e| e.to_string())?;
         channel.exec(true, command).await.map_err(|e| e.to_string())?;
         let mut out = ExecOutput::default();
@@ -215,6 +288,7 @@ impl RemoteSession {
     /// Start a command and read its output as it comes: no terminal, and its
     /// input is closed at once so a command that reads it sees the end.
     pub async fn exec_stream(&self, command: &str) -> Result<ExecStream, String> {
+        self.execs.fetch_add(1, Ordering::SeqCst);
         let channel = self.handle.channel_open_session().await.map_err(|e| e.to_string())?;
         channel.exec(true, command).await.map_err(|e| e.to_string())?;
         channel.eof().await.map_err(|e| e.to_string())?;
@@ -315,6 +389,8 @@ pub struct RemoteHub {
     health: HealthBoard,
     /// Commands (Runs) not yet ended on a Server.
     runs: Arc<AtomicUsize>,
+    /// Bytes received on the SFTP channels.
+    sftp_bytes: Arc<AtomicU64>,
     /// Held while one Server is being connected, so files that ask at the
     /// same time share one session (and one host key question).
     connecting: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
@@ -345,6 +421,7 @@ impl RemoteHub {
             typed_secrets: Arc::default(),
             health: HealthBoard::new(),
             runs: Arc::default(),
+            sftp_bytes: Arc::default(),
             connecting: Mutex::default(),
         });
         (hub, requests)
@@ -359,6 +436,11 @@ impl RemoteHub {
     /// this in the Server).
     pub fn needs_sign_in_prompt(&self, server: &Server) -> bool {
         self.prompted.lock().unwrap().get(&server.id).copied().unwrap_or(server.needs_sign_in_prompt)
+    }
+
+    /// Bytes received on the SFTP channels of this hub so far.
+    pub fn sftp_bytes(&self) -> u64 {
+        self.sftp_bytes.load(Ordering::Relaxed)
     }
 
     /// How many commands are still running through the hub's sessions: a
@@ -643,7 +725,7 @@ impl RemoteHub {
                 }
             }
             if i + 1 == chain.len() {
-                return Ok(RemoteSession { server: server.clone(), connected_at: Instant::now(), runs: self.runs.clone(), handle, _hops: hops });
+                return Ok(RemoteSession { server: server.clone(), connected_at: Instant::now(), runs: self.runs.clone(), sftp_bytes: self.sftp_bytes.clone(), execs: AtomicUsize::new(0), handle, _hops: hops });
             }
             hops.push(handle);
         }

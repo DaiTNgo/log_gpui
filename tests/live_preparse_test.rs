@@ -12,8 +12,8 @@ fn same_entries(app: &log_gpui::app::AppView, expected: &ParsedFile, what: &str)
     assert_eq!(held.entries.len(), expected.entries.len(), "{what}: lines");
     for (i, (a, b)) in held.entries.iter().zip(&expected.entries).enumerate() {
         assert_eq!(
-            (a.index, &a.raw_line, a.parent, a.has_time, a.timestamp.to_bits(), &a.payload, &a.level_text, &a.tag, &a.time_str),
-            (b.index, &b.raw_line, b.parent, b.has_time, b.timestamp.to_bits(), &b.payload, &b.level_text, &b.tag, &b.time_str),
+            (a.index, &a.raw_line, a.parent, a.has_time, a.timestamp.to_bits(), a.payload(), a.level_text(), a.tag(), a.time_str()),
+            (b.index, &b.raw_line, b.parent, b.has_time, b.timestamp.to_bits(), b.payload(), b.level_text(), b.tag(), b.time_str()),
             "{what}: entry {i}"
         );
         assert_eq!(format!("{:?}", a.spans), format!("{:?}", b.spans), "{what}: spans of entry {i}");

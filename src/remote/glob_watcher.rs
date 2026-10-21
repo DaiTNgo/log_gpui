@@ -9,7 +9,9 @@ use async_channel::{Receiver, Sender};
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use tokio::io::AsyncReadExt;
+use russh_sftp::client::{RawSftpSession, SftpSession};
+use russh_sftp::protocol::OpenFlags;
+use tokio::io::{AsyncRead, AsyncWrite};
 
 /// A folder with more entries than this is listed at most every 30 seconds.
 pub const BIG_FOLDER: usize = 10_000;
@@ -18,6 +20,10 @@ pub const BIG_FOLDER_INTERVAL: Duration = Duration::from_secs(30);
 const MAX_PROBES: usize = 500;
 /// Names per `stat` command.
 const STAT_BATCH: usize = 100;
+/// Files whose first bytes are asked for at the same time.
+const PROBE_CONCURRENCY: usize = 16;
+/// Bytes of a file the Archive check needs.
+const HEAD_LEN: u32 = 512;
 
 /// What a watcher tells the app.
 #[derive(Debug, Clone)]
@@ -89,6 +95,8 @@ impl GlobWatcher {
     async fn run(mut self, commands: Receiver<WatchCommand>) {
         // What was learned about a name, for the modification time it had.
         let mut probed: HashMap<String, Probe> = HashMap::new();
+        // The SFTP sessions are kept from scan to scan.
+        let mut conn: Option<Conn> = None;
         let mut next_wait = Duration::ZERO;
         loop {
             let deadline = tokio::time::Instant::now() + next_wait;
@@ -114,19 +122,32 @@ impl GlobWatcher {
             if self.events.is_closed() {
                 return;
             }
-            let entries = self.scan(&mut probed).await;
+            let entries = self.scan(&mut probed, &mut conn).await;
             next_wait = scan_interval(self.interval, entries);
         }
     }
 
     /// One listing. Returns the number of entries seen.
-    async fn scan(&self, probed: &mut HashMap<String, Probe>) -> usize {
+    async fn scan(&self, probed: &mut HashMap<String, Probe>, conn: &mut Option<Conn>) -> usize {
         let store = self.servers.lock().unwrap().clone();
-        let Ok(session) = self.hub.session(&store, &self.server_id).await else { return 0 };
-        let Ok(sftp) = session.open_sftp().await else { return 0 };
-        let entries = match list_dir(&sftp, &self.dir).await {
+        let Ok(session) = self.hub.session(&store, &self.server_id).await else {
+            *conn = None;
+            return 0;
+        };
+        if conn.as_ref().is_some_and(|c| !Arc::ptr_eq(&c.session, &session) || session.is_closed()) {
+            *conn = None;
+        }
+        if conn.is_none() {
+            let (Ok(sftp), Ok(stream)) = (session.open_sftp().await, session.open_sftp_stream().await) else { return 0 };
+            let Ok(head) = HeadProbe::new(stream).await else { return 0 };
+            *conn = Some(Conn { session: session.clone(), sftp, head: Arc::new(head) });
+        }
+        let live = conn.as_ref().unwrap();
+        let (sftp, head) = (&live.sftp, live.head.clone());
+        let entries = match list_dir(sftp, &self.dir).await {
             Ok(entries) => entries,
             Err(message) => {
+                *conn = None;
                 if message.contains("does not exist") {
                     let _ = self
                         .events
@@ -149,15 +170,22 @@ impl GlobWatcher {
         if !wanted.is_empty() {
             let names: Vec<&str> = wanted.iter().map(|e| e.name.as_str()).collect();
             let inodes = read_inodes(&session, &self.dir, &names).await;
-            for entry in &wanted {
-                let archive = is_archive(&sftp, &super::browse::join(&self.dir, &entry.name)).await;
+            let paths: Vec<String> = wanted.iter().map(|e| super::browse::join(&self.dir, &e.name)).collect();
+            let archives: HashSet<String> =
+                head.are_archives(&paths).await.into_iter().filter(|(_, a)| *a).map(|(p, _)| p).collect();
+            for (entry, path) in wanted.iter().zip(&paths) {
                 probed.insert(
                     entry.name.clone(),
-                    Probe { modified: entry.modified, size: entry.size, inode: inodes.get(&entry.name).copied(), archive },
+                    Probe {
+                        modified: entry.modified,
+                        size: entry.size,
+                        inode: inodes.get(&entry.name).copied(),
+                        archive: archives.contains(path),
+                    },
                 );
             }
         }
-        probed.retain(|name, _| entries.iter().any(|e| &e.name == name));
+        forget_missing(probed, &entries);
         let inodes = probed.iter().filter_map(|(n, p)| p.inode.map(|i| (n.clone(), i))).collect();
         let archives = probed.iter().filter(|(_, p)| p.archive).map(|(n, _)| n.clone()).collect();
         let _ = self
@@ -210,20 +238,68 @@ pub fn parse_inodes(text: &str) -> HashMap<String, u64> {
         .collect()
 }
 
-/// Whether the first 512 bytes of a remote file say Archive or compressed.
-/// An empty or unreadable file is not one.
-async fn is_archive(sftp: &russh_sftp::client::SftpSession, path: &str) -> bool {
-    let Ok(mut file) = sftp.open(path.to_string()).await else { return false };
-    let mut head = vec![0u8; 512];
-    let mut filled = 0;
-    while filled < head.len() {
-        match file.read(&mut head[filled..]).await {
-            Ok(0) | Err(_) => break,
-            Ok(n) => filled += n,
-        }
+/// Drops what was learned about names that are no longer in the folder.
+fn forget_missing(probed: &mut HashMap<String, Probe>, entries: &[DirEntry]) {
+    let present: HashSet<&str> = entries.iter().map(|e| e.name.as_str()).collect();
+    probed.retain(|name, _| present.contains(name.as_str()));
+}
+
+/// What a watcher keeps between scans.
+struct Conn {
+    session: Arc<RemoteSession>,
+    sftp: SftpSession,
+    head: Arc<HeadProbe>,
+}
+
+/// Asks remote files for their first bytes only: a raw SFTP session, so the
+/// read size is ours (`File` would ask for a full packet).
+pub struct HeadProbe {
+    raw: RawSftpSession,
+}
+
+impl HeadProbe {
+    pub async fn new<S: AsyncRead + AsyncWrite + Unpin + Send + 'static>(stream: S) -> Result<Self, String> {
+        let raw = RawSftpSession::new(stream);
+        raw.init().await.map_err(|e| e.to_string())?;
+        Ok(Self { raw })
     }
-    head.truncate(filled);
-    crate::archive::looks_like_archive(&head)
+
+    /// Whether the first bytes of each path say Archive or compressed
+    /// (several files at a time). An empty or unreadable file is not one.
+    pub async fn are_archives(self: &Arc<Self>, paths: &[String]) -> Vec<(String, bool)> {
+        let mut out = Vec::with_capacity(paths.len());
+        let mut tasks = tokio::task::JoinSet::new();
+        let mut next = paths.iter();
+        loop {
+            while tasks.len() < PROBE_CONCURRENCY {
+                let Some(path) = next.next() else { break };
+                let (probe, path) = (self.clone(), path.clone());
+                tasks.spawn(async move {
+                    let archive = probe.is_archive(&path).await;
+                    (path, archive)
+                });
+            }
+            match tasks.join_next().await {
+                Some(Ok(done)) => out.push(done),
+                Some(Err(_)) => {}
+                None => break,
+            }
+        }
+        out
+    }
+
+    async fn is_archive(&self, path: &str) -> bool {
+        let Ok(handle) = self.raw.open(path, OpenFlags::READ, Default::default()).await else { return false };
+        let mut head: Vec<u8> = Vec::new();
+        while head.len() < HEAD_LEN as usize {
+            match self.raw.read(handle.handle.clone(), head.len() as u64, HEAD_LEN - head.len() as u32).await {
+                Ok(data) if !data.data.is_empty() => head.extend_from_slice(&data.data),
+                _ => break,
+            }
+        }
+        let _ = self.raw.close(handle.handle).await;
+        crate::archive::looks_like_archive(&head)
+    }
 }
 
 #[cfg(test)]
@@ -236,6 +312,15 @@ mod tests {
         assert_eq!(parsed.get("app.log"), Some(&123));
         assert_eq!(parsed.get("my file.log"), Some(&456));
         assert_eq!(parsed.len(), 2);
+    }
+
+    #[test]
+    fn forgetting_vanished_names_keeps_the_present_ones() {
+        let entry = |name: &str| DirEntry { name: name.into(), is_dir: false, size: 1, modified: Some(1) };
+        let probe = || Probe { modified: Some(1), size: 1, inode: None, archive: false };
+        let mut probed: HashMap<String, Probe> = ["a", "b", "c"].iter().map(|n| (n.to_string(), probe())).collect();
+        forget_missing(&mut probed, &[entry("b"), entry("z")]);
+        assert_eq!(probed.keys().collect::<Vec<_>>(), ["b"]);
     }
 
     #[test]

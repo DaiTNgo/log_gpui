@@ -3,8 +3,10 @@
 //! Opening shows the last ~1,000 lines at once, then older lines are read in
 //! the background up to the Live Window. New lines come from polling every
 //! 500 ms and reading from the remembered offset, so a lost connection
-//! carries on exactly where it stopped. Rotation is told by the inode (read
-//! with `stat` through exec); a smaller size is a truncation.
+//! carries on exactly where it stopped. The size is polled with one SFTP
+//! request; rotation is told by the inode (read with `stat` through exec
+//! every few seconds, and when the size shrinks); a smaller size is a
+//! truncation.
 
 use super::backward::{BackwardLines, cut_before_start};
 use super::line_time::newest_timestamp;
@@ -30,6 +32,10 @@ use tokio::io::{AsyncReadExt, AsyncSeekExt};
 
 /// How often the file is checked for new bytes.
 pub const REMOTE_POLL_INTERVAL: Duration = Duration::from_millis(500);
+/// How often the inode is read through exec while the size only grows.
+const INODE_CHECK_INTERVAL: Duration = Duration::from_secs(3);
+/// How long the size request may take before the connection counts as lost.
+const SFTP_STAT_TIMEOUT: Duration = Duration::from_secs(5);
 /// How often a Gone file's path is looked at again.
 const GONE_POLL_INTERVAL: Duration = Duration::from_secs(5);
 /// Lines shown at once when a file opens.
@@ -174,6 +180,8 @@ struct Memory {
     loaded: usize,
     /// Whether `stat` through exec works on this server.
     exec_stat: Option<bool>,
+    /// When the inode was last read through exec.
+    inode_checked: Option<Instant>,
     /// Generation being read, counted like the app counts them.
     generation: u32,
     /// The user cleared the file: older lines are never read on their own.
@@ -351,6 +359,24 @@ impl RemoteFileSource {
         sftp: &SftpSession,
         mem: &mut Memory,
     ) -> Result<FileStat, Kind> {
+        // Between inode checks the size comes from one SFTP request, no
+        // process. A smaller size or a missing file asks the question again.
+        let recently_checked = mem.inode_checked.is_some_and(|at| at.elapsed() < INODE_CHECK_INTERVAL);
+        if mem.exec_stat == Some(true) && mem.opened && mem.ino.is_some() && recently_checked {
+            if session.is_closed() {
+                return Err(Kind::Lost);
+            }
+            let asked = tokio::time::timeout(SFTP_STAT_TIMEOUT, sftp.metadata(self.path.clone())).await;
+            match asked.unwrap_or(Err(SftpError::Timeout)) {
+                Ok(meta) => {
+                    let size = meta.size.unwrap_or(0);
+                    if size >= mem.offset {
+                        return Ok(FileStat { ino: mem.ino, size });
+                    }
+                }
+                Err(e) => return Err(classify(&e)),
+            }
+        }
         if mem.exec_stat != Some(false) {
             let command = format!(
                 "stat -c '%i %s' {q} 2>/dev/null || stat -f '%i %z' {q} 2>/dev/null",
@@ -364,6 +390,7 @@ impl RemoteFileSource {
                     parts.next().and_then(|p| p.parse::<u64>().ok()),
                 ) {
                     mem.exec_stat = Some(true);
+                    mem.inode_checked = Some(Instant::now());
                     return Ok(FileStat { ino: Some(ino), size });
                 }
                 if out.exit_status == Some(0) {
@@ -388,7 +415,9 @@ impl RemoteFileSource {
         ctl: &mut Ctl,
         was_down: bool,
     ) -> Served {
-        let sftp = match session.open_sftp().await {
+        // Tail, backfill and Load more read blocks here and there: a session
+        // that sends only the blocks asked for.
+        let sftp = match session.open_sftp_random().await {
             Ok(sftp) => sftp,
             Err(_) if session.is_closed() => return Served::Lost,
             Err(_) => {
@@ -789,7 +818,7 @@ impl RemoteFileSource {
         let path = join(&dirname(&self.path), &target.name);
         let room = room.max(1);
         let read = if target.compression.is_compressed() {
-            self.read_compressed_earlier(sftp, &path, &target, room, mem.stop_before, events).await?
+            self.read_compressed_earlier(session, &path, &target, room, mem.stop_before, events).await?
         } else {
             self.read_plain_earlier(sftp, session, &path, &target, room, mem.stop_before, events).await?
         };
@@ -870,14 +899,16 @@ impl RemoteFileSource {
     /// thread; only the last `room` lines are kept.
     async fn read_compressed_earlier(
         &self,
-        sftp: &SftpSession,
+        session: &Arc<RemoteSession>,
         path: &str,
         target: &RotatedFile,
         room: usize,
         stop_before: Option<f64>,
         events: &Sender<SourceEvent>,
     ) -> Result<EarlierRead, Kind> {
-        let file = sftp.open(path.to_string()).await.map_err(|e| classify(&e))?;
+        // Decoded from its start: a session that pipelines its reads.
+        let sequential = session.open_sftp().await.map_err(|_| Kind::Lost)?;
+        let file = sequential.open(path.to_string()).await.map_err(|e| classify(&e))?;
         let handle = tokio::runtime::Handle::current();
         let (kind, size, what, progress_events) =
             (target.compression, target.size, target.name.clone(), events.clone());
@@ -1135,7 +1166,8 @@ impl RemoteFileSource {
         let (Some(first_no), Some(expected)) = (request.first_line_no, request.first_hash) else {
             return Ok(None);
         };
-        let file = sftp.open(path).await.map_err(|e| classify(&e))?;
+        let sequential = session.open_sftp().await.map_err(|_| Kind::Lost)?;
+        let file = sequential.open(path).await.map_err(|e| classify(&e))?;
         let handle = tokio::runtime::Handle::current();
         let (kind, size, what, progress_events) =
             (target.compression, target.size, target.name.clone(), events.clone());

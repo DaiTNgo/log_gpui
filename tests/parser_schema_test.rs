@@ -97,8 +97,8 @@ fn test_logevent_to_logentry_conversion() {
 
     let entry = log_gpui::model::LogEntry::from_event(&event);
     assert_eq!(entry.level, LogLevel::Error);
-    assert_eq!(entry.tag, "API");
-    assert_eq!(entry.payload, "boom");
+    assert_eq!(entry.tag(), "API");
+    assert_eq!(entry.payload(), "boom");
     assert_eq!(entry.request_id.as_deref(), Some("req-1"));
 }
 

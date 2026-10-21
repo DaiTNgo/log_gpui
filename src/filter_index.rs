@@ -7,7 +7,7 @@
 
 use crate::model::{FieldKey, LogEntry};
 use crate::unicode_text;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// A column with more distinct values than this cannot be filtered on.
 pub const MAX_DISTINCT: usize = 500;
@@ -64,8 +64,8 @@ impl Source {
         let v = match self {
             Source::SourceFile => entry.source.as_deref().unwrap_or(""),
             Source::Stream => entry.stream.map_or("", |s| s.as_str()),
-            Source::Level => entry.level_text.as_str(),
-            Source::Module => entry.tag.as_str(),
+            Source::Level => entry.level_text(),
+            Source::Module => entry.tag(),
             Source::RequestId => entry.request_id.as_deref().unwrap_or(""),
             Source::TraceId => entry.trace_id.as_deref().unwrap_or(""),
             Source::Field(k) => entry.span_text(k.as_str()).unwrap_or(""),
@@ -95,9 +95,9 @@ pub fn column_value<'a>(entry: &'a LogEntry, key: &str) -> Option<&'a str> {
     let v = match key {
         "source" => entry.source.as_deref().unwrap_or(""),
         "stream" => entry.stream.map_or("", |s| s.as_str()),
-        "message" => entry.payload.as_str(),
-        "level" => entry.level_text.as_str(),
-        "module" => entry.tag.as_str(),
+        "message" => entry.payload(),
+        "level" => entry.level_text(),
+        "module" => entry.tag(),
         "request_id" => entry.request_id.as_deref().unwrap_or(""),
         "trace_id" => entry.trace_id.as_deref().unwrap_or(""),
         other => entry.span_text(other).unwrap_or(""),
@@ -338,6 +338,8 @@ pub struct FilterIndex {
     timed_lines: usize,
     /// Parent Lines whose message has each `key=value` key, read or not.
     kv_counts: HashMap<FieldKey, usize>,
+    /// The fields that have a column (a lookup, not a scan of `columns`).
+    field_cols: HashSet<FieldKey>,
 }
 
 /// A row has its own timestamp when it is a finite, positive number.
@@ -362,7 +364,9 @@ impl FilterIndex {
         if !entries.is_empty() {
             index.init_fixed_columns();
             for name in field_order {
-                index.columns.push(ColumnIndex::new(Source::Field(FieldKey::new(name)), 0));
+                let key = FieldKey::new(name);
+                index.field_cols.insert(key);
+                index.columns.push(ColumnIndex::new(Source::Field(key), 0));
             }
         }
         index.append(entries);
@@ -438,13 +442,14 @@ impl FilterIndex {
         debug_assert_eq!(entries.len(), self.rows);
         self.columns.retain(|c| c.field().is_none());
         let mut fields: Vec<ColumnIndex> = Vec::new();
+        self.field_cols.clear();
         let mut parent_row = 0;
         for (row, entry) in entries.iter().enumerate() {
             if entry.parent.is_none() {
                 parent_row = row;
             }
             for (name, _) in entry.fields() {
-                if !fields.iter().any(|c| c.source == Source::Field(name)) {
+                if self.field_cols.insert(name) {
                     fields.push(ColumnIndex::new(Source::Field(name), row));
                 }
             }
@@ -536,10 +541,10 @@ impl FilterIndex {
         // in time order).
         let timed = |e: &&LogEntry| has_timestamp(e);
         if let Some(first) = kept.iter().find(timed) {
-            self.min_entry = Some((first.timestamp, first.time_str.to_string()));
+            self.min_entry = Some((first.timestamp, first.time_str().to_string()));
         }
         if let Some(last) = kept.iter().rev().find(timed) {
-            self.max_entry = Some((last.timestamp, last.time_str.to_string()));
+            self.max_entry = Some((last.timestamp, last.time_str().to_string()));
         }
         if kept.is_empty() {
             self.min_entry = None;
@@ -559,7 +564,7 @@ impl FilterIndex {
         }
         let parent_row = self.parent_row;
         for (name, _) in entry.fields() {
-            if !self.columns.iter().any(|c| c.source == Source::Field(name)) {
+            if self.field_cols.insert(name) {
                 self.columns.push(ColumnIndex::new(Source::Field(name), row));
             }
         }
@@ -577,10 +582,10 @@ impl FilterIndex {
                 self.first_ts = Some(entry.timestamp);
             }
             if self.min_entry.as_ref().is_none_or(|(t, _)| entry.timestamp < *t) {
-                self.min_entry = Some((entry.timestamp, entry.time_str.to_string()));
+                self.min_entry = Some((entry.timestamp, entry.time_str().to_string()));
             }
             if self.max_entry.as_ref().is_none_or(|(t, _)| entry.timestamp > *t) {
-                self.max_entry = Some((entry.timestamp, entry.time_str.to_string()));
+                self.max_entry = Some((entry.timestamp, entry.time_str().to_string()));
             }
         } else {
             self.effective_ts.push(prev);

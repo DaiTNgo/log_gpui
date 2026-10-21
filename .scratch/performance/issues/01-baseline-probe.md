@@ -8,9 +8,9 @@ Parent: `.scratch/performance/PRD.md`
 
 **Status:** done
 
-- [ ] The probe drives the same code paths the app uses (the real refresh after an append, the real Search update), not reimplementations.
-- [ ] It runs in a release build with one command and prints one line per measured operation.
-- [ ] Baseline numbers from this machine are appended to this ticket under `## Comments`.
+- [x] The probe drives the same code paths the app uses (the real refresh after an append, the real Search update), not reimplementations.
+- [x] It runs in a release build with one command and prints one line per measured operation.
+- [x] Baseline numbers from this machine are appended to this ticket under `## Comments`.
 
 ## Comments
 
