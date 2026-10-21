@@ -484,7 +484,7 @@ impl LiveBuffer {
                 )
             }) {
                 top.break_before = None;
-                parsed.raw_breaks.remove(&0);
+                Arc::make_mut(&mut parsed.raw_breaks).remove(&0);
             }
         }
         if count > 0 {
@@ -499,7 +499,7 @@ impl LiveBuffer {
                     label: format!("{} rotated{when}", self.name),
                 });
                 newer.break_before = Some(mark.clone());
-                parsed.raw_breaks.insert(count, mark);
+                Arc::make_mut(&mut parsed.raw_breaks).insert(count, mark);
             }
         }
         moved
@@ -515,7 +515,7 @@ impl LiveBuffer {
             label: format!("{count} since {since} do not fit the Live Window"),
         });
         top.break_before = Some(mark.clone());
-        parsed.raw_breaks.insert(0, mark);
+        Arc::make_mut(&mut parsed.raw_breaks).insert(0, mark);
     }
 
     // ── Remote Copy ─────────────────────────────────────────────────────────
@@ -568,7 +568,7 @@ impl LiveBuffer {
         if let Some(top) = parsed.entries.first_mut() {
             let mark = Arc::new(BreakMark { kind: BreakKind::OlderNotRead, label: label.to_string() });
             top.break_before = Some(mark.clone());
-            parsed.raw_breaks.insert(0, mark);
+            Arc::make_mut(&mut parsed.raw_breaks).insert(0, mark);
         }
     }
 
@@ -595,13 +595,13 @@ impl LiveBuffer {
                     };
                     let mark = Arc::new(BreakMark { kind, label });
                     top.break_before = Some(mark.clone());
-                    parsed.raw_breaks.insert(0, mark);
+                    Arc::make_mut(&mut parsed.raw_breaks).insert(0, mark);
                 }
             }
             None => {
                 if top.break_before.as_ref().is_some_and(is_ours) {
                     top.break_before = None;
-                    parsed.raw_breaks.remove(&0);
+                    Arc::make_mut(&mut parsed.raw_breaks).remove(&0);
                 }
             }
         }
@@ -635,7 +635,7 @@ impl LiveBuffer {
             self.replace_last = false;
             if parsed.entries.pop().is_some() {
                 parsed.lines_mut().pop();
-                parsed.raw_breaks.remove(&parsed.entries.len());
+                Arc::make_mut(&mut parsed.raw_breaks).remove(&parsed.entries.len());
                 self.byte_lens.truncate(parsed.entries.len());
                 self.next_index -= 1;
             }
@@ -678,7 +678,7 @@ impl LiveBuffer {
             if let Some(mark) = self.pending.take() {
                 let mark = Arc::new(mark);
                 entry.break_before = Some(mark.clone());
-                parsed.raw_breaks.insert(parsed.entries.len(), mark);
+                Arc::make_mut(&mut parsed.raw_breaks).insert(parsed.entries.len(), mark);
             }
             self.next_index += 1;
             parsed.max_chars.record_entry(&entry);
@@ -869,7 +869,7 @@ impl LiveBuffer {
             label: format!("{} older lines left the window", self.name),
         });
         first.break_before = Some(mark.clone());
-        parsed.raw_breaks.insert(0, mark);
+        Arc::make_mut(&mut parsed.raw_breaks).insert(0, mark);
         if generation == self.generation {
             self.first_index = first_kept;
         }
@@ -890,7 +890,7 @@ impl LiveBuffer {
         // A new vector, not `clear`: the old one's memory is freed.
         parsed.entries = Vec::new();
         parsed.lines = Arc::new(Vec::new());
-        parsed.raw_breaks.clear();
+        Arc::make_mut(&mut parsed.raw_breaks).clear();
         parsed.max_chars = crate::column::FieldMaxChars::new();
         self.byte_lens = Vec::new();
         self.parser.reset();
@@ -974,7 +974,7 @@ impl LiveBuffer {
                 })
             {
                 first.break_before = None;
-                parsed.raw_breaks.remove(&0);
+                Arc::make_mut(&mut parsed.raw_breaks).remove(&0);
             }
         }
         match top_generation {
@@ -1001,7 +1001,7 @@ impl LiveBuffer {
                         ),
                     });
                     joined.break_before = Some(mark.clone());
-                    parsed.raw_breaks.insert(lines.len(), mark);
+                    Arc::make_mut(&mut parsed.raw_breaks).insert(lines.len(), mark);
                 }
             }
         }
@@ -1013,7 +1013,7 @@ impl LiveBuffer {
                         label: format!("{} {}", self.name, BreakKind::StartOfLoaded.label()),
                     });
                     first.break_before = Some(mark.clone());
-                    parsed.raw_breaks.insert(0, mark);
+                    Arc::make_mut(&mut parsed.raw_breaks).insert(0, mark);
                 }
             }
         }
@@ -1038,7 +1038,7 @@ impl LiveBuffer {
         match parsed.entries.first_mut() {
             Some(first) => {
                 first.break_before = Some(mark.clone());
-                parsed.raw_breaks.insert(0, mark);
+                Arc::make_mut(&mut parsed.raw_breaks).insert(0, mark);
             }
             None => self.add_pending(BreakMark { kind: BreakKind::Changed, label: mark.label.clone() }),
         }

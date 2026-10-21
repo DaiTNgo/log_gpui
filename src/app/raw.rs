@@ -174,6 +174,7 @@ impl AppView {
             _ => None,
         };
         let empty = Arc::new(Vec::new());
+        let no_breaks = Arc::<std::collections::BTreeMap<_, _>>::default();
         space
             .ordered_files()
             .into_iter()
@@ -200,12 +201,11 @@ impl AppView {
                     display_name: f.display_name.clone(),
                     folder: f.folder(),
                     lines,
-                    breaks: Arc::new(
-                        scratch
-                            .then(|| None)
-                            .unwrap_or_else(|| self.parsed_files.get(&f.file_id).map(|p| p.raw_breaks.clone()))
-                            .unwrap_or_default(),
-                    ),
+                    breaks: if scratch {
+                        no_breaks.clone()
+                    } else {
+                        self.parsed_files.get(&f.file_id).map_or_else(|| no_breaks.clone(), |p| p.raw_breaks.clone())
+                    },
                     editable,
                 }
             })
@@ -325,14 +325,15 @@ impl AppView {
                 if this.raw.last_selection.get(&observed_id) != Some(&range) {
                     this.raw.last_selection.insert(observed_id.clone(), range);
                     // The caret's line is the current line.
-                    let lines = this
+                    let count = this
                         .raw_sections()
                         .into_iter()
                         .find(|s| s.file_id == observed_id)
-                        .map(|s| s.lines);
-                    if let Some((line, _)) =
-                        lines.and_then(|l| raw_view::line_and_byte(l.as_slice(), cursor))
-                    {
+                        .map(|s| s.lines.len());
+                    let at = count.and_then(|n| {
+                        raw_view::line_and_byte_in_rope(state.read(cx).text(), cursor, n)
+                    });
+                    if let Some((line, _)) = at {
                         let line = crate::focus::LineRef::new(observed_id.as_str(), line);
                         if this.current_line().as_ref() != Some(&line) {
                             this.set_current_line(line, super::focus::Origin::View, cx);
@@ -611,7 +612,11 @@ impl AppView {
                     wanted = Some(ColorTarget::RawMark { file_id: section.file_id.clone(), pieces });
                     break;
                 }
-            } else if let Some((line, byte)) = raw_view::line_and_byte(&section.lines, cursor) {
+            } else if let Some((line, byte)) = raw_view::line_and_byte_in_rope(
+                editor.state.read(cx).text(),
+                cursor,
+                section.lines.len(),
+            ) {
                 let under = self
                     .active_project()
                     .and_then(|p| p.log_spaces.iter().find_map(|s| s.file(&section.file_id)))
