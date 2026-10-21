@@ -181,6 +181,10 @@ pub(crate) struct FileDelta {
     pub(crate) generation: u32,
     /// The last line already shown was replaced by its finished version.
     pub(crate) replaced_last: bool,
+    /// Something the app shows may have changed (lines, a status, a
+    /// progress, a notice): a batch with none needs no new frame when the
+    /// open view holds none of its files.
+    pub(crate) shown: bool,
 }
 
 pub(crate) fn now_label() -> String {
@@ -643,6 +647,9 @@ impl AppView {
             if let Some(source) = self.live.sources.get_mut(file_id) {
                 source.health.observe(&event, std::time::SystemTime::now());
             }
+            if !matches!(event, SourceEvent::Inode(_)) {
+                delta.shown = true;
+            }
             match event {
                 SourceEvent::Tail { lines, generation, bytes, end_offset } => {
                     buffer.apply_tail_with(&mut parsed, &lines, generation, &bytes, end_offset);
@@ -829,7 +836,11 @@ impl AppView {
             .filter(|(id, d)| space_files.contains(id) && (d.appended.is_some() || d.structural || d.trimmed.is_some()))
             .collect();
         if relevant.is_empty() {
-            cx.notify();
+            // Background files: the sidebar's status and counts are what a
+            // new frame would show.
+            if deltas.iter().any(|(_, d)| d.shown || d.appended.is_some() || d.structural || d.trimmed.is_some()) {
+                cx.notify();
+            }
             return;
         }
 
