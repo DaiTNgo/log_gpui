@@ -15,6 +15,7 @@ use super::source::{
 use super::splitter::LineSplitter;
 use crate::model::Stream;
 use crate::remote::{ConnectError, ExecEvent, ExecStream, PresetFields, RemoteHub, RemoteSession, ServerStore};
+use crate::workspace::log_space::RemoteTarget;
 use async_channel::{Receiver, Sender};
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
@@ -67,6 +68,8 @@ enum Served {
     Closed,
     /// The connection dropped.
     Lost,
+    /// The command was edited and runs on another Server.
+    Replaced,
     /// Cannot go on; the user must act.
     Stopped(SourceStatus),
 }
@@ -84,6 +87,9 @@ enum Plan {
     AfterDisconnect,
     /// Resuming did not work: as written, a new Generation.
     ResumeFailed,
+    /// The user edited the command: the new one runs as written. Its Break
+    /// was already sent when the edit was applied.
+    Replaced,
 }
 
 /// What a wait ended with.
@@ -94,6 +100,8 @@ enum Wake {
     Reconnect,
     /// Restart on exit was turned on or off.
     Changed,
+    /// The command (and maybe the Server) was edited: see `State::apply_replacement`.
+    Replace,
     Closed,
 }
 
@@ -101,6 +109,8 @@ enum Wake {
 enum RunEnd {
     Closed,
     Restart,
+    /// The command was edited while the Run was going.
+    Replace,
     /// The Run was a resume and the tool did not take its since flag.
     ResumeFailed,
     Exited(Option<u32>),
@@ -115,8 +125,26 @@ struct RunStart {
     deferred_break: Option<BreakKind>,
 }
 
+/// What a Replace asks for.
+struct Replacement {
+    server_id: String,
+    command: String,
+    preset: Option<PresetFields>,
+    name: String,
+}
+
 /// What survives a lost connection and the end of a Run.
 struct State {
+    /// What runs, and where. An edit changes these while the source goes on.
+    server_id: String,
+    command: String,
+    preset: Option<PresetFields>,
+    /// `<server>$ <command>`.
+    name: String,
+    /// An edit waiting to be applied (when no Run is in the way).
+    replacement: Option<Replacement>,
+    /// The next Run is the first of an edited command.
+    fresh: bool,
     window: usize,
     paused: bool,
     restart_on_exit: bool,
@@ -144,6 +172,12 @@ impl State {
             SourceCommand::Close => return Wake::Closed,
             SourceCommand::Restart => return Wake::Restart,
             SourceCommand::Reconnect => return Wake::Reconnect,
+            SourceCommand::Replace { server_id, target: RemoteTarget::Command { command, preset, .. }, name } => {
+                self.replacement = Some(Replacement { server_id, command, preset, name });
+                return Wake::Replace;
+            }
+            // A file is never swapped into a command.
+            SourceCommand::Replace { .. } => {}
             // The app drops the lines it holds; the command goes on, numbers
             // keep counting. A command has no older lines to load.
             SourceCommand::Clear | SourceCommand::CancelLoadMore | SourceCommand::LoadEarlier { .. } => {}
@@ -165,6 +199,25 @@ impl State {
             }
         }
         Wake::Timeout
+    }
+
+    /// Switch to the edited command: the lines held stay, a Break says what
+    /// changed, and what runs next is a new Run, a new Generation.
+    fn apply_replacement(&mut self, events: &Sender<SourceEvent>) {
+        let Some(new) = self.replacement.take() else { return };
+        let _ = events.try_send(SourceEvent::CommandChanged { from: self.name.clone(), to: new.name.clone() });
+        self.server_id = new.server_id;
+        self.command = new.command;
+        self.preset = new.preset;
+        self.name = new.name;
+        self.resume_disabled = false;
+        self.restart_pending = false;
+        self.fresh = true;
+        self.was_disconnected = false;
+        self.resume = self.preset.clone().map(ResumePoint::new);
+        self.queue.clear();
+        self.dropped = 0;
+        self.splitters = [LineSplitter::new(), LineSplitter::new()];
     }
 
     fn trim_queue(&mut self) {
@@ -210,6 +263,12 @@ fn send_lines(events: &Sender<SourceEvent>, batch: Vec<(Stream, String)>) {
 impl RemoteCommandSource {
     async fn run(self, events: Sender<SourceEvent>, commands: Receiver<SourceCommand>) {
         let mut st = State {
+            server_id: self.server_id.clone(),
+            command: self.command.clone(),
+            preset: self.preset.clone(),
+            name: self.name.clone(),
+            replacement: None,
+            fresh: false,
             window: self.window,
             paused: false,
             restart_on_exit: self.restart_on_exit,
@@ -229,13 +288,15 @@ impl RemoteCommandSource {
         let _ = events.try_send(SourceEvent::Status(SourceStatus::Connecting));
         loop {
             let store = self.servers.lock().unwrap().clone();
-            match self.hub.session_with(&store, &self.server_id, interactive).await {
+            match self.hub.session_with(&store, &st.server_id, interactive).await {
                 Ok(session) => {
                     interactive = false;
                     backoff = Duration::from_secs(1);
                     failing_since = None;
                     match self.serve(&session, &mut st, &events, &commands).await {
                         Served::Closed => return,
+                        // Another Server now: connect to it at once.
+                        Served::Replaced => continue,
                         Served::Lost => {
                             if st.started {
                                 let _ = events.try_send(SourceEvent::Break { kind: BreakKind::Disconnected });
@@ -243,7 +304,7 @@ impl RemoteCommandSource {
                             }
                             let _ = events.try_send(SourceEvent::Status(SourceStatus::Reconnecting));
                             failing_since = Some(Instant::now());
-                            self.hub.drop_session(&self.server_id).await;
+                            self.hub.drop_session(&st.server_id).await;
                         }
                         Served::Stopped(status) => {
                             let _ = events.try_send(SourceEvent::Status(status));
@@ -312,6 +373,11 @@ impl RemoteCommandSource {
                 Wake::Reconnect => return true,
                 Wake::Closed => return false,
                 Wake::Restart => st.restart_pending = true,
+                // Nothing runs: the edited command is connected to at once.
+                Wake::Replace => {
+                    st.apply_replacement(events);
+                    return true;
+                }
                 Wake::Changed | Wake::Timeout => {}
             }
         }
@@ -333,6 +399,10 @@ impl RemoteCommandSource {
                 Wake::Timeout | Wake::Reconnect => return true,
                 Wake::Closed => return false,
                 Wake::Restart => st.restart_pending = true,
+                Wake::Replace => {
+                    st.apply_replacement(events);
+                    return true;
+                }
                 Wake::Changed => {}
             }
         }
@@ -377,7 +447,10 @@ impl RemoteCommandSource {
         events: &Sender<SourceEvent>,
         commands: &Receiver<SourceCommand>,
     ) -> Served {
-        let mut plan = if st.restart_pending {
+        let mut plan = if st.fresh {
+            st.fresh = false;
+            Plan::Replaced
+        } else if st.restart_pending {
             Plan::Manual
         } else if st.started {
             Plan::AfterDisconnect
@@ -388,6 +461,7 @@ impl RemoteCommandSource {
             st.restart_pending = false;
             self.reset_resume(st);
         }
+        let on_server = st.server_id.clone();
         let mut backoff = RESTART_BACKOFF_FIRST;
         let mut quick_failures = 0u32;
         loop {
@@ -399,7 +473,7 @@ impl RemoteCommandSource {
                 Ok(stream) => stream,
                 Err(_) if session.is_closed() => return Served::Lost,
                 Err(e) => {
-                    return Served::Stopped(SourceStatus::Error(format!("{}: {e}", self.name)));
+                    return Served::Stopped(SourceStatus::Error(format!("{}: {e}", st.name)));
                 }
             };
             let _ = events.try_send(SourceEvent::Run { command: start.command.clone() });
@@ -409,11 +483,22 @@ impl RemoteCommandSource {
             let started = Instant::now();
             match self.pump(&mut stream, st, events, commands, start).await {
                 RunEnd::Closed => {
-                    self.finish(stream, events, session).await;
+                    self.finish(stream, events, session, st).await;
                     return Served::Closed;
                 }
+                RunEnd::Replace => {
+                    self.finish(stream, events, session, st).await;
+                    st.apply_replacement(events);
+                    if st.server_id != on_server {
+                        return Served::Replaced;
+                    }
+                    st.fresh = false;
+                    plan = Plan::Replaced;
+                    quick_failures = 0;
+                    backoff = RESTART_BACKOFF_FIRST;
+                }
                 RunEnd::Restart => {
-                    self.finish(stream, events, session).await;
+                    self.finish(stream, events, session, st).await;
                     plan = Plan::Manual;
                     quick_failures = 0;
                     backoff = RESTART_BACKOFF_FIRST;
@@ -421,7 +506,7 @@ impl RemoteCommandSource {
                 }
                 RunEnd::ResumeFailed => {
                     // The tool did not take the since flag: run it as written.
-                    self.finish(stream, events, session).await;
+                    self.finish(stream, events, session, st).await;
                     st.resume_disabled = true;
                     st.resume = None;
                     let _ = events.try_send(SourceEvent::Problem("resume not supported".into()));
@@ -448,6 +533,17 @@ impl RemoteCommandSource {
                         let automatic = st.restart_on_exit && quick_failures < QUICK_FAILURES_BEFORE_STOP;
                         match self.wait(automatic.then_some(backoff), commands, st, events).await {
                             Wake::Closed => return Served::Closed,
+                            Wake::Replace => {
+                                st.apply_replacement(events);
+                                if st.server_id != on_server {
+                                    return Served::Replaced;
+                                }
+                                st.fresh = false;
+                                plan = Plan::Replaced;
+                                quick_failures = 0;
+                                backoff = RESTART_BACKOFF_FIRST;
+                                break;
+                            }
                             Wake::Restart => {
                                 plan = Plan::Manual;
                                 quick_failures = 0;
@@ -473,19 +569,20 @@ impl RemoteCommandSource {
 
     /// Start counting from a fresh start of the command.
     fn reset_resume(&self, st: &mut State) {
-        st.resume = self.preset.clone().filter(|_| !st.resume_disabled).map(ResumePoint::new);
+        st.resume = st.preset.clone().filter(|_| !st.resume_disabled).map(ResumePoint::new);
     }
 
     /// The command line of the next Run, and the Break that goes before it.
     fn prepare(&self, plan: Plan, st: &mut State, events: &Sender<SourceEvent>) -> RunStart {
+        let written = st.command.clone();
         let as_written = |break_kind: Option<BreakKind>| {
             if let Some(kind) = break_kind {
                 let _ = events.try_send(SourceEvent::Break { kind });
             }
-            RunStart { command: self.command.clone(), resumed: false, deferred_break: None }
+            RunStart { command: written.clone(), resumed: false, deferred_break: None }
         };
         match plan {
-            Plan::First => as_written(None),
+            Plan::First | Plan::Replaced => as_written(None),
             Plan::Manual => as_written(Some(BreakKind::Restarted(RestartKind::Manual))),
             Plan::ResumeFailed => as_written(Some(BreakKind::Restarted(RestartKind::ResumeFailed))),
             Plan::OnExit | Plan::AfterDisconnect => {
@@ -579,6 +676,7 @@ impl RemoteCommandSource {
                     Ok(command) => match st.handle(command, events) {
                         Wake::Closed => return RunEnd::Closed,
                         Wake::Restart => return RunEnd::Restart,
+                        Wake::Replace => return RunEnd::Replace,
                         _ => {}
                     },
                     Err(_) => return RunEnd::Closed,
@@ -602,7 +700,7 @@ impl RemoteCommandSource {
         }
         if proof.pending {
             // A real log line of a preset has a time; an error text does not.
-            let works = self
+            let works = st
                 .preset
                 .as_ref()
                 .is_some_and(|p| lines.iter().any(|l| parse_timestamp(p, l).is_some()));
@@ -657,11 +755,11 @@ impl RemoteCommandSource {
     }
 
     /// End a Run on the Server: ask it to stop, and say so when it may not have.
-    async fn finish(&self, stream: ExecStream, events: &Sender<SourceEvent>, session: &RemoteSession) {
+    async fn finish(&self, stream: ExecStream, events: &Sender<SourceEvent>, session: &RemoteSession, st: &State) {
         if !stream.terminate().await {
             let _ = events.try_send(SourceEvent::Problem(format!(
                 "{} may still be running on {}",
-                self.command, session.server.name
+                st.command, session.server.name
             )));
         }
     }

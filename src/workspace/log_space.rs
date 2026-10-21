@@ -251,6 +251,23 @@ impl LogFile {
         self.remote.as_ref().is_some_and(RemoteRef::is_command)
     }
 
+    /// Whether both read the same thing on the same Server: the same path, or
+    /// the same command. An edited file keeps its `file_id`, so this (and not
+    /// the id) tells whether two members are the same.
+    fn same_remote_target(&self, other: &LogFile) -> bool {
+        match (&self.remote, &other.remote) {
+            (Some(a), Some(b)) => {
+                a.server_id == b.server_id
+                    && match (&a.target, &b.target) {
+                        (RemoteTarget::File { path: x }, RemoteTarget::File { path: y }) => x == y,
+                        (RemoteTarget::Command { command: x, .. }, RemoteTarget::Command { command: y, .. }) => x == y,
+                        _ => false,
+                    }
+            }
+            _ => false,
+        }
+    }
+
     /// Build a file from a filesystem path: id and display name come from it.
     pub fn from_path(path: &str) -> Self {
         let display_name = Path::new(path)
@@ -610,6 +627,56 @@ impl LiveGlob {
     pub fn path_of(&self, name: &str) -> String {
         crate::remote::browse::join(&self.dir, name)
     }
+
+    /// This glob as it is after an edit to `server_id`, `dir` and `pattern`:
+    /// the same `glob_id` and `stopped`, and only the exclusions the new glob
+    /// still matches (none when the Server changed).
+    pub fn edited(&self, server_id: &str, dir: &str, pattern: &str) -> LiveGlob {
+        let same_server = self.server_id == server_id;
+        LiveGlob {
+            glob_id: self.glob_id.clone(),
+            server_id: server_id.to_string(),
+            dir: dir.to_string(),
+            pattern: pattern.to_string(),
+            excluded: self
+                .excluded
+                .iter()
+                .filter(|path| {
+                    same_server
+                        && crate::remote::browse::dirname(path) == dir
+                        && crate::remote::browse::glob_match(pattern, path.rsplit('/').next().unwrap_or(""))
+                })
+                .cloned()
+                .collect(),
+            stopped: self.stopped,
+        }
+    }
+}
+
+/// Why a member of a Remote Log Space could not be edited.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum EditError {
+    /// Only a Remote Log Space has members to edit.
+    WrongKind,
+    /// The member (or the Live Glob) is not in the space, or is not the kind
+    /// the edit is for.
+    NotFound,
+    /// Another member of the space already reads this.
+    Duplicate,
+    /// The command starts with `sudo`, `su`, …
+    Elevation(Elevation),
+}
+
+/// What an edit of a Live Glob does to its files, decided from the folder's
+/// listing (see `remote::glob_plan::plan_glob_edit`).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct GlobEditPlan {
+    /// Paths of the files to add.
+    pub add: Vec<String>,
+    /// Paths of the glob's files that stop matching.
+    pub remove: Vec<String>,
+    /// Paths of the glob's files that go on as they are.
+    pub keep: Vec<String>,
 }
 
 /// Why a Live Glob was not added.
@@ -759,6 +826,143 @@ impl LogSpace {
         Ok(outcome)
     }
 
+    /// Whether a member already reads what `file` reads.
+    fn has_remote_target(&self, file: &LogFile) -> bool {
+        self.files.iter().any(|f| f.same_remote_target(file))
+    }
+
+    /// `base`, or `base` with a number when a member (an edited one that kept
+    /// an id made from its old path) already has it.
+    fn free_file_id(&self, base: String) -> String {
+        if !self.has_file(&base) {
+            return base;
+        }
+        (2..)
+            .map(|n| format!("{base}#{n}"))
+            .find(|id| !self.has_file(id))
+            .expect("unbounded range")
+    }
+
+    /// The `file_id` of the Remote File on a Server at `path`.
+    pub fn remote_file_id(&self, server_id: &str, path: &str) -> Option<String> {
+        self.files
+            .iter()
+            .find(|f| f.remote.as_ref().is_some_and(|r| r.server_id == server_id && r.path() == Some(path)))
+            .map(|f| f.file_id.clone())
+    }
+
+    /// Point a Remote File or Remote Command at another path or command, or
+    /// another Server. It stays the same member: `file_id`, `added_seq`, its
+    /// place in the list and its Live Glob stay, and `display_name` follows.
+    /// Its Markers go (they were on another file) and it is read from
+    /// Generation 0. A Remote File keeps its `start_time` unless the caller
+    /// sets it again; a Remote Command keeps `restart_on_exit`.
+    ///
+    /// Refused when another member already reads the new target.
+    pub fn replace_remote_target(
+        &mut self,
+        file_id: &str,
+        server_id: &str,
+        server_name: &str,
+        target: RemoteTarget,
+    ) -> Result<(), EditError> {
+        if self.kind != LogSpaceKind::Remote {
+            return Err(EditError::WrongKind);
+        }
+        let Some(current) = self.file(file_id) else { return Err(EditError::NotFound) };
+        let Some(old) = current.remote.as_ref() else { return Err(EditError::NotFound) };
+        let target = match (&old.target, target) {
+            (RemoteTarget::File { .. }, target @ RemoteTarget::File { .. }) => target,
+            (RemoteTarget::Command { restart_on_exit, .. }, RemoteTarget::Command { command, preset, .. }) => {
+                check_elevation(&command).map_err(EditError::Elevation)?;
+                let preset = unedited_preset(&command, preset.as_ref());
+                RemoteTarget::Command { command, preset, restart_on_exit: *restart_on_exit }
+            }
+            // An edit does not turn a file into a command or the other way.
+            _ => return Err(EditError::NotFound),
+        };
+        let display_name = match &target {
+            RemoteTarget::File { path } => format!("{server_name}:{path}"),
+            RemoteTarget::Command { command, .. } => format!("{server_name}$ {command}"),
+        };
+        let candidate = LogFile {
+            remote: Some(RemoteRef { server_id: server_id.to_string(), target: target.clone(), start_time: None }),
+            ..LogFile::new(String::new(), String::new())
+        };
+        if self.files.iter().any(|f| f.file_id != file_id && f.same_remote_target(&candidate)) {
+            return Err(EditError::Duplicate);
+        }
+        let file = self.file_mut(file_id).expect("found above");
+        let is_command = matches!(target, RemoteTarget::Command { .. });
+        let remote = file.remote.as_mut().expect("found above");
+        remote.server_id = server_id.to_string();
+        remote.target = target;
+        file.display_name = display_name;
+        // A Remote Command keeps the lines and Markers of its earlier Runs.
+        if !is_command {
+            file.markers.clear();
+            file.generation = 0;
+        }
+        Ok(())
+    }
+
+    /// Change the Starting Time of a Remote File (`None`: read as usual),
+    /// keeping its Markers. Returns whether the file is a Remote File.
+    pub fn set_start_time(&mut self, file_id: &str, start: Option<String>) -> bool {
+        match self.file_mut(file_id) {
+            Some(file) if file.remote.as_ref().is_some_and(|r| r.path().is_some()) => {
+                file.set_start_time(start);
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Edit a Live Glob in place: it keeps its `glob_id`, so the files that
+    /// go on stay its files. `plan` says which of its files go and which come
+    /// (nothing comes while the glob is stopped). Paths it excluded that the
+    /// new glob no longer matches are forgotten. Returns the removed files,
+    /// for the caller to close.
+    ///
+    /// Refused when another Live Glob of the space is the same.
+    pub fn edit_live_glob(
+        &mut self,
+        glob_id: &str,
+        server_id: &str,
+        server_name: &str,
+        dir: &str,
+        pattern: &str,
+        plan: &GlobEditPlan,
+    ) -> Result<Vec<LogFile>, EditError> {
+        if self.kind != LogSpaceKind::Remote {
+            return Err(EditError::WrongKind);
+        }
+        let Some(glob) = self.glob(glob_id) else { return Err(EditError::NotFound) };
+        let stopped = glob.stopped;
+        if self.globs.iter().any(|g| g.glob_id != glob_id && g.server_id == server_id && g.dir == dir && g.pattern == pattern)
+        {
+            return Err(EditError::Duplicate);
+        }
+        let mut removed = Vec::new();
+        for file in std::mem::take(&mut self.files) {
+            let goes = file.from_glob.as_deref() == Some(glob_id)
+                && file.remote.as_ref().and_then(|r| r.path()).is_some_and(|p| plan.remove.iter().any(|r| r == p));
+            if goes {
+                self.file_filters.remove(&file.file_id);
+                self.file_focus.remove(&file.file_id);
+                removed.push(file);
+            } else {
+                self.files.push(file);
+            }
+        }
+        let glob = self.glob_mut(glob_id).expect("found above");
+        *glob = glob.edited(server_id, dir, pattern);
+        if !stopped {
+            self.add_glob_files(glob_id, server_name, &plan.add);
+        }
+        Ok(removed)
+    }
+
     /// Add Remote Files, given as `(server id, server name, path)`. A file
     /// already in the space (same Server and path) is skipped and reported by
     /// its name. A path a Live Glob of the same Server had excluded is taken
@@ -770,10 +974,11 @@ impl LogSpace {
         let mut outcome = ImportOutcome::default();
         for (server_id, server_name, path) in files {
             let mut file = LogFile::remote(server_id, server_name, path);
-            if self.has_file(&file.file_id) {
+            if self.has_remote_target(&file) {
                 outcome.skipped.push(file.display_name.clone());
                 continue;
             }
+            file.file_id = self.free_file_id(file.file_id);
             if let Some(glob) = self
                 .globs
                 .iter_mut()
@@ -831,9 +1036,10 @@ impl LogSpace {
         let server_id = glob.server_id.clone();
         for path in paths {
             let mut file = LogFile::remote(&server_id, server_name, path);
-            if self.has_file(&file.file_id) {
+            if self.has_remote_target(&file) {
                 continue;
             }
+            file.file_id = self.free_file_id(file.file_id);
             file.from_glob = Some(glob_id.to_string());
             file.added_seq = self.take_seq();
             out.added.push(file.file_id.clone());
@@ -905,10 +1111,11 @@ impl LogSpace {
         for (server_id, server_name, command, preset) in commands {
             check_elevation(command).map_err(AddCommandError::Elevation)?;
             let mut file = LogFile::remote_command(server_id, server_name, command, preset.as_ref());
-            if self.has_file(&file.file_id) {
+            if self.has_remote_target(&file) {
                 outcome.skipped.push(file.display_name.clone());
                 continue;
             }
+            file.file_id = self.free_file_id(file.file_id);
             file.added_seq = self.take_seq();
             outcome.added.push(file.file_id.clone());
             self.files.push(file);

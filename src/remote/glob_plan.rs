@@ -30,6 +30,9 @@ pub struct GlobPlan {
     pub pending: usize,
 }
 
+/// What editing a Live Glob does to its files: see `plan_glob_edit`.
+pub use crate::workspace::log_space::GlobEditPlan;
+
 /// What the watcher learned about the folder.
 #[derive(Debug, Clone)]
 pub struct Listing<'a> {
@@ -108,6 +111,41 @@ pub fn plan_glob(
     let pending = found.len().saturating_sub(room);
     found.truncate(room);
     GlobPlan { add: found.iter().map(|e| glob.path_of(&e.name)).collect(), gone, pending }
+}
+
+/// What editing the Live Glob `old` into `new` does to its files.
+///
+/// `own` are the paths of the files `old` brought. `files` are the Remote
+/// Files of the space on `new`'s Server (their `from_glob` is not read: a
+/// file is the glob's when it is kept). Files that still match stay; files
+/// that stop matching, or are on another Server or in another folder than
+/// `new` looks at, go; what `new` matches and the space does not have comes,
+/// within `limit`, unless the glob is stopped.
+pub fn plan_glob_edit(
+    old: &LiveGlob,
+    new: &LiveGlob,
+    listing: &Listing<'_>,
+    own: &[String],
+    files: &[SpaceFile],
+    read_inodes: &ReadInodes,
+    limit: usize,
+) -> GlobEditPlan {
+    let same_place = old.server_id == new.server_id && old.dir == new.dir;
+    let (keep, remove): (Vec<String>, Vec<String>) = own.iter().cloned().partition(|path| {
+        same_place
+            && !new.excluded.contains(path)
+            && glob_match(&new.pattern, path.rsplit('/').next().unwrap_or(""))
+    });
+    if new.stopped {
+        return GlobEditPlan { add: Vec::new(), remove, keep };
+    }
+    let after: Vec<SpaceFile> = files
+        .iter()
+        .filter(|f| !remove.contains(&f.path) || old.server_id != new.server_id)
+        .map(|f| SpaceFile { from_glob: keep.contains(&f.path), ..f.clone() })
+        .collect();
+    let add = plan_glob(new, &after, listing, read_inodes, limit).add;
+    GlobEditPlan { add, remove, keep }
 }
 
 #[cfg(test)]
@@ -311,5 +349,101 @@ mod tests {
     fn empty_files_are_added() {
         let entries = [DirEntry { name: "new.log".into(), is_dir: false, size: 0, modified: Some(1) }];
         assert_eq!(Env::new().plan(&glob("*.log"), &[], &entries, 50).add, [path("new.log")]);
+    }
+
+    // ── Editing a Live Glob ────────────────────────────────────────────────
+
+    fn edit_plan(old: &LiveGlob, new: &LiveGlob, own: &[&str], files: &[SpaceFile], entries: &[DirEntry], limit: usize) -> GlobEditPlan {
+        let env = Env::new();
+        let listing = Listing { entries, inodes: &env.inodes, archives: &env.archives };
+        let own: Vec<String> = own.iter().map(|n| path(n)).collect();
+        plan_glob_edit(old, new, &listing, &own, files, &env.read, limit)
+    }
+
+    fn names(paths: &[String]) -> Vec<String> {
+        paths.iter().map(|p| p.rsplit('/').next().unwrap().to_string()).collect()
+    }
+
+    #[test]
+    fn narrowing_the_pattern_removes_what_stops_matching() {
+        let entries = [file("app-1.log", 1), file("app-2.log", 2), file("worker.log", 3)];
+        let files = [space_file("app-1.log", true, false), space_file("app-2.log", true, false), space_file("worker.log", true, false)];
+        let plan = edit_plan(&glob("*.log"), &glob("app-*.log"), &["app-1.log", "app-2.log", "worker.log"], &files, &entries, 50);
+        assert_eq!(names(&plan.remove), ["worker.log"]);
+        assert_eq!(names(&plan.keep), ["app-1.log", "app-2.log"]);
+        assert!(plan.add.is_empty());
+    }
+
+    #[test]
+    fn widening_the_pattern_adds_the_new_matches_and_keeps_the_rest() {
+        let entries = [file("app-1.log", 1), file("worker.log", 3), file("notes.txt", 4)];
+        let files = [space_file("app-1.log", true, false)];
+        let plan = edit_plan(&glob("app-*.log"), &glob("*.log"), &["app-1.log"], &files, &entries, 50);
+        assert_eq!(names(&plan.keep), ["app-1.log"]);
+        assert_eq!(names(&plan.add), ["worker.log"]);
+        assert!(plan.remove.is_empty());
+    }
+
+    #[test]
+    fn another_folder_removes_every_file_and_adds_the_new_folders_matches() {
+        let mut new = glob("*.log");
+        new.dir = "/var/log/app2".into();
+        let entries = [DirEntry { name: "x.log".into(), is_dir: false, size: 1, modified: Some(1) }];
+        let files = [space_file("a.log", true, false)];
+        let plan = edit_plan(&glob("*.log"), &new, &["a.log"], &files, &entries, 50);
+        assert_eq!(names(&plan.remove), ["a.log"]);
+        assert!(plan.keep.is_empty());
+        assert_eq!(plan.add, ["/var/log/app2/x.log"]);
+    }
+
+    #[test]
+    fn another_server_keeps_nothing_and_does_not_mistake_a_same_path_file_for_its_own() {
+        let mut new = glob("*.log");
+        new.server_id = "t".into();
+        let entries = [file("a.log", 1), file("b.log", 2)];
+        // `files` are the files of the new Server: it already has b.log by path.
+        let files = [space_file("b.log", false, false)];
+        let plan = edit_plan(&glob("*.log"), &new, &["a.log"], &files, &entries, 50);
+        assert_eq!(names(&plan.remove), ["a.log"]);
+        assert!(plan.keep.is_empty());
+        assert_eq!(names(&plan.add), ["a.log"]);
+    }
+
+    #[test]
+    fn a_stopped_glob_removes_but_adds_nothing() {
+        let mut new = glob("api-*.log");
+        new.stopped = true;
+        let entries = [file("api-1.log", 1), file("a.log", 2)];
+        let files = [space_file("a.log", true, false)];
+        let plan = edit_plan(&glob("*.log"), &new, &["a.log"], &files, &entries, 50);
+        assert_eq!(names(&plan.remove), ["a.log"]);
+        assert!(plan.add.is_empty());
+    }
+
+    #[test]
+    fn the_limit_counts_the_files_that_are_kept() {
+        let entries: Vec<DirEntry> = (0..10).map(|i| file(&format!("f{i}.log"), i)).collect();
+        let files: Vec<SpaceFile> = (0..3).map(|i| space_file(&format!("f{i}.log"), true, false)).collect();
+        let plan = edit_plan(&glob("f[0-2].log"), &glob("*.log"), &["f0.log", "f1.log", "f2.log"], &files, &entries, 5);
+        assert_eq!(plan.keep.len(), 3);
+        assert_eq!(plan.add.len(), 2);
+    }
+
+    #[test]
+    fn a_file_added_by_path_is_not_added_again_by_the_new_glob() {
+        let entries = [file("a.log", 1), file("b.log", 2)];
+        let files = [space_file("b.log", false, false)];
+        let plan = edit_plan(&glob("a*.log"), &glob("*.log"), &[], &files, &entries, 50);
+        assert_eq!(names(&plan.add), ["a.log"]);
+    }
+
+    #[test]
+    fn a_path_the_user_excluded_is_not_kept_or_added() {
+        let mut new = glob("*.log");
+        new.excluded.push(path("debug.log"));
+        let entries = [file("debug.log", 1), file("a.log", 2)];
+        let plan = edit_plan(&glob("*.log"), &new, &["a.log"], &[space_file("a.log", true, false)], &entries, 50);
+        assert_eq!(names(&plan.keep), ["a.log"]);
+        assert!(plan.add.is_empty());
     }
 }

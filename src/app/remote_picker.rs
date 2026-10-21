@@ -15,6 +15,51 @@ use std::collections::HashSet;
 pub enum PickerTarget {
     NewSpace,
     AddTo(String),
+    /// Edit one member of a Remote Log Space with the dialog that added it.
+    Edit { space_id: String, member: EditMember },
+}
+
+/// The member of a Remote Log Space an Edit dialog changes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum EditMember {
+    /// A Remote File, by `file_id`.
+    File(String),
+    /// A Live Glob, by `glob_id`.
+    Glob(String),
+    /// A Remote Command, by `file_id`.
+    Command(String),
+}
+
+/// What the member was when its Edit dialog opened: Save is off while the
+/// dialog still says the same.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EditOriginal {
+    /// The file or glob (not for a Remote Command).
+    pub staged: Option<Staged>,
+    /// Starting Time of a Remote File, as stored.
+    pub start_time: String,
+    /// Server and command of a Remote Command, and the Command Preset it was
+    /// written from.
+    pub command: Option<(String, String, Option<crate::remote::PresetFields>)>,
+}
+
+/// What an edited Live Glob would do, shown before Save.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GlobPreview {
+    /// The glob the plan is for.
+    pub staged: Staged,
+    /// `None` while the folder is listed.
+    pub plan: Option<crate::workspace::log_space::GlobEditPlan>,
+    pub error: Option<String>,
+}
+
+impl GlobPreview {
+    /// `+N files · −M files · K kept`.
+    pub fn summary(&self) -> Option<String> {
+        let plan = self.plan.as_ref()?;
+        let files = |n: usize| if n == 1 { "1 file".to_string() } else { format!("{n} files") };
+        Some(format!("+{} · \u{2212}{} · {} kept", files(plan.add.len()), files(plan.remove.len()), plan.keep.len()))
+    }
 }
 
 /// Something chosen in the picker, waiting for Done.
@@ -115,6 +160,18 @@ pub struct RemotePicker {
     /// The fields are emptied at the next render (it needs a window).
     pub clear_input: bool,
     pub clear_filter: bool,
+    /// Text to put in the path field and the Starting Time field at the next
+    /// render (an Edit dialog opens with the member's values).
+    pub set_input: Option<String>,
+    pub set_start: Option<String>,
+    /// Edit only: what the member was.
+    pub original: Option<EditOriginal>,
+    /// Edit of a Live Glob: what the glob typed now would do.
+    pub glob_preview: Option<GlobPreview>,
+    /// Only the answers to the latest check and the latest preview count: a
+    /// dialog closed or changed meanwhile drops them.
+    resolve_request: u64,
+    preview_request: u64,
     /// Only the answer to the latest request is shown.
     request: u64,
 }
@@ -272,6 +329,12 @@ impl AppView {
             server_search: None,
             clear_input: false,
             clear_filter: false,
+            set_input: None,
+            set_start: None,
+            original: None,
+            glob_preview: None,
+            resolve_request: 0,
+            preview_request: 0,
             request: 0,
         });
         self.picker_select_server(&first, cx);
@@ -356,6 +419,14 @@ impl AppView {
             })
             .detach();
             picker.start_input = Some(input);
+        }
+        if let (Some(input), true) = (picker.input.clone(), picker.set_input.is_some()) {
+            let text = picker.set_input.take().unwrap_or_default();
+            input.update(cx, |state, cx| state.set_value(text, window, cx));
+        }
+        if let (Some(input), true) = (picker.start_input.clone(), picker.set_start.is_some()) {
+            let text = picker.set_start.take().unwrap_or_default();
+            input.update(cx, |state, cx| state.set_value(text, window, cx));
         }
     }
 
@@ -555,6 +626,16 @@ impl AppView {
         let Some(server_id) = picker.server_id.clone() else { return };
         let path = join(&picker.dir, name);
         let item = Staged::File { server_id, path };
+        if let Some(EditOriginal { staged, .. }) = picker.original.as_ref() {
+            // An Edit holds one file: the one ticked replaces it. A Live Glob
+            // is not turned into a file.
+            if matches!(staged, Some(Staged::File { .. })) {
+                picker.staged = vec![item];
+                picker.error = None;
+            }
+            cx.notify();
+            return;
+        }
         if let Some(pos) = picker.staged.iter().position(|s| *s == item) {
             picker.staged.remove(pos);
         } else {
@@ -629,6 +710,8 @@ impl AppView {
         picker.busy = Some(PickerBusy::Resolving(text.clone()));
         picker.error = None;
         picker.info = None;
+        picker.resolve_request += 1;
+        let resolve = picker.resolve_request;
         let hub = self.remote_hub(cx);
         let store: ServerStore = self.picker_store();
         let tasks: Vec<_> = targets
@@ -655,7 +738,13 @@ impl AppView {
             for (sid, task) in tasks {
                 results.push((sid, task.await));
             }
-            this.update(cx, |this, cx| this.picker_resolved(&selected, results, cx)).ok();
+            this.update(cx, |this, cx| {
+                // A dialog closed or reopened meanwhile ignores the answer.
+                if this.remote.picker.as_ref().is_some_and(|p| p.resolve_request == resolve) {
+                    this.picker_resolved(&selected, results, cx)
+                }
+            })
+            .ok();
         })
         .detach();
         cx.notify();
@@ -682,6 +771,60 @@ impl AppView {
         let mut errors = Vec::new();
         let mut open_dir = None;
         let (mut added_files, mut skipped_files, mut added_globs, mut skipped_globs) = (0, 0, 0, 0);
+        if picker.original.is_some() {
+            let kind_of_original = picker.original.as_ref().and_then(|o| o.staged.as_ref()).map(Staged::is_glob);
+            let mut chosen = None;
+            for (sid, result) in results {
+                match result {
+                    Ok(Ok(Resolved::Dir(dir))) => {
+                        if sid == selected {
+                            open_dir = Some(dir);
+                        }
+                    }
+                    Ok(Ok(Resolved::Files(paths))) => {
+                        if let Some(path) = paths.into_iter().next() {
+                            chosen.get_or_insert(Staged::File { server_id: sid.clone(), path });
+                        }
+                    }
+                    Ok(Ok(Resolved::Glob { dir, pattern })) => {
+                        chosen.get_or_insert(Staged::Glob { server_id: sid.clone(), dir, pattern });
+                    }
+                    Ok(Err(message)) => errors.push(format!("{}: {message}", name_of(&sid))),
+                    Err(e) => errors.push(format!("{}: Could not reach the server: {e}", name_of(&sid))),
+                }
+            }
+            if let Some(item) = chosen {
+                if Some(item.is_glob()) != kind_of_original {
+                    errors.push(if item.is_glob() {
+                        "A file cannot become a Live Glob: remove it and add the Live Glob".to_string()
+                    } else {
+                        "A Live Glob cannot become a file: remove it and add the file".to_string()
+                    });
+                } else {
+                    let is_glob = item.is_glob();
+                    picker.staged = vec![item];
+                    picker.glob_preview = None;
+                    if is_glob {
+                        self.picker_preview_glob(cx);
+                    }
+                }
+            }
+            let Some(picker) = self.remote.picker.as_mut() else { return };
+            picker.error = (!errors.is_empty()).then(|| errors.join("\n"));
+            if open_dir.is_some() {
+                picker.clear_input = true;
+            }
+            if let Some(dir) = open_dir {
+                self.picker_load(Some(dir), cx);
+                if !errors.is_empty() {
+                    if let Some(picker) = self.remote.picker.as_mut() {
+                        picker.error = Some(errors.join("\n"));
+                    }
+                }
+            }
+            cx.notify();
+            return;
+        }
         for (sid, result) in results {
             match result {
                 Ok(Ok(Resolved::Dir(dir))) => {
@@ -781,6 +924,8 @@ impl AppView {
                     self.set_start_time_for_added(&space_id, &remembered, &start);
                 }
             }
+            // Save has its own button (`picker_save_edit`).
+            PickerTarget::Edit { .. } => {}
         }
         for (server_id, path, is_glob) in remembered {
             self.remote.picker_state.add_recent(&server_id, &path, is_glob);
@@ -795,9 +940,8 @@ impl AppView {
         if let Some(space) = self.active_project_mut().and_then(|p| p.log_space_mut(space_id)) {
             for (server_id, path, is_glob) in added.iter().filter(|a| !a.2) {
                 let _ = is_glob;
-                let id = crate::workspace::log_space::LogFile::remote(server_id, "", path).file_id;
-                if let Some(file) = space.file_mut(&id) {
-                    file.set_start_time(Some(start.to_string()));
+                if let Some(id) = space.remote_file_id(server_id, path) {
+                    space.set_start_time(&id, Some(start.to_string()));
                 }
             }
         }
@@ -835,8 +979,8 @@ impl AppView {
                     notices.push(format!("Already in this Log Space: {}", outcome.skipped.join(", ")));
                 }
                 for (server_id, _, path) in &files {
-                    let id = crate::workspace::log_space::LogFile::remote(server_id, "", path).file_id;
-                    if outcome.added.contains(&id) {
+                    let added_here = space.remote_file_id(server_id, path).is_some_and(|id| outcome.added.contains(&id));
+                    if added_here {
                         added.push((server_id.clone(), path.clone(), false));
                     }
                 }
@@ -862,5 +1006,179 @@ impl AppView {
             self.sync_glob_watchers(cx);
         }
         added
+    }
+}
+
+// ── Editing a Remote File or a Live Glob ───────────────────────────────────
+
+impl AppView {
+    /// Open the dialog that added a Remote File or a Live Glob on it, filled
+    /// with its values and holding only it. (A Remote Command opens the
+    /// command dialog: `open_remote_command_edit`.)
+    pub fn open_remote_edit(&mut self, space_id: &str, member: EditMember, cx: &mut Context<Self>) {
+        let (staged, start) = {
+            let Some(space) = self.active_project().and_then(|p| p.log_space(space_id)) else { return };
+            match &member {
+                EditMember::File(file_id) => {
+                    let Some(remote) = space.file(file_id).and_then(|f| f.remote.as_ref()) else { return };
+                    let Some(path) = remote.path() else { return };
+                    (
+                        Staged::File { server_id: remote.server_id.clone(), path: path.to_string() },
+                        remote.start_time.clone().unwrap_or_default(),
+                    )
+                }
+                EditMember::Glob(glob_id) => {
+                    let Some(glob) = space.glob(glob_id) else { return };
+                    (
+                        Staged::Glob { server_id: glob.server_id.clone(), dir: glob.dir.clone(), pattern: glob.pattern.clone() },
+                        String::new(),
+                    )
+                }
+                EditMember::Command(file_id) => {
+                    let file_id = file_id.clone();
+                    return self.open_remote_command_edit(space_id, &file_id, cx);
+                }
+            }
+        };
+        let target = PickerTarget::Edit { space_id: space_id.to_string(), member };
+        self.open_remote_picker(target, cx);
+        let Some(picker) = self.remote.picker.as_mut() else { return };
+        let (server_id, dir, typed) = match &staged {
+            Staged::File { server_id, path } => (server_id.clone(), dirname(path), path.clone()),
+            Staged::Glob { server_id, dir, pattern } => (server_id.clone(), dir.clone(), join(dir, pattern)),
+        };
+        picker.server_id = Some(server_id);
+        picker.original = Some(EditOriginal { staged: Some(staged.clone()), start_time: start.clone(), command: None });
+        picker.staged = vec![staged];
+        picker.start_time = start.clone();
+        picker.set_input = Some(typed);
+        picker.set_start = Some(start);
+        self.load_picker_dir(Some(dir), LoadKind::Open, cx);
+    }
+
+    /// Whether this is an Edit dialog.
+    pub fn picker_is_edit(&self) -> bool {
+        self.remote.picker.as_ref().is_some_and(|p| matches!(p.target, PickerTarget::Edit { .. }))
+    }
+
+    /// Whether the dialog says something other than the Remote File or Live
+    /// Glob it edits, and the change can be saved: the Live Glob's preview has
+    /// arrived.
+    pub fn picker_edit_can_save(&self) -> bool {
+        let Some(picker) = self.remote.picker.as_ref() else { return false };
+        let Some(original) = picker.original.as_ref().filter(|o| o.staged.is_some()) else { return false };
+        if picker.busy.is_some() || self.picker_start_error().is_some() {
+            return false;
+        }
+        let [item] = picker.staged.as_slice() else { return false };
+        match item {
+            Staged::File { .. } => {
+                Some(item) != original.staged.as_ref() || picker.start_time.trim() != original.start_time.trim()
+            }
+            Staged::Glob { .. } => {
+                Some(item) != original.staged.as_ref()
+                    && picker.glob_preview.as_ref().is_some_and(|p| p.staged == *item && p.plan.is_some())
+            }
+        }
+    }
+
+    /// The warning beside Save, when saving drops something: the Markers of a
+    /// Remote File that becomes another file.
+    pub fn picker_edit_warning(&self) -> Option<&'static str> {
+        let picker = self.remote.picker.as_ref()?;
+        let PickerTarget::Edit { space_id, member: EditMember::File(file_id) } = &picker.target else { return None };
+        let original = picker.original.as_ref()?.staged.as_ref()?;
+        let [item] = picker.staged.as_slice() else { return None };
+        if item == original {
+            return None;
+        }
+        let file = self.active_project()?.log_space(space_id)?.file(file_id)?;
+        (!file.markers.is_empty()).then_some("Markers on this file will be removed")
+    }
+
+    /// List the folder of the Live Glob typed in an Edit dialog and work out
+    /// what saving would do. The answer of a dialog changed or closed
+    /// meanwhile is dropped.
+    pub(crate) fn picker_preview_glob(&mut self, cx: &mut Context<Self>) {
+        let Some(picker) = self.remote.picker.as_mut() else { return };
+        let PickerTarget::Edit { space_id, member: EditMember::Glob(glob_id) } = picker.target.clone() else { return };
+        let Some(staged) = picker.staged.first().cloned() else { return };
+        let Staged::Glob { server_id, dir, pattern } = staged.clone() else { return };
+        picker.preview_request += 1;
+        let request = picker.preview_request;
+        picker.glob_preview = Some(GlobPreview { staged: staged.clone(), plan: None, error: None });
+        let hub = self.remote_hub(cx);
+        let store: ServerStore = self.picker_store();
+        let task = hub.spawn({
+            let (hub, server_id, dir) = (hub.clone(), server_id.clone(), dir.clone());
+            async move {
+                let session = hub.session(&store, &server_id).await.map_err(|e| e.message())?;
+                let sftp = session.open_sftp().await?;
+                list_dir(&sftp, &dir).await
+            }
+        });
+        cx.spawn(async move |this, cx| {
+            let result = task.await;
+            this.update(cx, |this, cx| {
+                if this.remote.picker.as_ref().is_none_or(|p| p.preview_request != request) {
+                    return;
+                }
+                let preview = match result {
+                    Ok(Ok(entries)) => {
+                        match this.glob_edit_plan(&space_id, &glob_id, &server_id, &dir, &pattern, &entries) {
+                            Some(plan) => GlobPreview { staged: staged.clone(), plan: Some(plan), error: None },
+                            None => GlobPreview { staged: staged.clone(), plan: None, error: Some("The Live Glob is gone".into()) },
+                        }
+                    }
+                    Ok(Err(message)) => GlobPreview { staged: staged.clone(), plan: None, error: Some(message) },
+                    Err(e) => GlobPreview {
+                        staged: staged.clone(),
+                        plan: None,
+                        error: Some(format!("Could not reach the server: {e}")),
+                    },
+                };
+                if let Some(picker) = this.remote.picker.as_mut() {
+                    picker.glob_preview = Some(preview);
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+        cx.notify();
+    }
+
+    /// Save in an Edit dialog of a Remote File or a Live Glob. A change that
+    /// cannot be applied leaves the dialog open with the reason.
+    pub fn picker_save_edit(&mut self, cx: &mut Context<Self>) {
+        if !self.picker_edit_can_save() {
+            return;
+        }
+        let Some(picker) = self.remote.picker.as_ref() else { return };
+        let PickerTarget::Edit { space_id, member } = picker.target.clone() else { return };
+        let Some(item) = picker.staged.first().cloned() else { return };
+        let result = match (member, item) {
+            (EditMember::File(file_id), Staged::File { server_id, path }) => {
+                let start = Some(picker.start_time.clone());
+                self.apply_remote_file_edit(&space_id, &file_id, &server_id, &path, start, cx)
+            }
+            (EditMember::Glob(glob_id), Staged::Glob { server_id, dir, pattern }) => {
+                let plan = picker.glob_preview.as_ref().and_then(|p| p.plan.clone());
+                match plan {
+                    Some(plan) => self.apply_live_glob_edit(&space_id, &glob_id, &server_id, &dir, &pattern, &plan, cx),
+                    None => return,
+                }
+            }
+            _ => return,
+        };
+        match result {
+            Ok(()) => self.close_remote_picker(cx),
+            Err(message) => {
+                if let Some(picker) = self.remote.picker.as_mut() {
+                    picker.error = Some(message);
+                }
+                cx.notify();
+            }
+        }
     }
 }

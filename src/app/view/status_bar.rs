@@ -2,7 +2,6 @@
 
 use super::AppView;
 use crate::app::format_count;
-use crate::live::SourceStatus;
 use gpui::{Context, IntoElement};
 use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::popover::Popover;
@@ -18,7 +17,8 @@ impl AppView {
             return Some((text.clone(), text));
         }
         let (worst, count, total) = self.worst_live_status()?;
-        let label = crate::live::connection_label(&worst, count, total, self.slowest_server_latency());
+        let label =
+            crate::live::connection_label(&worst, count, total, self.slowest_server_latency());
         let list = self
             .live_file_statuses()
             .into_iter()
@@ -91,11 +91,11 @@ impl AppView {
                 // Connection Details opens from here (L7).
                 Some(snapshot) => {
                     let view = cx.entity();
-                    bar.right(
-                        Popover::new("connection-details")
-                            .trigger(trigger)
-                            .content(move |_, _, cx| super::connection_view::connection_details(&snapshot, &view, cx)),
-                    )
+                    bar.right(Popover::new("connection-details").trigger(trigger).content(
+                        move |_, _, cx| {
+                            super::connection_view::connection_details(&snapshot, &view, cx)
+                        },
+                    ))
                 }
                 None => bar.right(trigger.tooltip(list)),
             };
@@ -132,7 +132,9 @@ impl AppView {
                     .ghost()
                     .xsmall()
                     .label(label)
-                    .on_click(cx.listener(move |this, _, _window, cx| this.press_connect(action.clone(), cx))),
+                    .on_click(cx.listener(move |this, _, _window, cx| {
+                        this.press_connect(action.clone(), cx)
+                    })),
             );
         }
         if !self.live.follow && self.live.unseen > 0 {
@@ -149,7 +151,11 @@ impl AppView {
                 .ghost()
                 .xsmall()
                 .selected(self.active_space_paused())
-                .label(if self.active_space_paused() { "Paused" } else { "Pause" })
+                .label(if self.active_space_paused() {
+                    "Paused"
+                } else {
+                    "Pause"
+                })
                 .on_click(cx.listener(|this, _, _window, cx| this.toggle_pause(cx))),
         )
         .right(

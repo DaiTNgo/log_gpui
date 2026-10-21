@@ -505,6 +505,87 @@ impl AppView {
     }
 }
 
+impl AppView {
+    /// Remember a path or glob in the Server's Recent Paths.
+    pub(crate) fn remember_recent(&mut self, server_id: &str, path: &str, is_glob: bool) {
+        self.remote.picker_state.add_recent(server_id, path, is_glob);
+        self.save_picker_state();
+    }
+
+    /// Close the connection to a Server that nothing reads from any more: no
+    /// source of an open Log Space, no Live Glob watcher.
+    pub(crate) fn release_unused_server(&mut self, server_id: &str) {
+        let used = self
+            .workspace_state
+            .projects
+            .iter()
+            .flat_map(|p| &p.log_spaces)
+            .flat_map(|s| s.files_on_server(server_id))
+            .any(|f| self.live.sources.contains_key(&f.file_id))
+            || self.live.globs.watchers.keys().any(|(s, _)| s == server_id);
+        if used {
+            return;
+        }
+        if let Some(hub) = self.remote.hub.clone() {
+            let sid = server_id.to_string();
+            let h = hub.clone();
+            hub.spawn(async move { h.drop_session(&sid).await });
+        }
+    }
+
+    /// Save an edited Remote File: another path or Server makes it another
+    /// file (its lines and Markers go, it is read as when added); only the
+    /// Starting Time changing reads the same file again from the new time and
+    /// keeps its Markers. It keeps its place in the Log Space either way.
+    pub fn apply_remote_file_edit(
+        &mut self,
+        space_id: &str,
+        file_id: &str,
+        server_id: &str,
+        path: &str,
+        start: Option<String>,
+        cx: &mut Context<Self>,
+    ) -> Result<(), String> {
+        use crate::workspace::log_space::EditError;
+        let Some(server_name) = self.remote.servers.get(server_id).map(|s| s.name.clone()) else {
+            return Err("That Server does not exist any more".into());
+        };
+        let Some(old) = self
+            .active_project()
+            .and_then(|p| p.log_space(space_id))
+            .and_then(|s| s.file(file_id))
+            .and_then(|f| f.remote.clone())
+        else {
+            return Err("The file is gone".into());
+        };
+        let start = start.map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+        let moved = old.server_id != server_id || old.path() != Some(path);
+        if !moved && old.start_time == start {
+            return Ok(());
+        }
+        self.persist_active_session();
+        let Some(space) = self.active_project_mut().and_then(|p| p.log_space_mut(space_id)) else {
+            return Err("The Log Space is gone".into());
+        };
+        if moved {
+            match space.replace_remote_target(file_id, server_id, &server_name, RemoteTarget::File { path: path.to_string() }) {
+                Ok(()) => {}
+                Err(EditError::Duplicate) => return Err(format!("{server_name}:{path} is already in this Log Space")),
+                Err(_) => return Err("The file is gone".into()),
+            }
+        }
+        space.set_start_time(file_id, start);
+        self.forget_file(file_id);
+        self.forget_live_state(file_id);
+        self.remember_recent(server_id, path, false);
+        self.refresh_after_space_change(cx);
+        if old.server_id != server_id {
+            self.release_unused_server(&old.server_id);
+        }
+        Ok(())
+    }
+}
+
 /// What the Connect button does.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ConnectAction {

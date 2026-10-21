@@ -19,4 +19,4 @@ pub use project::{Project, ProjectColorAccent};
 pub use correlation::{CorrelationHit, CorrelationResult, nearest_timestamp_index, search_across_files};
 pub use session::{SessionManifest, SessionPersistence};
 pub use state::{ContextSidebarState, ContextSection, FocusPaneState, LeftSidebarState, WorkspaceState};
-pub use working_set::{TabSessionState, TabTarget, ViewMode, WorkingSet, WorkspaceTab};
+pub use working_set::{CloseScope, TabSessionState, TabTarget, ViewMode, WorkingSet, WorkspaceTab};

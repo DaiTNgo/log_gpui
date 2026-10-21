@@ -4,6 +4,8 @@ use super::AppView;
 use crate::workspace::working_set::TabTarget;
 use gpui::prelude::FluentBuilder as _;
 use gpui::{div, px, MouseButton, Context, InteractiveElement as _, IntoElement, ParentElement as _, SharedString, StatefulInteractiveElement as _, Styled};
+use crate::workspace::working_set::CloseScope;
+use gpui_component::menu::{ContextMenuExt as _, PopupMenuItem};
 use gpui_component::{h_flex, ActiveTheme as _, Icon};
 use gpui_kit::assets::IconName;
 
@@ -53,6 +55,23 @@ impl AppView {
         // content below. The close button shows on hover (always when active).
         let tabs = labels.into_iter().enumerate().map(|(index, (label, board))| {
             let active = active_idx == Some(index);
+            let pinned = self.active_project().is_some_and(|p| p.working_set.is_pinned(index));
+            let closable = |scope| {
+                self.active_project().map_or(0, |p| p.working_set.closable_count(scope, index))
+            };
+            let counts = [
+                closable(CloseScope::Others),
+                closable(CloseScope::Left),
+                closable(CloseScope::Right),
+                closable(CloseScope::All),
+            ];
+            let is_file_view = self.tab_file_path(index, false).is_some();
+            let is_local = self.tab_file_is_local(index);
+            let has_space = self
+                .active_project()
+                .and_then(|p| p.working_set.tabs().get(index))
+                .is_some_and(|t| t.target.space_id().is_some());
+            let menu_view = view.clone();
             let group = SharedString::from(format!("working-tab-{index}"));
             let (click_view, close_view) = (view.clone(), view.clone());
             h_flex()
@@ -82,10 +101,10 @@ impl AppView {
                         .justify_center()
                         .size_4()
                         .rounded_sm()
-                        .when(!active, |this| this.invisible())
+                        .when(!active && !pinned, |this| this.invisible())
                         .group_hover(group, |s| s.visible())
                         .hover(|s| s.bg(border))
-                        .child(Icon::new(IconName::Close).size_3())
+                        .child(Icon::new(if pinned { IconName::Pin } else { IconName::Close }).size_3())
                         .on_mouse_down(MouseButton::Left, |_, _, app| app.stop_propagation())
                         .on_click(move |_, _, app| {
                             close_view.update(app, |this, cx| this.close_tab_at(index, cx));
@@ -96,6 +115,45 @@ impl AppView {
                     if !active {
                         click_view.update(app, |this, cx| this.switch_to_tab(index, cx));
                     }
+                })
+                .context_menu(move |menu, _, _| {
+                    let [others, left, right, all] = counts;
+                    let item = |label: &'static str, enabled: bool, act: Box<dyn Fn(&mut AppView, &mut Context<AppView>)>| {
+                        let v = menu_view.clone();
+                        PopupMenuItem::new(label)
+                            .disabled(!enabled)
+                            .on_click(move |_, _, app| {
+                                v.update(app, |this, cx| act(this, cx));
+                            })
+                    };
+                    let mut menu = menu
+                        .item(item("Close", true, Box::new(move |this, cx| this.close_tab_at(index, cx))))
+                        .item(item("Close Others", others > 0, Box::new(move |this, cx| this.close_scope_at(CloseScope::Others, index, cx))))
+                        .item(PopupMenuItem::separator())
+                        .item(item("Close to the Left", left > 0, Box::new(move |this, cx| this.close_scope_at(CloseScope::Left, index, cx))))
+                        .item(item("Close to the Right", right > 0, Box::new(move |this, cx| this.close_scope_at(CloseScope::Right, index, cx))))
+                        .item(item("Close All", all > 0, Box::new(move |this, cx| this.close_scope_at(CloseScope::All, index, cx))))
+                        .item(PopupMenuItem::separator())
+                        .item(item(
+                            if pinned { "Unpin Tab" } else { "Pin Tab" },
+                            true,
+                            Box::new(move |this, cx| this.set_tab_pinned(index, !pinned, cx)),
+                        ));
+                    if is_file_view {
+                        menu = menu
+                            .item(PopupMenuItem::separator())
+                            .item(item("Copy Path", true, Box::new(move |this, cx| this.copy_tab_path(index, false, cx))))
+                            .item(item("Copy Relative Path", true, Box::new(move |this, cx| this.copy_tab_path(index, true, cx))));
+                        if is_local {
+                            menu = menu.item(item("Reveal in Finder", true, Box::new(move |this, _| this.reveal_tab_file(index))));
+                        }
+                    }
+                    if has_space {
+                        menu = menu
+                            .item(PopupMenuItem::separator())
+                            .item(item("Reveal in Sidebar", true, Box::new(move |this, cx| this.reveal_tab_in_sidebar(index, cx))));
+                    }
+                    menu
                 })
         });
 

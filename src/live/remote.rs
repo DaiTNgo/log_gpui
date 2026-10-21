@@ -137,7 +137,7 @@ impl Ctl {
             SourceCommand::Resume => self.paused = false,
             SourceCommand::SetWindow(n) => self.window = n,
             // For a Remote Command only.
-            SourceCommand::Restart | SourceCommand::SetRestartOnExit(_) => {}
+            SourceCommand::Restart | SourceCommand::SetRestartOnExit(_) | SourceCommand::Replace { .. } => {}
             SourceCommand::Clear => self.clear = true,
             SourceCommand::LoadEarlier { room } => self.load_earlier = Some(room),
             SourceCommand::CancelLoadMore => {

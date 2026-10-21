@@ -22,6 +22,10 @@ _Avoid_: Origin, input.
 A single file of a Log Space opened on its own, showing only that file's rows.
 _Avoid_: File tab, single view.
 
+**Pinned Tab**:
+A tab of the tab strip kept at its start. It moves in front of the other tabs, shows a pin in place of the close button, and stays when Close Others, Close to the Left/Right or Close All run and when `⌘W` is pressed on it; clicking its pin closes it. It is kept across restarts. The right-click menu of a tab also copies the path of a File View's file, shows it in Finder, and shows its Log Space in the sidebar.
+_Avoid_: Pin Toggle (that pins a column), frozen tab, sticky tab.
+
 **Source Column**:
 The column in a Log Space's Parsed View that names each row's Source File. It is pinnable and filterable, and can be hidden from Quick Settings.
 _Avoid_: File column, origin column.
@@ -51,7 +55,7 @@ A Log Space whose files live on servers reached over SSH. Its files are read-onl
 _Avoid_: SSH space, server space, remote tab.
 
 **Remote File**:
-A file of a Remote Log Space, named by its server and its path on that server. A Remote File is either added by its path or brought in by a Live Glob.
+A file of a Remote Log Space, named by its server and its path on that server. A Remote File is either added by its path or brought in by a Live Glob. Edit… changes its path, Server or Starting Time in place: it keeps its place in the Log Space and its File View. Only the Starting Time changing reads the same file again and keeps its Markers; another path or Server makes it another file, so its lines and Markers go.
 _Avoid_: SSH file, server log.
 
 **Rotated File**:
@@ -63,7 +67,7 @@ The content of a Remote File and the Rotated Files chosen, read whole once into 
 _Avoid_: Download, snapshot, cached file.
 
 **Live Glob**:
-A glob on one Server, kept by a Remote Log Space, whose matching files are the space's Remote Files, including files that appear after it was added. The glob may only be in the file name.
+A glob on one Server, kept by a Remote Log Space, whose matching files are the space's Remote Files, including files that appear after it was added. The glob may only be in the file name. Edit… changes its pattern, folder or Server in place: files that still match go on untouched, files that stop matching are removed (not Gone), new matches are added, and the dialog previews `+N files · −M files · K kept` first.
 _Avoid_: Wildcard, watch, pattern, auto-add.
 
 **Stopped Live Glob**:
@@ -215,7 +219,7 @@ The automatic calculation of a column's width to match its longest ingested cont
 _Avoid_: Best fit, auto size.
 
 **Search**:
-Finding and jumping between log lines that match a Search Expression. Search never changes which lines or File Sections the view shows; it marks Matches, moves the selection between them, and narrows the Focus Pane.
+Finding and jumping between log lines that match a Search Expression. Search never changes which lines or File Sections the view shows; it marks Matches across the whole view, moves the selection between them, and narrows the Focus Pane together with Filter.
 _Avoid_: Query.
 
 **Search Expression**:
@@ -231,7 +235,7 @@ One or more words typed next to each other with no operator between them, matche
 _Avoid_: String, literal.
 
 **Match**:
-A log line whose raw line satisfies the Search Expression, with every Phrase occurrence in it highlighted.
+A log line of the view whose raw line satisfies the Search Expression, with every Phrase occurrence in it highlighted. Filter does not affect Matches; a Match may be a line the Focus Pane does not list.
 _Avoid_: Hit, result.
 
 **Filter**:

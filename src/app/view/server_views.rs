@@ -779,6 +779,10 @@ impl AppView {
                 ),
             );
         let quick = self.render_quick_connect(cx);
+        let is_edit = self.picker_is_edit();
+        let edit_can_save = self.picker_edit_can_save();
+        let edit_warning = self.picker_edit_warning();
+        let command_can_save = is_edit && self.command_edit_changed(cx);
         // The picker is borrowed again below; take what it needs now.
         let Some(picker) = self.remote.picker.as_ref() else { return div().into_any_element() };
         let theme = cx.theme();
@@ -918,6 +922,33 @@ impl AppView {
         let start_error = self.picker_start_error();
         let tab = picker.tab;
         let on_files = tab == PickerTab::Files;
+        let editing_glob = is_edit && picker.original.as_ref().and_then(|o| o.staged.as_ref()).is_some_and(|s| s.is_glob());
+        let edit_title = match (&picker.target, on_files, editing_glob) {
+            (crate::app::remote_picker::PickerTarget::Edit { .. }, false, _) => Some("Edit remote command"),
+            (crate::app::remote_picker::PickerTarget::Edit { .. }, true, true) => Some("Edit Live Glob"),
+            (crate::app::remote_picker::PickerTarget::Edit { .. }, true, false) => Some("Edit remote file"),
+            _ => None,
+        };
+        let edit_now = (is_edit && on_files)
+            .then(|| {
+                picker.staged.first().map(|item| {
+                    let name = self.picker_server(item.server_id()).map(|s| s.name).unwrap_or_default();
+                    format!("{name}:{}", item.path())
+                })
+            })
+            .flatten();
+        let preview = picker.glob_preview.clone();
+        let glob_stopped = match &picker.target {
+            crate::app::remote_picker::PickerTarget::Edit {
+                space_id,
+                member: crate::app::remote_picker::EditMember::Glob(glob_id),
+            } => self
+                .active_project()
+                .and_then(|p| p.log_space(space_id))
+                .and_then(|s| s.glob(glob_id))
+                .is_some_and(|g| g.stopped),
+            _ => false,
+        };
         let can_add_command = !on_files
             && self.command_server().is_some()
             && !self.command_text(cx).is_empty()
@@ -1000,9 +1031,9 @@ impl AppView {
                         div()
                             .text_base()
                             .font_weight(gpui::FontWeight::SEMIBOLD)
-                            .child(if on_files { "Add remote files" } else { "Add remote command" }),
+                            .child(edit_title.unwrap_or(if on_files { "Add remote files" } else { "Add remote command" })),
                     )
-                    .child(
+                    .when(!is_edit, |this| this.child(
                         h_flex()
                             .gap_1()
                             .child(
@@ -1019,8 +1050,8 @@ impl AppView {
                                     .selected(!on_files)
                                     .on_click(cx.listener(|this, _, _, cx| this.picker_set_tab(PickerTab::Command, cx))),
                             ),
-                    )
-                    .when(on_files, |this| this.child(quick))
+                    ))
+                    .when(on_files && !is_edit, |this| this.child(quick))
                     .child(servers)
                     .when_some(command_body, |this, body| this.child(body))
                     .when(on_files, |this| this
@@ -1060,7 +1091,7 @@ impl AppView {
                     .child(div().child(filter_input.map(|i| Input::new(&i)).map(|i| i.into_any_element()).unwrap_or_else(|| div().into_any_element())))
                     .child(list)
                     .child(recent_block)
-                    .child(ticks)
+                    .when(!is_edit, |this| this.child(ticks))
                     .child(
                         h_flex()
                             .gap_2()
@@ -1069,11 +1100,11 @@ impl AppView {
                             .child(
                                 Button::new("picker-add")
                                     .small()
-                                    .label("Add path")
+                                    .label(if is_edit { "Use path" } else { "Add path" })
                                     .on_click(cx.listener(|this, _, _, cx| this.picker_add_typed(cx))),
                             ),
                     ))
-                    .when(on_files, |this| {
+                    .when(on_files && !editing_glob, |this| {
                         this.child(div().child(
                             start_input.map(|i| Input::new(&i).into_any_element()).unwrap_or_else(|| div().into_any_element()),
                         ))
@@ -1084,7 +1115,28 @@ impl AppView {
                             .when_some(info, |this, m| this.child(div().text_xs().text_color(muted).child(m)))
                             .when_some(error, |this, e| this.child(div().text_xs().text_color(danger).child(e)))
                     })
-                    .when(on_files && count > 0, |this| this.child(staged))
+                    .when(on_files && count > 0 && !is_edit, |this| this.child(staged))
+                    .when_some(edit_now, |this, now| {
+                        this.child(div().text_xs().text_color(muted).child(format!("Now: {now}")))
+                    })
+                    .when_some(preview.filter(|_| editing_glob), |this, preview| {
+                        let line = match (&preview.error, preview.summary()) {
+                            (Some(error), _) => div().text_xs().text_color(danger).child(error.clone()),
+                            (None, Some(summary)) => div().text_xs().child(summary),
+                            (None, None) => div().text_xs().text_color(muted).child("Matching\u{2026}"),
+                        };
+                        this.child(line).when(glob_stopped, |this| {
+                            this.child(
+                                div()
+                                    .text_xs()
+                                    .text_color(muted)
+                                    .child("Stopped: matching files are added when you resume"),
+                            )
+                        })
+                    })
+                    .when_some(edit_warning, |this, warning| {
+                        this.child(div().text_xs().text_color(theme_warning(cx)).child(warning))
+                    })
                     .child(
                         h_flex()
                             .justify_end()
@@ -1094,7 +1146,14 @@ impl AppView {
                                     .label("Cancel")
                                     .on_click(cx.listener(|this, _, _, cx| this.close_remote_picker(cx))),
                             )
-                            .when(on_files, |this| this.child(
+                            .when(on_files && is_edit, |this| this.child(
+                                Button::new("picker-save")
+                                    .primary()
+                                    .label("Save")
+                                    .disabled(!edit_can_save)
+                                    .on_click(cx.listener(|this, _, _, cx| this.picker_save_edit(cx))),
+                            ))
+                            .when(on_files && !is_edit, |this| this.child(
                                 Button::new("picker-done")
                                     .primary()
                                     .label(match (count, globs) {
@@ -1105,12 +1164,19 @@ impl AppView {
                                     .disabled(count == 0 || start_error.is_some())
                                     .on_click(cx.listener(|this, _, _, cx| this.picker_confirm(cx))),
                             ))
-                            .when(!on_files, |this| this.child(
+                            .when(!on_files && !is_edit, |this| this.child(
                                 Button::new("command-add")
                                     .primary()
                                     .label("Add")
                                     .disabled(!can_add_command)
                                     .on_click(cx.listener(|this, _, _, cx| this.command_add(cx))),
+                            ))
+                            .when(!on_files && is_edit, |this| this.child(
+                                Button::new("command-save")
+                                    .primary()
+                                    .label("Save")
+                                    .disabled(!(can_add_command && command_can_save))
+                                    .on_click(cx.listener(|this, _, _, cx| this.command_save_edit(cx))),
                             )),
                     ),
             )
@@ -1210,4 +1276,10 @@ fn auth_label(auth: &crate::remote::AuthMethod) -> String {
         crate::remote::AuthMethod::Agent { socket, .. } => format!("agent {}", socket.describe()),
         crate::remote::AuthMethod::KeyboardInteractive => "keyboard-interactive".into(),
     }
+}
+
+/// The color of a warning line.
+fn theme_warning(cx: &gpui::App) -> gpui::Hsla {
+    use gpui_component::ActiveTheme as _;
+    cx.theme().warning
 }

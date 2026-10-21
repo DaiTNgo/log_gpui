@@ -96,6 +96,7 @@ impl LocalFileSource {
                 | Ok(SourceCommand::LoadEarlier { .. })
                 | Ok(SourceCommand::LoadMore { .. })
                 | Ok(SourceCommand::Restart)
+                | Ok(SourceCommand::Replace { .. })
                 | Ok(SourceCommand::SetRestartOnExit(_)) => {}
                     Err(async_channel::TryRecvError::Empty) => break,
                     Err(async_channel::TryRecvError::Closed) => return,

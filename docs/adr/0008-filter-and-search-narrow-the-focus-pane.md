@@ -1,3 +1,5 @@
+> Partly superseded by [ADR-0012](0012-search-matches-the-whole-view.md): Matches in the view no longer depend on Filter.
+
 # 0008. Filter and Search Narrow the Focus Pane, Not the View
 
 ## Context

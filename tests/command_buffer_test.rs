@@ -116,3 +116,22 @@ fn exited_ranks_between_waiting_for_file_and_reconnecting() {
     assert!(SourceStatus::Live.severity() < SourceStatus::WaitingForFile.severity());
     assert_eq!(SourceStatus::Exited(Some(127)).label(), "Exited (code 127)");
 }
+
+#[test]
+fn an_edited_command_leaves_its_lines_and_starts_a_new_run_after_a_break_naming_both_commands() {
+    let (mut buf, mut parsed) = (LiveBuffer::loaded("web1$ docker logs api", 0), log_gpui::space_view::ParsedFile::empty());
+    buf.apply_append_streams(&mut parsed, &["old one".to_string(), "old two".to_string()], &[], None);
+    buf.apply_break(BreakKind::Exited(None), "10:02");
+    buf.apply_command_changed("web1$ docker logs api", "web1$ docker logs worker", "10:03");
+    assert_eq!(buf.generation, 1);
+    assert_eq!(buf.name, "web1$ docker logs worker");
+    buf.apply_append_streams(&mut parsed, &["new one".to_string()], &[], None);
+    // The old lines stay; the new one is line 1 of the next Generation, under a Break.
+    assert_eq!(parsed.lines.len(), 3);
+    assert_eq!(parsed.entries[2].index, 1);
+    assert_eq!(parsed.entries[2].generation, 1);
+    let mark = parsed.entries[2].break_before.as_ref().expect("a Break above the first new line");
+    assert_eq!(mark.kind, BreakKind::CommandChanged);
+    assert!(mark.label.contains("command changed"), "{}", mark.label);
+    assert!(mark.label.contains("web1$ docker logs api") && mark.label.contains("web1$ docker logs worker"), "{}", mark.label);
+}

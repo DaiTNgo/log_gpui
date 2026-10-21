@@ -16,6 +16,10 @@ fn main() {
                 size(px(1440.0), px(900.0)),
                 cx,
             ))),
+            // On Linux the app draws its own title bar and window border
+            // (gpui-component's TitleBar and Root); without this the window
+            // manager adds its own bar above ours.
+            window_decorations: Some(gpui::WindowDecorations::Client),
             // gpui-kit TitleBar owns dragging, double-click zoom and traffic lights.
             ..TitleBar::window_options()
         };

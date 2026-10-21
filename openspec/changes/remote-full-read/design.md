@@ -199,3 +199,17 @@ Không còn câu hỏi mở. Đã chốt với người dùng:
 - Hỗ trợ gzip, zstd, xz và bzip2 ngay bản đầu, bằng crate thuần Rust (quyết định 3).
 - Full Read Limit mặc định 2.000.000 dòng, chỉnh trong Settings (quyết định 9).
 - Remote Copy không có hạn sống; chỉ bị xoá khi gỡ khỏi Log Space hoặc khi xoá Log Space (quyết định 8).
+
+## Measurements (task 7.2)
+
+Run on a MacBook (Apple silicon) with `cargo run --release --example measure_full_read`, loopback sshd, logs of ~110 bytes a line. Dependencies are the pinned pure-Rust crates; all of them decode much faster than a network delivers (a 1 Gbit/s link is ~120 MB/s), so decoding is not the bottleneck and nothing needs to move to the C libraries.
+
+| Kind | Crate | Packed from 163 MB of log text | Decode speed (text out) |
+|---|---|---|---|
+| gzip | `flate2` (`miniz_oxide`) | 22.5 MB (7.2×) | ~2,300 MB/s |
+| zstd | `ruzstd` | 7.9 MB (20.6×) | ~1,060 MB/s |
+| xz | `lzma-rs` | 4.8 MB (33.9×) | ~220 MB/s |
+| bzip2 | `bzip2` (`libbz2-rs-sys`) | 9.2 MB (17.7×) | ~135 MB/s |
+
+- **Search by timestamp** on a 1.07 GB file (9.8 M lines): the byte where line 4,000,000 starts was found with **15 reads, 1.0 MB read**, in under 1 ms locally. Over a link with 30 ms of latency that is about 0.5 s.
+- **Open in full, 2,000,000 lines (217 MB)** over loopback SFTP: **6.2 s** (about 35 MB/s, bound by parsing the lines into the view, not by SFTP), first lines on screen after **45 ms**. Memory grew from 407 MB to 2,012 MB: **0.82 KB per line** for the parsed lines alone; with the copies the view makes while it rebuilds, the 1.3 KB per line measured in `add-remote-live-log` stays the figure to plan with. The folder on disk is 217 MB.

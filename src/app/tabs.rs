@@ -17,7 +17,7 @@ use crate::space_view::{BuiltView, EmptyCanvas, ParsedFile, build_file_view, bui
 use crate::archive::{ArchiveError, MAX_UNCOMPRESSED_BYTES, detect, read_entries, read_source};
 use crate::workspace::log_space::{LogFile, LogSpace, LogSpaceKind};
 use crate::workspace::project::Project;
-use crate::workspace::working_set::{TabSessionState, TabTarget, ViewMode, WorkingSet};
+use crate::workspace::working_set::{CloseScope, TabSessionState, TabTarget, ViewMode, WorkingSet};
 use gpui::{Context, ScrollStrategy};
 use std::path::Path;
 
@@ -471,13 +471,102 @@ impl AppView {
         self.schedule_session_save(cx);
     }
 
+    /// Close the active tab, unless it is a Pinned Tab.
     pub fn close_active_tab(&mut self, cx: &mut Context<Self>) {
         if let Some(idx) = self
             .active_project()
             .and_then(|p| p.working_set.active_tab_index())
         {
+            if self.active_project().is_some_and(|p| p.working_set.is_pinned(idx)) {
+                return;
+            }
             self.close_tab_at(idx, cx);
         }
+    }
+
+    /// Close the unpinned tabs `scope` reaches from the tab at `index`.
+    pub fn close_scope_at(&mut self, scope: CloseScope, index: usize, cx: &mut Context<Self>) {
+        self.persist_active_session();
+        if let Some(proj) = self.active_project_mut() {
+            proj.working_set.close_scope(scope, index);
+        }
+        self.restore_active_session(cx);
+        self.schedule_session_save(cx);
+    }
+
+    /// Pin or unpin the tab at `index`; the active tab stays the same tab.
+    pub fn set_tab_pinned(&mut self, index: usize, pinned: bool, cx: &mut Context<Self>) {
+        self.persist_active_session();
+        if let Some(proj) = self.active_project_mut() {
+            if pinned {
+                proj.working_set.pin_tab(index);
+            } else {
+                proj.working_set.unpin_tab(index);
+            }
+        }
+        self.schedule_session_save(cx);
+        cx.notify();
+    }
+
+    /// The file a File View tab shows.
+    fn tab_file(&self, index: usize) -> Option<LogFile> {
+        let proj = self.active_project()?;
+        let TabTarget::FileView { space_id, file_id } = &proj.working_set.tabs().get(index)?.target else {
+            return None;
+        };
+        proj.log_space(space_id)?.file(file_id).cloned()
+    }
+
+    /// Where a File View tab's file lives, as text for the clipboard: its path
+    /// on disk, or `user@host:path` for a Remote File. `relative` shortens a
+    /// path under the home folder to `~/…`.
+    pub fn tab_file_path(&self, index: usize, relative: bool) -> Option<String> {
+        let file = self.tab_file(index)?;
+        if let Some(remote) = &file.remote {
+            let path = remote.path()?;
+            let server = self.remote.servers.get(&remote.server_id)?;
+            return Some(format!("{}@{}:{path}", server.user, server.host));
+        }
+        let path = file.path?;
+        if relative {
+            if let Some(rest) = crate::workspace::session::home_dir()
+                .and_then(|h| std::path::Path::new(&path).strip_prefix(h).ok().map(|r| r.display().to_string()))
+            {
+                return Some(format!("~/{rest}"));
+            }
+        }
+        Some(path)
+    }
+
+    /// Whether the tab's file is on this computer, so Finder can show it.
+    pub fn tab_file_is_local(&self, index: usize) -> bool {
+        self.tab_file(index).is_some_and(|f| f.remote.is_none() && f.path.is_some())
+    }
+
+    pub fn copy_tab_path(&mut self, index: usize, relative: bool, cx: &mut Context<Self>) {
+        if let Some(text) = self.tab_file_path(index, relative) {
+            cx.write_to_clipboard(gpui::ClipboardItem::new_string(text));
+        }
+    }
+
+    pub fn reveal_tab_file(&mut self, index: usize) {
+        if let Some(path) = self.tab_file(index).filter(|f| f.remote.is_none()).and_then(|f| f.path) {
+            self.reveal_in_file_manager(&path);
+        }
+    }
+
+    /// Show the tab's Log Space in the left sidebar, open and expanded.
+    pub fn reveal_tab_in_sidebar(&mut self, index: usize, cx: &mut Context<Self>) {
+        let Some(space_id) = self
+            .active_project()
+            .and_then(|p| p.working_set.tabs().get(index))
+            .and_then(|t| t.target.space_id().map(str::to_string))
+        else {
+            return;
+        };
+        self.sidebar_state.visible = true;
+        self.expanded_spaces.insert(space_id);
+        cx.notify();
     }
 
     /// The session a newly opened tab of `space` starts with. An Imported

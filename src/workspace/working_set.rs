@@ -85,6 +85,18 @@ pub struct WorkspaceTab {
     pub target: TabTarget,
     /// Per-tab editor session state.
     pub session: TabSessionState,
+    /// A Pinned Tab sits before all other tabs and survives the bulk closes.
+    #[serde(default)]
+    pub pinned: bool,
+}
+
+/// Which tabs a bulk close reaches, relative to the clicked tab.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CloseScope {
+    Others,
+    Left,
+    Right,
+    All,
 }
 
 /// Deterministic headless state machine managing the ordered list of open tabs
@@ -154,7 +166,7 @@ impl WorkingSet {
         }
 
         let idx = self.tabs.len();
-        self.tabs.push(WorkspaceTab { target, session });
+        self.tabs.push(WorkspaceTab { target, session, pinned: false });
         self.active_index = Some(idx);
         Some(idx)
     }
@@ -182,6 +194,98 @@ impl WorkingSet {
         }
 
         Some(closed)
+    }
+
+    /// Whether the tab at `index` is a Pinned Tab.
+    pub fn is_pinned(&self, index: usize) -> bool {
+        self.tabs.get(index).is_some_and(|t| t.pinned)
+    }
+
+    fn pinned_count(&self) -> usize {
+        self.tabs.iter().filter(|t| t.pinned).count()
+    }
+
+    /// Move the tab at `from` to `to`, keeping the active tab the same tab.
+    fn relocate(&mut self, from: usize, to: usize) {
+        if from == to {
+            return;
+        }
+        let active = self.active_index.map(|a| {
+            if a == from {
+                to
+            } else if from < a && a <= to {
+                a - 1
+            } else if to <= a && a < from {
+                a + 1
+            } else {
+                a
+            }
+        });
+        let tab = self.tabs.remove(from);
+        self.tabs.insert(to, tab);
+        self.active_index = active;
+    }
+
+    /// Pin the tab: it moves behind the other Pinned Tabs. Returns its new index.
+    pub fn pin_tab(&mut self, index: usize) -> usize {
+        if index >= self.tabs.len() || self.tabs[index].pinned {
+            return index;
+        }
+        let to = self.pinned_count();
+        self.tabs[index].pinned = true;
+        self.relocate(index, to);
+        to
+    }
+
+    /// Unpin the tab: it moves to the front of the unpinned tabs. Returns its new index.
+    pub fn unpin_tab(&mut self, index: usize) -> usize {
+        if !self.is_pinned(index) {
+            return index;
+        }
+        self.tabs[index].pinned = false;
+        let to = self.pinned_count();
+        self.relocate(index, to);
+        to
+    }
+
+    fn in_scope(scope: CloseScope, clicked: usize, i: usize) -> bool {
+        match scope {
+            CloseScope::Others => i != clicked,
+            CloseScope::Left => i < clicked,
+            CloseScope::Right => i > clicked,
+            CloseScope::All => true,
+        }
+    }
+
+    /// How many tabs `close_scope` would close: those in scope that are not pinned.
+    pub fn closable_count(&self, scope: CloseScope, clicked: usize) -> usize {
+        self.tabs
+            .iter()
+            .enumerate()
+            .filter(|(i, t)| !t.pinned && Self::in_scope(scope, clicked, *i))
+            .count()
+    }
+
+    /// Close the unpinned tabs in `scope` relative to the clicked tab. The
+    /// active tab stays when it survives; otherwise the clicked tab (or, for
+    /// Close All, the first remaining tab) becomes active.
+    pub fn close_scope(&mut self, scope: CloseScope, clicked: usize) {
+        let keep: Vec<bool> = self
+            .tabs
+            .iter()
+            .enumerate()
+            .map(|(i, t)| t.pinned || !Self::in_scope(scope, clicked, i))
+            .collect();
+        let new_index = |old: usize| keep[..old].iter().filter(|k| **k).count();
+        let active = self.active_index;
+        let next_active = match active {
+            Some(a) if keep.get(a) == Some(&true) => Some(new_index(a)),
+            _ if clicked < keep.len() && keep[clicked] => Some(new_index(clicked)),
+            _ => keep.iter().position(|k| *k).map(new_index),
+        };
+        let mut flags = keep.into_iter();
+        self.tabs.retain(|_| flags.next().unwrap_or(true));
+        self.active_index = if self.tabs.is_empty() { None } else { next_active };
     }
 
     /// Close the currently active tab.

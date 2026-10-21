@@ -5,10 +5,10 @@
 use super::AppView;
 use crate::live::SourceStatus;
 use crate::live::remote::GlobInodes;
-use crate::remote::browse::DirEntry;
-use crate::remote::glob_plan::{GlobPlan, Listing, SpaceFile, plan_glob};
+use crate::remote::browse::{DirEntry, join};
+use crate::remote::glob_plan::{GlobPlan, Listing, SpaceFile, plan_glob, plan_glob_edit};
 use crate::remote::glob_watcher::{GlobEvent, GlobWatcher, WatchCommand, WatcherHandle};
-use crate::workspace::log_space::{LiveGlob, LogSpaceKind};
+use crate::workspace::log_space::{EditError, GlobEditPlan, LiveGlob, LogSpaceKind};
 use async_channel::{Receiver, Sender};
 use gpui::Context;
 use std::collections::{HashMap, HashSet};
@@ -386,6 +386,106 @@ impl AppView {
         self.live.globs.inodes.remove(glob_id);
         self.refresh_after_space_change(cx);
         self.sync_glob_watchers(cx);
+    }
+
+    /// What editing a Live Glob into `server_id`, `dir`, `pattern` would do,
+    /// given what the folder holds (`entries`). Shown before Save.
+    pub fn glob_edit_plan(
+        &self,
+        space_id: &str,
+        glob_id: &str,
+        server_id: &str,
+        dir: &str,
+        pattern: &str,
+        entries: &[DirEntry],
+    ) -> Option<GlobEditPlan> {
+        let space = self.active_project()?.log_space(space_id)?;
+        let old = space.glob(glob_id)?;
+        let new = old.edited(server_id, dir, pattern);
+        let own: Vec<String> = space
+            .glob_files(glob_id)
+            .iter()
+            .filter_map(|f| f.remote.as_ref()?.path().map(str::to_string))
+            .collect();
+        let files: Vec<SpaceFile> = space
+            .files_on_server(server_id)
+            .into_iter()
+            .filter_map(|f| {
+                Some(SpaceFile {
+                    path: f.remote.as_ref()?.path()?.to_string(),
+                    from_glob: false,
+                    gone: self.live.sources.get(&f.file_id).is_some_and(|s| s.status == SourceStatus::Gone),
+                })
+            })
+            .collect();
+        let read = self.live.globs.inodes.get(glob_id).map(|i| i.lock().unwrap().clone()).unwrap_or_default();
+        let (inodes, archives) = (HashMap::new(), HashSet::new());
+        let listing = Listing { entries, inodes: &inodes, archives: &archives };
+        Some(plan_glob_edit(old, &new, &listing, &own, &files, &read, self.live.glob_limit))
+    }
+
+    /// Save an edited Live Glob: its files that stop matching go (as "Remove
+    /// from Log Space" does, but they are not excluded), the new matches are
+    /// added, the others are not touched. The plan is the one the dialog
+    /// showed.
+    pub fn apply_live_glob_edit(
+        &mut self,
+        space_id: &str,
+        glob_id: &str,
+        server_id: &str,
+        dir: &str,
+        pattern: &str,
+        plan: &GlobEditPlan,
+        cx: &mut Context<Self>,
+    ) -> Result<(), String> {
+        let Some(server_name) = self.remote.servers.get(server_id).map(|s| s.name.clone()) else {
+            return Err("That Server does not exist any more".into());
+        };
+        self.persist_active_session();
+        let old_server = self
+            .active_project()
+            .and_then(|p| p.log_space(space_id))
+            .and_then(|s| s.glob(glob_id))
+            .map(|g| (g.server_id.clone(), g.dir.clone()));
+        let Some(project) = self.active_project_mut() else { return Err("No open Project".into()) };
+        let Some(space) = project.log_space_mut(space_id) else { return Err("The Log Space is gone".into()) };
+        let removed = match space.edit_live_glob(glob_id, server_id, &server_name, dir, pattern, plan) {
+            Ok(removed) => removed,
+            Err(EditError::Duplicate) => {
+                return Err(format!("This Live Glob is already in the Log Space: {server_name}:{}", join(dir, pattern)));
+            }
+            Err(_) => return Err("The Live Glob is gone".into()),
+        };
+        for file in &removed {
+            project.working_set.close_tabs_for_file(space_id, &file.file_id);
+        }
+        for file in &removed {
+            self.forget_file(&file.file_id);
+            self.forget_live_state(&file.file_id);
+        }
+        self.live.globs.pending.remove(glob_id);
+        // What was read at another place says nothing about the new one.
+        if old_server.as_ref().is_none_or(|(s, d)| s != server_id || d != dir) {
+            self.live.globs.inodes.remove(glob_id);
+        }
+        self.remember_recent(server_id, &join(dir, pattern), true);
+        self.refresh_after_space_change(cx);
+        self.sync_glob_watchers(cx);
+        if let Some((old, _)) = old_server {
+            if old != server_id {
+                self.release_unused_server(&old);
+            }
+        }
+        Ok(())
+    }
+
+    /// What was read for a file that stops being read: long reads, Rotated
+    /// Files and Load More under way.
+    pub(crate) fn forget_live_state(&mut self, file_id: &str) {
+        self.live.earlier.remove(file_id);
+        self.live.loading_more.remove(file_id);
+        self.live.loading_earlier.remove(file_id);
+        self.live.progress.remove(file_id);
     }
 
     /// What the status bar says about matching files that are not read.

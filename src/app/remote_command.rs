@@ -4,11 +4,11 @@
 //! menu of a Remote Command does (Restart, Restart on exit).
 
 use super::AppView;
-use super::remote_picker::{PickerTab, PickerTarget};
+use super::remote_picker::{EditMember, EditOriginal, PickerTab, PickerTarget};
 use crate::live::SourceCommand;
 use crate::remote::command::{DEFAULT_PRESET_LINES, unedited_preset};
 use crate::remote::{PresetFields, ServerStore, check_elevation, shell_quote};
-use crate::workspace::log_space::{AddCommandError, RemoteTarget};
+use crate::workspace::log_space::{AddCommandError, EditError, RemoteTarget};
 use gpui::{AppContext as _, Context, Entity, Window};
 use gpui_component::input::{InputEvent, InputState};
 
@@ -68,6 +68,17 @@ pub struct CommandForm {
     suggestion_request: u64,
     /// Why the command cannot be added.
     pub error: Option<String>,
+    /// An Edit dialog opens with the command's values: put in the fields at
+    /// the next render, once they exist.
+    pub prefill: Option<CommandPrefill>,
+}
+
+/// The values an Edit dialog of a Remote Command starts with.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommandPrefill {
+    pub command: String,
+    /// The Command Preset the command was written from, if it still is.
+    pub preset: Option<PresetFields>,
 }
 
 /// What the listing of units, containers or pods printed.
@@ -165,6 +176,48 @@ impl AppView {
             if let Some(picker) = self.remote.picker.as_mut() {
                 picker.command.inputs = Some(inputs);
             }
+        }
+        let Some(picker) = self.remote.picker.as_mut() else { return };
+        if let (Some(prefill), Some(inputs)) = (picker.command.prefill.take(), picker.command.inputs.as_ref()) {
+            let set = |input: &Entity<InputState>, text: String, window: &mut Window, cx: &mut Context<Self>| {
+                input.update(cx, |state, cx| state.set_value(text, window, cx));
+            };
+            let (command, subject, namespace, container, context, lines) = (
+                inputs.command.clone(),
+                inputs.subject.clone(),
+                inputs.namespace.clone(),
+                inputs.container.clone(),
+                inputs.context.clone(),
+                inputs.lines.clone(),
+            );
+            picker.command.last_rendered = None;
+            match &prefill.preset {
+                Some(PresetFields::Journal { unit, lines: n }) => {
+                    picker.command.preset = Some(PresetKind::Journal);
+                    set(&subject, unit.clone(), window, cx);
+                    set(&lines, n.to_string(), window, cx);
+                }
+                Some(PresetFields::Docker { container: name, lines: n }) => {
+                    picker.command.preset = Some(PresetKind::Docker);
+                    set(&subject, name.clone(), window, cx);
+                    set(&lines, n.to_string(), window, cx);
+                }
+                Some(PresetFields::Kube { pod, namespace: ns, container: c, context: ctx, lines: n }) => {
+                    picker.command.preset = Some(PresetKind::Kube);
+                    set(&subject, pod.clone(), window, cx);
+                    set(&namespace, ns.clone(), window, cx);
+                    set(&container, c.clone(), window, cx);
+                    set(&context, ctx.clone(), window, cx);
+                    set(&lines, n.to_string(), window, cx);
+                }
+                None => picker.command.preset = None,
+            }
+            set(&command, prefill.command, window, cx);
+            let has_preset = prefill.preset.is_some();
+            if has_preset {
+                self.command_load_suggestions(cx);
+            }
+            return;
         }
         let Some(picker) = self.remote.picker.as_mut() else { return };
         if let (Some(text), Some(inputs)) = (picker.command.set_command.take(), picker.command.inputs.as_ref()) {
@@ -343,8 +396,134 @@ impl AppView {
                 }
             }
             PickerTarget::AddTo(space_id) => self.add_remote_commands_to_space(&space_id, vec![entry], cx),
+            // Save has its own button (`command_save_edit`).
+            PickerTarget::Edit { .. } => {}
         }
         cx.notify();
+    }
+
+    // ── Editing a Remote Command ────────────────────────────────────────────
+
+    /// Open the Add remote command dialog on a Remote Command, with its
+    /// Server, command and Command Preset filled in.
+    pub fn open_remote_command_edit(&mut self, space_id: &str, file_id: &str, cx: &mut Context<Self>) {
+        let Some(file) = self.active_project().and_then(|p| p.log_space(space_id)).and_then(|s| s.file(file_id)).cloned()
+        else {
+            return;
+        };
+        let Some(remote) = file.remote.clone() else { return };
+        let RemoteTarget::Command { command, preset, .. } = remote.target.clone() else { return };
+        let target = PickerTarget::Edit { space_id: space_id.to_string(), member: EditMember::Command(file_id.to_string()) };
+        self.open_remote_command_picker(target, cx);
+        let Some(picker) = self.remote.picker.as_mut() else { return };
+        picker.server_id = Some(remote.server_id.clone());
+        picker.original = Some(EditOriginal {
+            staged: None,
+            start_time: String::new(),
+            command: Some((remote.server_id.clone(), command.clone(), preset.clone())),
+        });
+        picker.command.prefill = Some(CommandPrefill { command, preset });
+        cx.notify();
+    }
+
+    /// Whether the command form says something other than the Remote Command
+    /// it edits (Save is off while it does not).
+    pub fn command_edit_changed(&self, cx: &gpui::App) -> bool {
+        let Some(picker) = self.remote.picker.as_ref() else { return false };
+        let Some((server_id, command, preset)) = picker.original.as_ref().and_then(|o| o.command.clone()) else {
+            return false;
+        };
+        let text = self.command_text(cx);
+        let now_preset = unedited_preset(&text, self.command_preset_fields(cx).as_ref());
+        picker.server_id.as_deref() != Some(server_id.as_str()) || text != command || now_preset != preset
+    }
+
+    /// Save: the Remote Command runs the edited command (see
+    /// `apply_remote_command_edit`). A command that cannot be saved leaves the
+    /// dialog open with the reason.
+    pub fn command_save_edit(&mut self, cx: &mut Context<Self>) {
+        let Some((server_id, _, _)) = self.command_server() else { return };
+        let command = self.command_text(cx);
+        if command.is_empty() || self.command_form_error(cx).is_some() || !self.command_edit_changed(cx) {
+            return;
+        }
+        let preset = self.command_preset_fields(cx);
+        let Some(PickerTarget::Edit { space_id, member: EditMember::Command(file_id) }) =
+            self.remote.picker.as_ref().map(|p| p.target.clone())
+        else {
+            return;
+        };
+        match self.apply_remote_command_edit(&space_id, &file_id, &server_id, &command, preset.as_ref(), cx) {
+            Ok(()) => self.close_remote_picker(cx),
+            Err(message) => {
+                if let Some(picker) = self.remote.picker.as_mut() {
+                    picker.command.error = Some(message);
+                }
+                cx.notify();
+            }
+        }
+    }
+
+    /// Save an edited Remote Command: it keeps its place, lines and Markers;
+    /// the Run in progress ends, a Break says what changed, and the new
+    /// command starts a new Run from its line 1, like Restart. Restart on exit
+    /// keeps its value.
+    pub fn apply_remote_command_edit(
+        &mut self,
+        space_id: &str,
+        file_id: &str,
+        server_id: &str,
+        command: &str,
+        preset: Option<&PresetFields>,
+        cx: &mut Context<Self>,
+    ) -> Result<(), String> {
+        let Some(server) = self.remote.servers.get(server_id).cloned() else {
+            return Err("That Server does not exist any more".into());
+        };
+        let Some(old_server) = self
+            .active_project()
+            .and_then(|p| p.log_space(space_id))
+            .and_then(|s| s.file(file_id))
+            .and_then(|f| f.remote.as_ref().map(|r| r.server_id.clone()))
+        else {
+            return Err("The command is gone".into());
+        };
+        self.persist_active_session();
+        let target = RemoteTarget::Command { command: command.to_string(), preset: preset.cloned(), restart_on_exit: false };
+        let Some(space) = self.active_project_mut().and_then(|p| p.log_space_mut(space_id)) else {
+            return Err("The Log Space is gone".into());
+        };
+        match space.replace_remote_target(file_id, server_id, &server.name, target) {
+            Ok(()) => {}
+            Err(EditError::Duplicate) => return Err(format!("{}$ {command} is already in this Log Space", server.name)),
+            Err(EditError::Elevation(e)) => {
+                return Err(format!("Commands run as {}; elevation is not allowed ({})", server.user, e.word));
+            }
+            Err(_) => return Err("The command is gone".into()),
+        }
+        let file = space.file(file_id).cloned().expect("just edited");
+        let remote = file.remote.expect("a Remote Command");
+        match self.live.sources.get(file_id) {
+            Some(source) => {
+                source.handle.send(SourceCommand::Replace {
+                    server_id: server_id.to_string(),
+                    target: remote.target,
+                    name: file.display_name.clone(),
+                });
+                // The old Server's connection is closed once the old Run has
+                // ended (the source says so with its Break).
+                if old_server != server_id {
+                    self.live.release_after_replace.insert(file_id.to_string(), old_server);
+                }
+            }
+            None => {
+                if old_server != server_id {
+                    self.release_unused_server(&old_server);
+                }
+            }
+        }
+        self.refresh_after_space_change(cx);
+        Ok(())
     }
 
     /// Add Remote Commands to a Remote Log Space; one it already has is

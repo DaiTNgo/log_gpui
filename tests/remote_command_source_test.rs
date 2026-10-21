@@ -14,6 +14,8 @@ struct Env {
     hub: Arc<RemoteHub>,
     store: ServerStore,
     server_id: String,
+    /// The same sshd as a second Server.
+    other_id: String,
     dir: String,
 }
 
@@ -23,15 +25,18 @@ fn env() -> Option<Env> {
     let user = std::env::var("USER").ok()?;
     let mut server = Server::new("web1", "127.0.0.1", &user, AuthMethod::Key { path: format!("{dir}/userkey") });
     server.port = port;
+    let mut other = Server::new("web2", "127.0.0.1", &user, AuthMethod::Key { path: format!("{dir}/userkey") });
+    other.port = port;
     let mut store = ServerStore::default();
     let server_id = store.save(server).unwrap();
+    let other_id = store.save(other).unwrap();
     let (hub, requests) = RemoteHub::new(Arc::new(MemorySecrets::default()), Arc::new(Mutex::new(KnownHosts::default())));
     std::thread::spawn(move || {
         while let Ok(req) = requests.recv_blocking() {
             let _ = req.reply.send(true);
         }
     });
-    Some(Env { hub, store, server_id, dir })
+    Some(Env { hub, store, server_id, other_id, dir })
 }
 
 impl Env {
@@ -440,5 +445,99 @@ fn clear_does_not_stop_the_run_and_resuming_by_time_still_starts_at_the_last_lin
         after.extend(lines);
     }
     assert_eq!(after, vec![format!("{T5} five")], "no loss, no repeat");
+    h.close();
+}
+
+// ─── Replace: the command was edited ────────────────────────────────────────
+
+fn replace(env: &Env, command: &str) -> SourceCommand {
+    SourceCommand::Replace {
+        server_id: env.server_id.clone(),
+        target: log_gpui::workspace::log_space::RemoteTarget::Command {
+            command: command.to_string(),
+            preset: None,
+            restart_on_exit: false,
+        },
+        name: format!("web1$ {command}"),
+    }
+}
+
+#[test]
+fn replace_ends_the_run_says_what_changed_and_starts_the_new_command_from_its_first_line() {
+    let Some(env) = env() else { return };
+    let tag = std::process::id();
+    let old = format!("echo old; sleep 60.{tag}");
+    let h = env.plain(&old);
+    next(&h, is_append);
+    let new = "echo new1; echo new2; sleep 60";
+    h.send(replace(&env, new));
+    let changed = next(&h, |e| matches!(e, SourceEvent::CommandChanged { .. }));
+    assert_eq!(
+        changed,
+        SourceEvent::CommandChanged { from: format!("web1$ {old}"), to: format!("web1$ {new}") }
+    );
+    let SourceEvent::Run { command } = next(&h, |e| matches!(e, SourceEvent::Run { .. })) else { unreachable!() };
+    assert_eq!(command, new, "the new command runs as written");
+    let lines = lines_until(&h, |e| matches!(e, SourceEvent::Status(SourceStatus::Live)));
+    assert!(lines.is_empty());
+    let SourceEvent::Append { lines, .. } = next(&h, is_append) else { unreachable!() };
+    assert_eq!(lines[0], "new1");
+    // The old process was asked to stop.
+    std::thread::sleep(Duration::from_millis(500));
+    assert_eq!(sleepers(&env, tag), 0, "the old Run was ended on the Server");
+    h.close();
+}
+
+#[test]
+fn replace_after_the_command_exited_starts_the_new_one() {
+    let Some(env) = env() else { return };
+    let h = env.plain("echo once");
+    next(&h, exited(Some(0)));
+    h.send(replace(&env, "echo twice"));
+    next(&h, |e| matches!(e, SourceEvent::CommandChanged { .. }));
+    let lines = lines_until(&h, exited(Some(0)));
+    assert_eq!(lines, vec![(Stream::Stdout, "twice".to_string())]);
+    h.close();
+}
+
+#[test]
+fn replace_keeps_restart_on_exit_for_the_new_command() {
+    let Some(env) = env() else { return };
+    let h = env.start("echo a", None, true, 100_000);
+    next(&h, exited(Some(0)));
+    h.send(replace(&env, "echo b"));
+    next(&h, |e| matches!(e, SourceEvent::CommandChanged { .. }));
+    next(&h, exited(Some(0)));
+    // Restart on exit still runs the edited command again.
+    next(&h, is_break(BreakKind::Restarted(RestartKind::OnExit)));
+    let lines = lines_until(&h, exited(Some(0)));
+    assert_eq!(lines, vec![(Stream::Stdout, "b".to_string())]);
+    h.close();
+}
+
+#[test]
+fn replace_onto_another_server_runs_there_and_the_break_names_both() {
+    let Some(env) = env() else { return };
+    let h = env.plain("echo from-web1; sleep 60");
+    next(&h, is_append);
+    h.send(SourceCommand::Replace {
+        server_id: env.other_id.clone(),
+        target: log_gpui::workspace::log_space::RemoteTarget::Command {
+            command: "echo from-web2".into(),
+            preset: None,
+            restart_on_exit: false,
+        },
+        name: "web2$ echo from-web2".into(),
+    });
+    let changed = next(&h, |e| matches!(e, SourceEvent::CommandChanged { .. }));
+    assert_eq!(
+        changed,
+        SourceEvent::CommandChanged {
+            from: "web1$ echo from-web1; sleep 60".into(),
+            to: "web2$ echo from-web2".into()
+        }
+    );
+    let lines = lines_until(&h, exited(Some(0)));
+    assert_eq!(lines, vec![(Stream::Stdout, "from-web2".to_string())]);
     h.close();
 }

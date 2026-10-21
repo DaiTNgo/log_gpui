@@ -14,14 +14,9 @@ use gpui_component::tag::Tag;
 use gpui_component::{h_flex, ActiveTheme as _, Icon};
 use gpui_kit::assets::IconName;
 
-/// Max height of a content-sized section before it scrolls internally.
-const SECTION_MAX_HEIGHT: f32 = 260.0;
-/// The Inspector never shrinks below this; the other sections give up room first.
 /// Window height taken by everything outside the sidebar (title bar, tabs, toolbar, status bar).
 const WINDOW_CHROME_HEIGHT: f32 = 170.0;
-/// Height of a collapsed section header.
-const SECTION_HEADER_HEIGHT: f32 = 40.0;
-const SECTION_MIN_HEIGHT: f32 = 80.0;
+/// The Inspector never shrinks below this.
 const INSPECTOR_MIN_HEIGHT: f32 = 240.0;
 
 /// Pre-rendered section bodies plus the badge counts shown in the headers.
@@ -58,28 +53,9 @@ impl ContextSidebar {
             parsed,
         } = sections;
 
-        // Split the height left over by the Inspector between the open tool sections.
-        let tools = [ContextSection::Filter, ContextSection::Highlights, ContextSection::Columns];
-        let open_tools = tools.iter().filter(|t| !state.is_collapsed(**t)).count();
-        let inspector_room = if state.is_collapsed(ContextSection::Inspector) {
-            0.0
-        } else {
-            INSPECTOR_MIN_HEIGHT
-        };
-        let budget = viewport_height
-            - WINDOW_CHROME_HEIGHT
-            - SECTION_HEADER_HEIGHT * 4.0
-            - inspector_room;
-        let section_cap = if open_tools == 0 {
-            SECTION_MAX_HEIGHT
-        } else {
-            (budget / open_tools as f32).clamp(SECTION_MIN_HEIGHT, SECTION_MAX_HEIGHT)
-        };
-
         let section = |kind: ContextSection,
                        badge: Option<usize>,
                        body: gpui::AnyElement,
-                       window: &mut gpui::Window,
                        cx: &mut gpui::Context<AppView>| {
             let collapsed = state.is_collapsed(kind);
             let fills = kind == ContextSection::Inspector;
@@ -128,64 +104,55 @@ impl ContextSidebar {
                     if fills {
                         this.child(body)
                     } else {
-                        let handle = window
-                            .use_keyed_state(
-                                ElementId::from(format!("ctx-scroll-{}", kind.as_str())),
-                                cx,
-                                |_, _| ScrollHandle::default(),
-                            )
-                            .read(cx)
-                            .clone();
-                        // Plain `overflow_y_scroll` + an overlaid scrollbar: the scrollbar
-                        // wrapper sizes its area to 100% of an auto-height parent, which
-                        // defeats `max_h`.
-                        this.child(
-                            div()
-                                .relative()
-                                .w_full()
-                                .child(
-                                    div()
-                                        .id(ElementId::from(format!("ctx-body-{}", kind.as_str())))
-                                        .w_full()
-                                        .max_h(px(section_cap))
-                                        .overflow_y_scroll()
-                                        .track_scroll(&handle)
-                                        .px_3()
-                                        .pb_3()
-                                        .child(body),
-                                )
-                                .child(
-                                    div().absolute().inset_0().child(
-                                        Scrollbar::new(&handle)
-                                            .id(ElementId::from(format!(
-                                                "ctx-scrollbar-{}",
-                                                kind.as_str()
-                                            )))
-                                            .axis(ScrollbarAxis::Vertical)
-                                            .viewport_from_layout(),
-                                    ),
-                                ),
-                        )
+                        this.child(div().w_full().px_3().pb_3().child(body))
                     }
                 })
         };
 
+        let handle = window
+            .use_keyed_state("ctx-sidebar-scroll", cx, |_, _| ScrollHandle::default())
+            .read(cx)
+            .clone();
+        let min_height = (viewport_height - WINDOW_CHROME_HEIGHT).max(INSPECTOR_MIN_HEIGHT);
+
+        // The whole sidebar scrolls; sections grow with their content and the
+        // Inspector soaks up whatever height is left over.
         div()
-            .id("context-sidebar")
+            .relative()
             .w(px(CONTEXT_SIDEBAR_WIDTH))
             .h_full()
             .flex_shrink_0()
-            .flex()
-            .flex_col()
             .border_l_1()
             .border_color(cx.theme().border)
             .bg(cx.theme().background)
-            .when(parsed, |this| {
-                this.child(section(ContextSection::Filter, Some(active_filters), filter, window, cx))
-                    .child(section(ContextSection::Highlights, Some(rule_count), highlights, window, cx))
-                    .child(section(ContextSection::Columns, None, columns, window, cx))
-            })
-            .child(section(ContextSection::Inspector, None, inspector, window, cx))
+            .child(
+                div()
+                    .id("context-sidebar")
+                    .size_full()
+                    .overflow_y_scroll()
+                    .track_scroll(&handle)
+                    .child(
+                        div()
+                            .w_full()
+                            .min_h(px(min_height))
+                            .flex()
+                            .flex_col()
+                            .when(parsed, |this| {
+                                this.child(section(ContextSection::Filter, Some(active_filters), filter, cx))
+                                    .child(section(ContextSection::Highlights, Some(rule_count), highlights, cx))
+                                    .child(section(ContextSection::Columns, None, columns, cx))
+                            })
+                            .child(section(ContextSection::Inspector, None, inspector, cx)),
+                    ),
+            )
+            .child(
+                div().absolute().inset_0().child(
+                    Scrollbar::new(&handle)
+                        .id("ctx-sidebar-scrollbar")
+                        .axis(ScrollbarAxis::Vertical)
+                        .viewport_from_layout(),
+                ),
+            )
             .into_any_element()
     }
 }

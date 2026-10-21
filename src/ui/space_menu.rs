@@ -6,6 +6,7 @@
 //! as a copy and deleted (not the last one).
 
 use crate::app::AppView;
+use crate::app::remote_picker::EditMember;
 use crate::app::rename::RenameTarget;
 use crate::ui::menu_list::{MenuList, ROW_HEIGHT};
 use crate::workspace::log_space::{FileOrder, LogSpaceKind};
@@ -256,8 +257,13 @@ fn file_menu(menu: PopupMenu, file: &FileRef, cx: &mut App) -> PopupMenu {
             let restart = file.clone();
             let on_exit = file.clone();
             let remove = file.clone();
+            let edit = file.clone();
             let restart_on_exit = file.command.unwrap_or(false);
-            menu.item(PopupMenuItem::new("Restart").on_click(move |_, _, app| {
+            menu.item(PopupMenuItem::new("Edit…").on_click(move |_, _, app| {
+                let (space, id) = (edit.space_id.clone(), edit.file_id.clone());
+                edit.view.update(app, |this, cx| this.open_remote_edit(&space, EditMember::Command(id), cx));
+            }))
+            .item(PopupMenuItem::new("Restart").on_click(move |_, _, app| {
                 let id = restart.file_id.clone();
                 restart.view.update(app, |this, cx| this.restart_remote_command(&id, cx));
             }))
@@ -275,7 +281,17 @@ fn file_menu(menu: PopupMenu, file: &FileRef, cx: &mut App) -> PopupMenu {
             let remove = file.clone();
             let download = file.clone();
             let full = file.clone();
+            let edit = file.clone();
             let menu = remote_file_live_items(menu, file, cx);
+            // A file a Live Glob brought is edited through the Live Glob.
+            let menu = if file.in_glob {
+                menu
+            } else {
+                menu.item(PopupMenuItem::new("Edit…").on_click(move |_, _, app| {
+                    let (space, id) = (edit.space_id.clone(), edit.file_id.clone());
+                    edit.view.update(app, |this, cx| this.open_remote_edit(&space, EditMember::File(id), cx));
+                }))
+            };
             menu.item(PopupMenuItem::new("Open in full…").on_click(move |_, _, app| {
                 let (space, id) = (full.space_id.clone(), full.file_id.clone());
                 full.view.update(app, |this, cx| this.open_in_full_file(&space, &id, cx));
@@ -516,8 +532,13 @@ fn glob_row(glob: GlobRef, cx: &mut App) -> gpui::AnyElement {
 fn glob_menu(menu: PopupMenu, glob: &GlobRef) -> PopupMenu {
     let toggle = glob.clone();
     let remove = glob.clone();
+    let edit = glob.clone();
     let label = if glob.stopped { "Resume watching" } else { "Stop watching" };
-    menu.item(PopupMenuItem::new(label).on_click(move |_, _, app| {
+    menu.item(PopupMenuItem::new("Edit…").on_click(move |_, _, app| {
+        let (space, id) = (edit.space_id.clone(), edit.glob_id.clone());
+        edit.view.update(app, |this, cx| this.open_remote_edit(&space, EditMember::Glob(id), cx));
+    }))
+    .item(PopupMenuItem::new(label).on_click(move |_, _, app| {
         let (space, id) = (toggle.space_id.clone(), toggle.glob_id.clone());
         let stopped = toggle.stopped;
         toggle.view.update(app, |this, cx| {

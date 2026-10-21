@@ -144,6 +144,17 @@ impl AppView {
             return;
         }
 
+        // Plain Space/Enter typed into a text input belong to that input (its own
+        // PressEnter subscription handles search), not to the context shortcut.
+        let typing = !cmd
+            && !alt
+            && [&self.search_input, &self.focus_find_input]
+                .iter()
+                .any(|input| gpui::Focusable::focus_handle(input.read(cx), cx).is_focused(window));
+        if typing && matches!(key, " " | "Enter" | "enter") {
+            return;
+        }
+
         match (cmd, shift, alt, key) {
             (true, false, false, "c") if self.pane_selection.is_some() => {
                 self.copy_pane_selection(cx);
@@ -209,6 +220,11 @@ impl AppView {
             (true, false, false, "w") => {
                 self.close_active_tab(cx);
             }
+            (true, false, true, "t") => {
+                if let Some(idx) = self.active_project().and_then(|p| p.working_set.active_tab_index()) {
+                    self.close_scope_at(crate::workspace::CloseScope::Others, idx, cx);
+                }
+            }
             (true, false, true, "b") => {
                 self.toggle_context_sidebar(cx);
             }
@@ -217,14 +233,8 @@ impl AppView {
                 cx.notify();
             }
             (false, false, false, "Enter") | (false, false, false, "enter") => {
-                if self.focus.search().is_open
-                    && !self.focus.search().matched_visible_indices.is_empty()
-                {
-                    self.jump_next_match(cx);
-                } else {
-                    self.is_context_open = !self.is_context_open;
-                    cx.notify();
-                }
+                self.is_context_open = !self.is_context_open;
+                cx.notify();
             }
             (false, true, false, "Enter") | (false, true, false, "enter") => {
                 if self.focus.search().is_open {

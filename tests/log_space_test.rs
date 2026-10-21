@@ -391,3 +391,217 @@ fn a_starting_time_is_remembered_with_the_remote_file_and_old_sessions_have_none
     let remote: log_gpui::workspace::log_space::RemoteRef = serde_json::from_str(old).unwrap();
     assert!(remote.start_time.is_none());
 }
+
+// ─── Editing Remote Files, Live Globs and Remote Commands ───────────────────
+
+mod edit {
+    use super::*;
+    use log_gpui::workspace::log_space::{EditError, GlobEditPlan, RemoteTarget};
+
+    fn space() -> LogSpace {
+        LogSpace::new("r".into(), "Checkout".into(), LogSpaceKind::Remote)
+    }
+
+    fn file_target(path: &str) -> RemoteTarget {
+        RemoteTarget::File { path: path.into() }
+    }
+
+    fn add(space: &mut LogSpace, path: &str) {
+        space.add_remote_files(&[("s1".into(), "web1".into(), path.into())]).unwrap();
+    }
+
+    #[test]
+    fn replacing_the_path_keeps_the_id_the_place_and_the_order() {
+        let mut space = space();
+        add(&mut space, "/app/first.log");
+        add(&mut space, "/app/ap.log");
+        add(&mut space, "/app/third.log");
+        let seq = space.file("remote:s1:/app/ap.log").unwrap().added_seq;
+        space.file_mut("remote:s1:/app/ap.log").unwrap().paint_marker(1, "x", 0..1, super::red());
+        space.replace_remote_target("remote:s1:/app/ap.log", "s1", "web1", file_target("/app/app.log")).unwrap();
+        let ordered: Vec<&str> = space.ordered_files().iter().map(|f| f.display_name.as_str()).collect();
+        assert_eq!(ordered, ["web1:/app/first.log", "web1:/app/app.log", "web1:/app/third.log"]);
+        let file = space.file("remote:s1:/app/ap.log").unwrap();
+        assert_eq!(file.added_seq, seq);
+        assert_eq!(file.remote.as_ref().unwrap().path(), Some("/app/app.log"));
+        assert!(file.markers.is_empty());
+        assert_eq!(file.generation, 0);
+    }
+
+    #[test]
+    fn replacing_the_server_renames_the_file_after_the_new_server() {
+        let mut space = space();
+        add(&mut space, "/app/app.log");
+        space.replace_remote_target("remote:s1:/app/app.log", "s2", "web2", file_target("/app/app.log")).unwrap();
+        let file = space.file("remote:s1:/app/app.log").unwrap();
+        assert_eq!(file.display_name, "web2:/app/app.log");
+        assert_eq!(file.remote.as_ref().unwrap().server_id, "s2");
+    }
+
+    #[test]
+    fn replacing_with_what_another_member_reads_is_refused_and_changes_nothing() {
+        let mut space = space();
+        add(&mut space, "/app/a.log");
+        add(&mut space, "/app/b.log");
+        let before = space.clone().files;
+        let result = space.replace_remote_target("remote:s1:/app/a.log", "s1", "web1", file_target("/app/b.log"));
+        assert_eq!(result, Err(EditError::Duplicate));
+        assert_eq!(space.files, before);
+        // Its own target is not a duplicate of itself.
+        assert!(space.replace_remote_target("remote:s1:/app/a.log", "s1", "web1", file_target("/app/a.log")).is_ok());
+    }
+
+    #[test]
+    fn an_edited_file_does_not_make_its_old_path_a_duplicate() {
+        let mut space = space();
+        add(&mut space, "/app/ap.log");
+        space.replace_remote_target("remote:s1:/app/ap.log", "s1", "web1", file_target("/app/app.log")).unwrap();
+        // The old path can be added again: it is another member, with its own id.
+        let outcome = space.add_remote_files(&[("s1".into(), "web1".into(), "/app/ap.log".into())]).unwrap();
+        assert_eq!(outcome.added.len(), 1);
+        assert_ne!(outcome.added[0], "remote:s1:/app/ap.log");
+        assert_eq!(space.remote_file_id("s1", "/app/ap.log").as_deref(), Some(outcome.added[0].as_str()));
+        assert_eq!(space.remote_file_id("s1", "/app/app.log").as_deref(), Some("remote:s1:/app/ap.log"));
+        // And the edited file's new path is a duplicate.
+        let again = space.add_remote_files(&[("s1".into(), "web1".into(), "/app/app.log".into())]).unwrap();
+        assert!(again.added.is_empty());
+        assert_eq!(again.skipped.len(), 1);
+    }
+
+    #[test]
+    fn a_file_cannot_become_a_command() {
+        let mut space = space();
+        add(&mut space, "/app/a.log");
+        let command = RemoteTarget::Command { command: "ls".into(), preset: None, restart_on_exit: false };
+        assert_eq!(space.replace_remote_target("remote:s1:/app/a.log", "s1", "web1", command), Err(EditError::NotFound));
+    }
+
+    #[test]
+    fn replacing_a_command_keeps_markers_restart_on_exit_and_the_place() {
+        let mut space = space();
+        space.add_remote_commands(&[("s1".into(), "web1".into(), "journalctl -f -u nginx".into(), None)]).unwrap();
+        let id = space.files[0].file_id.clone();
+        if let Some(RemoteTarget::Command { restart_on_exit, .. }) = space.file_mut(&id).unwrap().remote.as_mut().map(|r| &mut r.target) {
+            *restart_on_exit = true;
+        }
+        space.file_mut(&id).unwrap().paint_marker(3, "a line", 0..1, super::red());
+        let command = RemoteTarget::Command { command: "journalctl -f -u api".into(), preset: None, restart_on_exit: false };
+        space.replace_remote_target(&id, "s2", "web2", command).unwrap();
+        let file = space.file(&id).unwrap();
+        assert_eq!(file.display_name, "web2$ journalctl -f -u api");
+        assert_eq!(file.markers.len(), 1);
+        match &file.remote.as_ref().unwrap().target {
+            RemoteTarget::Command { command, restart_on_exit, .. } => {
+                assert_eq!(command, "journalctl -f -u api");
+                assert!(*restart_on_exit, "Restart on exit keeps its value");
+            }
+            _ => panic!("still a command"),
+        }
+    }
+
+    #[test]
+    fn a_command_that_elevates_is_refused() {
+        let mut space = space();
+        space.add_remote_commands(&[("s1".into(), "web1".into(), "tail -f /x".into(), None)]).unwrap();
+        let id = space.files[0].file_id.clone();
+        let command = RemoteTarget::Command { command: "sudo tail -f /x".into(), preset: None, restart_on_exit: false };
+        assert!(matches!(space.replace_remote_target(&id, "s1", "web1", command), Err(EditError::Elevation(_))));
+        assert_eq!(space.files[0].display_name, "web1$ tail -f /x");
+    }
+
+    #[test]
+    fn the_starting_time_changes_without_touching_markers() {
+        let mut space = space();
+        add(&mut space, "/app/app.log");
+        let id = "remote:s1:/app/app.log";
+        space.file_mut(id).unwrap().paint_marker(40_000, "x", 0..1, super::red());
+        assert!(space.set_start_time(id, Some("1h".into())));
+        assert!(space.set_start_time(id, Some("3h".into())));
+        let file = space.file(id).unwrap();
+        assert_eq!(file.remote.as_ref().unwrap().start_time.as_deref(), Some("3h"));
+        assert_eq!(file.markers.len(), 1);
+        assert!(space.set_start_time(id, Some("  ".into())));
+        assert!(space.file(id).unwrap().remote.as_ref().unwrap().start_time.is_none());
+        assert!(!space.set_start_time("nope", None));
+    }
+
+    fn plan(add: &[&str], remove: &[&str], keep: &[&str]) -> GlobEditPlan {
+        let owned = |v: &[&str]| v.iter().map(|p| format!("/var/log/app/{p}")).collect();
+        GlobEditPlan { add: owned(add), remove: owned(remove), keep: owned(keep) }
+    }
+
+    fn glob_space() -> (LogSpace, String) {
+        let mut space = space();
+        let id = space.add_live_glob("s1", "/var/log/app", "*.log").unwrap();
+        let paths: Vec<String> = ["app-1.log", "app-2.log", "worker.log"].iter().map(|n| format!("/var/log/app/{n}")).collect();
+        space.add_glob_files(&id, "web1", &paths);
+        (space, id)
+    }
+
+    #[test]
+    fn editing_a_glob_keeps_its_id_and_the_files_that_stay() {
+        let (mut space, id) = glob_space();
+        space.file_mut("remote:s1:/var/log/app/app-1.log").unwrap().paint_marker(1, "x", 0..1, super::red());
+        let removed = space
+            .edit_live_glob(&id, "s1", "web1", "/var/log/app", "app-*.log", &plan(&["app-3.log"], &["worker.log"], &["app-1.log", "app-2.log"]))
+            .unwrap();
+        assert_eq!(removed.len(), 1);
+        assert_eq!(removed[0].display_name, "web1:/var/log/app/worker.log");
+        assert_eq!(space.glob(&id).unwrap().pattern, "app-*.log");
+        let names: Vec<&str> = space.glob_files(&id).iter().map(|f| f.display_name.as_str()).collect();
+        assert_eq!(names, ["web1:/var/log/app/app-1.log", "web1:/var/log/app/app-2.log", "web1:/var/log/app/app-3.log"]);
+        assert_eq!(space.file("remote:s1:/var/log/app/app-1.log").unwrap().markers.len(), 1);
+    }
+
+    #[test]
+    fn editing_a_stopped_glob_removes_but_adds_nothing() {
+        let (mut space, id) = glob_space();
+        space.set_glob_stopped(&id, true);
+        space.edit_live_glob(&id, "s1", "web1", "/var/log/app", "app-*.log", &plan(&["app-3.log"], &["worker.log"], &["app-1.log", "app-2.log"])).unwrap();
+        assert!(space.glob(&id).unwrap().stopped);
+        assert_eq!(space.glob_files(&id).len(), 2);
+    }
+
+    #[test]
+    fn editing_a_glob_forgets_the_exclusions_it_no_longer_matches() {
+        let (mut space, id) = glob_space();
+        space.remove_file("remote:s1:/var/log/app/worker.log").unwrap();
+        space.glob_mut(&id).unwrap().excluded.push("/var/log/app/app-9.log".into());
+        assert_eq!(space.glob(&id).unwrap().excluded.len(), 2);
+        space.edit_live_glob(&id, "s1", "web1", "/var/log/app", "app-*.log", &plan(&[], &[], &["app-1.log", "app-2.log"])).unwrap();
+        assert_eq!(space.glob(&id).unwrap().excluded, ["/var/log/app/app-9.log"]);
+        // Another folder or Server forgets them all.
+        space.edit_live_glob(&id, "s1", "web1", "/var/log/other", "app-*.log", &plan(&[], &["app-1.log", "app-2.log"], &[])).unwrap();
+        assert!(space.glob(&id).unwrap().excluded.is_empty());
+    }
+
+    #[test]
+    fn editing_a_glob_into_another_glob_of_the_space_is_refused() {
+        let (mut space, id) = glob_space();
+        space.add_live_glob("s1", "/var/log/app", "app-*.log").unwrap();
+        let before = space.glob(&id).cloned();
+        let result = space.edit_live_glob(&id, "s1", "web1", "/var/log/app", "app-*.log", &GlobEditPlan::default());
+        assert_eq!(result, Err(EditError::Duplicate));
+        assert_eq!(space.glob(&id).cloned(), before);
+        assert_eq!(space.glob_files(&id).len(), 3);
+    }
+
+    #[test]
+    fn an_edited_space_is_saved_and_read_back_in_the_same_format() {
+        let mut space = space();
+        add(&mut space, "/app/ap.log");
+        space.replace_remote_target("remote:s1:/app/ap.log", "s1", "web1", file_target("/app/app.log")).unwrap();
+        space.set_start_time("remote:s1:/app/ap.log", Some("3h".into()));
+        let gid = space.add_live_glob("s1", "/var/log/app", "*.log").unwrap();
+        space.edit_live_glob(&gid, "s1", "web1", "/var/log/app", "app-*.log", &GlobEditPlan::default()).unwrap();
+        let json = serde_json::to_string(&space).unwrap();
+        let back: LogSpace = serde_json::from_str(&json).unwrap();
+        let file = back.file("remote:s1:/app/ap.log").unwrap();
+        assert_eq!(file.display_name, "web1:/app/app.log");
+        assert_eq!(file.remote.as_ref().unwrap().path(), Some("/app/app.log"));
+        assert_eq!(file.remote.as_ref().unwrap().start_time.as_deref(), Some("3h"));
+        assert_eq!(back.glob(&gid).unwrap().pattern, "app-*.log");
+        // No new field: the stored form is the old one.
+        assert!(!json.contains("added_seq\":null"));
+    }
+}
