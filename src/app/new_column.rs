@@ -64,18 +64,18 @@ impl AppView {
         let Some(&entry_ix) = self.visible_indices.get(row) else { return };
         let Some(entry) = self.all_entries.get(entry_ix) else { return };
         let line = entry.raw_line.to_string();
-        let message = entry.spans.get("message").cloned();
+        let message = entry.spans.get("message");
         let Some(value) = line.get(sel.clone()).map(str::to_string) else { return };
         let rows: Vec<usize> = sample_rows(self.all_entries.len(), SAMPLE_LINES * 2)
             .into_iter()
             .filter(|&i| !self.all_entries[i].is_continuation())
             .take(SAMPLE_LINES)
             .collect();
-        let sample: Vec<(&str, Option<&Range<usize>>)> = rows
+        let sample: Vec<(&str, Option<Range<usize>>)> = rows
             .iter()
             .map(|&i| (self.all_entries[i].raw_line.as_str(), self.all_entries[i].spans.get("message")))
             .collect();
-        let candidates = guess(&line, sel, message.as_ref(), &sample);
+        let candidates = guess(&line, sel, message, &sample);
         let (pattern, scope, key) = match candidates.first() {
             Some(c) => (c.pattern.clone(), c.scope, c.key.clone()),
             None => (format!("({})", regex::escape(&value)), RuleScope::Line, None),

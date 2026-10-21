@@ -115,7 +115,7 @@ fn sel(line: &str, value: &str) -> std::ops::Range<usize> {
 }
 
 fn guesses(line: &str, value: &str, sample: &[&str]) -> Vec<Candidate> {
-    let sample: Vec<(&str, Option<&std::ops::Range<usize>>)> = sample.iter().map(|l| (*l, None)).collect();
+    let sample: Vec<(&str, Option<std::ops::Range<usize>>)> = sample.iter().map(|l| (*l, None)).collect();
     guess(line, sel(line, value), None, &sample)
 }
 
@@ -165,8 +165,8 @@ fn guesses_the_nth_bracket_group() {
 fn guesses_the_nth_word_of_the_message_and_of_the_line() {
     let line = "2026-10-18 10:00:01 [INFO] [DB] charge ok";
     let es = parse_text_bytes(line.as_bytes()).unwrap();
-    let msg = es[0].spans.get("message").cloned();
-    let g = guess(line, sel(line, "ok"), msg.as_ref(), &[(line, msg.as_ref())]);
+    let msg = es[0].spans.get("message");
+    let g = guess(line, sel(line, "ok"), msg.clone(), &[(line, msg)]);
     let names: Vec<&str> = g.iter().map(|c| c.description.as_str()).collect();
     assert!(names.contains(&"word 2 of the message"), "{names:?}");
     assert!(names.contains(&"word 6 of the line"), "{names:?}");

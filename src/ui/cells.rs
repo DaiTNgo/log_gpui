@@ -224,14 +224,14 @@ pub fn hidden_matches(
     if ranges.is_empty() {
         return None;
     }
-    let overlaps = |span: &Range<usize>| ranges.iter().any(|&(s, e)| s < span.end && span.start < e);
+    let overlaps = |span: Range<usize>| ranges.iter().any(|&(s, e)| s < span.end && span.start < e);
     let shown = layout.columns();
     let visible = shown
         .iter()
         .filter_map(|c| TextCell::from_column(*c))
         .chain([TextCell::Message])
         .filter_map(|cell| cell_text(entry, cell).and_then(|(_, span)| span))
-        .any(|span| overlaps(&span));
+        .any(|span| overlaps(span));
     if visible {
         return None;
     }
