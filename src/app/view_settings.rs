@@ -108,6 +108,7 @@ impl AppView {
 
     pub fn set_keyword_colors(&mut self, on: bool, cx: &mut Context<Self>) {
         self.workspace_state.keyword_colors = on;
+        self.update_raw_highlights(cx);
         self.schedule_session_save(cx);
         cx.notify();
     }
