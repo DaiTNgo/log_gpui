@@ -13,7 +13,9 @@ use crate::model::{LogEntry, LogLevel};
 use crate::palette::Weight;
 use crate::search_expr::Matcher;
 use crate::text_selection::TextSelection;
-use crate::ui::canvas::{CanvasColors, CellCtx, render_text_cell};
+use crate::ui::canvas::{
+    CanvasColors, CellCtx, SearchPaint, render_text_cell, search_group_fills, search_paints, shared_search_paints,
+};
 use crate::ui::cells::TextCell;
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
@@ -464,6 +466,48 @@ impl FocusPane {
     }
 }
 
+/// The paint of one line of the pane: Search Matches and Focus Find finds.
+pub struct MatchPaints {
+    pub search: Vec<SearchPaint>,
+    pub find: Vec<SearchPaint>,
+}
+
+/// The paint of the Search Matches and Focus Find finds of `line`. With
+/// keyword colors on, both are painted per Color Group with the same colors
+/// the Canvas uses, so a keyword has one color in Search and in Focus Find;
+/// off, Search uses the single Match color and Focus Find its own.
+pub fn match_paints(
+    line: &str,
+    search: Option<&Matcher>,
+    find: &FocusFind,
+    keyword_colors: bool,
+    colors: &CanvasColors,
+) -> MatchPaints {
+    let tone = colors.tone();
+    let search_ranges = match search {
+        Some(m) if m.is_match(line) => m.find_group_ranges(line),
+        _ => Vec::new(),
+    };
+    let find_ranges = find.find_group_ranges(line);
+    if !keyword_colors {
+        return MatchPaints {
+            search: shared_search_paints(&search_ranges, colors.search),
+            find: find_ranges
+                .iter()
+                .map(|r| SearchPaint { start: r.start, end: r.end, fill: colors.find.opacity(0.6) })
+                .collect(),
+        };
+    }
+    let search_fills = search
+        .map(|m| search_group_fills(&m.group_keys(), tone))
+        .unwrap_or_default();
+    let find_fills = search_group_fills(&find.group_keys(), tone);
+    MatchPaints {
+        search: search_paints(&search_ranges, &search_fills, false),
+        find: search_paints(&find_ranges, &find_fills, false),
+    }
+}
+
 /// What the virtualized list needs to build the rows on its own.
 struct PaneRows {
     /// Whether the rows are laid out in the view's columns (the Parsed View).
@@ -541,24 +585,25 @@ impl PaneRows {
             Some(m) if m.is_match(&entry.raw_line) => m.find_ranges(&entry.raw_line),
             _ => Vec::new(),
         };
-        let find_ranges = find.find_ranges(&entry.raw_line);
+        let mut paints = match_paints(&entry.raw_line, self.search_matcher.as_ref(), find, app.keyword_colors(), &colors);
+        // Focus Find paints over Search, as before.
+        let mut search_paints = std::mem::take(&mut paints.search);
+        search_paints.append(&mut paints.find);
         let selected_in_line = self.selection.and_then(|s| s.range_in_row(index, entry.raw_line.len()));
         let columns = (self.columns && parsed).then_some(&app.column_layout);
         let hidden_match = columns.and_then(|layout| {
             crate::ui::cells::hidden_matches(entry, &search_ranges, layout)
                 .map(|hidden| crate::ui::cells::hidden_matches_tooltip(&hidden, layout))
         });
-        // In columns, Search is painted on whichever cell holds each Match.
-        let (cell_search, line_search): (&[(usize, usize)], &[(usize, usize)]) =
-            if columns.is_some() { (&[], &search_ranges) } else { (&search_ranges, &[]) };
+        // Matches are painted on whichever cell holds them, in bytes of the line.
         let ctx = CellCtx {
             colors: &colors,
             entry,
             paint,
-            search_ranges: cell_search,
-            find_ranges: &find_ranges,
-            line_search,
-            search_paints: &[],
+            search_ranges: &[],
+            find_ranges: &[],
+            line_search: &[],
+            search_paints: &search_paints,
             selected: selected_in_line.as_ref(),
             tone,
             rule_cell: None,

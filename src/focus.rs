@@ -265,6 +265,20 @@ impl FocusFind {
         self.hits.binary_search(&row).is_ok()
     }
 
+    /// The Color Groups of the expression (see `Matcher::group_keys`); none
+    /// without an expression.
+    pub fn group_keys(&self) -> Vec<&str> {
+        self.matcher.as_ref().map(Matcher::group_keys).unwrap_or_default()
+    }
+
+    /// Like `find_ranges`, each range tagged with its Color Group.
+    pub fn find_group_ranges(&self, text: &str) -> Vec<crate::search_expr::GroupRange> {
+        match &self.matcher {
+            Some(m) if m.is_match(text) => m.find_group_ranges(text),
+            _ => Vec::new(),
+        }
+    }
+
     /// Byte ranges to paint in `text`. A line that does not satisfy the
     /// whole expression has none.
     pub fn find_ranges(&self, text: &str) -> Vec<(usize, usize)> {
