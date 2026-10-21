@@ -273,6 +273,8 @@ impl AppView {
     pub(crate) fn install_live_rows(&mut self, open: OpenView) {
         let OpenView { built, source_visible, .. } = open;
         self.no_timestamp_files = built.no_timestamp_files.iter().cloned().collect();
+        // Other rows: a scan of the old ones is stale.
+        self.rows_epoch += 1;
         self.all_entries = built.entries;
         self.filter_index = built.index;
         self.column_layout.max_chars = built.max_chars;
@@ -406,6 +408,8 @@ impl AppView {
         self.focus.search_mut().is_open = has_query;
         let fresh = self.column_layout.max_chars == FieldMaxChars::new();
         self.no_timestamp_files = built.no_timestamp_files.iter().cloned().collect();
+        // Other rows: a scan of the old ones is stale.
+        self.rows_epoch += 1;
         self.all_entries = built.entries;
         self.filter_index = built.index;
         self.filter_state = filter;

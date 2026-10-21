@@ -2,6 +2,7 @@
 //! lines takes tens of milliseconds to scan on one core, which is felt on
 //! every keystroke; small logs are scanned in place.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 
 /// Below this many rows a scan is not worth the threads.
@@ -65,5 +66,46 @@ pub fn count<T: Copy + Send + Sync>(items: &[T], keep: impl Fn(T) -> bool + Sync
             .map(|part| s.spawn(move || part.iter().filter(|&&i| keep(i)).count()))
             .collect();
         parts.into_iter().map(|p| p.join().expect("row scan panicked")).sum()
+    })
+}
+
+/// How many rows a cancellable scan looks at between two looks at its flag.
+const CANCEL_CHECK_ROWS: usize = 4096;
+
+fn filter_part<T: Copy>(part: &[T], keep: &(impl Fn(T) -> bool + Sync), cancel: &AtomicBool) -> Option<Vec<T>> {
+    let mut out = Vec::new();
+    for block in part.chunks(CANCEL_CHECK_ROWS) {
+        if cancel.load(Ordering::Relaxed) {
+            return None;
+        }
+        out.extend(block.iter().copied().filter(|&i| keep(i)));
+    }
+    Some(out)
+}
+
+/// Like `filter`, but gives up with `None` soon after `cancel` is set (it is
+/// looked at between blocks of rows) instead of running to the end.
+pub fn filter_cancellable<T: Copy + Send + Sync>(
+    items: &[T],
+    keep: impl Fn(T) -> bool + Sync,
+    cancel: &AtomicBool,
+) -> Option<Vec<T>> {
+    if items.len() < MIN_PARALLEL {
+        return filter_part(items, &keep, cancel);
+    }
+    let chunk = chunk_len(items.len());
+    let keep = &keep;
+    thread::scope(|s| {
+        let parts: Vec<_> =
+            items.chunks(chunk).map(|part| s.spawn(move || filter_part(part, keep, cancel))).collect();
+        let mut out = Vec::new();
+        let mut cancelled = false;
+        for part in parts {
+            match part.join().expect("row scan panicked") {
+                Some(rows) => out.extend(rows),
+                None => cancelled = true,
+            }
+        }
+        (!cancelled).then_some(out)
     })
 }

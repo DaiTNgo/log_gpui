@@ -78,7 +78,7 @@ impl AppView {
         self.refreshes.full += 1;
         // The Matches are found again below: a scan under way is stale.
         self.rows_epoch += 1;
-        self.search_generation += 1;
+        self.supersede_search_scan();
         self.evaluate_filter_pass();
         if self.visible_indices.len() != self.all_entries.len() {
             // Always every row in order: grow or cut the list where it is, not

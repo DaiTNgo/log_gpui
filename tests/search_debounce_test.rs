@@ -101,3 +101,41 @@ fn half_typed_time_range_text_does_not_refilter(cx: &mut TestAppContext) {
     wait_for_scan(&mut f);
     assert_eq!(filters(&f), before + 1);
 }
+
+fn scan_cancel(f: &common::fake_live::Files) -> std::sync::Arc<std::sync::atomic::AtomicBool> {
+    f.h.view.read_with(&f.h.cx, |app, _| app.search_scan_cancel())
+}
+
+fn is_cancelled(flag: &std::sync::atomic::AtomicBool) -> bool {
+    flag.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+fn start_scan(f: &mut common::fake_live::Files) {
+    type_text(f, "user=4");
+    f.h.cx.executor().advance_clock(Duration::from_millis(150));
+    while scans(f) == 0 {
+        f.h.cx.executor().tick();
+    }
+}
+
+#[gpui::test]
+fn a_newer_query_cancels_the_scan_under_way(cx: &mut TestAppContext) {
+    let mut f = open(cx, &[("alpha", 0)], 200, 1_000_000);
+    start_scan(&mut f);
+    let scan = scan_cancel(&f);
+    assert!(!is_cancelled(&scan), "a live scan is not cancelled");
+    type_text(&mut f, "user=5");
+    assert!(is_cancelled(&scan), "a newer query cancels it");
+    assert!(!is_cancelled(&scan_cancel(&f)), "the next scan starts uncancelled");
+    wait_for_scan(&mut f);
+    assert_eq!(matches(&f), matches_found_at_once(&mut f, "user=5"));
+}
+
+#[gpui::test]
+fn a_full_refresh_cancels_the_scan_under_way(cx: &mut TestAppContext) {
+    let mut f = open(cx, &[("alpha", 0)], 200, 1_000_000);
+    start_scan(&mut f);
+    let scan = scan_cancel(&f);
+    f.h.view.update(&mut f.h.cx, |app, cx| app.apply_filters_and_refresh(cx));
+    assert!(is_cancelled(&scan));
+}

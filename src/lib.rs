@@ -18,6 +18,7 @@ pub mod raw_view;
 pub mod remote;
 pub mod sample;
 pub mod search;
+pub mod search_lines;
 pub mod search_expr;
 pub mod space_view;
 pub mod text_selection;

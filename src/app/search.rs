@@ -5,6 +5,8 @@ use super::AppView;
 use super::focus::Origin;
 use crate::workspace::working_set::ViewMode;
 use gpui::{Context, Window};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 impl AppView {
     /// Focus the search field and make sure the active query is surfaced
@@ -30,9 +32,22 @@ impl AppView {
         });
     }
 
+    /// A scan under way is not needed any more: it stops soon, and what it
+    /// would find is dropped.
+    pub fn supersede_search_scan(&mut self) {
+        self.search_generation += 1;
+        self.search_cancel.store(true, Ordering::Relaxed);
+        self.search_cancel = Arc::new(AtomicBool::new(false));
+    }
+
+    /// The flag the scan started now would stop at.
+    pub fn search_scan_cancel(&self) -> Arc<AtomicBool> {
+        self.search_cancel.clone()
+    }
+
     pub fn run_search(&mut self, cx: &mut Context<Self>) {
         // Found here and now: a scan under way is not needed.
-        self.search_generation += 1;
+        self.supersede_search_scan();
         if self.view_mode == ViewMode::Raw {
             // Raw View ignores Filter: look at every line of every section.
             self.run_raw_search(cx);
@@ -121,7 +136,7 @@ impl AppView {
             return self.run_search(cx);
         }
         search.pending = true;
-        self.search_generation += 1;
+        self.supersede_search_scan();
         let generation = self.search_generation;
         cx.spawn(async move |this, cx| {
             cx.background_executor().timer(SEARCH_DEBOUNCE).await;
@@ -140,14 +155,16 @@ impl AppView {
     }
 
     /// Look for the Matches among every row on a worker thread. The rows are
-    /// read by the worker from a copy of their texts, so Live lines can go on
-    /// arriving.
+    /// read by the worker from a snapshot of their texts (`SearchLines`, only
+    /// brought up to date here), so Live lines can go on arriving.
     fn start_search_scan(&mut self, generation: u64, cx: &mut Context<Self>) {
         if generation != self.search_generation {
             return;
         }
         let Some(matcher) = self.focus.search().matcher.clone() else { return };
-        let lines: Vec<gpui::SharedString> = self.all_entries.iter().map(|e| e.raw_line.clone()).collect();
+        self.search_lines.sync(&self.all_entries, self.rows_epoch);
+        let lines = self.search_lines.clone();
+        let cancel = self.search_cancel.clone();
         let (epoch, scanned) = (self.rows_epoch, lines.len());
         self.refreshes.scans += 1;
         cx.spawn(async move |this, cx| {
@@ -155,7 +172,7 @@ impl AppView {
                 .background_executor()
                 .spawn(async move {
                     let rows: Vec<usize> = (0..lines.len()).collect();
-                    crate::par::filter(&rows, |ix| matcher.is_match(&lines[ix]))
+                    crate::par::filter_cancellable(&rows, |ix| matcher.is_match(lines.get(ix)), &cancel)
                 })
                 .await;
             this.update(cx, |this, cx| this.finish_search_scan(generation, epoch, scanned, found, cx)).ok();
@@ -168,16 +185,16 @@ impl AppView {
         generation: u64,
         epoch: u64,
         scanned: usize,
-        found: Vec<usize>,
+        found: Option<Vec<usize>>,
         cx: &mut Context<Self>,
     ) {
         if generation != self.search_generation {
             return;
         }
-        if epoch != self.rows_epoch {
+        let Some(found) = found.filter(|_| epoch == self.rows_epoch) else {
             // Rows left or moved while it ran: look again.
             return self.start_search_scan(generation, cx);
-        }
+        };
         self.focus.search_mut().set_scanned_matches(found, &self.all_entries, scanned);
         self.refresh_focus();
         if let Some(entry_ix) = self.focus.search().current_match_pos() {

@@ -188,6 +188,10 @@ pub struct AppView {
     /// The newest Search scan asked for: an older one that finishes is
     /// dropped.
     pub search_generation: u64,
+    /// The texts of the rows the Search scan reads, kept between scans.
+    pub search_lines: crate::search_lines::SearchLines,
+    /// Set to stop the Search scan of the generation before it.
+    pub search_cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
     /// Bumped whenever rows left or moved in the open view (not when rows
     /// were only added at the end): a scan of the rows before that is stale.
     pub rows_epoch: u64,
@@ -492,6 +496,8 @@ impl AppView {
             entry_scans: std::cell::Cell::new(0),
             entry_found: std::cell::Cell::new(None),
             search_generation: 0,
+            search_lines: Default::default(),
+            search_cancel: Default::default(),
             rows_epoch: 0,
             time_range_generation: 0,
             remote,

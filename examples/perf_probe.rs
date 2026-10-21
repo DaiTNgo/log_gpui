@@ -178,6 +178,18 @@ fn app_probe(n: usize) {
     });
     state(&mut h, "Search keystroke ('user=4')");
 
+    // The next query after a small Live batch: the texts of the old rows are
+    // kept from the scan before, only the new ones are copied.
+    send_batch(1_000);
+    h.view.update(&mut h.cx, |app, cx| app.pump_live(cx));
+    time("app Search keystroke, UI thread ('user=45')", || {
+        h.view.update(&mut h.cx, |app, cx| app.type_search_query("user=45", cx));
+    });
+    time("app Search Matches after the pause (next query)", || {
+        h.cx.executor().advance_clock(std::time::Duration::from_millis(150));
+        h.cx.run_until_parked();
+    });
+
     // The first scan of every row after a batch that only touched the new
     // rows pays for bringing the old rows' memory back in (tens of ms at
     // 1M lines): do it once before measuring, so the lines compare the work.
