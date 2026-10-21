@@ -10,7 +10,6 @@ use gpui::{
     ScrollHandle, Styled,
 };
 use gpui_component::scroll::{Scrollbar, ScrollbarAxis};
-use gpui_component::tag::Tag;
 use gpui_component::{h_flex, ActiveTheme as _, Icon};
 use gpui_kit::assets::IconName;
 
@@ -18,6 +17,26 @@ use gpui_kit::assets::IconName;
 const WINDOW_CHROME_HEIGHT: f32 = 170.0;
 /// The Inspector never shrinks below this.
 const INSPECTOR_MIN_HEIGHT: f32 = 240.0;
+/// Section headers keep this height with or without a badge.
+const SECTION_HEADER_HEIGHT: f32 = 36.0;
+
+/// Compact count badge. Fixed height, so it appearing never changes the row
+/// it sits in (gpui-component's `Tag` is taller than the 12px text beside it).
+pub fn count_badge(text: impl Into<gpui::SharedString>, cx: &gpui::App) -> gpui::Div {
+    div()
+        .flex_shrink_0()
+        .h(px(16.0))
+        .min_w(px(16.0))
+        .px_1()
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded_full()
+        .bg(cx.theme().muted)
+        .text_color(cx.theme().muted_foreground)
+        .text_size(px(10.0))
+        .child(text.into())
+}
 
 /// Pre-rendered section bodies plus the badge counts shown in the headers.
 pub struct ContextSections {
@@ -62,8 +81,10 @@ impl ContextSidebar {
             let header = h_flex()
                 .id(ElementId::from(format!("ctx-section-{}", kind.as_str())))
                 .w_full()
+                // Fixed height: the badge appearing must not nudge the body.
+                .h(px(SECTION_HEADER_HEIGHT))
+                .flex_shrink_0()
                 .px_3()
-                .py_2()
                 .gap_2()
                 .items_center()
                 .cursor_pointer()
@@ -84,7 +105,7 @@ impl ContextSidebar {
                         .child(kind.as_str()),
                 )
                 .when_some(badge.filter(|n| *n > 0), |this, n| {
-                    this.child(Tag::secondary().child(format!("{}", n)))
+                    this.child(count_badge(n.to_string(), cx))
                 })
                 .on_click(cx.listener(move |this, _, _window, cx| {
                     this.toggle_context_section(kind, cx);

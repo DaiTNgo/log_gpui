@@ -16,7 +16,13 @@ use gpui_component::checkbox::Checkbox;
 use gpui_component::input::Input;
 use gpui_component::tag::Tag;
 use gpui_component::{h_flex, v_flex, ActiveTheme as _, Icon, Selectable as _, Sizable as _};
+use crate::ui::context_sidebar::count_badge;
 use gpui_kit::assets::IconName;
+
+/// Tallest the value list of an open filter card grows before it scrolls.
+const VALUE_LIST_MAX_HEIGHT: f32 = 220.0;
+/// From this many values the list always takes the full capped height.
+const VALUE_LIST_FIXED_FROM: usize = 12;
 
 impl AppView {
     /// The name Filter shows for a column: its Column Label, or `fallback`.
@@ -104,8 +110,12 @@ impl AppView {
 
     fn render_value_list(&self, col: &ColumnIndex, cx: &mut Context<Self>) -> gpui::AnyElement {
         let view = cx.entity();
+        let query = crate::unicode_text::fold(self.filter_ui.search_input.read(cx).value().trim());
         let mut list = v_flex().w_full().gap_0p5();
         for (vix, value) in col.values.iter().enumerate() {
+            if !query.is_empty() && !value.folded.contains(&query) {
+                continue;
+            }
             let key = col.key.clone();
             let folded = value.folded.clone();
             let checked = self.filter_state.is_value_ticked(&col.key, &value.folded);
@@ -127,6 +137,7 @@ impl AppView {
             .map(|c| {
                 c.values
                     .iter()
+                    .filter(|v| query.is_empty() || v.contains(&query))
                     .filter(|v| !col.values.iter().any(|x| &x.folded == *v))
                     .cloned()
                     .collect()
@@ -146,7 +157,33 @@ impl AppView {
                     }),
             );
         }
-        list.into_any_element()
+        let many = col.values.len() >= VALUE_LIST_FIXED_FROM;
+        // Capped, and fixed once the list is long: ticking or searching must
+        // not push the sections below it around.
+        let scroller = div()
+            .id(ElementId::from(format!("filter-vals-{}", col.key)))
+            .w_full()
+            .when(many, |d| d.h(px(VALUE_LIST_MAX_HEIGHT)))
+            .max_h(px(VALUE_LIST_MAX_HEIGHT))
+            .overflow_y_scroll()
+            .child(list)
+            .when(!query.is_empty() && self.value_list_is_empty(col, &query), |d| {
+                d.child(div().text_xs().text_color(cx.theme().muted_foreground).child("No value matches."))
+            });
+        v_flex()
+            .w_full()
+            .gap_1()
+            .child(Input::new(&self.filter_ui.search_input).small())
+            .child(scroller)
+            .into_any_element()
+    }
+
+    fn value_list_is_empty(&self, col: &ColumnIndex, query: &str) -> bool {
+        !col.values.iter().any(|v| v.folded.contains(query))
+            && !self
+                .filter_state
+                .column(&col.key)
+                .is_some_and(|c| c.values.iter().any(|v| v.contains(query)))
     }
 
     fn render_filter_card(&self, ix: usize, key: &str, cx: &mut Context<Self>) -> gpui::AnyElement {
@@ -161,6 +198,8 @@ impl AppView {
         let clear_key = key.to_string();
         let header = h_flex()
             .w_full()
+            // Fixed height: the count / hide tags must not change the row.
+            .h(px(24.0))
             .gap_2()
             .items_center()
             .child(
@@ -183,8 +222,8 @@ impl AppView {
                             .font_weight(gpui::FontWeight::SEMIBOLD)
                             .child(label),
                     )
-                    .when(hide && count > 0, |this| this.child(Tag::secondary().child("hide")))
-                    .when(count > 0, |this| this.child(Tag::secondary().child(count.to_string())))
+                    .when(hide && count > 0, |this| this.child(count_badge("hide", cx)))
+                    .when(count > 0, |this| this.child(count_badge(count.to_string(), cx)))
                     .on_click(cx.listener(move |this, _, _window, cx| {
                         this.toggle_filter_column(&toggle_key, cx);
                     })),
@@ -283,6 +322,7 @@ impl AppView {
             .child(
                 h_flex()
                     .w_full()
+                    .h(px(24.0))
                     .gap_2()
                     .items_center()
                     .child(
@@ -311,6 +351,7 @@ impl AppView {
         root = root.child(
             h_flex()
                 .w_full()
+                .h(px(24.0))
                 .items_center()
                 .justify_between()
                 .child(

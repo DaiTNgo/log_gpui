@@ -14,6 +14,10 @@ pub struct FilterUi {
     pub expanded: Option<String>,
     /// "Add value" input of the expanded column.
     pub value_input: Entity<InputState>,
+    /// Narrows the value list of the expanded column.
+    pub search_input: Entity<InputState>,
+    /// Column `search_input` was last reset for; a different column clears it.
+    pub search_scope: Option<String>,
     pub from_input: Entity<InputState>,
     pub to_input: Entity<InputState>,
     /// The Time Range inputs must be rewritten from the Filter (set when the
@@ -25,6 +29,7 @@ pub struct FilterUi {
 impl FilterUi {
     pub fn new(window: &mut Window, cx: &mut Context<AppView>) -> Self {
         let value_input = cx.new(|cx| InputState::new(window, cx).placeholder("Add value…"));
+        let search_input = cx.new(|cx| InputState::new(window, cx).placeholder("Search values…"));
         let from_input = cx.new(|cx| InputState::new(window, cx).placeholder("From"));
         let to_input = cx.new(|cx| InputState::new(window, cx).placeholder("To"));
 
@@ -43,6 +48,11 @@ impl FilterUi {
                 }
             },
         ));
+        subscriptions.push(cx.subscribe(&search_input, |_this: &mut AppView, _, event: &InputEvent, cx| {
+            if matches!(event, InputEvent::Change) {
+                cx.notify();
+            }
+        }));
         for input in [&from_input, &to_input] {
             subscriptions.push(cx.subscribe_in(
                 input,
@@ -61,6 +71,8 @@ impl FilterUi {
             picker_open: false,
             expanded: None,
             value_input,
+            search_input,
+            search_scope: None,
             from_input,
             to_input,
             inputs_dirty: true,
@@ -311,6 +323,23 @@ impl AppView {
 
     /// Rewrite the Time Range inputs from the Filter and refresh their hints.
     /// Called from `render`, where a window is available.
+    /// A value-search box starts empty for each column it is shown for.
+    pub fn sync_value_search(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let scope = self.filter_ui.expanded.clone();
+        if scope != self.filter_ui.search_scope {
+            self.filter_ui.search_scope = scope;
+            self.filter_ui
+                .search_input
+                .update(cx, |state, cx| state.set_value(SharedString::from(""), window, cx));
+        }
+        let scope = self.rule_form.as_ref().and_then(|f| f.column.clone());
+        if scope != self.rule_search_scope {
+            self.rule_search_scope = scope;
+            self.rule_search
+                .update(cx, |state, cx| state.set_value(SharedString::from(""), window, cx));
+        }
+    }
+
     pub fn sync_filter_inputs(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if !self.filter_ui.inputs_dirty {
             return;

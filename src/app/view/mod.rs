@@ -41,6 +41,7 @@ impl Render for AppView {
         sync_editor_colors(cx);
         self.sync_focus_pane_visibility(cx);
         self.sync_filter_inputs(window, cx);
+        self.sync_value_search(window, cx);
         self.sync_search_input(window, cx);
         self.sync_focus_find_input(window, cx);
         self.sync_raw_editors(window, cx);
@@ -154,6 +155,13 @@ impl Render for AppView {
 
         // Right context sidebar (Filter / Highlights / Inspector): only for a
         // focused log file tab, built from that file's own state.
+        let inspector_text = self.inspector_lines().map(|lines| lines.join("\n"));
+        if inspector_text != self.inspector_text {
+            let text = inspector_text.clone().unwrap_or_default();
+            self.inspector_editor
+                .update(cx, |state, cx| state.set_value(text, window, cx));
+            self.inspector_text = inspector_text;
+        }
         let context_sidebar = self
             .context_sidebar
             // The Raw View keeps the Inspector alone; Filter and Highlights are for parsed rows.
@@ -163,7 +171,7 @@ impl Render for AppView {
                     filter: self.render_filter_panel_content(cx),
                     highlights: self.render_highlights_panel_content(cx),
                     columns: self.render_columns_panel_content(cx),
-                    inspector: InspectorView::render_body(self.inspector_lines(), cx),
+                    inspector: InspectorView::render_body(self.inspector_text.is_some(), &self.inspector_editor, cx),
                     active_filters: self.filter_state.active_count(),
                     rule_count: self.highlight_rules().len(),
                     parsed: self.view_mode == ViewMode::Parsed,
