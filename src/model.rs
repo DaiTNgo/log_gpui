@@ -223,6 +223,15 @@ impl Stream {
     }
 }
 
+/// The texts of an entry that does not have them in its line.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct OwnTexts {
+    time_str: SharedString,
+    tag: SharedString,
+    level_text: SharedString,
+    payload: SharedString,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LogEntry {
     /// 1-based sequential line index in the log file
@@ -237,18 +246,10 @@ pub struct LogEntry {
     /// lines of files). A line's own: a Continuation Line never inherits it.
     #[serde(default)]
     pub stream: Option<Stream>,
-    /// Formatted time string (e.g. 10:32:02.441)
-    pub time_str: SharedString,
     /// Time delta from previous displayed log entry in milliseconds
     pub delta_time_ms: Option<f64>,
-    /// Tag / Service / Logger module name (e.g. "auth", "api", "database")
-    pub tag: SharedString,
-    /// Log severity level, as understood from `level_text`
+    /// Log severity level, as understood from the level text of the line
     pub level: LogLevel,
-    /// The level exactly as written in the line (`err`, `E`, `ERROR`); empty
-    /// when the line has none.
-    #[serde(default)]
-    pub level_text: SharedString,
     /// Byte range in `raw_line` of each field read from the line.
     #[serde(default)]
     pub spans: Spans,
@@ -260,10 +261,14 @@ pub struct LogEntry {
     /// Line number of the Parent Line when this is a Continuation Line.
     #[serde(default)]
     pub parent: Option<usize>,
-    /// Parsed message payload
-    pub payload: SharedString,
-    /// Raw unparsed line content
+    /// Raw unparsed line content: the one copy of the line's text. The time,
+    /// level text, tag and payload are read from it by `spans`.
     pub raw_line: SharedString,
+    /// Texts that are not stretches of `raw_line`: only entries made by hand
+    /// (`LogEntry::new`, a setter) have them; a parsed entry reads its texts
+    /// from `raw_line` and has none.
+    #[serde(skip)]
+    pub(crate) own: Option<std::sync::Arc<OwnTexts>>,
     /// Colors the user painted on stretches of this line's text.
     #[serde(default)]
     pub markers: Vec<TextMarker>,
@@ -307,16 +312,18 @@ impl LogEntry {
             timestamp,
             has_time: timestamp.is_finite() && timestamp > 0.0,
             stream: None,
-            time_str: time_str.into(),
             delta_time_ms: None,
-            tag: tag.into(),
             level,
-            level_text: if level == LogLevel::Unknown { SharedString::default() } else { level.as_str().into() },
             spans: Spans::default(),
             extra: Spans::default(),
             parent: None,
-            payload: payload.into(),
             raw_line: raw_line.into(),
+            own: Some(std::sync::Arc::new(OwnTexts {
+                time_str: time_str.into(),
+                tag: tag.into(),
+                level_text: if level == LogLevel::Unknown { SharedString::default() } else { level.as_str().into() },
+                payload: payload.into(),
+            })),
             markers: Vec::new(),
             request_id: None,
             trace_id: None,
@@ -336,32 +343,64 @@ impl From<&crate::parser::event::LogEvent> for LogEntry {
 }
 
 impl LogEntry {
+    /// The text of the field `name` in the line, empty when it has none.
+    fn text_of(&self, name: &str) -> &str {
+        self.span_text(name).unwrap_or("")
+    }
+
     /// The time as written in the line (empty when it has none).
     pub fn time_str(&self) -> &str {
-        &self.time_str
+        match &self.own {
+            Some(own) => &own.time_str,
+            None => self.text_of("timestamp"),
+        }
     }
 
     /// The Tag / Service / Logger name as written in the line.
     pub fn tag(&self) -> &str {
-        &self.tag
+        match &self.own {
+            Some(own) => &own.tag,
+            None => self.text_of("module"),
+        }
     }
 
-    /// The level exactly as written in the line.
+    /// The level exactly as written in the line (`err`, `E`, `ERROR`); empty
+    /// when the line has none.
     pub fn level_text(&self) -> &str {
-        &self.level_text
+        match &self.own {
+            Some(own) => &own.level_text,
+            None => self.text_of("level"),
+        }
     }
 
     /// The message of the line.
     pub fn payload(&self) -> &str {
-        &self.payload
+        match &self.own {
+            Some(own) => &own.payload,
+            None => self.text_of("message"),
+        }
+    }
+
+    /// The four texts as owned ones, to change one of them.
+    fn own_mut(&mut self) -> &mut OwnTexts {
+        if self.own.is_none() {
+            let own = OwnTexts {
+                time_str: self.time_str().to_string().into(),
+                tag: self.tag().to_string().into(),
+                level_text: self.level_text().to_string().into(),
+                payload: self.payload().to_string().into(),
+            };
+            self.own = Some(std::sync::Arc::new(own));
+        }
+        std::sync::Arc::make_mut(self.own.as_mut().expect("just set"))
     }
 
     pub fn set_time_str(&mut self, text: &str) {
-        self.time_str = text.to_string().into();
+        self.own_mut().time_str = text.to_string().into();
     }
 
     pub fn set_tag(&mut self, text: &str) {
-        self.tag = text.to_string().into();
+        self.own_mut().tag = text.to_string().into();
     }
 
     /// Whether this line continues the line above it (a stack trace line).
@@ -390,36 +429,41 @@ impl LogEntry {
     /// Convert a schema-typed `LogEvent` back into the rendering model. Every
     /// text the entry shows is read from the line itself.
     pub fn from_event(event: &crate::parser::event::LogEvent) -> Self {
-        let level_text = event
-            .span_text("level")
-            .map(str::to_string)
-            .or_else(|| event.get_field("level").and_then(|v| v.as_str()).map(str::to_string))
-            .unwrap_or_default();
-        let level = match LogLevel::from_token(&level_text) {
-            LogLevel::Unknown if !level_text.is_empty() => LogLevel::from_str(&level_text),
+        Self::from_event_text(event, event.raw_line.as_str().into())
+    }
+
+    /// The same, with the line's text already in the shared form.
+    pub fn from_event_text(event: &crate::parser::event::LogEvent, raw_line: SharedString) -> Self {
+        let field = |name: &str| event.get_field(name).and_then(|v| v.as_str());
+        let level_text = event.span_text("level").or_else(|| field("level")).unwrap_or("");
+        let level = match LogLevel::from_token(level_text) {
+            LogLevel::Unknown if !level_text.is_empty() => LogLevel::from_str(level_text),
             known => known,
         };
-        let tag = event
-            .span_text("module")
-            .map(str::to_string)
-            .or_else(|| event.get_field("module").and_then(|v| v.as_str()).map(str::to_string))
-            .unwrap_or_default();
+        let tag = event.span_text("module").or_else(|| field("module")).unwrap_or("");
         let request_id = event.get_field("requestId").and_then(|v| v.as_str()).map(|s| s.to_string());
 
-        let mut entry = LogEntry::new(
-            event.index,
-            event.timestamp,
-            event.time_str.clone(),
-            tag,
-            level,
-            event.message.clone(),
-            event.raw_line.clone(),
-        );
-        entry.level_text = level_text.into();
+        let mut entry = LogEntry::new(event.index, event.timestamp, String::new(), String::new(), level, String::new(), String::new());
+        entry.own = None;
+        entry.raw_line = raw_line;
         entry.spans = Spans::from_map(&event.spans);
         entry.parent = event.parent;
         entry.has_time = event.has_time;
         entry.request_id = request_id;
+        // An event not read from its line (made by hand) can have texts the
+        // line does not: keep them. A parsed one never does.
+        if entry.time_str() != event.time_str
+            || entry.payload() != event.message
+            || entry.tag() != tag
+            || entry.level_text() != level_text
+        {
+            entry.own = Some(std::sync::Arc::new(OwnTexts {
+                time_str: event.time_str.as_str().into(),
+                tag: tag.to_string().into(),
+                level_text: level_text.to_string().into(),
+                payload: event.message.as_str().into(),
+            }));
+        }
         entry
     }
 }

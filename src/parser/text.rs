@@ -731,14 +731,11 @@ pub fn reread(lines: &[StoredLine], format: Option<&CompiledFormat>) -> Vec<LogE
 pub fn adopt(entry: &mut LogEntry, fresh: LogEntry) {
     entry.timestamp = fresh.timestamp;
     entry.has_time = fresh.has_time;
-    entry.time_str = fresh.time_str;
-    entry.tag = fresh.tag;
     entry.level = fresh.level;
-    entry.level_text = fresh.level_text;
+    entry.own = None;
     entry.spans = fresh.spans;
     entry.extra = Default::default();
     entry.parent = fresh.parent;
-    entry.payload = fresh.payload;
     entry.request_id = fresh.request_id;
 }
 
