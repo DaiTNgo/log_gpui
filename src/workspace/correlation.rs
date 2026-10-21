@@ -81,7 +81,7 @@ pub fn search_across_files(
         let mut count = 0usize;
         for entry in entries {
             let matches = re.is_match(&entry.raw_line)
-                || re.is_match(&entry.payload)
+                || re.is_match(entry.payload())
                 || entry
                     .request_id
                     .as_deref()
@@ -99,7 +99,7 @@ pub fn search_across_files(
                     line_number: entry.index,
                     timestamp: entry.timestamp,
                     level: entry.level,
-                    payload: entry.payload.to_string(),
+                    payload: entry.payload().to_string(),
                 });
             }
         }

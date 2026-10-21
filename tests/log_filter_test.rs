@@ -386,7 +386,7 @@ fn timed() -> Vec<LogEntry> {
     let day = 86400.0 * 20000.0;
     let mk = |i: usize, secs: f64, msg: &str| {
         let mut e = entry(i, day + secs, "API", LogLevel::Info, msg);
-        e.time_str = format!("{secs}").into();
+        e.set_time_str(&format!("{secs}"));
         e
     };
     vec![
@@ -451,7 +451,7 @@ fn rows_before_the_first_timestamp_are_always_shown() {
 #[test]
 fn time_range_ands_with_columns() {
     let mut entries = timed();
-    entries[1].tag = "DB".into();
+    entries[1].set_tag("DB");
     let mut f = FilterState::new();
     f.toggle_value("module", "API");
     f.set_time_range("10:01:00", "10:06:00");

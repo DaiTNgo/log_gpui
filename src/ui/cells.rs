@@ -75,10 +75,10 @@ pub fn cell_text(entry: &LogEntry, cell: TextCell) -> Option<(&str, Option<Range
     }
     // An entry built without spans shows its fields as they are.
     let text = match cell {
-        TextCell::Timestamp => entry.time_str.as_str(),
-        TextCell::Level => entry.level_text.as_str(),
-        TextCell::Module => entry.tag.as_str(),
-        TextCell::Message => entry.payload.as_str(),
+        TextCell::Timestamp => entry.time_str(),
+        TextCell::Level => entry.level_text(),
+        TextCell::Module => entry.tag(),
+        TextCell::Message => entry.payload(),
         TextCell::Raw => entry.raw_line.as_str(),
         TextCell::Field(_) => "",
     };

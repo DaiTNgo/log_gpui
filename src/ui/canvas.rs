@@ -316,7 +316,7 @@ impl LogCanvas {
                             _ => colors.muted.opacity(0.5),
                         }
                     };
-                    let width = (entry.payload.len() as f32 / 160.0).clamp(0.0, 1.0) * bar_max;
+                    let width = (entry.payload().len() as f32 / 160.0).clamp(0.0, 1.0) * bar_max;
                     window.paint_quad(gpui::fill(
                         gpui::Bounds::new(
                             gpui::point(bounds.origin.x + px(4.0), y),

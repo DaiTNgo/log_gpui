@@ -1146,7 +1146,7 @@ pub fn size_text(bytes: u64) -> String {
 fn continuation_of(entry: &crate::model::LogEntry, parent: usize) -> crate::model::LogEntry {
     let mut e = entry.clone();
     e.parent = Some(parent);
-    e.time_str = Default::default();
+    e.set_time_str("");
     e.has_time = false;
     e
 }

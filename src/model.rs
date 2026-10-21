@@ -336,6 +336,34 @@ impl From<&crate::parser::event::LogEvent> for LogEntry {
 }
 
 impl LogEntry {
+    /// The time as written in the line (empty when it has none).
+    pub fn time_str(&self) -> &str {
+        &self.time_str
+    }
+
+    /// The Tag / Service / Logger name as written in the line.
+    pub fn tag(&self) -> &str {
+        &self.tag
+    }
+
+    /// The level exactly as written in the line.
+    pub fn level_text(&self) -> &str {
+        &self.level_text
+    }
+
+    /// The message of the line.
+    pub fn payload(&self) -> &str {
+        &self.payload
+    }
+
+    pub fn set_time_str(&mut self, text: &str) {
+        self.time_str = text.to_string().into();
+    }
+
+    pub fn set_tag(&mut self, text: &str) {
+        self.tag = text.to_string().into();
+    }
+
     /// Whether this line continues the line above it (a stack trace line).
     pub fn is_continuation(&self) -> bool {
         self.parent.is_some()

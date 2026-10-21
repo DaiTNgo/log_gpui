@@ -78,7 +78,7 @@ fn reparsing_after_an_edit_reads_the_new_text() {
         "2026-09-05 10:00:00 [INFO] [api] one\n2026-09-05 10:00:01 [ERROR] [api] two\n",
     );
     assert_eq!(after.entries.len(), 2);
-    assert_eq!(after.entries[1].tag, "api");
+    assert_eq!(after.entries[1].tag(), "api");
 }
 
 #[test]

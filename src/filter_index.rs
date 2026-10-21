@@ -64,8 +64,8 @@ impl Source {
         let v = match self {
             Source::SourceFile => entry.source.as_deref().unwrap_or(""),
             Source::Stream => entry.stream.map_or("", |s| s.as_str()),
-            Source::Level => entry.level_text.as_str(),
-            Source::Module => entry.tag.as_str(),
+            Source::Level => entry.level_text(),
+            Source::Module => entry.tag(),
             Source::RequestId => entry.request_id.as_deref().unwrap_or(""),
             Source::TraceId => entry.trace_id.as_deref().unwrap_or(""),
             Source::Field(k) => entry.span_text(k.as_str()).unwrap_or(""),
@@ -95,9 +95,9 @@ pub fn column_value<'a>(entry: &'a LogEntry, key: &str) -> Option<&'a str> {
     let v = match key {
         "source" => entry.source.as_deref().unwrap_or(""),
         "stream" => entry.stream.map_or("", |s| s.as_str()),
-        "message" => entry.payload.as_str(),
-        "level" => entry.level_text.as_str(),
-        "module" => entry.tag.as_str(),
+        "message" => entry.payload(),
+        "level" => entry.level_text(),
+        "module" => entry.tag(),
         "request_id" => entry.request_id.as_deref().unwrap_or(""),
         "trace_id" => entry.trace_id.as_deref().unwrap_or(""),
         other => entry.span_text(other).unwrap_or(""),
@@ -541,10 +541,10 @@ impl FilterIndex {
         // in time order).
         let timed = |e: &&LogEntry| has_timestamp(e);
         if let Some(first) = kept.iter().find(timed) {
-            self.min_entry = Some((first.timestamp, first.time_str.to_string()));
+            self.min_entry = Some((first.timestamp, first.time_str().to_string()));
         }
         if let Some(last) = kept.iter().rev().find(timed) {
-            self.max_entry = Some((last.timestamp, last.time_str.to_string()));
+            self.max_entry = Some((last.timestamp, last.time_str().to_string()));
         }
         if kept.is_empty() {
             self.min_entry = None;
@@ -582,10 +582,10 @@ impl FilterIndex {
                 self.first_ts = Some(entry.timestamp);
             }
             if self.min_entry.as_ref().is_none_or(|(t, _)| entry.timestamp < *t) {
-                self.min_entry = Some((entry.timestamp, entry.time_str.to_string()));
+                self.min_entry = Some((entry.timestamp, entry.time_str().to_string()));
             }
             if self.max_entry.as_ref().is_none_or(|(t, _)| entry.timestamp > *t) {
-                self.max_entry = Some((entry.timestamp, entry.time_str.to_string()));
+                self.max_entry = Some((entry.timestamp, entry.time_str().to_string()));
             }
         } else {
             self.effective_ts.push(prev);

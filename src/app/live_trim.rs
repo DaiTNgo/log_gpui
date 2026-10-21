@@ -94,7 +94,7 @@ impl AppView {
         }
         self.longest_row = match longest_row {
             Some(row) if !longest_dropped => row,
-            _ => super::filter::longest(self.all_entries.iter().map(|e| e.payload.len())),
+            _ => super::filter::longest(self.all_entries.iter().map(|e| e.payload().len())),
         };
 
         // The Matches and the rows of the Focus Pane, which hold positions.
