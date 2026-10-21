@@ -19,6 +19,9 @@ clone needs no Cargo config.
   read `HOME`/`USER`, falling back to `USERPROFILE`/`USERNAME` on Windows. Use
   them instead of reading the variables directly (ssh config, `~` expansion,
   Quick Connect default user).
+- Full Read free-space check: on Windows the free bytes come from
+  `GetDiskFreeSpaceExW` (declared directly in `src/remote/estimate.rs`, no extra
+  crate). If the call fails the size is unknown and nothing is refused, as on Unix.
 - Tests that need Unix tools or APIs (`ssh-agent`, `kill`, file permissions)
   are `#[cfg(unix)]`. The SSH integration tests skip themselves without
   `SSH_TEST_DIR`, as everywhere.
@@ -52,3 +55,10 @@ cargo xwin check --target x86_64-pc-windows-msvc --all-targets
 `cargo-xwin` also does the linking (`cargo xwin build --target
 x86_64-pc-windows-msvc`), but the result cannot be run on a Mac; the real test
 run is the Windows CI job.
+
+## Console window
+
+`src/main.rs` sets `windows_subsystem = "windows"` for Windows release builds
+(`cfg(all(windows, not(debug_assertions)))`), so the release `.exe` opens no
+console. Debug builds keep the console, so `eprintln!` traces such as
+`LOG_GPUI_LIVE_TRACE` stay visible. macOS and Linux are unaffected.
