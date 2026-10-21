@@ -150,13 +150,69 @@ impl AppView {
                 .map(|m| FocusRow::Raw { section: m.section, line: m.line })
                 .collect(),
         };
-        self.focus_rows = Arc::new(rows);
         let sections = self.sections_if_raw();
+        let rows = self.apply_find_filter(rows, &sections);
+        self.focus_rows = Arc::new(rows);
         let texts: Vec<&str> =
             Self::focus_row_texts(&self.all_entries, &sections, &self.focus_rows).collect();
         self.focus_longest = super::filter::longest(texts.iter().map(|t| t.len()));
         self.focus.find_mut().compute_hits(texts.into_iter(), false);
         self.pane_selection = None;
+    }
+
+    /// Keep the rows Focus Find finds when the Find Filter narrows the open
+    /// tab, and remember how many there were before.
+    fn apply_find_filter(&mut self, rows: Vec<FocusRow>, sections: &[RawSection]) -> Vec<FocusRow> {
+        let find = self.focus.find();
+        if !find.is_filtering() {
+            self.focus.find_mut().rows_before_filter = rows.len();
+            return rows;
+        }
+        let before = rows.len();
+        let kept: Vec<FocusRow> = {
+            let texts = Self::focus_row_texts(&self.all_entries, sections, &rows);
+            rows.iter().zip(texts).filter(|(_, text)| find.matches(text)).map(|(row, _)| *row).collect()
+        };
+        self.focus.find_mut().rows_before_filter = before;
+        kept
+    }
+
+    /// `apply_find_filter` for rows appended after the tab's rows (Parsed View).
+    fn apply_find_filter_appended(&mut self, new_rows: Vec<FocusRow>) -> Vec<FocusRow> {
+        let find = self.focus.find();
+        let added = new_rows.len();
+        let kept: Vec<FocusRow> = if find.is_filtering() {
+            let texts = Self::focus_row_texts(&self.all_entries, &[], &new_rows);
+            new_rows.iter().zip(texts).filter(|(_, text)| find.matches(text)).map(|(row, _)| *row).collect()
+        } else {
+            new_rows
+        };
+        self.focus.find_mut().rows_before_filter += added;
+        kept
+    }
+
+    /// How many of the entries at `positions` (ascending) the open tab lists
+    /// before the Find Filter, in the Parsed View.
+    pub(crate) fn focus_rows_among(&self, positions: &[usize]) -> usize {
+        let limited = self.filter_limits_focus();
+        let search = self.focus.search();
+        if search.matcher.is_none() && !limited {
+            return 0;
+        }
+        positions
+            .iter()
+            .filter(|p| search.matcher.is_none() || search.matched_visible_indices.binary_search(p).is_ok())
+            .filter(|p| !limited || self.filter_pass.binary_search(p).is_ok())
+            .count()
+    }
+
+    /// Switch the open tab's Find Filter on or off.
+    pub fn toggle_find_filter(&mut self, cx: &mut Context<Self>) {
+        let find = self.focus.find_mut();
+        find.filter = !find.filter;
+        self.refresh_focus();
+        self.scroll_pane_to_current();
+        cx.notify();
     }
 
     /// `refresh_focus` after rows were appended to the view: the pane lists
@@ -181,6 +237,7 @@ impl AppView {
         } else {
             Vec::new()
         };
+        let new_rows = self.apply_find_filter_appended(new_rows);
         let text = |row: &FocusRow| match *row {
             FocusRow::Entry(ix) => self.all_entries.get(ix).map_or("", |e| e.raw_line.as_str()),
             FocusRow::Raw { .. } => "",
@@ -393,6 +450,10 @@ impl AppView {
         let texts: Vec<&str> =
             Self::focus_row_texts(&self.all_entries, &sections, &self.focus_rows).collect();
         self.focus.find_mut().set_query(text, texts.into_iter());
+        if self.focus.find().filter {
+            // The rows the tab lists change with the text.
+            self.refresh_focus();
+        }
         if let Some(row) = self.focus.find().current_row() {
             self.goto_pane_row(row, Origin::Jump, cx);
         }

@@ -600,7 +600,14 @@ impl AppView {
         };
         self.persist_active_session();
         let session = self.new_tab_session(&space);
+        let target = TabTarget::LogSpace { space_id: space_id.to_string() };
         if let Some(proj) = self.active_project_mut() {
+            if proj.working_set.find_tab(&target).is_none() {
+                // Opened again: the Find Filter starts off.
+                if let Some(space) = proj.log_space_mut(space_id) {
+                    space.focus.clear_find_filters();
+                }
+            }
             proj.open_log_space(space_id, session);
         }
         self.expanded_spaces.insert(space_id.to_string());
@@ -619,7 +626,16 @@ impl AppView {
         }
         self.persist_active_session();
         let session = self.new_tab_session(&space);
+        let target = TabTarget::FileView { space_id: space_id.to_string(), file_id: file_id.to_string() };
         if let Some(proj) = self.active_project_mut() {
+            if proj.working_set.find_tab(&target).is_none() {
+                // Opened again: the Find Filter starts off.
+                if let Some(space) = proj.log_space_mut(space_id) {
+                    if let Some(focus) = space.file_focus.get_mut(file_id) {
+                        focus.clear_find_filters();
+                    }
+                }
+            }
             proj.open_file_view(space_id, file_id, session);
         }
         self.restore_active_session(cx);

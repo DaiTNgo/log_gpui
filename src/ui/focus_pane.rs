@@ -26,7 +26,7 @@ use gpui_component::input::{Input, InputState};
 use gpui_component::menu::ContextMenuExt as _;
 use gpui_component::scroll::ScrollableElement as _;
 use gpui_component::tag::Tag;
-use gpui_component::{ActiveTheme as _, Icon, Sizable as _, h_flex, v_flex};
+use gpui_component::{ActiveTheme as _, Icon, Selectable as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::assets::IconName;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -172,6 +172,8 @@ impl FocusPane {
         let find_error = state.find.parse_error.is_some();
         let (v_prev, v_next, v_hide) = (state.view.clone(), state.view.clone(), state.view.clone());
         let v_detach = state.view.clone();
+        let v_filter = state.view.clone();
+        let find_filtering = state.find.is_filtering();
         let find_box = h_flex()
             .gap_1()
             .items_center()
@@ -212,6 +214,15 @@ impl FocusPane {
                     .xsmall()
                     .icon(IconName::ChevronDown)
                     .on_click(move |_, _w, cx| v_next.update(cx, |this, cx| this.focus_find_next(cx))),
+            )
+            .child(
+                Button::new("focus-find-filter")
+                    .ghost()
+                    .xsmall()
+                    .icon(IconName::Funnel)
+                    .selected(find_filtering)
+                    .tooltip("Find Filter: list only the lines found")
+                    .on_click(move |_, _w, cx| v_filter.update(cx, |this, cx| this.toggle_find_filter(cx))),
             )
             .child(div().min_w(px(40.0)).text_xs().text_color(muted).child(find_label))
             .map(|this| match state.mode {

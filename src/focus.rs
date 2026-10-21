@@ -145,6 +145,11 @@ pub struct FocusFind {
     pub hits: Vec<usize>,
     /// Selected hit, an index into `hits`.
     pub current: usize,
+    /// Find Filter switched on: the tab lists only the rows Focus Find finds.
+    /// Never stored, so it is off whenever the view opens again.
+    pub filter: bool,
+    /// How many rows the tab would list without the Find Filter.
+    pub rows_before_filter: usize,
 }
 
 impl FocusFind {
@@ -221,9 +226,25 @@ impl FocusFind {
         self.matcher.is_some()
     }
 
+    /// Whether the Find Filter actually narrows the tab: switched on and
+    /// with an expression to find.
+    pub fn is_filtering(&self) -> bool {
+        self.filter && self.is_active()
+    }
+
+    /// Whether `text` satisfies the expression (false without one).
+    pub fn matches(&self, text: &str) -> bool {
+        self.matcher.as_ref().is_some_and(|m| m.is_match(text))
+    }
+
     /// The counter beside the Focus Find field: "–" with nothing to find,
-    /// "No matches" when the expression finds nothing, else "3/12".
+    /// "No matches" when the expression finds nothing, else "3/12". While
+    /// the Find Filter narrows the tab: "N of M lines" (rows kept of the rows
+    /// before the Find Filter).
     pub fn label(&self) -> String {
+        if self.is_filtering() {
+            return format!("{} of {} lines", self.hits.len(), self.rows_before_filter);
+        }
         match (self.is_active(), self.display()) {
             (false, _) => "–".into(),
             (true, (_, 0)) => "No matches".into(),
@@ -383,6 +404,13 @@ impl FocusTabs {
 
     pub fn can_close(&self) -> bool {
         self.tabs.len() > 1
+    }
+
+    /// Switch the Find Filter off on every tab (the view opens again).
+    pub fn clear_find_filters(&mut self) {
+        for tab in &mut self.tabs {
+            tab.find.filter = false;
+        }
     }
 }
 

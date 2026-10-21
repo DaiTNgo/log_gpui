@@ -147,6 +147,40 @@ fn incremental_batches_equal_a_full_refresh(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn the_same_with_the_find_filter_on(cx: &mut TestAppContext) {
+    let mut h = common::open_app_with_lines(cx, &file_lines(0..60));
+    let (tx, _) = fake_source(&mut h);
+    h.view.update(&mut h.cx, |app, cx| {
+        app.trigger_search_query("user=4 || ERROR", cx);
+        app.on_focus_find_changed("request 1", cx);
+        app.toggle_find_filter(cx);
+    });
+    let label = |h: &mut Harness| h.view.read_with(&h.cx, |app, _| app.focus.find().label());
+    let start_label = label(&mut h);
+    assert!(start_label.ends_with(" lines"), "{start_label}");
+    for (n, filtered) in [(0, false), (1, true)] {
+        if filtered {
+            h.view.update(&mut h.cx, |app, cx| app.filter_toggle_value("level", "error", cx));
+        }
+        let start = 60 + n * 50;
+        send(&tx, batch(start..start + 50));
+        let before = h.view.read_with(&h.cx, |app, _| app.refreshes);
+        h.view.update(&mut h.cx, |app, cx| app.pump_live(cx));
+        let after = h.view.read_with(&h.cx, |app, _| app.refreshes);
+        assert_eq!((after.full, after.appended), (before.full, before.appended + 1), "only the new rows were read");
+        let incremental = h.view.read_with(&h.cx, |app, _| snapshot(app));
+        let incremental_label = label(&mut h);
+        h.view.update(&mut h.cx, |app, cx| app.apply_filters_and_refresh(cx));
+        let full = h.view.read_with(&h.cx, |app, _| snapshot(app));
+        assert_same(&incremental, &full, &format!("batch {n}"));
+        assert_eq!(incremental_label, label(&mut h), "batch {n}: counter");
+        // Every row the pane lists is one Focus Find finds.
+        assert_eq!(incremental.hits, (0..incremental.focus.len()).collect::<Vec<_>>());
+    }
+    assert_ne!(label(&mut h), start_label, "the counter updates");
+}
+
+#[gpui::test]
 fn the_same_without_search_or_filter_and_with_a_time_range(cx: &mut TestAppContext) {
     let mut h = common::open_app_with_lines(cx, &file_lines(0..30));
     let (tx, _) = fake_source(&mut h);
