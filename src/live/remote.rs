@@ -137,7 +137,7 @@ impl Ctl {
             SourceCommand::Resume => self.paused = false,
             SourceCommand::SetWindow(n) => self.window = n,
             // For a Remote Command only.
-            SourceCommand::Restart | SourceCommand::SetRestartOnExit(_) => {}
+            SourceCommand::Restart | SourceCommand::SetRestartOnExit(_) | SourceCommand::Replace { .. } => {}
             SourceCommand::Clear => self.clear = true,
             SourceCommand::LoadEarlier { room } => self.load_earlier = Some(room),
             SourceCommand::CancelLoadMore => {
@@ -388,7 +388,9 @@ impl RemoteFileSource {
         ctl: &mut Ctl,
         was_down: bool,
     ) -> Served {
-        let sftp = match session.open_sftp().await {
+        // Tail, backfill and Load more read blocks here and there: a session
+        // that sends only the blocks asked for.
+        let sftp = match session.open_sftp_random().await {
             Ok(sftp) => sftp,
             Err(_) if session.is_closed() => return Served::Lost,
             Err(_) => {
@@ -789,7 +791,7 @@ impl RemoteFileSource {
         let path = join(&dirname(&self.path), &target.name);
         let room = room.max(1);
         let read = if target.compression.is_compressed() {
-            self.read_compressed_earlier(sftp, &path, &target, room, mem.stop_before, events).await?
+            self.read_compressed_earlier(session, &path, &target, room, mem.stop_before, events).await?
         } else {
             self.read_plain_earlier(sftp, session, &path, &target, room, mem.stop_before, events).await?
         };
@@ -870,14 +872,16 @@ impl RemoteFileSource {
     /// thread; only the last `room` lines are kept.
     async fn read_compressed_earlier(
         &self,
-        sftp: &SftpSession,
+        session: &Arc<RemoteSession>,
         path: &str,
         target: &RotatedFile,
         room: usize,
         stop_before: Option<f64>,
         events: &Sender<SourceEvent>,
     ) -> Result<EarlierRead, Kind> {
-        let file = sftp.open(path.to_string()).await.map_err(|e| classify(&e))?;
+        // Decoded from its start: a session that pipelines its reads.
+        let sequential = session.open_sftp().await.map_err(|_| Kind::Lost)?;
+        let file = sequential.open(path.to_string()).await.map_err(|e| classify(&e))?;
         let handle = tokio::runtime::Handle::current();
         let (kind, size, what, progress_events) =
             (target.compression, target.size, target.name.clone(), events.clone());
@@ -1135,7 +1139,8 @@ impl RemoteFileSource {
         let (Some(first_no), Some(expected)) = (request.first_line_no, request.first_hash) else {
             return Ok(None);
         };
-        let file = sftp.open(path).await.map_err(|e| classify(&e))?;
+        let sequential = session.open_sftp().await.map_err(|_| Kind::Lost)?;
+        let file = sequential.open(path).await.map_err(|e| classify(&e))?;
         let handle = tokio::runtime::Handle::current();
         let (kind, size, what, progress_events) =
             (target.compression, target.size, target.name.clone(), events.clone());

@@ -736,9 +736,6 @@ impl AppView {
                 SourceEvent::CommandChanged { from, to } => {
                     buffer.apply_command_changed(&from, &to, &time);
                     self.begin_generation_for(file_id);
-                    if let Some(old) = self.live.release_after_replace.remove(file_id) {
-                        self.release_unused_server(&old);
-                    }
                     if let Some(source) = self.live.sources.get_mut(file_id) {
                         source.name = to;
                     }

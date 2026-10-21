@@ -159,6 +159,8 @@ impl State {
                 self.window = n;
                 self.trim_queue();
             }
+            // Not handled on this base (the Replace feature is unfinished).
+            SourceCommand::Replace { .. } => {}
             SourceCommand::SetRestartOnExit(on) => {
                 self.restart_on_exit = on;
                 return Wake::Changed;

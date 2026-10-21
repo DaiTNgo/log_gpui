@@ -552,8 +552,10 @@ impl Reader {
             let (start, to, start_byte) = (self.plan.start, self.plan.to, gp.start_byte);
             let (size, path) = (gp.size, gp.path.clone());
             let handle = tokio::runtime::Handle::current();
-            let file = sftp.open(path.clone()).await.map_err(|e| format!("{}: {e}", gp.name))?;
+            let probing = session.open_sftp_random().await?;
+            let file = probing.open(path.clone()).await.map_err(|e| format!("{}: {e}", gp.name))?;
             tokio::task::spawn_blocking(move || -> io::Result<(u64, u64)> {
+                let _probing = probing;
                 let mut src = SftpReadAt { handle, file };
                 let start = match start {
                     Some(t) => find_start_offset(&mut src, size, t)?,
@@ -604,6 +606,9 @@ impl Reader {
         let mut splitter = LineSplitter::new();
         let mut offset = start;
         let mut buf = vec![0u8; BLOCK];
+        // Where the file is: it is only moved when `offset` is elsewhere, as
+        // every seek throws away the reads in flight.
+        let mut at = 0u64;
         let mut last_progress = Instant::now() - Duration::from_secs(1);
         while offset < end {
             if !self.ctl.checkpoint().await {
@@ -611,7 +616,10 @@ impl Reader {
             }
             let want = BLOCK.min((end - offset) as usize);
             let read = async {
-                file.seek(io::SeekFrom::Start(offset)).await?;
+                if at != offset {
+                    file.seek(io::SeekFrom::Start(offset)).await?;
+                    at = offset;
+                }
                 file.read(&mut buf[..want]).await
             }
             .await;
@@ -627,10 +635,12 @@ impl Reader {
                         Ok(f) => f,
                         Err(_) => return Ok(Outcome::Stopped(StopReason::RotatedWhileReading)),
                     };
+                    at = 0;
                     continue;
                 }
             };
             offset += n as u64;
+            at = offset;
             let (mut lines, mut bytes) = splitter.push_with_lens(&buf[..n]);
             if offset >= end {
                 if let Some(last) = splitter.finish() {
