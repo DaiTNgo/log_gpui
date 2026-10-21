@@ -103,7 +103,7 @@ pub fn compile_pattern(pattern: &str) -> Result<Regex, PatternError> {
 
 /// Where the rule's regex captures in `line`, `message` being the MESSAGE
 /// cell. An empty capture is no value.
-pub fn capture(regex: &Regex, scope: RuleScope, line: &str, message: Option<&Range<usize>>) -> Option<Range<usize>> {
+pub fn capture(regex: &Regex, scope: RuleScope, line: &str, message: Option<Range<usize>>) -> Option<Range<usize>> {
     let (text, offset) = match scope {
         RuleScope::Line => (line, 0),
         RuleScope::Message => {
@@ -184,7 +184,7 @@ impl LineConfig {
             if rule.scope == RuleScope::Line && maybe.as_ref().is_some_and(|m| !m.matched(i)) {
                 continue;
             }
-            if let Some(range) = capture(&rule.regex, rule.scope, line, message) {
+            if let Some(range) = capture(&rule.regex, rule.scope, line, message.clone()) {
                 found.push((rule.name, range));
             }
         }
@@ -328,7 +328,7 @@ pub struct Candidate {
 }
 
 /// A line of the sample: its text and its MESSAGE cell.
-pub type SampleLine<'a> = (&'a str, Option<&'a Range<usize>>);
+pub type SampleLine<'a> = (&'a str, Option<Range<usize>>);
 
 static RE_KEY_BEFORE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r#"(?:^|[^\w.\-"])("?)([A-Za-z_][\w.\-]*)("?)(=|:\s?)("?)$"#).unwrap());
@@ -404,7 +404,7 @@ fn word_guess(text: &str, offset: usize, sel: &Range<usize>, scope: RuleScope, o
 /// only those that read exactly `sel` from `line` are kept, ranked by how
 /// many `sample` lines they read a value from. A guess anchored on a key
 /// stays ahead of a guess by position that reads as many.
-pub fn guess(line: &str, sel: Range<usize>, message: Option<&Range<usize>>, sample: &[SampleLine]) -> Vec<Candidate> {
+pub fn guess(line: &str, sel: Range<usize>, message: Option<Range<usize>>, sample: &[SampleLine]) -> Vec<Candidate> {
     let Some(value) = line.get(sel.clone()).filter(|v| !v.is_empty()) else { return Vec::new() };
     let mut out: Vec<Candidate> = Vec::new();
 
@@ -429,7 +429,7 @@ pub fn guess(line: &str, sel: Range<usize>, message: Option<&Range<usize>>, samp
     out.extend(bracket_guess(line, &sel, '[', ']', "[ ]"));
     out.extend(bracket_guess(line, &sel, '(', ')', "( )"));
     // 3. The n-th word of the message, then of the line.
-    if let Some(m) = message.filter(|m| m.start <= sel.start && sel.end <= m.end) {
+    if let Some(m) = message.clone().filter(|m| m.start <= sel.start && sel.end <= m.end) {
         out.extend(word_guess(&line[m.clone()], m.start, &sel, RuleScope::Message, "message"));
     }
     out.extend(word_guess(line, 0, &sel, RuleScope::Line, "line"));
@@ -438,13 +438,13 @@ pub fn guess(line: &str, sel: Range<usize>, message: Option<&Range<usize>>, samp
     let mut kept: Vec<Candidate> = Vec::new();
     for mut c in out {
         let Ok(regex) = compile_pattern(&c.pattern) else { continue };
-        if capture(&regex, c.scope, line, message) != Some(sel.clone()) {
+        if capture(&regex, c.scope, line, message.clone()) != Some(sel.clone()) {
             continue;
         }
         if kept.iter().any(|k| k.description == c.description) {
             continue;
         }
-        c.coverage = sample.iter().filter(|(l, m)| capture(&regex, c.scope, l, *m).is_some()).count();
+        c.coverage = sample.iter().filter(|(l, m)| capture(&regex, c.scope, l, m.clone()).is_some()).count();
         kept.push(c);
     }
     kept.sort_by(|a, b| b.coverage.cmp(&a.coverage));

@@ -43,3 +43,23 @@ Not done (left for a follow-up; the three boxes above hold without them):
 - `Spans` still allocates an `Arc<[(&str, Range<usize>)]>` per line (about 140 B); a compact form (interned name ids, `u32` ranges) would save roughly half of that.
 - The parser still builds a transient `LogEvent` (String copies and two `HashMap`s) per line and converts it; `LineParser::parse`, `reread` and the Live path go through it. Building the entry's spans directly from the regex groups would remove those allocations (time, not RSS, as they are freed per line).
 - `request_id` / `trace_id` (`Option<String>`), `markers`, `break_*`, `file_id`, `source` still take about 100 B of every entry's 240 B inline; boxing the rarely set ones would shrink the entry and every view copy further.
+
+### Follow-up 13b (branch `perf/13b`): compact Spans
+
+- `Spans` is now `Option<Arc<[PackedSpan]>>`: each span is 12 bytes (a `u32` id of the interned field name, `u32` start and end), names live once in a global table (thread-local read cache, no lock on the hot path), and a line with no spans (every `extra` without Extraction Rules) allocates nothing. A 5-field line takes 76 B of heap instead of ~176 B. `Spans::get` / `iter` / `fields` and `LogEntry::span` now return ranges by value; serde, Debug order and all output are unchanged (`tests/spans_compact_test.rs`, full suite green).
+- `LogEvent.spans` is a short list over interned names (`SpanList`), not a `HashMap<String, Range>` (4 key Strings + a map allocation per line), so `LineParser::parse`, `parse_entries` and the Live path allocate less per line. The other transient `LogEvent` copies (`time_str`, `message`, `raw_line`, the `fields` map with level/module/time) are still built per line: `fields` is read by schema discovery and `from_event` falls back to it, so dropping it is not a cheap, output-neutral change.
+
+Same 1M-line file (generated with the `perf_probe` line pattern, 77 MB), release, same machine:
+
+| | 13 done | 13b |
+|---|---|---|
+| `mem_probe` parse a file | 506 MB (506 B/line) | 414 MB (414 B/line) |
+| `mem_probe --live` | 749 MB | 656 MB |
+| `perf_probe` peak RSS | 1.77 GB | 1.55 GB |
+| parse (mem_probe / perf_probe) | ~1.9 s | 1.9 s / 2.0 s (no measurable change; timings on this shared machine vary by 2x under load, the 13 baseline run here came out at 4.5 s while a build ran) |
+| app Live append batch (1,000) | 5.65 ms | 6.3 ms |
+| Search Matches after the pause | 40.2 ms | 42.7 ms |
+| Filter Value toggle | 7.5 ms | 7.7 ms |
+| Live Window trim | 84 ms | 103 ms |
+
+Left: the rarely set entry fields (`request_id`, `trace_id`, `markers`, `break_*`, ...) still take ~100 B of each 240 B entry inline.

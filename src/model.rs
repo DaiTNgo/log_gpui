@@ -76,29 +76,102 @@ impl LogLevel {
 
 /// The byte range in `raw_line` of each field read from the line, by field
 /// name. A line has a handful of them, so a plain list takes far less memory
-/// than a map; the names are shared, never copied per line, and so is the
-/// list when an entry is copied into a view.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+/// than a map: each is 12 bytes (an id of the interned name and two `u32`
+/// offsets), the names are kept once for the run, and the list is shared when
+/// an entry is copied into a view. No spans (the usual case for `extra`) is
+/// no allocation at all.
+#[derive(Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(from = "HashMap<String, Range<usize>>", into = "HashMap<String, Range<usize>>")]
-pub struct Spans(std::sync::Arc<[(&'static str, Range<usize>)]>);
+pub struct Spans(Option<std::sync::Arc<[PackedSpan]>>);
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct PackedSpan {
+    name: u32,
+    start: u32,
+    end: u32,
+}
+
+impl PackedSpan {
+    fn new(name: &str, range: &Range<usize>) -> Self {
+        let off = |v: usize| u32::try_from(v).unwrap_or(u32::MAX);
+        Self { name: name_id(name), start: off(range.start), end: off(range.end) }
+    }
+
+    fn range(self) -> Range<usize> {
+        self.start as usize..self.end as usize
+    }
+}
+
+struct NameTable {
+    ids: HashMap<&'static str, u32>,
+    names: Vec<&'static str>,
+}
+
+fn name_table() -> &'static std::sync::Mutex<NameTable> {
+    static TABLE: std::sync::OnceLock<std::sync::Mutex<NameTable>> = std::sync::OnceLock::new();
+    TABLE.get_or_init(|| std::sync::Mutex::new(NameTable { ids: HashMap::new(), names: Vec::new() }))
+}
+
+thread_local! {
+    /// This thread's copy of the names known so far, so reading a name or an
+    /// id takes no lock.
+    static KNOWN: std::cell::RefCell<NameTable> =
+        std::cell::RefCell::new(NameTable { ids: HashMap::new(), names: Vec::new() });
+}
+
+fn remember(id: u32, name: &'static str) {
+    KNOWN.with(|k| {
+        let mut k = k.borrow_mut();
+        k.ids.insert(name, id);
+        if k.names.len() <= id as usize {
+            k.names.resize(id as usize + 1, "");
+        }
+        k.names[id as usize] = name;
+    });
+}
+
+/// The id of `name`, adding it to the table when `add` is set.
+fn find_id(name: &str, add: bool) -> Option<u32> {
+    if let Some(id) = KNOWN.with(|k| k.borrow().ids.get(name).copied()) {
+        return Some(id);
+    }
+    let mut table = name_table().lock().unwrap_or_else(|e| e.into_inner());
+    let id = match table.ids.get(name) {
+        Some(&id) => id,
+        None if add => {
+            let leaked: &'static str = Box::leak(name.to_string().into_boxed_str());
+            let id = table.names.len() as u32;
+            table.names.push(leaked);
+            table.ids.insert(leaked, id);
+            id
+        }
+        None => return None,
+    };
+    let known: &'static str = table.names[id as usize];
+    drop(table);
+    remember(id, known);
+    Some(id)
+}
+
+fn name_id(name: &str) -> u32 {
+    find_id(name, true).expect("added")
+}
+
+/// The name behind an id made by `name_id`.
+fn name_of(id: u32) -> &'static str {
+    let cached = KNOWN.with(|k| k.borrow().names.get(id as usize).copied().filter(|n| !n.is_empty()));
+    if let Some(name) = cached {
+        return name;
+    }
+    let known = name_table().lock().unwrap_or_else(|e| e.into_inner()).names[id as usize];
+    remember(id, known);
+    known
+}
 
 /// The one copy of a field name, kept for the rest of the run: names come
 /// from the fields of the logs read, so there are few of them.
 pub fn intern(name: &str) -> &'static str {
-    use std::cell::RefCell;
-    use std::collections::HashSet;
-    thread_local! {
-        static NAMES: RefCell<HashSet<&'static str>> = RefCell::new(HashSet::new());
-    }
-    NAMES.with(|names| {
-        let mut names = names.borrow_mut();
-        if let Some(known) = names.get(name) {
-            return *known;
-        }
-        let leaked: &'static str = Box::leak(name.to_string().into_boxed_str());
-        names.insert(leaked);
-        leaked
-    })
+    name_of(name_id(name))
 }
 
 /// Span names that are not fields of their own: the fixed cells, and the
@@ -154,39 +227,56 @@ impl<'de> Deserialize<'de> for FieldKey {
 impl Spans {
     /// Spans by name, in the order of their names.
     pub fn from_map(map: &HashMap<String, Range<usize>>) -> Self {
-        let mut pairs: Vec<(&'static str, Range<usize>)> =
-            map.iter().map(|(name, range)| (intern(name), range.clone())).collect();
+        let mut pairs: Vec<(&str, &Range<usize>)> = map.iter().map(|(name, range)| (name.as_str(), range)).collect();
         pairs.sort_by(|a, b| a.0.cmp(b.0));
-        Self(pairs.into())
+        Self::pack(pairs.into_iter().map(|(name, range)| PackedSpan::new(name, range)))
     }
 
     /// Spans from `(name, range)` pairs, kept in the given order.
     pub fn from_pairs(pairs: Vec<(&'static str, Range<usize>)>) -> Self {
-        Self(pairs.into())
+        Self::pack(pairs.iter().map(|(name, range)| PackedSpan::new(name, range)))
+    }
+
+    fn pack(spans: impl Iterator<Item = PackedSpan>) -> Self {
+        let list: Vec<PackedSpan> = spans.collect();
+        if list.is_empty() { Self(None) } else { Self(Some(list.into())) }
+    }
+
+    fn packed(&self) -> &[PackedSpan] {
+        self.0.as_deref().unwrap_or(&[])
     }
 
     /// The fields among the spans (not the fixed cells), by name.
-    pub fn fields(&self) -> impl Iterator<Item = (FieldKey, &Range<usize>)> {
-        self.0
-            .iter()
-            .filter(|(name, _)| is_field_name(name))
-            .map(|(name, range)| (FieldKey(name), range))
+    pub fn fields(&self) -> impl Iterator<Item = (FieldKey, Range<usize>)> + '_ {
+        self.iter().filter(|(name, _)| is_field_name(name)).map(|(name, range)| (FieldKey(name), range))
     }
 
-    pub fn get(&self, name: &str) -> Option<&Range<usize>> {
-        self.0.iter().find(|(key, _)| *key == name).map(|(_, range)| range)
+    pub fn get(&self, name: &str) -> Option<Range<usize>> {
+        let id = find_id(name, false)?;
+        self.packed().iter().find(|s| s.name == id).map(|s| s.range())
     }
 
     pub fn len(&self) -> usize {
-        self.0.len()
+        self.packed().len()
     }
 
     pub fn is_empty(&self) -> bool {
-        self.0.is_empty()
+        self.0.is_none()
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = (&'static str, &Range<usize>)> {
-        self.0.iter().map(|(name, range)| (*name, range))
+    pub fn iter(&self) -> impl Iterator<Item = (&'static str, Range<usize>)> + '_ {
+        self.packed().iter().map(|s| (name_of(s.name), s.range()))
+    }
+
+    /// Bytes this list takes on the heap (not counting a copy that shares it).
+    pub fn heap_bytes(&self) -> usize {
+        self.0.as_ref().map_or(0, |list| 2 * std::mem::size_of::<usize>() + list.len() * std::mem::size_of::<PackedSpan>())
+    }
+}
+
+impl std::fmt::Debug for Spans {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_list().entries(self.iter()).finish()
     }
 }
 
@@ -198,7 +288,7 @@ impl From<HashMap<String, Range<usize>>> for Spans {
 
 impl From<Spans> for HashMap<String, Range<usize>> {
     fn from(spans: Spans) -> Self {
-        spans.0.iter().map(|(name, range)| (name.to_string(), range.clone())).collect()
+        spans.iter().map(|(name, range)| (name.to_string(), range)).collect()
     }
 }
 
@@ -410,7 +500,7 @@ impl LogEntry {
 
     /// Where the field `name` is in the line: read with the line, or else
     /// by an Extraction Rule.
-    pub fn span(&self, name: &str) -> Option<&Range<usize>> {
+    pub fn span(&self, name: &str) -> Option<Range<usize>> {
         self.spans.get(name).or_else(|| self.extra.get(name))
     }
 
@@ -446,7 +536,7 @@ impl LogEntry {
         let mut entry = LogEntry::new(event.index, event.timestamp, String::new(), String::new(), level, String::new(), String::new());
         entry.own = None;
         entry.raw_line = raw_line;
-        entry.spans = Spans::from_map(&event.spans);
+        entry.spans = event.spans.to_spans();
         entry.parent = event.parent;
         entry.has_time = event.has_time;
         entry.request_id = request_id;
