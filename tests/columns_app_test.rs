@@ -36,9 +36,22 @@ fn columns(h: &mut Harness) -> Vec<PinnableColumn> {
     h.view.read_with(&h.cx, |app, _| app.column_layout.columns())
 }
 
+/// The switch of the Columns section: it shows or hides a column of the
+/// Focus Pane.
 fn show(h: &mut Harness, key: &str, shown: bool) {
     h.view.update(&mut h.cx, |app, cx| app.set_column_shown(key, shown, cx));
     h.cx.run_until_parked();
+}
+
+/// "Hide column" of a Column Header: the Canvas only.
+fn show_in_canvas(h: &mut Harness, key: &str, shown: bool) {
+    h.view.update(&mut h.cx, |app, cx| app.set_canvas_column_shown(key, shown, cx));
+    h.cx.run_until_parked();
+}
+
+/// The columns the Focus Pane lays out in the Parsed View.
+fn pane(h: &mut Harness) -> Vec<PinnableColumn> {
+    h.view.read_with(&h.cx, |app, _| app.pane_columns().expect("Parsed View").columns())
 }
 
 fn visible(h: &mut Harness) -> usize {
@@ -46,7 +59,7 @@ fn visible(h: &mut Harness) -> usize {
 }
 
 #[gpui::test]
-fn turning_a_json_field_on_shows_its_column(cx: &mut TestAppContext) {
+fn turning_a_json_field_on_shows_its_column_in_the_focus_pane(cx: &mut TestAppContext) {
     let mut h = common::open_app_with_lines(cx, &json_lines());
     assert!(!columns(&mut h).contains(&field("region")), "Detected Fields start off");
     let detected = h.view.read_with(&h.cx, |app, _| app.column_groups("").detected);
@@ -54,8 +67,10 @@ fn turning_a_json_field_on_shows_its_column(cx: &mut TestAppContext) {
     assert!(!region.shown);
     assert_eq!(region.lines, 99);
 
+    assert!(!pane(&mut h).contains(&field("region")), "Detected Fields start off in the Focus Pane");
     show(&mut h, "region", true);
-    assert_eq!(columns(&mut h).last(), Some(&field("region")));
+    assert_eq!(pane(&mut h).last(), Some(&field("region")));
+    assert!(!columns(&mut h).contains(&field("region")), "the Canvas is not changed");
     h.cx.simulate_resize(gpui::size(gpui::px(1400.0), gpui::px(900.0)));
     h.cx.run_until_parked();
 }
@@ -64,7 +79,7 @@ fn turning_a_json_field_on_shows_its_column(cx: &mut TestAppContext) {
 fn a_hidden_column_still_filters(cx: &mut TestAppContext) {
     let mut h = common::open_app_with_lines(cx, &json_lines());
     show(&mut h, "level", false);
-    assert!(!columns(&mut h).contains(&PinnableColumn::Level));
+    assert!(!pane(&mut h).contains(&PinnableColumn::Level));
     h.view.update(&mut h.cx, |app, cx| app.filter_toggle_value("level", "error", cx));
     h.cx.run_until_parked();
     assert_eq!(visible(&mut h), 10);
@@ -74,7 +89,7 @@ fn a_hidden_column_still_filters(cx: &mut TestAppContext) {
 fn dragging_reorders_field_columns(cx: &mut TestAppContext) {
     let mut h = common::open_app_with_lines(cx, &json_lines());
     for key in ["msg", "user", "region"] {
-        show(&mut h, key, true);
+        show_in_canvas(&mut h, key, true);
     }
     h.view.update(&mut h.cx, |app, cx| app.move_field_column(2, 0, cx));
     h.cx.run_until_parked();
@@ -85,7 +100,7 @@ fn dragging_reorders_field_columns(cx: &mut TestAppContext) {
 #[gpui::test]
 fn field_columns_pin_in_view_order_and_auto_fit(cx: &mut TestAppContext) {
     let mut h = common::open_app_with_lines(cx, &json_lines());
-    show(&mut h, "user", true);
+    show_in_canvas(&mut h, "user", true);
     h.view.update(&mut h.cx, |app, cx| {
         app.toggle_pin_column(field("user"), cx);
         app.toggle_pin_column(PinnableColumn::Level, cx);
@@ -162,7 +177,7 @@ fn a_label_taken_by_another_column_is_refused_until_changed(cx: &mut TestAppCont
 #[gpui::test]
 fn a_continuation_line_shows_the_placeholder_in_field_columns(cx: &mut TestAppContext) {
     let mut h = common::open_app_with_lines(cx, &json_lines());
-    show(&mut h, "user", true);
+    show_in_canvas(&mut h, "user", true);
     let placeholder = h.view.read_with(&h.cx, |app, _| {
         let last = app.all_entries.last().unwrap();
         last.is_continuation() && shows_placeholder(last, TextCell::Field(FieldKey::new("user")))
@@ -171,12 +186,15 @@ fn a_continuation_line_shows_the_placeholder_in_field_columns(cx: &mut TestAppCo
 }
 
 #[gpui::test]
-fn the_source_switch_is_the_settings_switch(cx: &mut TestAppContext) {
+fn source_is_an_ordinary_column_of_the_focus_pane(cx: &mut TestAppContext) {
     let mut h = common::open_app_with_lines(cx, &json_lines());
     show(&mut h, "source", true);
-    assert!(h.view.read_with(&h.cx, |app, _| app.source_column_shown()));
+    assert!(pane(&mut h).contains(&PinnableColumn::Source));
+    assert!(!h.view.read_with(&h.cx, |app, _| app.source_column_shown()), "the Canvas is not changed");
+    let row = h.view.read_with(&h.cx, |app, _| app.column_groups("").built_in.into_iter().find(|r| r.key == "source"));
+    assert!(row.expect("Source has a switch").shown);
     show(&mut h, "source", false);
-    assert!(!h.view.read_with(&h.cx, |app, _| app.source_column_shown()));
+    assert!(!pane(&mut h).contains(&PinnableColumn::Source));
 }
 
 #[gpui::test]
@@ -199,25 +217,27 @@ fn column_settings_survive_a_save(cx: &mut TestAppContext) {
     let mut h = common::open_app_with_lines(cx, &json_lines());
     show(&mut h, "user", true);
     show(&mut h, "level", false);
+    show_in_canvas(&mut h, "module", false);
     let manifest = h.view.read_with(&h.cx, |app, _| {
         log_gpui::workspace::session::SessionManifest::from_workspace(&app.workspace_state)
     });
     let back = log_gpui::workspace::session::SessionManifest::from_json(&manifest.to_json().unwrap()).unwrap();
     let ws = back.into_workspace();
     let columns = &ws.projects[0].columns;
-    assert_eq!(columns.fields, vec!["user"]);
-    assert!(!columns.is_shown("level"));
+    assert!(!columns.is_shown("module"), "the Canvas choice is kept");
+    assert_eq!(columns.pane_choice("user"), Some(true));
+    assert_eq!(columns.pane_choice("level"), Some(false));
 }
 
 #[gpui::test]
-fn the_focus_pane_shows_the_columns_of_the_view(cx: &mut TestAppContext) {
+fn the_focus_pane_has_its_own_columns(cx: &mut TestAppContext) {
     let mut h = common::open_app_with_lines(cx, &json_lines());
     show(&mut h, "user", true);
     show(&mut h, "level", false);
-    h.view.update(&mut h.cx, |app, cx| app.toggle_pin_column(field("user"), cx));
+    h.view.update(&mut h.cx, |app, cx| app.toggle_pin_column(PinnableColumn::Timestamp, cx));
     let pane = h.view.read_with(&h.cx, |app, _| app.pane_columns()).expect("Parsed View");
-    assert_eq!(pane.columns(), columns(&mut h), "same columns, same order");
-    assert!(!pane.columns().contains(&PinnableColumn::Level));
+    assert!(pane.columns().contains(&field("user")) && !pane.columns().contains(&PinnableColumn::Level));
+    assert!(columns(&mut h).contains(&PinnableColumn::Level), "the Canvas keeps LEVEL");
     assert!(pane.pinned_columns().is_empty(), "the pane scrolls as one");
     h.view.update(&mut h.cx, |app, _| app.view_mode = log_gpui::workspace::working_set::ViewMode::Raw);
     assert!(h.view.read_with(&h.cx, |app, _| app.pane_columns()).is_none(), "the Raw View lists raw lines");

@@ -281,6 +281,7 @@ impl AppView {
         self.read_rule_fields();
         self.column_layout.set_source_visible(source_visible);
         self.sync_stream_column();
+        self.sync_pane_columns();
     }
 
     /// Load every file of the Log Space into the cache and re-parse the
@@ -420,6 +421,7 @@ impl AppView {
         self.read_rule_fields();
         self.column_layout.set_source_visible(source_visible);
         self.sync_stream_column();
+        self.sync_pane_columns();
         if fresh {
             self.column_layout.update_from_entries(&self.all_entries, self.density);
         }

@@ -77,8 +77,10 @@ fn the_nginx_template_gives_columns_and_interleaves_by_time(cx: &mut TestAppCont
 
     h.view.update(&mut h.cx, |a, cx| a.set_column_shown("referrer", false, cx));
     h.cx.run_until_parked();
-    assert!(!columns(&mut h).contains(&field("referrer")));
-    assert!(columns(&mut h).contains(&field("agent")));
+    let pane = h.view.read_with(&h.cx, |a, _| a.pane_columns().unwrap().columns());
+    assert!(!pane.contains(&field("referrer")));
+    assert!(pane.contains(&field("agent")), "Log Format fields are on in the Focus Pane by default");
+    assert!(columns(&mut h).contains(&field("referrer")), "the Canvas is not changed");
 }
 
 #[gpui::test]

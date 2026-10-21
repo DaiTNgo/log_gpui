@@ -334,6 +334,17 @@ pub fn label_header_width(col: PinnableColumn, label: &str) -> f32 {
     crate::ui::mono::header_text_width(label) + side_padding + 2.0 + coverage_room(col)
 }
 
+/// Which columns the Focus Pane lays out, apart from the Canvas's.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct PaneColumns {
+    /// Fixed columns (TIMESTAMP, LEVEL, MODULE) hidden.
+    pub hidden: BTreeSet<PinnableColumn>,
+    /// The Field Columns shown, in order.
+    pub fields: Vec<FieldKey>,
+    pub source: bool,
+    pub stream: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ColumnLayoutState {
     pub pinned_columns: BTreeSet<PinnableColumn>,
@@ -361,6 +372,10 @@ pub struct ColumnLayoutState {
     /// Column Labels by column key, from the Project.
     #[serde(default)]
     pub labels: HashMap<String, String>,
+    /// The columns of the Focus Pane, which has its own switches: the
+    /// fields above are not read for it.
+    #[serde(default)]
+    pub pane: PaneColumns,
     pub is_resizing: Option<(PinnableColumn, Pixels)>,
     pub resize_start_x: Option<Pixels>,
     pub hovered_header: Option<PinnableColumn>,
@@ -401,6 +416,7 @@ impl ColumnLayoutState {
             hidden: BTreeSet::new(),
             fields: Vec::new(),
             labels: HashMap::new(),
+            pane: PaneColumns::default(),
             is_resizing: None,
             resize_start_x: None,
             hovered_header: None,
@@ -513,6 +529,51 @@ impl ColumnLayoutState {
         self.hidden = hidden;
         self.fields = fields;
         self.sync_ordered_pinned();
+    }
+
+    /// Set the columns the Focus Pane lays out. A new Field Column is
+    /// fitted to its values, Source and Stream to their names.
+    pub fn set_pane_columns(&mut self, pane: PaneColumns, density: Density) {
+        for key in &pane.fields {
+            if !self.widths.contains_key(&PinnableColumn::Field(*key)) {
+                self.auto_fit(PinnableColumn::Field(*key), density);
+            }
+        }
+        if pane.source && !self.pane.source {
+            self.auto_fit(PinnableColumn::Source, density);
+        }
+        if pane.stream && !self.pane.stream {
+            self.max_chars.stream = self.max_chars.stream.max(6);
+            self.auto_fit(PinnableColumn::Stream, density);
+        }
+        self.pane = pane;
+    }
+
+    /// The columns the Focus Pane lays out, in the Canvas's order. None is
+    /// pinned: the pane scrolls as one.
+    pub fn pane_columns(&self) -> Vec<PinnableColumn> {
+        PinnableColumn::ALL
+            .iter()
+            .copied()
+            .chain(self.pane.fields.iter().map(|k| PinnableColumn::Field(*k)))
+            .filter(|c| match c {
+                PinnableColumn::Source => self.pane.source,
+                PinnableColumn::Stream => self.pane.stream,
+                PinnableColumn::Field(_) => true,
+                fixed => !self.pane.hidden.contains(fixed),
+            })
+            .collect()
+    }
+
+    /// This layout as the Focus Pane draws it: its columns, none pinned.
+    pub fn as_pane(&self) -> ColumnLayoutState {
+        let mut layout = self.clone();
+        layout.unpin_all();
+        layout.hidden = self.pane.hidden.clone();
+        layout.fields = self.pane.fields.clone();
+        layout.source_visible = self.pane.source;
+        layout.stream_visible = self.pane.stream;
+        layout
     }
 
     /// The text of a column's Column Header: its Column Label, or its name.

@@ -123,12 +123,18 @@ impl AppView {
         let rules = self.extraction_rules().to_vec();
         // Every Field Column turned on may be a `key=value` Detected Field;
         // one the line has already (a JSON key, a rule's) is not read again.
-        let kv: Vec<String> = self
-            .column_settings()
+        let settings = self.column_settings();
+        let on_in_pane = settings.pane.iter().filter(|(_, on)| **on).map(|(k, _)| k.clone());
+        let mut kv: Vec<String> = settings
             .fields
-            .into_iter()
+            .iter()
+            .cloned()
+            .chain(on_in_pane)
             .filter(|f| !rules.iter().any(|r| r.name == *f))
+            .filter(|f| crate::model::is_field_name(f) && !crate::columns::BUILT_IN.iter().any(|(k, _)| k == f))
             .collect();
+        let mut seen = std::collections::HashSet::new();
+        kv.retain(|f| seen.insert(f.clone()));
         if self.rule_cache.rules != rules || self.rule_cache.kv != kv {
             self.rule_cache.config = Arc::new(LineConfig::with_detected(&rules, &kv));
             self.rule_cache.rules = rules;

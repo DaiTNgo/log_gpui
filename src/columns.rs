@@ -6,7 +6,7 @@
 use crate::filter_index::FilterIndex;
 use crate::model::{FieldKey, is_field_name};
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 /// Column key of MESSAGE, which is always shown.
 pub const MESSAGE_KEY: &str = "message";
@@ -54,9 +54,28 @@ pub struct ColumnSettings {
     /// Field Columns turned on, in the order the Parsed View draws them.
     #[serde(default)]
     pub fields: Vec<String>,
+    /// What the user chose for the Focus Pane in the Columns section, by
+    /// column key. A column without a choice follows its default: the fixed
+    /// columns, a Log Format's and an Extraction Rule's fields are on,
+    /// Detected Fields are off.
+    #[serde(default)]
+    pub pane: BTreeMap<String, bool>,
 }
 
 impl ColumnSettings {
+    /// The choice for the Focus Pane about the column `key`, if any.
+    pub fn pane_choice(&self, key: &str) -> Option<bool> {
+        self.pane.get(key).copied()
+    }
+
+    /// Show or hide the column `key` in the Focus Pane. MESSAGE is always
+    /// shown.
+    pub fn set_pane_shown(&mut self, key: &str, shown: bool) {
+        if key != MESSAGE_KEY {
+            self.pane.insert(key.to_string(), shown);
+        }
+    }
+
     /// The Column Label of `key`, if the user gave one.
     pub fn label(&self, key: &str) -> Option<&str> {
         self.labels.get(key).map(String::as_str)

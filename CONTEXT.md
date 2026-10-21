@@ -27,11 +27,11 @@ A tab of the tab strip kept at its start. It moves in front of the other tabs, s
 _Avoid_: Pin Toggle (that pins a column), frozen tab, sticky tab.
 
 **Source Column**:
-The column in a Log Space's Parsed View that names each row's Source File. It is pinnable and filterable, and can be hidden from Quick Settings.
+The column in a Log Space's Parsed View that names each row's Source File. It is pinnable and filterable. Whether the Focus Pane shows it is a switch in the Columns section.
 _Avoid_: File column, origin column.
 
 **Quick Settings**:
-The toolbar popover holding display switches for the open view, such as showing the Source Column and density.
+The toolbar popover holding display switches for the open view, such as density.
 _Avoid_: View panel, view options.
 
 **Keymap**:
@@ -247,7 +247,7 @@ Narrowing the lines of the Focus Pane by the values of the file's columns, in th
 _Avoid_: Query, view.
 
 **Focus Pane**:
-The full-width pane under the view and both sidebars, holding one or more Focus Tabs. The open Focus Tab lists only the lines passing both Filter and its Search Expression. In the Parsed View each line shows in the same columns as the view (same order, widths and Column Labels; a column hidden in the view is hidden here too), with its line number; in the Raw View each line shows as its raw line with its line number and, when the Log Space has several files, its Source File. An empty Search Expression or an empty Filter sets no limit; when both are empty the pane is empty. In the Raw View only the Search Expression applies. Its current line and the view's selection always follow each other. It shows Markers and Level Markers, and keeps up with tailed lines and scratch edits.
+The full-width pane under the view and both sidebars, holding one or more Focus Tabs. The open Focus Tab lists only the lines passing both Filter and its Search Expression. In the Parsed View each line shows the columns switched on for the Focus Pane in the Columns section (the view's order, widths and Column Labels; hiding one here never hides it in the Canvas), with its line number; in the Raw View each line shows as its raw line with its line number and, when the Log Space has several files, its Source File. An empty Search Expression or an empty Filter sets no limit; when both are empty the pane is empty. In the Raw View only the Search Expression applies. Its current line and the view's selection always follow each other. It shows Markers and Level Markers, and keeps up with tailed lines and scratch edits.
 _Avoid_: Match Pane, Filter Log, result pane, search results.
 
 **Focus Window**:
@@ -323,7 +323,7 @@ A field the app finds in lines on its own (a JSON key, or a `key=value` pair in 
 _Avoid_: Suggested column, auto column.
 
 **Columns** (section of the context sidebar):
-The one place to show, hide and order the columns of the view, manage Extraction Rules and choose a Log Format.
+The one place to show or hide the columns of the Focus Pane (Source and Stream included; Detected Fields are off by default), kept per Project, and to order columns, manage Extraction Rules and choose a Log Format.
 _Avoid_: Column manager, view panel.
 
 ## Rules & Constraints

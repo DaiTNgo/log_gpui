@@ -103,7 +103,7 @@ fn turning_a_detected_field_on_makes_a_column_that_filters(cx: &mut TestAppConte
     assert!(h.view.read_with(&h.cx, |a, _| a.filter_index.column("user").is_none()), "off: not filterable");
 
     show(&mut h, "user", true);
-    assert!(h.view.read_with(&h.cx, |a, _| a.column_layout.columns().contains(&user_col())));
+    assert!(h.view.read_with(&h.cx, |a, _| a.pane_columns().unwrap().columns().contains(&user_col())));
     let note = h.view.read_with(&h.cx, |a, _| a.all_entries[0].span_text("note").map(str::to_string));
     assert_eq!(note, None, "only fields turned on are read");
     h.view.update(&mut h.cx, |a, cx| a.filter_toggle_value("user", "alice", cx));
@@ -111,7 +111,7 @@ fn turning_a_detected_field_on_makes_a_column_that_filters(cx: &mut TestAppConte
     assert_eq!(h.view.read_with(&h.cx, |a, _| a.filter_pass.len()), 10);
 
     show(&mut h, "user", false);
-    assert!(!h.view.read_with(&h.cx, |a, _| a.column_layout.columns().contains(&user_col())));
+    assert!(!h.view.read_with(&h.cx, |a, _| a.pane_columns().unwrap().columns().contains(&user_col())));
     assert!(h.view.read_with(&h.cx, |a, _| a.filter_state.column("user").is_some_and(|c| c.is_active())), "the condition stays");
     let notice = h.view.read_with(&h.cx, |a, _| a.focus_pane_notice()).unwrap();
     assert!(matches!(notice, FocusPaneNotice::UnreadColumn { can_turn_on: true, .. }), "{notice:?}");

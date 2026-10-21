@@ -545,7 +545,7 @@ impl PaneRows {
         let selected_in_line = self.selection.and_then(|s| s.range_in_row(index, entry.raw_line.len()));
         let columns = (self.columns && parsed).then_some(&app.column_layout);
         let hidden_match = columns.and_then(|layout| {
-            crate::ui::cells::hidden_matches(entry, &search_ranges, layout)
+            crate::ui::cells::hidden_matches_in(entry, &search_ranges, &layout.pane_columns())
                 .map(|hidden| crate::ui::cells::hidden_matches_tooltip(&hidden, layout))
         });
         // In columns, Search is painted on whichever cell holds each Match.
@@ -625,7 +625,7 @@ impl PaneRows {
                 })
                 .when_some(columns, |this, layout| {
                     let mut this = this;
-                    for col in layout.columns() {
+                    for col in layout.pane_columns() {
                         this = this.child(crate::ui::canvas::render_column_cell(col, layout, &ctx));
                     }
                     this.child(
@@ -684,7 +684,7 @@ fn render_column_header(
         .h_full()
         .items_center()
         .child(div().flex_shrink_0().w(px(NUMBER_WIDTH + LEVEL_WIDTH)));
-    for col in layout.columns() {
+    for col in layout.pane_columns() {
         row = row.child(
             div()
                 .flex_shrink_0()

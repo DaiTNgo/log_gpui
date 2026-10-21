@@ -749,7 +749,7 @@ fn header_menu(
     let mut menu = menu;
     if can_hide {
         menu = menu.item(PopupMenuItem::new("Hide column").on_click(move |_, _, app| {
-            hide_view.update(app, |this, cx| this.set_column_shown(key, false, cx));
+            hide_view.update(app, |this, cx| this.set_canvas_column_shown(key, false, cx));
         }));
     }
     menu.item(PopupMenuItem::new("Rename").on_click(move |_, window, app| {

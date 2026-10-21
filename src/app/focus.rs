@@ -573,11 +573,7 @@ impl AppView {
     /// pinned (the pane scrolls as one). `None` in the Raw View. A copy: for
     /// hit-testing a click, not for a frame.
     pub fn pane_columns(&self) -> Option<crate::column::ColumnLayoutState> {
-        self.pane_layout().map(|layout| {
-            let mut layout = layout.clone();
-            layout.unpin_all();
-            layout
-        })
+        self.pane_layout().map(crate::column::ColumnLayoutState::as_pane)
     }
 
     /// Whether the pane names the Source File of each line (the Raw View;

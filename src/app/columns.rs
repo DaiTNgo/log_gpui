@@ -89,6 +89,55 @@ impl AppView {
         let fields = settings.view_fields_with(&self.filter_index, &self.formats.view_fields);
         self.column_layout.labels = settings.labels.clone();
         self.column_layout.set_view_columns(settings.hidden_columns(), fields, self.density);
+        self.sync_pane_columns();
+    }
+
+    /// Lay out the columns of the Focus Pane, which has its own switches in
+    /// the Columns section.
+    pub(crate) fn sync_pane_columns(&mut self) {
+        use crate::column::PaneColumns;
+        let mut pane = PaneColumns::default();
+        for col in [PinnableColumn::Timestamp, PinnableColumn::Level, PinnableColumn::Module] {
+            if !self.column_shown(col.key()) {
+                pane.hidden.insert(col);
+            }
+        }
+        pane.source = self.column_shown("source") && self.active_is_log_space();
+        pane.stream = self.column_shown("stream") && self.active_space_has_command();
+        pane.fields = self.pane_field_keys();
+        self.column_layout.set_pane_columns(pane, self.density);
+    }
+
+    /// The Field Columns the Focus Pane lays out: the ones on that have a
+    /// value in a row. A Log Format's fields come first, then a rule's, then
+    /// the fields the user ordered, then the rest.
+    fn pane_field_keys(&self) -> Vec<crate::model::FieldKey> {
+        let settings = self.column_settings();
+        let mut keys: Vec<String> = self.formats.view_fields.clone();
+        keys.extend(self.extraction_rules().iter().map(|r| r.name.clone()));
+        keys.extend(settings.fields.iter().cloned());
+        keys.extend(settings.pane.iter().filter(|(_, on)| **on).map(|(k, _)| k.clone()));
+        let mut seen = std::collections::HashSet::new();
+        keys.retain(|k| is_pane_field(k) && seen.insert(k.clone()));
+        keys.into_iter()
+            .filter(|k| self.column_shown(k) && self.filter_index.coverage(k).0 > 0)
+            .map(|k| crate::model::FieldKey::new(&k))
+            .collect()
+    }
+
+    /// Whether the Focus Pane shows the column `key` when the user made no
+    /// choice: the fixed columns, a Log Format's and a rule's fields, and
+    /// Source and Stream where the open Log Space has them.
+    fn pane_default(&self, key: &str) -> bool {
+        match key {
+            "timestamp" | "level" | "module" | MESSAGE_KEY => true,
+            "source" => self.active_space().is_some_and(|s| s.files.len() > 1),
+            "stream" => self.active_space_has_command(),
+            _ => {
+                self.formats.view_fields.iter().any(|f| f == key)
+                    || self.extraction_rules().iter().any(|r| r.name == key)
+            }
+        }
     }
 
     fn columns_changed(&mut self, cx: &mut Context<Self>) {
@@ -97,8 +146,21 @@ impl AppView {
         cx.notify();
     }
 
-    /// The switch of a column in the Columns section, or "Hide column".
+    /// The switch of a column in the Columns section: the Focus Pane only.
     pub fn set_column_shown(&mut self, key: &str, shown: bool, cx: &mut Context<Self>) {
+        if key == MESSAGE_KEY {
+            return;
+        }
+        if let Some(project) = self.active_project_mut() {
+            project.columns.set_pane_shown(key, shown);
+        }
+        self.columns_changed(cx);
+        // A `key=value` field is read only while it is on.
+        self.reread_if_config_changed(cx);
+    }
+
+    /// "Hide column" of a Column Header: the Canvas only.
+    pub fn set_canvas_column_shown(&mut self, key: &str, shown: bool, cx: &mut Context<Self>) {
         match key {
             MESSAGE_KEY => {}
             "source" => self.set_show_source(shown, cx),
@@ -119,15 +181,15 @@ impl AppView {
         }
     }
 
-    /// Whether the column `key` is shown.
+    /// Whether the Focus Pane shows the column `key` (its switch in the
+    /// Columns section).
     pub fn column_shown(&self, key: &str) -> bool {
-        match key {
-            MESSAGE_KEY => true,
-            "source" => self.column_layout.source_visible,
-            "stream" => self.column_layout.stream_visible,
-            _ if self.formats.view_fields.iter().any(|f| f == key) => !self.column_settings().hidden.contains(key),
-            _ => self.column_settings().is_shown(key),
+        if key == MESSAGE_KEY {
+            return true;
         }
+        self.active_project()
+            .and_then(|p| p.columns.pane_choice(key))
+            .unwrap_or_else(|| self.pane_default(key))
     }
 
     /// Drag a Field Column from `from` to `to` in the Columns section.
@@ -308,12 +370,12 @@ impl AppView {
             if rule_names.contains(&key.as_str()) {
                 continue;
             }
-            groups.detected.push(ColumnRow { order: Some(i), ..row(key, index.coverage(key).0, true, true) });
+            groups.detected.push(ColumnRow { order: Some(i), ..row(key, index.coverage(key).0, self.column_shown(key), true) });
         }
         let mut detected: Vec<ColumnRow> = index
             .field_columns()
             .filter(|c| !settings.fields.contains(&c.key) && !rule_names.contains(&c.key.as_str()))
-            .map(|c| row(&c.key, c.covered(), false, true))
+            .map(|c| row(&c.key, c.covered(), self.column_shown(&c.key), true))
             .filter(|r| query.is_empty() || r.key.to_lowercase().contains(&query) || r.name.to_lowercase().contains(&query))
             .collect();
         for (key, n) in index.kv_counts() {
@@ -322,13 +384,19 @@ impl AppView {
                 || rule_names.contains(&key)
                 || detected.iter().any(|r| r.key == key);
             if !listed && (query.is_empty() || key.to_lowercase().contains(&query)) {
-                detected.push(row(key, *n, false, true));
+                detected.push(row(key, *n, self.column_shown(key), true));
             }
         }
-        detected.sort_by(|a, b| b.lines.cmp(&a.lines).then_with(|| a.key.cmp(&b.key)));
+        detected.sort_by(|a, b| b.shown.cmp(&a.shown).then(b.lines.cmp(&a.lines)).then_with(|| a.key.cmp(&b.key)));
         groups.detected_more = detected.len().saturating_sub(DETECTED_SHOWN);
         detected.truncate(DETECTED_SHOWN);
         groups.detected.extend(detected);
         groups
     }
+}
+
+/// Whether `key` can be a Field Column of the Focus Pane: a field of the
+/// lines, not one of the fixed columns.
+fn is_pane_field(key: &str) -> bool {
+    crate::model::is_field_name(key) && !BUILT_IN.iter().any(|(k, _)| *k == key)
 }
