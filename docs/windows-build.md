@@ -12,9 +12,13 @@ clone needs no Cargo config.
 
 ## What differs on Windows
 
-- Agent sign-in: russh only talks to an ssh-agent over a Unix socket, so on
-  Windows an Agent Server fails with "ssh-agent not available at ..." (the
-  `AgentUnavailable` error). The Windows named-pipe agent is a later ticket.
+- Agent sign-in: on Windows the System agent is `SSH_AUTH_SOCK` if set, else
+  the OpenSSH agent's named pipe (`\\.\pipe\openssh-ssh-agent`, which
+  1Password also serves, so the 1Password preset is that pipe). Pageant is a
+  separate choice, and an `IdentityAgent` pipe path is honoured. Secretive is
+  macOS-only and not offered on Windows. A missing agent reports "ssh-agent
+  not available at <path tried>". The pipe and Pageant connections are
+  type-checked from a Mac but have only been exercised on real Windows.
 - Tests that need Unix tools or APIs (`ssh-agent`, `kill`, file permissions)
   are `#[cfg(unix)]`. The SSH integration tests skip themselves without
   `SSH_TEST_DIR`, as everywhere.

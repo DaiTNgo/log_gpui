@@ -8,11 +8,8 @@ use super::known_hosts::{HostKeyStatus, KnownHosts};
 use super::secrets::SecretStore;
 use super::server::{AuthMethod, Server, ServerStore};
 use russh::client::{self, Handle, KeyboardInteractiveAuthResponse};
-#[cfg(unix)]
 use russh::keys::agent::AgentIdentity;
-#[cfg(unix)]
-use russh::keys::agent::client::AgentClient;
-#[cfg(unix)]
+use russh::keys::agent::client::{AgentClient, AgentStream};
 use russh::keys::{PublicKey, load_public_key};
 use russh::keys::{HashAlg, PrivateKeyWithHashAlg, PublicKeyOrCertificate, load_secret_key};
 use russh::MethodKind;
@@ -105,10 +102,8 @@ type Reporter<'a> = Option<&'a (dyn Fn(TestStep) + Send + Sync)>;
 
 /// Most keys of an agent tried for one sign-in (a server cuts the connection
 /// after `MaxAuthTries`, 6 by default).
-#[cfg(unix)]
 const MAX_AGENT_KEYS: usize = 5;
 /// How long the agent gets to sign (a touch, a 1Password or Touch ID approval).
-#[cfg(unix)]
 const AGENT_SIGN_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// Overwrite a secret in place before it is dropped.
@@ -749,7 +744,6 @@ impl RemoteHub {
     /// Ask the agent to sign with its keys, one after another (at most
     /// `MAX_AGENT_KEYS`; the one named by `preferred` alone when set). The
     /// private keys never leave the agent.
-    #[cfg(unix)]
     async fn auth_agent(
         &self,
         handle: &mut Handle<ClientHandler>,
@@ -762,7 +756,7 @@ impl RemoteHub {
         let unavailable = || agent_unavailable(server, shown_path);
         let rejected = |detail: &str| ConnectError::AgentRejected { server_name: server.name.clone(), detail: detail.to_string() };
         let path = socket.as_deref().ok_or_else(unavailable)?;
-        let mut agent = AgentClient::connect_uds(path).await.map_err(|_| unavailable())?;
+        let mut agent = connect_agent(path).await.map_err(|_| unavailable())?;
         let identities = agent.request_identities().await.map_err(|_| unavailable())?;
         let mut keys: Vec<PublicKey> = identities
             .into_iter()
@@ -807,21 +801,6 @@ impl RemoteHub {
         } else {
             "no agent key accepted"
         }))
-    }
-
-    /// Windows: russh talks to an ssh-agent only over a Unix socket, so an
-    /// Agent sign-in is "agent unavailable" until the named-pipe agent lands.
-    #[cfg(not(unix))]
-    async fn auth_agent(
-        &self,
-        _handle: &mut Handle<ClientHandler>,
-        server: &Server,
-        _target_id: &str,
-        _socket: &Option<String>,
-        shown_path: &str,
-        _preferred: Option<&str>,
-    ) -> Result<russh::client::AuthResult, ConnectError> {
-        Err(agent_unavailable(server, shown_path))
     }
 
     /// Show the Server's questions to the user until it accepts or refuses.
@@ -929,6 +908,28 @@ fn needs_secret(server: &Server) -> ConnectError {
     ConnectError::NeedsSecret { server_id: server.id.clone(), server_name: server.name.clone() }
 }
 
+/// An ssh-agent connection, whatever carries it.
+type AgentConnection = AgentClient<Box<dyn AgentStream + Send + Unpin>>;
+
+/// Connect to the agent `target` names: a Unix socket path.
+#[cfg(unix)]
+async fn connect_agent(target: &str) -> Result<AgentConnection, russh::keys::Error> {
+    Ok(AgentClient::connect_uds(target).await?.dynamic())
+}
+
+/// Connect to the agent `target` names: `PAGEANT`, or a named pipe path.
+#[cfg(windows)]
+async fn connect_agent(target: &str) -> Result<AgentConnection, russh::keys::Error> {
+    if target == super::server::PAGEANT {
+        return Ok(AgentClient::connect_pageant().await?.dynamic());
+    }
+    // `connect_named_pipe` retries for as long as the pipe is busy.
+    match tokio::time::timeout(Duration::from_secs(10), AgentClient::connect_named_pipe(target)).await {
+        Ok(client) => Ok(client?.dynamic()),
+        Err(_) => Err(std::io::Error::new(std::io::ErrorKind::TimedOut, "the agent pipe stayed busy").into()),
+    }
+}
+
 /// The error of an ssh-agent that cannot be used (no socket, no answer, or
 /// not supported on this platform).
 fn agent_unavailable(server: &Server, shown_path: &str) -> ConnectError {
@@ -937,7 +938,6 @@ fn agent_unavailable(server: &Server, shown_path: &str) -> ConnectError {
 
 /// The SHA256 fingerprint a Preferred key names: a `SHA256:` fingerprint as
 /// typed, or the fingerprint of the `.pub` file at the path.
-#[cfg(unix)]
 fn preferred_fingerprint(wanted: &str) -> Option<String> {
     if wanted.starts_with("SHA256:") {
         return Some(wanted.to_string());
