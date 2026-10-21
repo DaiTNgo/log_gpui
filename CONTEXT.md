@@ -79,7 +79,7 @@ The paths and Live Globs last added from one Server, offered again in the file p
 _Avoid_: History, bookmarks, favorites.
 
 **Live Window**:
-The newest lines a Remote Log Space holds, up to a set number of lines. Lines older than the window are no longer shown.
+The newest lines a followed file holds, up to a set number of lines: each Remote File, and each local file that is followed live once it grows past it. Lines older than the window are no longer shown; Load More brings them back from the file.
 _Avoid_: Buffer, cache, history limit.
 
 **Server**:
@@ -334,7 +334,7 @@ L9. **Readable Without Elevation**: A Remote File is read with the Server's own 
 L10. **Live Is A Window, Not An Archive**: A Remote Log Space may stay connected for as long as the user likes, but holds only its Live Window; the oldest lines leave as new ones arrive. Nothing received is kept after the Log Space is closed. To read a Remote File in full, the user uses Open in full to make a Remote Copy, or downloads the file to keep it in a folder of their own.
 L11. **Paths May Not Exist Yet**: A Remote File or Live Glob may be added before any file exists; it waits and starts reading when a file appears. A Server that cannot be reached or a folder that does not exist is refused when adding.
 L12. **Leaving The Window**: A line that leaves the Live Window loses its Marker, stops counting toward Filter Values, and a Break at the top of the view says older lines have left. A Filter Value with no lines left disappears unless it is ticked. A Focus Tab whose current line left moves to the oldest line still held.
-L13. **Window Per Remote File**: The Live Window size is one app-wide setting applied to each Remote File separately, so a busy file never pushes a quiet file's lines out. Imported Log Spaces have no Live Window, even while their files grow.
+L13. **Window Per Remote File**: The Live Window size is one app-wide setting applied to each Remote File separately, so a busy file never pushes a quiet file's lines out. A local file followed live in an Imported Log Space has the same Live Window; it is not applied to a local file when it is opened, only as the file grows.
 L14. **Download To Keep**: A Remote File, or every file of a Remote Log Space at once, can be downloaded to a chosen folder and then opened as a new Imported Log Space. By default only the current file is downloaded; the user may tick Rotated Files to take along, and they are kept as they are, compressed ones included.
 L15. **Servers In Use Stay**: A Server cannot be deleted while a Remote Log Space or another Server's Jump Server uses it; the app lists what uses it instead.
 L16. **Config Is Imported, Not Followed**: Servers can be imported from `~/.ssh/config` and refreshed on request; the app never reads it while connecting, and an imported Server is an ordinary Server the user can edit.
