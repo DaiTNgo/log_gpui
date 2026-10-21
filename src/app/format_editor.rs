@@ -15,6 +15,9 @@ pub struct FormatEditor {
     /// The Log Space to read with the format once saved (opened from its
     /// picker with "New Log Format…").
     pub apply_to_space: Option<String>,
+    /// The Source File to read with the format once saved (opened from its
+    /// "Log Format…" with no format applying).
+    pub apply_to_file: Option<String>,
     pub name_input: Entity<InputState>,
     pub template_input: Entity<InputState>,
     /// File name globs, separated by commas.
@@ -83,6 +86,7 @@ impl AppView {
         self.format_editor = Some(FormatEditor {
             id: existing.map(|f| f.id),
             apply_to_space,
+            apply_to_file: None,
             name_input,
             template_input,
             globs_input,
@@ -94,6 +98,61 @@ impl AppView {
         });
         self.format_name_changed(cx);
         self.format_template_changed(cx);
+    }
+
+    /// "Log Format…" of a Log Space (`file_id` `None`) or of a Source File:
+    /// the editor opens on the Log Format that applies; with none, on a new
+    /// one whose template is a sample line of the file, read by the format
+    /// once saved (by the file, or by the Log Space).
+    pub fn edit_log_format(&mut self, space_id: &str, file_id: Option<&str>, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(id) = self.applied_format_id(space_id, file_id) {
+            self.open_format_editor(Some(&id), None, window, cx);
+            return;
+        }
+        let sample = self.sample_line(space_id, file_id);
+        let apply_to_space = file_id.is_none().then(|| space_id.to_string());
+        self.open_format_editor(None, apply_to_space, window, cx);
+        if let Some(editor) = self.format_editor.as_mut() {
+            editor.apply_to_file = file_id.map(str::to_string);
+        }
+        if let Some(line) = sample {
+            if let Some(input) = self.format_editor.as_ref().map(|e| e.template_input.clone()) {
+                input.update(cx, |s, cx| s.set_value(line, window, cx));
+            }
+            self.format_template_changed(cx);
+        }
+    }
+
+    /// The Log Format a Source File is read with (a Log Space: the one chosen
+    /// for it, else the one of its first file that has one).
+    fn applied_format_id(&self, space_id: &str, file_id: Option<&str>) -> Option<String> {
+        use crate::log_format::{FormatChoice, resolve};
+        let choices = self.active_project()?.format_choices.clone();
+        let space = self.active_project()?.log_spaces.iter().find(|s| s.id == space_id)?;
+        let of_file = |file_id: &str, name: &str| {
+            resolve(self.log_formats(), &choices, space_id, file_id, name).map(|f| f.id.clone())
+        };
+        match file_id {
+            Some(file_id) => of_file(file_id, &space.file(file_id)?.display_name),
+            None => match choices.spaces.get(space_id) {
+                Some(FormatChoice::Format(id)) if self.formats.store.get(id).is_some() => Some(id.clone()),
+                Some(_) => None,
+                None => space.files.iter().find_map(|f| of_file(&f.file_id, &f.display_name)),
+            },
+        }
+    }
+
+    /// The first line of the file that is not a Continuation Line (of a
+    /// Log Space: of its first file that has one).
+    fn sample_line(&self, space_id: &str, file_id: Option<&str>) -> Option<String> {
+        let space = self.active_project()?.log_spaces.iter().find(|s| s.id == space_id)?;
+        let first = |id: &str| {
+            self.parsed_files.get(id)?.entries.iter().find(|e| !e.is_continuation()).map(|e| e.raw_line.to_string())
+        };
+        match file_id {
+            Some(id) => first(id),
+            None => space.files.iter().find_map(|f| first(&f.file_id)),
+        }
     }
 
     pub fn close_format_editor(&mut self, cx: &mut Context<Self>) {
@@ -223,11 +282,14 @@ impl AppView {
             .map(|g| g.trim().to_string())
             .filter(|g| !g.is_empty())
             .collect();
-        let (id, space) = (editor.id.clone(), editor.apply_to_space.clone());
+        let (id, space, file) = (editor.id.clone(), editor.apply_to_space.clone(), editor.apply_to_file.clone());
         self.format_editor = None;
         let id = self.save_log_format(id.as_deref(), &name, &template, globs, cx);
         if let Some(space) = space {
-            self.set_space_format(&space, Some(crate::log_format::FormatChoice::Format(id)), cx);
+            self.set_space_format(&space, Some(crate::log_format::FormatChoice::Format(id.clone())), cx);
+        }
+        if let Some(file) = file {
+            self.set_file_format(&file, Some(crate::log_format::FormatChoice::Format(id)), cx);
         }
         cx.notify();
     }
