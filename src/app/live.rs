@@ -83,6 +83,9 @@ pub struct LiveRuntime {
     pub glob_interval: u64,
     /// The number the next source gets (`LiveSourceState::seq`).
     next_source_seq: u64,
+    /// A Remote Command that was edited onto another Server: the Server it
+    /// left, whose connection closes when its old Run has ended.
+    pub release_after_replace: HashMap<String, String>,
     /// Files with a Load More being read.
     pub loading_more: HashSet<String>,
     /// The next Rotated File each file could load above its lines.
@@ -123,6 +126,7 @@ impl LiveRuntime {
             glob_limit: 50,
             glob_interval: 5,
             next_source_seq: 0,
+            release_after_replace: HashMap::new(),
             loading_more: HashSet::new(),
             earlier: HashMap::new(),
             loading_earlier: HashSet::new(),
@@ -740,6 +744,9 @@ impl AppView {
                 SourceEvent::CommandChanged { from, to } => {
                     buffer.apply_command_changed(&from, &to, &time);
                     self.begin_generation_for(file_id);
+                    if let Some(old) = self.live.release_after_replace.remove(file_id) {
+                        self.release_unused_server(&old);
+                    }
                     if let Some(source) = self.live.sources.get_mut(file_id) {
                         source.name = to;
                     }

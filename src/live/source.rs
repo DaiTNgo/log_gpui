@@ -368,6 +368,10 @@ pub enum SourceCommand {
     Restart,
     /// Turn Restart on exit on or off for a Remote Command.
     SetRestartOnExit(bool),
+    /// Run another command (or the same one on another Server) in place of a
+    /// Remote Command: the Run in progress ends, the lines stay, and the new
+    /// command starts a new Run. `name` is `<server>$ <command>`.
+    Replace { server_id: String, target: crate::workspace::log_space::RemoteTarget, name: String },
     Close,
 }
 
