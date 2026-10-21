@@ -186,8 +186,6 @@ fn a_missing_archive_or_entry_is_not_found() {
 
 // ─── Log files that are Archive Entries ──────────────────────────────────────
 
-// Compares `/` paths; Windows local paths are ticket 04.
-#[cfg(unix)]
 #[test]
 fn an_archive_entry_has_its_own_identity_and_name() {
     let file = LogFile::from_archive_entry("/tmp/x/bundle.zip", "nginx/access.log");

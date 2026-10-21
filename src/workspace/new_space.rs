@@ -62,10 +62,9 @@ impl PendingFile {
     /// Archive Entry, and "Reading <name>…" while an Archive is listed.
     pub fn display_name(&self) -> String {
         let name = match &self.source {
-            PendingSource::Disk(path) => std::path::Path::new(path)
-                .file_name()
-                .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or_else(|| path.clone()),
+            PendingSource::Disk(path) => crate::local_path::file_name(path, crate::local_path::PathStyle::native())
+                .unwrap_or(path)
+                .to_string(),
             PendingSource::Entry { archive, entry, .. } => {
                 LogFile::from_archive_entry(archive, entry).display_name
             }

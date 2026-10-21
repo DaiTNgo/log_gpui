@@ -25,8 +25,11 @@ clone needs no Cargo config.
 - Tests that need Unix tools or APIs (`ssh-agent`, `kill`, file permissions)
   are `#[cfg(unix)]`. The SSH integration tests skip themselves without
   `SSH_TEST_DIR`, as everywhere.
-- Tests that compare `/`-separated local paths are `#[cfg(unix)]` until local
-  Windows paths are handled.
+- Local paths: names, folders and `Include` absoluteness come from
+  `local_path` (`file_name`, `folder`, `is_absolute`), which splits on both
+  `\` and `/` and knows `C:\` roots on Windows. The `PathStyle` argument lets
+  the Windows rules be tested on any platform. Remote paths are not local
+  paths: they always split on `/` and do not use this module.
 
 ## Cross-checking from a Mac
 

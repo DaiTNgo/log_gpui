@@ -4,6 +4,7 @@
 //! are understood; the rest is listed as skipped.
 
 use super::browse::glob_match;
+use crate::local_path::{PathStyle, is_absolute, split_last};
 use super::server::{AgentSocket, AuthMethod, MAX_JUMPS, Origin, Server, ServerStore};
 use std::collections::{HashMap, HashSet};
 
@@ -153,7 +154,7 @@ fn read_items(fs: &dyn ConfigFs, env: &Env, text: &str, depth: usize, items: &mu
                     continue;
                 }
                 for pattern in values {
-                    for path in include_paths(fs, env, &pattern) {
+                    for path in include_paths(fs, env, &pattern, PathStyle::native()) {
                         if let Some(text) = fs.read(&path) {
                             read_items(fs, env, &text, depth + 1, items);
                         }
@@ -167,17 +168,20 @@ fn read_items(fs: &dyn ConfigFs, env: &Env, text: &str, depth: usize, items: &mu
 
 /// The files an `Include` pattern stands for: relative paths start from
 /// `~/.ssh`, the file name part may be a glob.
-fn include_paths(fs: &dyn ConfigFs, env: &Env, pattern: &str) -> Vec<String> {
+fn include_paths(fs: &dyn ConfigFs, env: &Env, pattern: &str, style: PathStyle) -> Vec<String> {
     let expanded = tilde(pattern, env);
-    let full = if expanded.starts_with('/') { expanded } else { format!("{}/{expanded}", env.ssh_dir()) };
-    let (dir, name) = match full.rsplit_once('/') {
-        Some((dir, name)) => (dir.to_string(), name.to_string()),
-        None => return Vec::new(),
-    };
+    let full = if is_absolute(&expanded, style) { expanded } else { format!("{}/{expanded}", env.ssh_dir()) };
+    let Some((dir, name, sep)) = split_include_glob(&full, style) else { return Vec::new() };
     if !name.contains(['*', '?', '[']) {
         return if fs.exists(&full) { vec![full] } else { Vec::new() };
     }
-    fs.list(&dir).into_iter().filter(|n| glob_match(&name, n)).map(|n| format!("{dir}/{n}")).collect()
+    fs.list(&dir).into_iter().filter(|n| glob_match(&name, n)).map(|n| format!("{dir}{sep}{n}")).collect()
+}
+
+/// An `Include` path cut into its folder, its (possibly glob) file name and
+/// the separator it used.
+fn split_include_glob(full: &str, style: PathStyle) -> Option<(String, String, char)> {
+    split_last(full, style).map(|(dir, name, sep)| (dir.to_string(), name.to_string(), sep))
 }
 
 /// Whether a `Host` pattern list matches `alias`: some pattern matches and
@@ -872,6 +876,25 @@ mod tests {
         let aliases: Vec<&str> = parsed.hosts.iter().map(|h| h.alias.as_str()).collect();
         assert_eq!(aliases, vec!["db", "cache", "web1"]);
         assert_eq!(host(&parsed, "db").port, Some(2222));
+    }
+
+    #[test]
+    fn a_windows_drive_path_in_include_is_absolute() {
+        let fs = MapFs::with(&[
+            (r"C:\ssh\conf.d\a.conf", "Host db\n"),
+            (r"C:\ssh\conf.d\b.conf", "Host cache\n"),
+            (r"C:\ssh\one", "Host one\n"),
+            ("/home/me/.ssh/C:/ssh/one", "relative wrongly\n"),
+        ]);
+        let win = |p: &str| include_paths(&fs, &env(), p, PathStyle::Windows);
+        assert_eq!(win(r"C:\ssh\one"), vec![r"C:\ssh\one".to_string()]);
+        // The listing of a Windows folder is out of MapFs's `/` model; check the split instead.
+        assert_eq!(
+            split_include_glob(r"C:\ssh\conf.d\*.conf", PathStyle::Windows),
+            Some((r"C:\ssh\conf.d".to_string(), "*.conf".to_string(), '\\'))
+        );
+        // On Unix a drive path is relative to ~/.ssh.
+        assert!(include_paths(&fs, &env(), r"C:\ssh\one", PathStyle::Unix).is_empty());
     }
 
     #[test]

@@ -97,8 +97,6 @@ fn importing_a_known_path_is_skipped_and_reported() {
 
 // ─── Scratch files ───────────────────────────────────────────────────────────
 
-// Compares `/` paths; Windows local paths are ticket 04.
-#[cfg(unix)]
 #[test]
 fn scratch_files_are_named_with_the_smallest_unused_number() {
     let mut space = LogSpace::new("s".into(), "S".into(), LogSpaceKind::Scratch);
@@ -112,7 +110,8 @@ fn scratch_files_are_named_with_the_smallest_unused_number() {
     let second = space.files[1].file_id.clone();
     space.remove_file(&second).unwrap();
     assert_eq!(space.new_scratch_file(dir).unwrap().display_name, "untitled-2.log");
-    assert_eq!(space.files.last().unwrap().path.as_deref(), Some("/tmp/spaces/s/untitled-2.log"));
+    let expected = dir.join("untitled-2.log");
+    assert_eq!(space.files.last().unwrap().path.as_deref(), expected.to_str());
 }
 
 #[test]

@@ -8,6 +8,7 @@ pub mod focus;
 pub mod highlight;
 pub mod log_format;
 pub mod live;
+pub mod local_path;
 pub mod marker;
 pub mod model;
 pub mod palette;
