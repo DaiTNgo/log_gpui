@@ -62,7 +62,7 @@ pub fn open(cx: &mut TestAppContext, names: &[(&str, usize)], count: usize, wind
     let ids: Vec<(String, String)> = h.view.read_with(&h.cx, |app, _| {
         app.parsed_files
             .iter()
-            .map(|(id, p)| (id.clone(), p.lines.first().cloned().unwrap_or_default()))
+            .map(|(id, p)| (id.clone(), p.lines.first().map(|l| l.to_string()).unwrap_or_default()))
             .collect()
     });
     let mut senders = Vec::new();

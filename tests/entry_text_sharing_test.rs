@@ -58,3 +58,19 @@ fn a_hand_built_entry_keeps_the_text_it_was_given() {
     let c = e.clone();
     assert_eq!(c.tag(), "DB");
 }
+
+#[test]
+fn reading_entries_line_by_line_equals_reading_events_then_converting() {
+    use log_gpui::parser::text::{parse_entries, parse_events};
+    let text = "2026-09-05 12:34:56.789 [INFO] [auth] login ok\n\tat Foo\n   \n\
+                {\"time\":\"2026-09-05T12:34:58Z\",\"level\":\"error\",\"msg\":\"boom\"}\nno time here\n";
+    let direct = parse_entries(text);
+    let via: Vec<LogEntry> = parse_events(text).iter().map(LogEntry::from_event).collect();
+    assert_eq!(direct.len(), via.len());
+    for (a, b) in direct.iter().zip(&via) {
+        assert_eq!(
+            (a.index, &a.raw_line, a.parent, a.has_time, a.timestamp.to_bits(), a.payload(), a.level_text(), a.tag(), a.time_str(), &a.spans, a.level),
+            (b.index, &b.raw_line, b.parent, b.has_time, b.timestamp.to_bits(), b.payload(), b.level_text(), b.tag(), b.time_str(), &b.spans, b.level),
+        );
+    }
+}

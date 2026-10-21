@@ -117,7 +117,7 @@ impl AppView {
             FocusRow::Raw { section, line } => sections
                 .get(section)
                 .and_then(|s| s.lines.get(line))
-                .map_or("", String::as_str),
+                .map_or("", |l| l.as_str()),
         })
     }
 

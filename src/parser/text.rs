@@ -66,7 +66,7 @@ pub fn parse_text_bytes_with_max_chars(bytes: &[u8]) -> anyhow::Result<ParseResu
 /// Parse bytes, reading the fields of `config` from every line as well.
 pub fn parse_text_bytes_with_config(bytes: &[u8], config: &LineConfig) -> anyhow::Result<ParseResult> {
     let content = String::from_utf8_lossy(bytes);
-    let mut entries: Vec<LogEntry> = parse_events(&content).iter().map(LogEntry::from_event).collect();
+    let mut entries = parse_entries(&content);
     config.apply(&mut entries);
     let max_chars = crate::column::FieldMaxChars::scan_entries(&entries);
     Ok(ParseResult { entries, max_chars })
@@ -117,6 +117,24 @@ pub fn parse_events_with(content: &str, format: Option<&CompiledFormat>) -> Vec<
         events.push(event);
     }
     events
+}
+
+/// The entries of every stored line, read as `parse_events` reads them, one
+/// line at a time: the events of a million lines are never held together.
+pub fn parse_entries(content: &str) -> Vec<LogEntry> {
+    let mut entries = Vec::with_capacity(content.bytes().filter(|b| *b == b'\n').count() + 1);
+    let mut parent: Option<usize> = None;
+    for (i, line) in content.lines().enumerate() {
+        let index = i + 1;
+        let mut event = parse_line(index, line, None);
+        if event.has_time {
+            parent = Some(index);
+        } else if let Some(p) = parent {
+            event = event.into_continuation(p);
+        }
+        entries.push(LogEntry::from_event(&event));
+    }
+    entries
 }
 
 /// Parses lines one at a time as they arrive, the way `parse_events` parses a

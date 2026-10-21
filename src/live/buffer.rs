@@ -477,7 +477,7 @@ impl LiveBuffer {
         for entry in &entries {
             parsed.max_chars.record_entry(entry);
         }
-        parsed.lines_mut().splice(at..at, lines.iter().cloned());
+        parsed.lines_mut().splice(at..at, entries.iter().map(|e| e.raw_line.clone()));
         parsed.entries.splice(at..at, entries.drain(..));
         self.sync_byte_lens(parsed.entries.len() - count);
         self.byte_lens.insert_at(at, (0..count).map(|i| bytes.get(i).copied().unwrap_or(0)));
@@ -739,7 +739,8 @@ impl LiveBuffer {
             parsed.max_chars.record_entry(&entry);
             parsed.entries.push(entry);
         }
-        parsed.lines_mut().extend(lines.iter().cloned());
+        let added: Vec<gpui::SharedString> = parsed.entries[from..].iter().map(|e| e.raw_line.clone()).collect();
+        parsed.lines_mut().extend(added);
         from..parsed.entries.len()
     }
 

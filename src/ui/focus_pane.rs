@@ -513,8 +513,8 @@ impl PaneRows {
                         String::new(),
                         String::new(),
                         LogLevel::Unknown,
-                        text.clone(),
-                        text.clone(),
+                        text.to_string(),
+                        text.to_string(),
                     );
                     e.markers = markers
                         .get(&s.file_id)
