@@ -8,9 +8,13 @@ use super::known_hosts::{HostKeyStatus, KnownHosts};
 use super::secrets::SecretStore;
 use super::server::{AuthMethod, Server, ServerStore};
 use russh::client::{self, Handle, KeyboardInteractiveAuthResponse};
+#[cfg(unix)]
 use russh::keys::agent::AgentIdentity;
+#[cfg(unix)]
 use russh::keys::agent::client::AgentClient;
-use russh::keys::{HashAlg, PrivateKeyWithHashAlg, PublicKey, PublicKeyOrCertificate, load_public_key, load_secret_key};
+#[cfg(unix)]
+use russh::keys::{PublicKey, load_public_key};
+use russh::keys::{HashAlg, PrivateKeyWithHashAlg, PublicKeyOrCertificate, load_secret_key};
 use russh::MethodKind;
 use russh_sftp::client::SftpSession;
 use std::collections::HashMap;
@@ -101,8 +105,10 @@ type Reporter<'a> = Option<&'a (dyn Fn(TestStep) + Send + Sync)>;
 
 /// Most keys of an agent tried for one sign-in (a server cuts the connection
 /// after `MaxAuthTries`, 6 by default).
+#[cfg(unix)]
 const MAX_AGENT_KEYS: usize = 5;
 /// How long the agent gets to sign (a touch, a 1Password or Touch ID approval).
+#[cfg(unix)]
 const AGENT_SIGN_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// Overwrite a secret in place before it is dropped.
@@ -743,6 +749,7 @@ impl RemoteHub {
     /// Ask the agent to sign with its keys, one after another (at most
     /// `MAX_AGENT_KEYS`; the one named by `preferred` alone when set). The
     /// private keys never leave the agent.
+    #[cfg(unix)]
     async fn auth_agent(
         &self,
         handle: &mut Handle<ClientHandler>,
@@ -752,7 +759,7 @@ impl RemoteHub {
         shown_path: &str,
         preferred: Option<&str>,
     ) -> Result<russh::client::AuthResult, ConnectError> {
-        let unavailable = || ConnectError::AgentUnavailable { server_name: server.name.clone(), path: shown_path.to_string() };
+        let unavailable = || agent_unavailable(server, shown_path);
         let rejected = |detail: &str| ConnectError::AgentRejected { server_name: server.name.clone(), detail: detail.to_string() };
         let path = socket.as_deref().ok_or_else(unavailable)?;
         let mut agent = AgentClient::connect_uds(path).await.map_err(|_| unavailable())?;
@@ -800,6 +807,21 @@ impl RemoteHub {
         } else {
             "no agent key accepted"
         }))
+    }
+
+    /// Windows: russh talks to an ssh-agent only over a Unix socket, so an
+    /// Agent sign-in is "agent unavailable" until the named-pipe agent lands.
+    #[cfg(not(unix))]
+    async fn auth_agent(
+        &self,
+        _handle: &mut Handle<ClientHandler>,
+        server: &Server,
+        _target_id: &str,
+        _socket: &Option<String>,
+        shown_path: &str,
+        _preferred: Option<&str>,
+    ) -> Result<russh::client::AuthResult, ConnectError> {
+        Err(agent_unavailable(server, shown_path))
     }
 
     /// Show the Server's questions to the user until it accepts or refuses.
@@ -907,8 +929,15 @@ fn needs_secret(server: &Server) -> ConnectError {
     ConnectError::NeedsSecret { server_id: server.id.clone(), server_name: server.name.clone() }
 }
 
+/// The error of an ssh-agent that cannot be used (no socket, no answer, or
+/// not supported on this platform).
+fn agent_unavailable(server: &Server, shown_path: &str) -> ConnectError {
+    ConnectError::AgentUnavailable { server_name: server.name.clone(), path: shown_path.to_string() }
+}
+
 /// The SHA256 fingerprint a Preferred key names: a `SHA256:` fingerprint as
 /// typed, or the fingerprint of the `.pub` file at the path.
+#[cfg(unix)]
 fn preferred_fingerprint(wanted: &str) -> Option<String> {
     if wanted.starts_with("SHA256:") {
         return Some(wanted.to_string());
@@ -933,5 +962,17 @@ impl Drop for RemoteHub {
         if let Some(runtime) = self.runtime.take() {
             runtime.shutdown_background();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_unusable_agent_says_which_socket_was_tried() {
+        let server = Server::new("web1", "10.0.0.1", "deploy", AuthMethod::Agent { socket: Default::default(), preferred_key: None });
+        let error = agent_unavailable(&server, r"\\.\pipe\openssh-ssh-agent");
+        assert_eq!(error.message(), r"ssh-agent not available at \\.\pipe\openssh-ssh-agent");
     }
 }

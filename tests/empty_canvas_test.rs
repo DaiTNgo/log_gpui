@@ -4,6 +4,7 @@ use common::Harness;
 use gpui::TestAppContext;
 use log_gpui::space_view::EmptyCanvas;
 use log_gpui::workspace::log_space::{ImportSource, LogSpaceKind};
+#[cfg(unix)]
 use std::os::unix::fs::PermissionsExt as _;
 
 fn empty_canvas(h: &mut Harness) -> Option<EmptyCanvas> {
@@ -52,6 +53,7 @@ fn log_space_with_lines_shows_rows(cx: &mut TestAppContext) {
     assert_eq!(empty_canvas(&mut h), None);
 }
 
+#[cfg(unix)]
 #[gpui::test]
 fn unreadable_source_file_shows_its_error_on_the_canvas(cx: &mut TestAppContext) {
     let mut h = common::open_app(cx);

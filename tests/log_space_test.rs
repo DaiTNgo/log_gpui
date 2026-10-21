@@ -97,6 +97,8 @@ fn importing_a_known_path_is_skipped_and_reported() {
 
 // ─── Scratch files ───────────────────────────────────────────────────────────
 
+// Compares `/` paths; Windows local paths are ticket 04.
+#[cfg(unix)]
 #[test]
 fn scratch_files_are_named_with_the_smallest_unused_number() {
     let mut space = LogSpace::new("s".into(), "S".into(), LogSpaceKind::Scratch);

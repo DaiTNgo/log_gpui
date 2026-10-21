@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    name: build and test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+        include:
+          # Linux is best effort: it has not been run by the maintainers yet
+          # (gpui needs the system libraries below), so it never turns the
+          # workflow red.
+          - os: ubuntu-latest
+            experimental: true
+    continue-on-error: ${{ matrix.experimental == true }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Linux system libraries
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxkbcommon-x11-dev libwayland-dev libxcb1-dev libx11-xcb-dev \
+            libvulkan-dev libasound2-dev libfontconfig-dev libssl-dev pkg-config
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      # `.cargo/config.toml` is per machine and not in git: a fresh clone uses
+      # the default registry and the system CA bundle.
+      - name: Build
+        run: cargo build --all-targets --locked
+
+      # The SSH integration tests skip themselves without SSH_TEST_DIR; the
+      # Unix-only tests are compiled out on Windows.
+      - name: Test
+        run: cargo test --locked
