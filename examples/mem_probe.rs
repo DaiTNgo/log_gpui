@@ -28,8 +28,10 @@ fn main() {
         let mut entries = Vec::new();
         let mut lines = Vec::new();
         for (i, line) in text.lines().enumerate() {
-            entries.push(parser.parse(i + 1, line));
-            lines.push(line.to_string());
+            let entry = parser.parse(i + 1, line);
+            // The Raw View's line is the entry's own text, not a copy.
+            lines.push(entry.raw_line.clone());
+            entries.push(entry);
         }
         let after_parse = rss_mb();
         let view = entries.clone();
