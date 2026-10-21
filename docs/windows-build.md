@@ -51,3 +51,10 @@ cargo xwin check --target x86_64-pc-windows-msvc --all-targets
 `cargo-xwin` also does the linking (`cargo xwin build --target
 x86_64-pc-windows-msvc`), but the result cannot be run on a Mac; the real test
 run is the Windows CI job.
+
+## Console window
+
+`src/main.rs` sets `windows_subsystem = "windows"` for Windows release builds
+(`cfg(all(windows, not(debug_assertions)))`), so the release `.exe` opens no
+console. Debug builds keep the console, so `eprintln!` traces such as
+`LOG_GPUI_LIVE_TRACE` stay visible. macOS and Linux are unaffected.
