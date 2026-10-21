@@ -1,6 +1,6 @@
 # 0004. Search Is Text-Only
 
-_Partly superseded by ADR-0008: Search and Filter now narrow the Focus Pane, and the view always shows every line._
+_Partly superseded by ADR-0008: Search and Filter now narrow the Focus Pane, and the view always shows every line. Matches no longer depend on Filter (ADR-0012)._
 
 ## Context
 
