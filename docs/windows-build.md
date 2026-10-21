@@ -15,6 +15,9 @@ clone needs no Cargo config.
 - Agent sign-in: russh only talks to an ssh-agent over a Unix socket, so on
   Windows an Agent Server fails with "ssh-agent not available at ..." (the
   `AgentUnavailable` error). The Windows named-pipe agent is a later ticket.
+- Full Read free-space check: on Windows the free bytes come from
+  `GetDiskFreeSpaceExW` (declared directly in `src/remote/estimate.rs`, no extra
+  crate). If the call fails the size is unknown and nothing is refused, as on Unix.
 - Tests that need Unix tools or APIs (`ssh-agent`, `kill`, file permissions)
   are `#[cfg(unix)]`. The SSH integration tests skip themselves without
   `SSH_TEST_DIR`, as everywhere.
