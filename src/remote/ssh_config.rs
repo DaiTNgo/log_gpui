@@ -412,6 +412,9 @@ fn agent_socket_for(value: &str) -> AgentSocket {
     if value == "SSH_AUTH_SOCK" || value == "$SSH_AUTH_SOCK" {
         return AgentSocket::System;
     }
+    if value.eq_ignore_ascii_case(super::server::PAGEANT) {
+        return AgentSocket::Pageant;
+    }
     for preset in [AgentSocket::OnePassword, AgentSocket::Secretive] {
         if preset.resolve().as_deref() == Some(value) {
             return preset;
@@ -960,6 +963,17 @@ mod tests {
         assert_eq!(
             find(&all, "web2").server.auth,
             AuthMethod::Agent { socket: AgentSocket::Path("/tmp/a.sock".into()), preferred_key: None }
+        );
+    }
+
+    #[test]
+    fn identity_agent_pageant_means_pageant_and_a_pipe_path_is_kept() {
+        let config = "Host a\n  IdentityAgent pageant\nHost b\n  IdentityAgent \"\\\\.\\pipe\\my-agent\"\n";
+        let all = list(config, &[], &ServerStore::default());
+        assert_eq!(find(&all, "a").server.auth, AuthMethod::Agent { socket: AgentSocket::Pageant, preferred_key: None });
+        assert_eq!(
+            find(&all, "b").server.auth,
+            AuthMethod::Agent { socket: AgentSocket::Path(r"\\.\pipe\my-agent".into()), preferred_key: None }
         );
     }
 

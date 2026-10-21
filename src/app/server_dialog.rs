@@ -33,6 +33,7 @@ pub enum AgentChoice {
     System,
     OnePassword,
     Secretive,
+    Pageant,
     Path,
 }
 
@@ -147,6 +148,7 @@ impl AppView {
                     AgentSocket::System => AgentChoice::System,
                     AgentSocket::OnePassword => AgentChoice::OnePassword,
                     AgentSocket::Secretive => AgentChoice::Secretive,
+                    AgentSocket::Pageant => AgentChoice::Pageant,
                     AgentSocket::Path(_) => AgentChoice::Path,
                 },
             ),
@@ -421,6 +423,7 @@ impl AppView {
                     AgentChoice::System => AgentSocket::System,
                     AgentChoice::OnePassword => AgentSocket::OnePassword,
                     AgentChoice::Secretive => AgentSocket::Secretive,
+                    AgentChoice::Pageant => AgentSocket::Pageant,
                     AgentChoice::Path => AgentSocket::Path(typed(extra.map(|e| &e.agent_path))),
                 };
                 let preferred = typed(extra.map(|e| &e.preferred_key));

@@ -44,23 +44,49 @@ impl LineSource for LocalFileSource {
 
 struct Open {
     file: File,
-    ino: u64,
+    ino: FileId,
     offset: u64,
 }
 
-/// Identity of the file behind a path: its inode on Unix. Windows has no
-/// stable file index in std, so there the creation time stands in for it.
+/// Identity of a file: its inode on Unix; on Windows its volume serial number
+/// and file index (the creation time is no identity there: a file created
+/// within ~15 s of another's rename inherits its creation time).
+type FileId = u128;
+
 #[cfg(unix)]
-fn file_id(meta: &std::fs::Metadata) -> u64 {
-    std::os::unix::fs::MetadataExt::ino(meta)
+fn id_of_open(_file: &File, meta: &std::fs::Metadata) -> FileId {
+    std::os::unix::fs::MetadataExt::ino(meta) as FileId
 }
 
-#[cfg(not(unix))]
-fn file_id(meta: &std::fs::Metadata) -> u64 {
-    meta.created()
-        .ok()
-        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-        .map_or(0, |d| d.as_nanos() as u64)
+/// The identity of whatever `path` names now; `None` when that cannot be told.
+#[cfg(unix)]
+fn id_of_path(_path: &std::path::Path, meta: &std::fs::Metadata) -> Option<FileId> {
+    Some(std::os::unix::fs::MetadataExt::ino(meta) as FileId)
+}
+
+#[cfg(windows)]
+fn id_of_open(file: &File, _meta: &std::fs::Metadata) -> FileId {
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::Storage::FileSystem::{
+        GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION,
+    };
+    // SAFETY: the handle is valid for the life of `file`; the struct is plain data.
+    unsafe {
+        let mut info: BY_HANDLE_FILE_INFORMATION = std::mem::zeroed();
+        if GetFileInformationByHandle(file.as_raw_handle() as _, &mut info) == 0 {
+            return 0;
+        }
+        (FileId::from(info.dwVolumeSerialNumber) << 64)
+            | (FileId::from(info.nFileIndexHigh) << 32)
+            | FileId::from(info.nFileIndexLow)
+    }
+}
+
+/// std opens files with full sharing on Windows, so this does not block a rename.
+#[cfg(windows)]
+fn id_of_path(path: &std::path::Path, meta: &std::fs::Metadata) -> Option<FileId> {
+    let file = File::open(path).ok()?;
+    Some(id_of_open(&file, meta))
 }
 
 impl LocalFileSource {
@@ -74,7 +100,8 @@ impl LocalFileSource {
         // The file as the app loaded it.
         match File::open(&self.path).and_then(|f| f.metadata().map(|m| (f, m))) {
             Ok((file, meta)) => {
-                open = Some(Open { file, ino: file_id(&meta), offset: self.start_offset.min(meta.len()) });
+                let ino = id_of_open(&file, &meta);
+                open = Some(Open { file, ino, offset: self.start_offset.min(meta.len()) });
                 let _ = events.try_send(SourceEvent::Status(SourceStatus::Live));
             }
             Err(_) => {
@@ -137,7 +164,7 @@ impl LocalFileSource {
             (None, Some(meta)) => {
                 // The file appeared (or came back): a new Generation.
                 if let Ok(file) = File::open(&self.path) {
-                    *open = Some(Open { file, ino: file_id(&meta), offset: 0 });
+                    *open = Some(Open { ino: id_of_open(&file, &meta), file, offset: 0 });
                     splitter.clear();
                     if !*waiting {
                         send(SourceEvent::Break { kind: BreakKind::Rotated });
@@ -150,13 +177,13 @@ impl LocalFileSource {
                 }
             }
             (Some(current), Some(meta)) => {
-                if file_id(&meta) != current.ino {
+                if id_of_path(&self.path, &meta).is_some_and(|id| id != current.ino) {
                     // Rotated: read the rest of the old file first.
                     drain(current, splitter, events);
                     splitter.clear();
                     send(SourceEvent::Break { kind: BreakKind::Rotated });
                     if let Ok(file) = File::open(&self.path) {
-                        *open = Some(Open { file, ino: file_id(&meta), offset: 0 });
+                        *open = Some(Open { ino: id_of_open(&file, &meta), file, offset: 0 });
                         if let Some(current) = open.as_mut() {
                             drain(current, splitter, events);
                         }

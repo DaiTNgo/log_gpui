@@ -337,11 +337,15 @@ impl AppView {
                 if agent_presets.contains(&crate::remote::AgentSocket::Secretive) || agent == AgentChoice::Secretive {
                     sockets = sockets.child(choice("agent-secretive", "Secretive", AgentChoice::Secretive, cx));
                 }
+                if agent_presets.contains(&crate::remote::AgentSocket::Pageant) || agent == AgentChoice::Pageant {
+                    sockets = sockets.child(choice("agent-pageant", "Pageant", AgentChoice::Pageant, cx));
+                }
                 sockets = sockets.child(choice("agent-path", "Path\u{2026}", AgentChoice::Path, cx));
                 let socket_now = match agent {
                     AgentChoice::System => crate::remote::AgentSocket::System,
                     AgentChoice::OnePassword => crate::remote::AgentSocket::OnePassword,
                     AgentChoice::Secretive => crate::remote::AgentSocket::Secretive,
+                    AgentChoice::Pageant => crate::remote::AgentSocket::Pageant,
                     AgentChoice::Path => crate::remote::AgentSocket::Path(String::new()),
                 };
                 this.child(h_flex().gap_2().items_start().child(label("Agent socket")).child(div().flex_1().child(sockets)))
