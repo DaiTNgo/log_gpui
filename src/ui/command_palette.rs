@@ -1,4 +1,5 @@
 
+use crate::keymap::Command;
 use gpui_component::ActiveTheme as _;
 use gpui::{
     div, px, ElementId, InteractiveElement, IntoElement, ParentElement, StatefulInteractiveElement,
@@ -7,192 +8,25 @@ use gpui::{
 
 pub struct CommandPalette;
 
-/// A shortcut as written in the list (macOS symbols), spelled for this platform:
-/// `⌘⇧F` stays as is on macOS and reads `Ctrl+Shift+F` elsewhere.
-fn display_shortcut(shortcut: &'static str) -> gpui::SharedString {
-    if cfg!(target_os = "macos") || !shortcut.contains(['⌘', '⇧', '⌥']) {
-        return shortcut.into();
-    }
-    let mut out = String::new();
-    for ch in shortcut.chars() {
-        match ch {
-            '⌘' => out.push_str("Ctrl+"),
-            '⇧' => out.push_str("Shift+"),
-            '⌥' => out.push_str("Alt+"),
-            c => out.push(c),
-        }
-    }
-    out.into()
-}
-
 pub struct PaletteCommand {
     pub name: &'static str,
-    pub shortcut: &'static str,
-    pub action: PaletteAction,
-}
-
-#[derive(Clone, Copy)]
-pub enum PaletteAction {
-    ToggleSearch,
-    ToggleFilter,
-    ShowContext,
-    GoNextError,
-    GoPrevError,
-    SetComfortable,
-    SetCompact,
-    SetUltraCompact,
-    ManageServers,
-    ToggleFollow,
-    TogglePause,
-    ToggleInspector,
-    LoadDemo,
-    NewLogSpace,
-    ToggleRawParsed,
-    SaveScratch,
-    UnpinAllColumns,
-    ToggleProjectSwitcher,
-    ShowHighlights,
-    ToggleFocusPane,
-    MoveFocusToWindow,
-    ClearFile,
-    LoadMore,
-    BackToLiveWindow,
-    OpenInFull,
+    pub action: Command,
 }
 
 impl CommandPalette {
+    /// Every Command but the palette itself, in the Keymap's order.
     pub fn list() -> Vec<PaletteCommand> {
-        vec![
-            PaletteCommand {
-                name: "Search: Find in Log",
-                shortcut: "⌘F",
-                action: PaletteAction::ToggleSearch,
-            },
-            PaletteCommand {
-                name: "Filter: Open Filter Builder",
-                shortcut: "⌘⇧F",
-                action: PaletteAction::ToggleFilter,
-            },
-            PaletteCommand {
-                name: "Focus Pane: Show or Hide",
-                shortcut: "⌘J",
-                action: PaletteAction::ToggleFocusPane,
-            },
-            PaletteCommand {
-                name: "Focus Pane: Move to Window",
-                shortcut: "",
-                action: PaletteAction::MoveFocusToWindow,
-            },
-            PaletteCommand {
-                name: "Highlights: Open Highlight Rules",
-                shortcut: "⌘⇧M",
-                action: PaletteAction::ShowHighlights,
-            },
-            PaletteCommand {
-                name: "Investigation: Show Surrounding Context",
-                shortcut: "Space",
-                action: PaletteAction::ShowContext,
-            },
-            PaletteCommand {
-                name: "Navigate: Jump to Next Error",
-                shortcut: "⌘E",
-                action: PaletteAction::GoNextError,
-            },
-            PaletteCommand {
-                name: "Navigate: Jump to Previous Error",
-                shortcut: "⌘⇧E",
-                action: PaletteAction::GoPrevError,
-            },
-            PaletteCommand {
-                name: "Density: Compact (Default)",
-                shortcut: "",
-                action: PaletteAction::SetCompact,
-            },
-            PaletteCommand {
-                name: "Density: Comfortable",
-                shortcut: "",
-                action: PaletteAction::SetComfortable,
-            },
-            PaletteCommand {
-                name: "Density: Ultra Compact",
-                shortcut: "",
-                action: PaletteAction::SetUltraCompact,
-            },
-            PaletteCommand {
-                name: "Servers: Manage…",
-                shortcut: "",
-                action: PaletteAction::ManageServers,
-            },
-            PaletteCommand {
-                name: "Live: Toggle Follow",
-                shortcut: "T",
-                action: PaletteAction::ToggleFollow,
-            },
-            PaletteCommand {
-                name: "Live: Toggle Pause",
-                shortcut: "",
-                action: PaletteAction::TogglePause,
-            },
-            PaletteCommand {
-                name: "Live: Clear File",
-                shortcut: "⌘⇧K",
-                action: PaletteAction::ClearFile,
-            },
-            PaletteCommand {
-                name: "Live: Load More Older Lines",
-                shortcut: "⌘⇧↑",
-                action: PaletteAction::LoadMore,
-            },
-            PaletteCommand {
-                name: "Live: Open in Full…",
-                shortcut: "",
-                action: PaletteAction::OpenInFull,
-            },
-            PaletteCommand {
-                name: "Live: Back to Live Window",
-                shortcut: "",
-                action: PaletteAction::BackToLiveWindow,
-            },
-            PaletteCommand {
-                name: "Inspector: Toggle Slide-out Inspector",
-                shortcut: "⌘I",
-                action: PaletteAction::ToggleInspector,
-            },
-            PaletteCommand {
-                name: "Log Space: New Log Space...",
-                shortcut: "⌘O",
-                action: PaletteAction::NewLogSpace,
-            },
-            PaletteCommand {
-                name: "View: Toggle Raw / Parsed",
-                shortcut: "⌘⇧R",
-                action: PaletteAction::ToggleRawParsed,
-            },
-            PaletteCommand {
-                name: "Log Space: Save Scratch Files",
-                shortcut: "⌘S",
-                action: PaletteAction::SaveScratch,
-            },
-            PaletteCommand {
-                name: "Project: Switch Project",
-                shortcut: "⌘P",
-                action: PaletteAction::ToggleProjectSwitcher,
-            },
-            PaletteCommand {
-                name: "Data: Load Demo Log Space",
-                shortcut: "",
-                action: PaletteAction::LoadDemo,
-            },
-            PaletteCommand {
-                name: "Columns: Unpin All",
-                shortcut: "",
-                action: PaletteAction::UnpinAllColumns,
-            },
-        ]
+        Command::ALL
+            .into_iter()
+            .filter(|&c| c != Command::CommandPalette)
+            .map(|c| PaletteCommand { name: c.name(), action: c })
+            .collect()
     }
 
+    /// `hint` gives the shortcut shown beside a Command, from the Keymap.
     pub fn render(
         is_open: bool,
+        hint: impl Fn(Command) -> String,
         cx: &mut gpui::Context<crate::app::AppView>,
     ) -> gpui::AnyElement {
         if !is_open {
@@ -225,10 +59,10 @@ impl CommandPalette {
                     div()
                         .text_xs()
                         .font_family(mono_font.clone())
-                        .child(display_shortcut(cmd.shortcut)),
+                        .child(hint(act)),
                 )
                 .on_click(cx.listener(move |this, _, window, cx| {
-                    this.execute_palette_action(act, window, cx);
+                    this.execute_command(act, window, cx);
                 }));
 
             list = list.child(item);

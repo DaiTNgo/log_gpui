@@ -27,7 +27,6 @@ use gpui_component::ActiveTheme as _;
 use crate::ui::canvas::{CanvasColors, CanvasViewState, LogCanvas};
 use crate::ui::command_palette::CommandPalette;
 use crate::ui::context_sidebar::{ContextSections, ContextSidebar};
-use crate::ui::context_view::ContextModal;
 use crate::ui::inspector::InspectorView;
 use crate::ui::project_switcher::ProjectSwitcher;
 use crate::ui::sidebar::SidebarView;
@@ -108,15 +107,12 @@ impl Render for AppView {
 
         let status_bar = self.render_status_bar(cx);
 
-        let context_modal = ContextModal::render(
-            self.is_context_open,
-            self.selected_row_pos
-                .and_then(|p| self.visible_indices.get(p).copied()),
-            &self.all_entries,
+        let keymap = self.keymap.clone();
+        let command_palette = CommandPalette::render(
+            self.is_palette_open,
+            move |c| keymap.shortcuts(c).first().map(crate::app::shortcut_label).unwrap_or_default(),
             cx,
         );
-
-        let command_palette = CommandPalette::render(self.is_palette_open, cx);
         let new_space_dialog = self.render_new_space_dialog(cx);
         let new_column_dialog = self.render_new_column(cx);
         let format_editor = self.render_format_editor(cx);
@@ -220,7 +216,6 @@ impl Render for AppView {
             )
             .children(focus_pane)
             .child(status_bar)
-            .child(context_modal)
             .child(command_palette)
             .child(project_switcher)
             .child(new_space_dialog)

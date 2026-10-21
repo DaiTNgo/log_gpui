@@ -111,7 +111,7 @@ fn find_in_log_focuses_the_search_field_and_leaves_panels(cx: &mut TestAppContex
     let panels = |h: &mut Harness| h.view.read_with(&h.cx, |app, _| format!("{:?}", app.context_sidebar));
     let before = panels(&mut h);
     h.view.update_in(&mut h.cx, |app, window, cx| {
-        app.execute_palette_action(log_gpui::ui::command_palette::PaletteAction::ToggleSearch, window, cx);
+        app.execute_command(log_gpui::keymap::Command::ToggleSearch, window, cx);
     });
     h.cx.run_until_parked();
     let focused = h.view.update_in(&mut h.cx, |app, window, cx| {

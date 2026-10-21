@@ -8,8 +8,8 @@ use crate::app::MatchKind;
 use crate::density::Density;
 use crate::palette::Hue;
 use gpui::{
-    div, px, AnyElement, App, Entity, InteractiveElement, IntoElement, Keystroke, ParentElement,
-    SharedString, StatefulInteractiveElement, Styled, Window,
+    div, px, AnyElement, App, Entity, InteractiveElement, IntoElement, ParentElement,
+    prelude::FluentBuilder as _, SharedString, StatefulInteractiveElement, Styled, Window,
 };
 use gpui_component::button::{Button, ButtonGroup, ButtonVariants as _};
 use gpui_component::input::Input;
@@ -25,20 +25,6 @@ use gpui_kit::assets::IconName;
 const DIALOG_MARGIN: f32 = 48.0;
 /// Width of the list of sections.
 const NAV_WIDTH: f32 = 240.0;
-
-const SHORTCUTS: [(&str, &str); 11] = [
-    ("cmd-o", "New Log Space"),
-    ("cmd-s", "Save scratch files"),
-    ("cmd-b", "Projects sidebar"),
-    ("cmd-alt-b", "Context sidebar"),
-    ("cmd-shift-b", "Context: Files"),
-    ("cmd-shift-i", "Context: Investigations"),
-    ("cmd-shift-s", "Context: Saved Views"),
-    ("cmd-p", "Project switcher"),
-    ("cmd-k", "Command palette"),
-    ("cmd-f", "Search logs"),
-    ("cmd-1", "Switch tab"),
-];
 
 /// A page of the Settings.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -97,6 +83,10 @@ struct Values {
     colors: crate::palette::MatchColors,
     /// The Log Format library: id, name, template.
     formats: Vec<(String, String, String)>,
+    keymap: crate::keymap::Keymap,
+    recording: Option<crate::keymap::Command>,
+    keymap_message: Option<String>,
+    record_focus: gpui::FocusHandle,
 }
 
 pub fn open_settings_dialog(view: Entity<AppView>, window: &mut Window, cx: &mut App) {
@@ -119,6 +109,10 @@ pub fn open_settings_dialog(view: Entity<AppView>, window: &mut Window, cx: &mut
                     density: v.density,
                     colors: v.workspace_state.match_colors,
                     formats: v.log_formats().iter().map(|f| (f.id.clone(), f.name.clone(), f.template.clone())).collect(),
+                    keymap: v.keymap.clone(),
+                    recording: v.keymap_recording,
+                    keymap_message: v.keymap_message.clone(),
+                    record_focus: v.keymap_record_focus.clone(),
                 },
                 v.settings_section,
                 v.settings_search.read(cx).value().trim().to_lowercase(),
@@ -193,7 +187,9 @@ pub fn open_settings_dialog(view: Entity<AppView>, window: &mut Window, cx: &mut
                             .min_w(px(0.0))
                             .gap_1()
                             .child(div().text_base().child(row.title))
-                            .child(div().text_sm().text_color(muted).child(row.description)),
+                            .when(!row.description.is_empty(), |col| {
+                                col.child(div().text_sm().text_color(muted).child(row.description))
+                            }),
                     )
                     .child(div().flex_shrink_0().child(row.control)),
             );
@@ -306,6 +302,106 @@ fn log_format_rows(view: &Entity<AppView>, v: &Values, cx: &App) -> Vec<Row> {
         },
         Row { title: "Library", description: "", control: list.into_any_element() },
     ]
+}
+
+fn keymap_rows(view: &Entity<AppView>, v: &Values, cx: &App) -> Vec<Row> {
+    use crate::keymap::Command;
+    let (muted, accent) = {
+        let theme = cx.theme();
+        (theme.muted_foreground, theme.ring)
+    };
+    let reset_view = view.clone();
+    let mut rows = vec![Row {
+        title: "Keyboard shortcuts",
+        description: "Press + and then the keys to add a shortcut; a shortcut another command had moves here. Shortcuts without ⌘ or ⌥ work while no text field has the cursor. Esc, the arrow keys, ⌘C, ⌘1–⌘9 and ⌘Tab cannot be changed.",
+        control: Button::new("keymap-reset-all")
+            .small()
+            .label("Reset all")
+            .disabled(!v.keymap.has_changes())
+            .on_click(move |_, window, app| {
+                reset_view.update(app, |this, cx| this.reset_all_shortcuts(cx));
+                window.refresh();
+            })
+            .into_any_element(),
+    }];
+    if let Some(message) = &v.keymap_message {
+        rows.push(Row {
+            title: "Last change",
+            description: "",
+            control: div().max_w(px(440.0)).text_sm().text_color(muted).child(message.clone()).into_any_element(),
+        });
+    }
+    for command in Command::ALL {
+        let id = command.id();
+        let mut control = h_flex().gap_1().items_center().justify_end();
+        for shortcut in v.keymap.shortcuts(command) {
+            let del_view = view.clone();
+            let text = shortcut.text();
+            control = control.child(
+                h_flex()
+                    .gap_0p5()
+                    .items_center()
+                    .child(Kbd::new(shortcut.keystroke()))
+                    .child(
+                        Button::new(SharedString::from(format!("keymap-del-{id}-{text}")))
+                            .ghost()
+                            .xsmall()
+                            .icon(IconName::Close)
+                            .on_click(move |_, window, app| {
+                                del_view.update(app, |this, cx| this.remove_shortcut(command, &shortcut, cx));
+                                window.refresh();
+                            }),
+                    ),
+            );
+        }
+        if v.recording == Some(command) {
+            let rec_view = view.clone();
+            control = control.child(
+                div()
+                    .id("keymap-recorder")
+                    .track_focus(&v.record_focus)
+                    .px_2()
+                    .py_0p5()
+                    .border_1()
+                    .border_color(accent)
+                    .rounded_md()
+                    .text_sm()
+                    .child("Press keys… (Esc cancels)")
+                    .on_key_down(move |event: &gpui::KeyDownEvent, window, app| {
+                        rec_view.update(app, |this, cx| this.record_shortcut(&event.keystroke, cx));
+                        app.stop_propagation();
+                        window.refresh();
+                    }),
+            );
+        } else {
+            let add_view = view.clone();
+            control = control.child(
+                Button::new(SharedString::from(format!("keymap-add-{id}")))
+                    .ghost()
+                    .xsmall()
+                    .icon(IconName::Plus)
+                    .on_click(move |_, window, app| {
+                        add_view.update(app, |this, cx| this.start_recording_shortcut(command, window, cx));
+                        window.refresh();
+                    }),
+            );
+        }
+        if !v.keymap.is_default(command) {
+            let reset_view = view.clone();
+            control = control.child(
+                Button::new(SharedString::from(format!("keymap-reset-{id}")))
+                    .ghost()
+                    .xsmall()
+                    .label("Reset")
+                    .on_click(move |_, window, app| {
+                        reset_view.update(app, |this, cx| this.reset_shortcuts(command, cx));
+                        window.refresh();
+                    }),
+            );
+        }
+        rows.push(Row { title: command.name(), description: "", control: control.into_any_element() });
+    }
+    rows
 }
 
 fn rows_of(section: SettingsSection, view: &Entity<AppView>, v: &Values, cx: &App) -> Vec<Row> {
@@ -508,18 +604,7 @@ fn rows_of(section: SettingsSection, view: &Entity<AppView>, v: &Values, cx: &Ap
                     .into_any_element(),
             }]
         }
-        SettingsSection::Keymap => SHORTCUTS
-            .into_iter()
-            .filter_map(|(keys, label)| {
-                // Shortcuts take Ctrl in place of Cmd off macOS.
-                let keys = if cfg!(target_os = "macos") { keys.to_string() } else { keys.replace("cmd-", "ctrl-") };
-                Keystroke::parse(&keys).ok().map(|stroke| Row {
-                    title: label,
-                    description: "",
-                    control: Kbd::new(stroke).into_any_element(),
-                })
-            })
-            .collect(),
+        SettingsSection::Keymap => keymap_rows(view, v, cx),
     }
 }
 

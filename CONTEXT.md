@@ -34,6 +34,10 @@ _Avoid_: File column, origin column.
 The toolbar popover holding display switches for the open view, such as showing the Source Column and density.
 _Avoid_: View panel, view options.
 
+**Keymap**:
+Which Shortcut runs which Command of the Command Palette, changed on the Keymap page of Settings and kept in `keymap.json` as the changed Commands only. A Command can have several Shortcuts; giving one a Shortcut another Command had moves it. A Shortcut without ⌘ or ⌥ works only while no text field has the cursor. The Fixed Keys (Esc, the arrow keys, ⌘C, ⌘1–⌘9, ⌘Tab) cannot be taken. The Focus Window keeps its own fixed keys.
+_Avoid_: Keybindings, hotkeys.
+
 **Imported Log Space**:
 A Log Space whose files were dropped or picked when it was created, or Archive Entries, or Remote Copies. Its files are read-only.
 _Avoid_: Read-only space.

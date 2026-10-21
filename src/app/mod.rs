@@ -18,6 +18,8 @@ pub mod full_read;
 pub mod globs;
 mod highlights;
 mod keyboard;
+mod shortcuts;
+pub use shortcuts::shortcut_label;
 pub mod live;
 pub mod live_more;
 pub mod live_trim;
@@ -143,6 +145,15 @@ pub struct AppView {
     /// The page of the Settings dialog that is open, and its search field.
     pub settings_section: crate::ui::settings::SettingsSection,
     pub settings_search: Entity<InputState>,
+    /// Which Shortcut runs which Command, and where it is saved.
+    pub keymap: crate::keymap::Keymap,
+    pub keymap_path: std::path::PathBuf,
+    /// The Command the Keymap settings wait for a key press for.
+    pub keymap_recording: Option<crate::keymap::Command>,
+    /// What the last change in the Keymap settings did, or why it did not.
+    pub keymap_message: Option<String>,
+    /// Holds the key presses while a Shortcut is being recorded.
+    pub keymap_record_focus: FocusHandle,
     /// The search field must be rewritten from the tab's query (set when a
     /// tab's session is restored); done at render time, where a window exists.
     pub search_input_dirty: bool,
@@ -172,7 +183,6 @@ pub struct AppView {
     /// The "+ Add rule" form of the Highlights section.
     pub rule_form: Option<highlights::RuleForm>,
     pub rule_input: Entity<InputState>,
-    pub is_context_open: bool,
     pub is_palette_open: bool,
 
     pub file_name: String,
@@ -317,6 +327,14 @@ impl AppView {
             .as_ref()
             .and_then(|p| p.path().parent().map(|d| d.join("log_formats.json")))
             .unwrap_or_else(crate::log_format::LogFormatStore::default_path);
+        let keymap_path = persistence
+            .as_ref()
+            .and_then(|p| p.path().parent().map(|d| d.join("keymap.json")))
+            .unwrap_or_else(crate::keymap::Keymap::default_path);
+        let (keymap, keymap_error) = match crate::keymap::Keymap::load(&keymap_path) {
+            Ok(keymap) => (keymap, None),
+            Err(e) => (Default::default(), Some(format!("keymap.json could not be read ({e}); using the default shortcuts."))),
+        };
         let mut workspace_state = persistence
             .as_ref()
             .and_then(|p| p.load().ok().flatten())
@@ -464,6 +482,11 @@ impl AppView {
             search_input,
             settings_section: Default::default(),
             settings_search,
+            keymap,
+            keymap_path,
+            keymap_recording: None,
+            keymap_message: None,
+            keymap_record_focus: cx.focus_handle(),
             search_input_dirty: true,
             scroll_handle,
             selected_row_pos: None,
@@ -480,7 +503,6 @@ impl AppView {
             cell_target: None,
             rule_form: None,
             rule_input,
-            is_context_open: false,
             is_palette_open: false,
             file_name: String::new(),
             file_format: "Text Log".to_string(),
@@ -526,7 +548,7 @@ impl AppView {
             new_space: None,
             confirm: None,
             custom_load: None,
-            notice: None,
+            notice: keymap_error,
             session_save_gen: 0,
             persistence,
             focus_handle,

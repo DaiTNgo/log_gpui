@@ -6,6 +6,7 @@ pub mod filter;
 pub mod filter_index;
 pub mod focus;
 pub mod highlight;
+pub mod keymap;
 pub mod log_format;
 pub mod live;
 pub mod local_path;

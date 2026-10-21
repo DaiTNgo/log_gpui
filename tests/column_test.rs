@@ -537,7 +537,8 @@ fn test_column_resize_double_click_auto_fit() {
 
 #[test]
 fn test_command_palette_unpin_all_action() {
-    use log_gpui::ui::command_palette::{CommandPalette, PaletteAction};
+    use log_gpui::keymap::Command;
+    use log_gpui::ui::command_palette::CommandPalette;
 
     // 1. Verify Command Palette lists "Columns: Unpin All"
     let commands = CommandPalette::list();
@@ -546,7 +547,7 @@ fn test_command_palette_unpin_all_action() {
         .find(|cmd| cmd.name == "Columns: Unpin All")
         .expect("Command Palette must display 'Columns: Unpin All'");
 
-    assert!(matches!(unpin_cmd.action, PaletteAction::UnpinAllColumns));
+    assert!(matches!(unpin_cmd.action, Command::UnpinAllColumns));
 
     // 2. Verify triggering unpin_all releases all pinned columns
     let mut state = ColumnLayoutState::new();

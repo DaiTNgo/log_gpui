@@ -3,7 +3,6 @@ pub mod cell_menu;
 pub mod cells;
 pub mod command_palette;
 pub mod context_sidebar;
-pub mod context_view;
 pub mod floating_panel;
 pub mod focus_pane;
 pub mod inspector;
