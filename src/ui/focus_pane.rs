@@ -11,7 +11,6 @@ use crate::highlight::RowPaint;
 use crate::marker::{TextMarker, level_marker};
 use crate::model::{LogEntry, LogLevel};
 use crate::palette::Weight;
-use crate::search_expr::Matcher;
 use crate::text_selection::TextSelection;
 use crate::ui::canvas::{CanvasColors, CellCtx, render_text_cell};
 use crate::ui::cells::TextCell;
@@ -26,7 +25,7 @@ use gpui_component::input::{Input, InputState};
 use gpui_component::menu::ContextMenuExt as _;
 use gpui_component::scroll::ScrollableElement as _;
 use gpui_component::tag::Tag;
-use gpui_component::{ActiveTheme as _, Icon, Sizable as _, h_flex, v_flex};
+use gpui_component::{ActiveTheme as _, Icon, Selectable as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::assets::IconName;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -80,7 +79,8 @@ pub struct PaneState<'a> {
     pub can_close: bool,
     pub find_input: &'a gpui::Entity<InputState>,
     pub find: &'a FocusFind,
-    pub search_matcher: Option<Matcher>,
+    /// Search Highlight is on: Search Matches are painted.
+    pub search_highlight: bool,
     pub rows: Arc<Vec<FocusRow>>,
     pub source: PaneSource,
     /// Index in `rows` of the current line, when the tab lists it.
@@ -172,6 +172,8 @@ impl FocusPane {
         let find_error = state.find.parse_error.is_some();
         let (v_prev, v_next, v_hide) = (state.view.clone(), state.view.clone(), state.view.clone());
         let v_detach = state.view.clone();
+        let v_highlight = state.view.clone();
+        let search_highlight = state.search_highlight;
         let find_box = h_flex()
             .gap_1()
             .items_center()
@@ -214,6 +216,15 @@ impl FocusPane {
                     .on_click(move |_, _w, cx| v_next.update(cx, |this, cx| this.focus_find_next(cx))),
             )
             .child(div().min_w(px(40.0)).text_xs().text_color(muted).child(find_label))
+            .child(
+                Button::new("focus-search-highlight")
+                    .ghost()
+                    .xsmall()
+                    .icon(IconName::Highlighter)
+                    .selected(search_highlight)
+                    .tooltip(if search_highlight { "Hide Search Highlight" } else { "Show Search Highlight" })
+                    .on_click(move |_, _w, cx| v_highlight.update(cx, |this, cx| this.toggle_search_highlight(cx))),
+            )
             .map(|this| match state.mode {
                 PaneMode::Docked => this
                     .child(
@@ -380,7 +391,6 @@ impl FocusPane {
             rows: state.rows,
             source: state.source,
             selected: state.selected,
-            search_matcher: state.search_matcher,
             show_source: state.show_source,
             colors: state.colors,
             selection: state.selection,
@@ -474,7 +484,6 @@ struct PaneRows {
     rows: Arc<Vec<FocusRow>>,
     source: PaneSource,
     selected: Option<usize>,
-    search_matcher: Option<Matcher>,
     show_source: bool,
     colors: CanvasColors,
     selection: Option<TextSelection>,
@@ -537,10 +546,7 @@ impl PaneRows {
         };
         let is_selected = self.selected == Some(index);
         let is_find_current = find.current_row() == Some(index);
-        let search_ranges = match &self.search_matcher {
-            Some(m) if m.is_match(&entry.raw_line) => m.find_ranges(&entry.raw_line),
-            _ => Vec::new(),
-        };
+        let search_ranges = app.focus_pane_search_ranges(&entry.raw_line);
         let find_ranges = find.find_ranges(&entry.raw_line);
         let selected_in_line = self.selection.and_then(|s| s.range_in_row(index, entry.raw_line.len()));
         let columns = (self.columns && parsed).then_some(&app.column_layout);

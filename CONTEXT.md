@@ -254,6 +254,10 @@ _Avoid_: Match Pane, Filter Log, result pane, search results.
 A separate window the Focus Pane can be moved into, to be made larger or put on another screen. While it is open the Focus Pane exists only there, together with the Search field of the open Focus Tab. It always follows the view open in the main window, and closing it or choosing "Move back" returns the Focus Pane under the main window. It is not reopened after a restart.
 _Avoid_: Popup, second window, detached pane.
 
+**Search Highlight**:
+Whether the Focus Pane paints Search Matches, in both the Parsed and the Raw View. Every line there already matches the Search, so the user can turn it off from the Focus Pane, Settings or a Keymap command. One app-wide setting for every Focus Tab, on by default and kept across restarts. It never changes the view's painting, Highlight Rules or Focus Find.
+_Avoid_: Match paint toggle, pane highlighting.
+
 **Focus Tab**:
 One numbered tab (1, 2, 3, …) of the Focus Pane with its own Search Expression and its own Focus Find. The Search field in the toolbar always edits the open Focus Tab's Search Expression, and only the open tab's Matches are marked in the view. Numbers are never reused while the tab is open, and a new tab takes the next number after the highest. The last remaining Focus Tab cannot be closed.
 _Avoid_: Search tab, result tab.

@@ -16,6 +16,18 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 impl AppView {
+    /// The parts of `line` the Focus Pane paints as Search Matches: none
+    /// while Search Highlight is off.
+    pub fn focus_pane_search_ranges(&self, line: &str) -> Vec<(usize, usize)> {
+        if !self.workspace_state.show_search_highlight {
+            return Vec::new();
+        }
+        match &self.focus.search().matcher {
+            Some(m) if m.is_match(line) => m.find_ranges(line),
+            _ => Vec::new(),
+        }
+    }
+
     /// The Markers of each file of the Raw View by line, leaving out those of
     /// a line edited since.
     fn raw_pane_markers(
@@ -89,7 +101,7 @@ impl AppView {
             can_close: self.focus.can_close(),
             find_input,
             find: self.focus.find(),
-            search_matcher: self.focus.search().matcher.clone(),
+            search_highlight: self.workspace_state.show_search_highlight,
             rows: self.focus_rows.clone(),
             source,
             selected: self.pane_selected_index(),

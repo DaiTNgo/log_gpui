@@ -46,6 +46,10 @@ pub struct WorkspaceState {
     /// Whether the Raw View wraps long lines: an app setting.
     #[serde(default = "default_true")]
     pub raw_soft_wrap: bool,
+    /// Whether the Focus Pane paints Search Matches (Search Highlight): an
+    /// app setting.
+    #[serde(default = "default_true")]
+    pub show_search_highlight: bool,
     /// Whether Log Space views show the Source Column; `None` until chosen,
     /// then a Log Space shows it when it has two or more files.
     #[serde(default)]
@@ -95,6 +99,7 @@ impl Default for WorkspaceState {
             density: Default::default(),
             show_minimap: true,
             raw_soft_wrap: true,
+            show_search_highlight: true,
             show_source: None,
             show_stream: false,
         }
