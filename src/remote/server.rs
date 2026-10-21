@@ -36,49 +36,122 @@ pub enum AgentSocket {
     #[default]
     System,
     OnePassword,
+    /// macOS only.
     Secretive,
+    /// Windows only: PuTTY's Pageant, reached through its window message.
+    Pageant,
     Path(String),
 }
+
+/// The platform an agent socket is resolved for (a parameter so both
+/// platforms' rules can be tested from either).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Os {
+    Unix,
+    Windows,
+}
+
+impl Os {
+    pub const fn current() -> Os {
+        if cfg!(windows) { Os::Windows } else { Os::Unix }
+    }
+}
+
+/// Where an ssh-agent is reached. A distinct case for Pageant, so a user's
+/// socket path can never be mistaken for it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AgentTarget {
+    Pageant,
+    /// A Unix socket path or a Windows named pipe.
+    Socket(String),
+}
+
+/// What `resolve` returns for Pageant: a name, not a path.
+pub const PAGEANT: &str = "pageant";
 
 impl AgentSocket {
     const ONE_PASSWORD: &'static str = "~/Library/Group Containers/2BUA8C4S2C.com.1password/t/agent.sock";
     const SECRETIVE: &'static str = "~/Library/Containers/com.maxgoedjen.Secretive.SecretAgent/Data/socket.ssh";
+    /// The Windows OpenSSH agent's pipe, which 1Password also serves.
+    const WINDOWS_PIPE: &'static str = r"\\.\pipe\openssh-ssh-agent";
 
     /// The socket path, `~` expanded; `None` when `System` and
-    /// `SSH_AUTH_SOCK` is not set.
+    /// `SSH_AUTH_SOCK` is not set (on Windows `System` falls back to the
+    /// OpenSSH pipe). Pageant gives `PAGEANT`.
     pub fn resolve(&self) -> Option<String> {
+        self.resolve_on(Os::current(), std::env::var("SSH_AUTH_SOCK").ok())
+    }
+
+    pub fn resolve_on(&self, os: Os, ssh_auth_sock: Option<String>) -> Option<String> {
         match self {
-            AgentSocket::System => std::env::var("SSH_AUTH_SOCK").ok().filter(|s| !s.is_empty()),
-            AgentSocket::OnePassword => Some(expand_home(Self::ONE_PASSWORD)),
+            AgentSocket::System => ssh_auth_sock
+                .filter(|s| !s.is_empty())
+                .or_else(|| (os == Os::Windows).then(|| Self::WINDOWS_PIPE.to_string())),
+            AgentSocket::OnePassword => Some(match os {
+                Os::Windows => Self::WINDOWS_PIPE.to_string(),
+                Os::Unix => expand_home(Self::ONE_PASSWORD),
+            }),
             AgentSocket::Secretive => Some(expand_home(Self::SECRETIVE)),
+            AgentSocket::Pageant => Some(PAGEANT.to_string()),
             AgentSocket::Path(p) => Some(expand_home(p)),
+        }
+    }
+
+    /// What to connect to: Pageant, or a socket path / pipe name.
+    pub fn target(&self) -> Option<AgentTarget> {
+        self.target_on(Os::current(), std::env::var("SSH_AUTH_SOCK").ok())
+    }
+
+    pub fn target_on(&self, os: Os, ssh_auth_sock: Option<String>) -> Option<AgentTarget> {
+        match self {
+            AgentSocket::Pageant => Some(AgentTarget::Pageant),
+            other => other.resolve_on(os, ssh_auth_sock).map(AgentTarget::Socket),
         }
     }
 
     /// Text for messages: the path, or `SSH_AUTH_SOCK` when it is unset.
     pub fn describe(&self) -> String {
-        self.resolve().unwrap_or_else(|| "$SSH_AUTH_SOCK".into())
+        match self {
+            AgentSocket::Pageant => "Pageant".into(),
+            _ => self.resolve().unwrap_or_else(|| "$SSH_AUTH_SOCK".into()),
+        }
     }
 
-    /// The presets whose socket exists on this machine.
-    pub fn available_presets() -> Vec<AgentSocket> {
-        let mut found = Vec::new();
-        for preset in [AgentSocket::System, AgentSocket::OnePassword, AgentSocket::Secretive] {
-            if preset.resolve().is_some_and(|p| Path::new(&p).exists()) {
-                found.push(preset);
-            }
+    /// The presets that make sense on a platform (whether they exist on this
+    /// machine is a separate question).
+    pub fn candidate_presets(os: Os) -> Vec<AgentSocket> {
+        match os {
+            Os::Unix => vec![AgentSocket::System, AgentSocket::OnePassword, AgentSocket::Secretive],
+            Os::Windows => vec![AgentSocket::System, AgentSocket::OnePassword, AgentSocket::Pageant],
         }
-        found
+    }
+
+    /// The presets usable on this machine.
+    pub fn available_presets() -> Vec<AgentSocket> {
+        Self::available_presets_on(Os::current(), std::env::var("SSH_AUTH_SOCK").ok(), |p| Path::new(p).exists())
+    }
+
+    /// On Unix a preset is usable when its socket exists. On Windows the
+    /// agents are named pipes (which `exists()` can report absent while the
+    /// pipe is busy) or Pageant (a window, not probeable cheaply), so every
+    /// candidate is offered and a failed connection says so.
+    pub fn available_presets_on(os: Os, ssh_auth_sock: Option<String>, exists: impl Fn(&str) -> bool) -> Vec<AgentSocket> {
+        Self::candidate_presets(os)
+            .into_iter()
+            .filter(|preset| {
+                os == Os::Windows || preset.resolve_on(os, ssh_auth_sock.clone()).is_some_and(|p| exists(&p))
+            })
+            .collect()
     }
 }
 
 /// `~` or `~/…` as the home directory.
 pub fn expand_home(path: &str) -> String {
-    let home = std::env::var("HOME").unwrap_or_default();
+    let home = crate::workspace::session::home_dir().map(|h| h.display().to_string()).unwrap_or_default();
     if path == "~" {
         home
     } else if let Some(rest) = path.strip_prefix("~/") {
-        format!("{home}/{rest}")
+        crate::local_path::join_like(&home, rest)
     } else {
         path.to_string()
     }
@@ -459,5 +532,88 @@ impl ServerStore {
             return;
         }
         let _ = std::fs::write(backup, old);
+    }
+}
+
+#[cfg(test)]
+mod agent_socket_tests {
+    use super::*;
+
+    const PIPE: &str = r"\\.\pipe\openssh-ssh-agent";
+
+    #[test]
+    fn windows_system_agent_is_the_openssh_pipe_without_ssh_auth_sock() {
+        assert_eq!(AgentSocket::System.resolve_on(Os::Windows, None).as_deref(), Some(PIPE));
+        assert_eq!(AgentSocket::System.resolve_on(Os::Windows, Some(String::new())).as_deref(), Some(PIPE));
+    }
+
+    #[test]
+    fn ssh_auth_sock_still_wins_on_windows() {
+        assert_eq!(AgentSocket::System.resolve_on(Os::Windows, Some(r"\\.\pipe\other".into())).as_deref(), Some(r"\\.\pipe\other"));
+    }
+
+    #[test]
+    fn unix_system_agent_without_ssh_auth_sock_is_unresolved() {
+        assert_eq!(AgentSocket::System.resolve_on(Os::Unix, None), None);
+    }
+
+    #[test]
+    fn windows_one_password_is_the_openssh_pipe() {
+        assert_eq!(AgentSocket::OnePassword.resolve_on(Os::Windows, None).as_deref(), Some(PIPE));
+    }
+
+    #[test]
+    fn pageant_resolves_to_a_name_not_a_path() {
+        assert_eq!(AgentSocket::Pageant.resolve_on(Os::Windows, None).as_deref(), Some("pageant"));
+        assert_eq!(AgentSocket::Pageant.describe(), "Pageant");
+    }
+
+    #[test]
+    fn windows_offers_pageant_and_not_secretive() {
+        let presets = AgentSocket::candidate_presets(Os::Windows);
+        assert!(presets.contains(&AgentSocket::Pageant));
+        assert!(!presets.contains(&AgentSocket::Secretive));
+    }
+
+    #[test]
+    fn unix_offers_secretive_and_not_pageant() {
+        let presets = AgentSocket::candidate_presets(Os::Unix);
+        assert!(presets.contains(&AgentSocket::Secretive));
+        assert!(!presets.contains(&AgentSocket::Pageant));
+    }
+
+    #[test]
+    fn windows_offers_every_preset_without_probing_the_filesystem() {
+        let presets = AgentSocket::available_presets_on(Os::Windows, None, |_| false);
+        assert_eq!(presets, AgentSocket::candidate_presets(Os::Windows));
+        assert!(presets.contains(&AgentSocket::OnePassword));
+    }
+
+    #[test]
+    fn unix_keeps_only_presets_whose_socket_exists() {
+        let presets = AgentSocket::available_presets_on(Os::Unix, Some("/run/agent".into()), |p| p == "/run/agent");
+        assert_eq!(presets, vec![AgentSocket::System]);
+    }
+
+    #[test]
+    fn pageant_is_a_target_of_its_own_and_a_path_named_pageant_is_not_it() {
+        assert_eq!(AgentSocket::Pageant.target_on(Os::Windows, None), Some(AgentTarget::Pageant));
+        assert_eq!(
+            AgentSocket::Path("pageant".into()).target_on(Os::Windows, None),
+            Some(AgentTarget::Socket("pageant".into()))
+        );
+    }
+
+    #[test]
+    fn home_joins_with_one_separator_style() {
+        use crate::local_path::join_like;
+        assert_eq!(join_like(r"C:\Users\me", ".ssh/id"), r"C:\Users\me\.ssh\id");
+        assert_eq!(join_like("/home/me", ".ssh/id"), "/home/me/.ssh/id");
+    }
+
+    #[test]
+    fn an_explicit_pipe_path_is_kept() {
+        let socket = AgentSocket::Path(r"\\.\pipe\my-agent".into());
+        assert_eq!(socket.resolve_on(Os::Windows, None).as_deref(), Some(r"\\.\pipe\my-agent"));
     }
 }

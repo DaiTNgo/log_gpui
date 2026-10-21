@@ -189,14 +189,17 @@ fn a_path_that_does_not_exist_yet_waits_and_a_denied_file_reports_it() {
     assert_eq!(lines, vec!["hello"]);
     h.close();
 
-    use std::os::unix::fs::PermissionsExt;
-    let secret = env.dir.path().join("secret.log");
-    std::fs::write(&secret, "x\n").unwrap();
-    std::fs::set_permissions(&secret, std::fs::Permissions::from_mode(0o000)).unwrap();
-    let (h, p) = env.source("secret.log", 100_000);
-    let e = next(&h, |e| matches!(e, SourceEvent::Status(s) if s.label().starts_with("Permission denied")));
-    assert!(matches!(e, SourceEvent::Status(s) if s.label() == format!("Permission denied: web1:{p}")));
-    h.close();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let secret = env.dir.path().join("secret.log");
+        std::fs::write(&secret, "x\n").unwrap();
+        std::fs::set_permissions(&secret, std::fs::Permissions::from_mode(0o000)).unwrap();
+        let (h, p) = env.source("secret.log", 100_000);
+        let e = next(&h, |e| matches!(e, SourceEvent::Status(s) if s.label().starts_with("Permission denied")));
+        assert!(matches!(e, SourceEvent::Status(s) if s.label() == format!("Permission denied: web1:{p}")));
+        h.close();
+    }
 }
 
 #[test]

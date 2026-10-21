@@ -87,7 +87,7 @@ The newest lines a followed file holds, up to a set number of lines: each Remote
 _Avoid_: Buffer, cache, history limit.
 
 **Server**:
-The saved details for reaching one machine over SSH: address, port, user, how to sign in (key, password, or ssh-agent, optionally followed by questions the server asks such as a one-time code), and optionally a Jump Server. A Server may belong to one Server Group and carry tags. Servers are shared by every Project.
+The saved details for reaching one machine over SSH: address, port, user, how to sign in (key, password, or ssh-agent (SSH_AUTH_SOCK, 1Password, Secretive, a chosen socket; on Windows System/1Password mean the OpenSSH agent pipe and Pageant is also offered), optionally followed by questions the server asks such as a one-time code), and optionally a Jump Server. A Server may belong to one Server Group and carry tags. Servers are shared by every Project.
 _Avoid_: Host, connection, remote, SSH profile.
 
 **Server Group**:

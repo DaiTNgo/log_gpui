@@ -1,3 +1,7 @@
+// Release builds on Windows use the GUI subsystem so no console window opens
+// beside the app; debug builds keep the console for eprintln! traces.
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
+
 use log_gpui::app::AppView;
 use gpui::{px, size, AppContext, Bounds, WindowBounds, WindowOptions};
 use gpui_component::{theme::ThemeMode, Root, Theme, TitleBar};

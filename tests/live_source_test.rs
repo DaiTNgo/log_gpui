@@ -214,6 +214,27 @@ fn local_source_rotation_reads_the_old_tail_then_the_new_file() {
     h.close();
 }
 
+/// The new file is longer than the old read offset, so only the file's
+/// identity (not its size) can tell it from the old one. On Windows the new
+/// file inherits the old one's creation time ("file tunneling") when it is
+/// created within ~15 s of the rename, so the creation time cannot be the identity.
+#[test]
+fn local_source_rotation_is_detected_even_when_the_new_file_is_longer() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("app.log");
+    std::fs::write(&path, "a\n").unwrap();
+    let h = source(&path, 2);
+    std::thread::sleep(Duration::from_millis(40));
+    std::fs::rename(&path, dir.path().join("app.log.1")).unwrap();
+    std::fs::write(&path, "first-new\nsecond-new\n").unwrap();
+    wait_for(&h, |e| *e == SourceEvent::Break { kind: BreakKind::Rotated });
+    assert_eq!(
+        wait_for(&h, |e| matches!(e, SourceEvent::Append { .. })),
+        appended(&["first-new", "second-new"])
+    );
+    h.close();
+}
+
 #[test]
 fn local_source_deleted_waits_for_the_file() {
     let dir = tempfile::tempdir().unwrap();

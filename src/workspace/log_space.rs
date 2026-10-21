@@ -6,6 +6,7 @@
 //! never mix" is enforced by the operations below rather than by convention.
 
 use crate::filter::FilterState;
+use crate::local_path::{self, PathStyle};
 use crate::marker::{TextMarker, add_marker, recolor_marker_at, remove_marker_at};
 use crate::model::LogEntry;
 use crate::palette::HighlightColor;
@@ -270,10 +271,7 @@ impl LogFile {
 
     /// Build a file from a filesystem path: id and display name come from it.
     pub fn from_path(path: &str) -> Self {
-        let display_name = Path::new(path)
-            .file_name()
-            .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_else(|| path.to_string());
+        let display_name = local_path::file_name(path, PathStyle::native()).unwrap_or(path).to_string();
         Self {
             file_id: path.to_string(),
             display_name,
@@ -307,10 +305,7 @@ impl LogFile {
     /// name without `.gz`).
     pub fn from_archive_entry(archive: &str, entry: &str) -> Self {
         let archive_path = Path::new(archive);
-        let archive_name = archive_path
-            .file_name()
-            .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_else(|| archive.to_string());
+        let archive_name = local_path::file_name(archive, PathStyle::native()).unwrap_or(archive).to_string();
         let lone_gz = crate::archive::SINGLE_SUFFIXES.iter().any(|s| archive_name.ends_with(s)) && entry == crate::archive::gz_entry_name(archive_path);
         Self {
             file_id: format!("{archive}!/{entry}"),
@@ -339,11 +334,7 @@ impl LogFile {
     /// folder holding the Archive), shown beside the name in a File
     /// Section header.
     pub fn folder(&self) -> Option<String> {
-        self.path
-            .as_deref()
-            .and_then(|p| Path::new(p).parent())
-            .map(|p| p.to_string_lossy().to_string())
-            .filter(|p| !p.is_empty() && p != ".")
+        self.path.as_deref().and_then(|p| local_path::folder(p, PathStyle::native())).filter(|p| p != ".")
     }
 
     /// The file was rotated, truncated or deleted: what is read next is a new

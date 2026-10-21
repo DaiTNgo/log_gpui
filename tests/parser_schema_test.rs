@@ -4,14 +4,19 @@ use log_gpui::parser::{parse_file_with_schema, parse_text_bytes_with_max_chars};
 use log_gpui::parser::schema::FieldType;
 use std::collections::HashMap;
 
+/// A path for a scratch file in the system temp folder (`/tmp` does not exist on Windows).
+fn tmp(name: &str) -> String {
+    std::env::temp_dir().join(name).display().to_string()
+}
+
 #[test]
 fn test_json_schema_discovers_fields_and_types() {
     let content = r#"{"level":"ERROR","service":"API","message":"timeout","duration":1500,"retry":true}
 {"level":"INFO","service":"DB","message":"connected","duration":12,"retry":false}
 {"level":"ERROR","service":"API","message":"refused","duration":999,"retry":true}"#;
 
-    std::fs::write("/tmp/_query_schema_test.log", content.as_bytes()).unwrap();
-    let result = parse_file_with_schema("/tmp/_query_schema_test.log").unwrap();
+    std::fs::write(tmp("_query_schema_test.log"), content.as_bytes()).unwrap();
+    let result = parse_file_with_schema(&tmp("_query_schema_test.log")).unwrap();
     let level = result.schema.find_field("level").expect("level field");
     assert_eq!(level.field_type, FieldType::Enum);
     let values = level.enum_values.as_ref().expect("enum values");
@@ -39,8 +44,8 @@ fn test_json_schema_discovers_fields_and_types() {
 #[test]
 fn test_text_schema_has_canonical_fields() {
     let content = "2026-09-05 12:34:56.789 [ERROR] [api] Connection timeout\n2026-09-05 12:34:57.000 [INFO] [db] Query ok\n";
-    std::fs::write("/tmp/_query_schema_text.log", content.as_bytes()).unwrap();
-    let result = parse_file_with_schema("/tmp/_query_schema_text.log").unwrap();
+    std::fs::write(tmp("_query_schema_text.log"), content.as_bytes()).unwrap();
+    let result = parse_file_with_schema(&tmp("_query_schema_text.log")).unwrap();
 
     assert_eq!(result.events.len(), 2);
     assert!(result.schema.find_field("level").is_some());
@@ -51,8 +56,8 @@ fn test_text_schema_has_canonical_fields() {
 #[test]
 fn test_level_and_module_schema_types() {
     let content = "2026-09-05 12:34:56.789 [ERROR] [api] boom\n2026-09-05 12:34:57.000 [WARN] [api] slow\n";
-    std::fs::write("/tmp/_query_schema_levels.log", content.as_bytes()).unwrap();
-    let result = parse_file_with_schema("/tmp/_query_schema_levels.log").unwrap();
+    std::fs::write(tmp("_query_schema_levels.log"), content.as_bytes()).unwrap();
+    let result = parse_file_with_schema(&tmp("_query_schema_levels.log")).unwrap();
 
     let level = result.schema.find_field("level").unwrap();
     assert_eq!(level.field_type, FieldType::Enum);
@@ -65,8 +70,8 @@ fn test_enum_cardinality_cap_turns_high_cardinality_to_string() {
         lines.push(format!(r#"{{"level":"INFO","message":"msg{}","unique":"val{}"}}"#, i, i));
     }
     let content = lines.join("\n");
-    std::fs::write("/tmp/_query_schema_cardinality.jsonl", content.as_bytes()).unwrap();
-    let result = parse_file_with_schema("/tmp/_query_schema_cardinality.jsonl").unwrap();
+    std::fs::write(tmp("_query_schema_cardinality.jsonl"), content.as_bytes()).unwrap();
+    let result = parse_file_with_schema(&tmp("_query_schema_cardinality.jsonl")).unwrap();
 
     // "unique" has 30 distinct values → String, not Enum
     let unique = result.schema.find_field("unique").expect("unique field");
@@ -76,8 +81,8 @@ fn test_enum_cardinality_cap_turns_high_cardinality_to_string() {
 #[test]
 fn test_json_event_fields_and_message() {
     let content = r#"{"level":"ERROR","service":"Payments","message":"processor timeout","amount":42.5}"#;
-    std::fs::write("/tmp/_query_schema_event.jsonl", content.as_bytes()).unwrap();
-    let result = parse_file_with_schema("/tmp/_query_schema_event.jsonl").unwrap();
+    std::fs::write(tmp("_query_schema_event.jsonl"), content.as_bytes()).unwrap();
+    let result = parse_file_with_schema(&tmp("_query_schema_event.jsonl")).unwrap();
 
     let event = &result.events[0];
     assert_eq!(event.get_field("level").and_then(|v| v.as_str()), Some("ERROR"));
@@ -113,7 +118,7 @@ fn test_json_to_log_value_conversion() {
 #[test]
 fn test_legacy_parse_result_still_works() {
     let content = "2026-09-05 12:34:56.789 [ERROR] [api] Connection timeout\n";
-    std::fs::write("/tmp/_query_schema_legacy.log", content.as_bytes()).unwrap();
+    std::fs::write(tmp("_query_schema_legacy.log"), content.as_bytes()).unwrap();
     let result = parse_text_bytes_with_max_chars(content.as_bytes()).unwrap();
     assert_eq!(result.entries.len(), 1);
     assert_eq!(result.entries[0].level, LogLevel::Error);

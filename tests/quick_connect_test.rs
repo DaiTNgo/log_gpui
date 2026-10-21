@@ -7,6 +7,7 @@ use common::Harness;
 use gpui::TestAppContext;
 use log_gpui::app::remote_picker::{PickerTarget, Staged};
 use log_gpui::remote::{AuthMethod, Server};
+#[cfg(unix)]
 use std::process::Command;
 use std::time::{Duration, Instant};
 
@@ -27,11 +28,13 @@ fn ssh() -> Option<Ssh> {
     })
 }
 
+#[cfg(unix)]
 /// A throwaway ssh-agent that the app's "System" agent socket points at.
 struct Agent {
     pid: String,
 }
 
+#[cfg(unix)]
 fn start_agent(dir: &std::path::Path, keys: &[&str]) -> Agent {
     let socket = dir.join("agent.sock").display().to_string();
     let out = Command::new("ssh-agent").args(["-a", &socket]).output().expect("ssh-agent");
@@ -46,6 +49,7 @@ fn start_agent(dir: &std::path::Path, keys: &[&str]) -> Agent {
     Agent { pid }
 }
 
+#[cfg(unix)]
 impl Drop for Agent {
     fn drop(&mut self) {
         let _ = Command::new("kill").arg(&self.pid).status();
@@ -141,6 +145,7 @@ fn the_same_address_reuses_the_saved_server(cx: &mut TestAppContext) {
     h.view.read_with(&h.cx, |app, _| assert!(app.remote.picker.as_ref().unwrap().quick_servers.is_empty()));
 }
 
+#[cfg(unix)]
 #[gpui::test]
 fn a_new_host_connects_with_the_agent_and_is_saved_only_with_a_file(cx: &mut TestAppContext) {
     let _serial = serial();
@@ -166,6 +171,7 @@ fn a_new_host_connects_with_the_agent_and_is_saved_only_with_a_file(cx: &mut Tes
     });
 }
 
+#[cfg(unix)]
 #[gpui::test]
 fn closing_the_picker_without_a_file_saves_nothing(cx: &mut TestAppContext) {
     let _serial = serial();
@@ -181,6 +187,7 @@ fn closing_the_picker_without_a_file_saves_nothing(cx: &mut TestAppContext) {
     assert_eq!(h.view.read_with(&h.cx, |app, _| app.remote.servers.servers.len()), 1);
 }
 
+#[cfg(unix)]
 #[gpui::test]
 fn a_refused_agent_asks_for_a_key_file_and_saves_that_sign_in(cx: &mut TestAppContext) {
     let _serial = serial();

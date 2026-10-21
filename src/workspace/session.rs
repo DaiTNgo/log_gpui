@@ -171,9 +171,24 @@ impl SessionManifest {
 
 /// The user's home directory: `$HOME`, or `%USERPROFILE%` on Windows.
 pub fn home_dir() -> Option<std::path::PathBuf> {
-    std::env::var_os("HOME")
-        .or_else(|| if cfg!(windows) { std::env::var_os("USERPROFILE") } else { None })
+    home_dir_from(&|key| std::env::var_os(key), cfg!(windows))
+}
+
+/// The local user name: `$USER`, or `%USERNAME%` on Windows.
+pub fn user_name() -> Option<String> {
+    user_name_from(&|key| std::env::var_os(key), cfg!(windows))
+}
+
+fn home_dir_from(get: &dyn Fn(&str) -> Option<std::ffi::OsString>, windows: bool) -> Option<std::path::PathBuf> {
+    get("HOME")
+        .or_else(|| if windows { get("USERPROFILE") } else { None })
         .map(std::path::PathBuf::from)
+}
+
+fn user_name_from(get: &dyn Fn(&str) -> Option<std::ffi::OsString>, windows: bool) -> Option<String> {
+    get("USER")
+        .or_else(|| if windows { get("USERNAME") } else { None })
+        .map(|name| name.to_string_lossy().into_owned())
 }
 
 /// Directory (in the user config directory) holding the app's own data:
@@ -254,6 +269,27 @@ mod tests {
     use super::*;
     use crate::workspace::project::ProjectColorAccent;
     use crate::workspace::state::WorkspaceState;
+
+    fn lookup<'a>(pairs: &'a [(&'a str, &'a str)]) -> impl Fn(&str) -> Option<std::ffi::OsString> + 'a {
+        move |key| pairs.iter().find(|(k, _)| *k == key).map(|(_, v)| std::ffi::OsString::from(v))
+    }
+
+    #[test]
+    fn windows_home_and_user_come_from_userprofile_and_username() {
+        let env = lookup(&[("USERPROFILE", r"C:\Users\me"), ("USERNAME", "me")]);
+        assert_eq!(home_dir_from(&env, true), Some(std::path::PathBuf::from(r"C:\Users\me")));
+        assert_eq!(user_name_from(&env, true), Some("me".to_string()));
+    }
+
+    #[test]
+    fn unix_home_and_user_ignore_windows_variables_and_prefer_home_user() {
+        let windows_only = lookup(&[("USERPROFILE", r"C:\Users\me"), ("USERNAME", "me")]);
+        assert_eq!(home_dir_from(&windows_only, false), None);
+        assert_eq!(user_name_from(&windows_only, false), None);
+        let both = lookup(&[("HOME", "/home/me"), ("USER", "me"), ("USERPROFILE", "x"), ("USERNAME", "y")]);
+        assert_eq!(home_dir_from(&both, true), Some(std::path::PathBuf::from("/home/me")));
+        assert_eq!(user_name_from(&both, true), Some("me".to_string()));
+    }
 
     #[test]
     fn session_round_trip_preserves_projects_and_active_id() {

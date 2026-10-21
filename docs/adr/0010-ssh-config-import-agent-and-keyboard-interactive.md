@@ -3,7 +3,7 @@
 This partly replaces [0009](0009-embedded-ssh-client.md). The SSH client stays embedded, the Server list stays the app's own, and the app keeps its own known hosts. What changes is how Servers get made and how they sign in:
 
 - **`~/.ssh/config` is imported on request, never followed.** The user imports `Host` entries (HostName, User, Port, IdentityFile, IdentityAgent, ProxyJump) as ordinary Servers and Jump Servers, and can refresh them later; the file is read only then, never while connecting and never written. This keeps 0009's point (behaviour does not depend on the machine's configuration at run time) while saving the retyping.
-- **ssh-agent sign-in** (`SSH_AUTH_SOCK`, 1Password, Secretive or a chosen socket). The app only asks the agent to sign; private keys never reach it.
+- **ssh-agent sign-in** (`SSH_AUTH_SOCK`, 1Password, Secretive or a chosen socket; on Windows also Pageant). On Windows the sockets are named pipes: System is `SSH_AUTH_SOCK` or else the OpenSSH agent pipe, 1Password is that same pipe (which 1Password serves), Secretive does not exist, and Pageant is reached through its window message. The Windows presets are always offered, since a pipe cannot be probed reliably; a connection that fails says the agent is unavailable. The app only asks the agent to sign; private keys never reach it.
 - **Keyboard-interactive** (OTP/2FA), alone or after a key or the agent. The server's questions are shown as asked and the answers are never stored. A Server that needs them is not reconnected by itself.
 
 ## Considered Options

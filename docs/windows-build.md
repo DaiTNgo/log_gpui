@@ -1,0 +1,71 @@
+# Building for Windows
+
+CI (`.github/workflows/ci.yml`) builds and tests on `windows-latest` and
+`macos-latest` on every push; `ubuntu-latest` runs too but is best effort.
+
+## Cargo config is per machine
+
+`.cargo/config.toml` is not in git (it holds macOS-only paths: the CA bundle
+and `DEVELOPER_DIR`). On a Mac that needs them, copy
+`.cargo/config.macos.toml.example` to `.cargo/config.toml`. A Windows or Linux
+clone needs no Cargo config.
+
+## What differs on Windows
+
+- Agent sign-in: on Windows the System agent is `SSH_AUTH_SOCK` if set, else
+  the OpenSSH agent's named pipe (`\\.\pipe\openssh-ssh-agent`, which
+  1Password also serves, so the 1Password preset is that pipe). Pageant is a
+  separate choice, and an `IdentityAgent` pipe path is honoured. Secretive is
+  macOS-only and not offered on Windows. A missing agent reports "ssh-agent
+  not available at <path tried>". The pipe and Pageant connections are
+  type-checked from a Mac but have only been exercised on real Windows.
+- Home folder and local user: `workspace::session::home_dir()` / `user_name()`
+  read `HOME`/`USER`, falling back to `USERPROFILE`/`USERNAME` on Windows. Use
+  them instead of reading the variables directly (ssh config, `~` expansion,
+  Quick Connect default user).
+- Full Read free-space check: on Windows the free bytes come from
+  `GetDiskFreeSpaceExW` (declared directly in `src/remote/estimate.rs`, no extra
+  crate). If the call fails the size is unknown and nothing is refused, as on Unix.
+- Tests that need Unix tools or APIs (`ssh-agent`, `kill`, file permissions)
+  are `#[cfg(unix)]`. The SSH integration tests skip themselves without
+  `SSH_TEST_DIR`, as everywhere.
+- Local paths: names, folders and `Include` absoluteness come from
+  `local_path` (`file_name`, `folder`, `is_absolute`), which splits on both
+  `\` and `/` and knows `C:\` roots on Windows. The `PathStyle` argument lets
+  the Windows rules be tested on any platform. Remote paths are not local
+  paths: they always split on `/` and do not use this module.
+
+## Cross-checking from a Mac
+
+Cargo cannot run Windows tests on a Mac, but the crate (and its tests) can be
+type-checked for the MSVC target, which catches every "does not compile on
+Windows" mistake.
+
+One-time setup:
+
+```sh
+rustup target add x86_64-pc-windows-msvc
+cargo install cargo-xwin --locked        # downloads the MSVC CRT + Windows SDK on first use
+brew install llvm nasm                   # llvm-rc: gpui's resource step; nasm: aws-lc-sys (via russh)
+export PATH="$(brew --prefix llvm)/bin:$PATH"
+```
+
+(Homebrew's `llvm` is keg-only, hence the `PATH` line. The first `cargo xwin`
+run downloads the Windows SDK into `~/Library/Caches/cargo-xwin`.)
+
+Then:
+
+```sh
+cargo xwin check --target x86_64-pc-windows-msvc --all-targets
+```
+
+`cargo-xwin` also does the linking (`cargo xwin build --target
+x86_64-pc-windows-msvc`), but the result cannot be run on a Mac; the real test
+run is the Windows CI job.
+
+## Console window
+
+`src/main.rs` sets `windows_subsystem = "windows"` for Windows release builds
+(`cfg(all(windows, not(debug_assertions)))`), so the release `.exe` opens no
+console. Debug builds keep the console, so `eprintln!` traces such as
+`LOG_GPUI_LIVE_TRACE` stay visible. macOS and Linux are unaffected.

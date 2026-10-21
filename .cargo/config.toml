@@ -1,5 +1,0 @@
-[http]
-cainfo = "/etc/ssl/cert.pem"
-
-[env]
-DEVELOPER_DIR = "/Library/Developer/CommandLineTools"

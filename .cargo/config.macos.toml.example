@@ -1,0 +1,8 @@
+# Copy to `.cargo/config.toml` (which git ignores) on a Mac whose Rust cannot
+# find the system CA bundle or the developer tools by itself. Other machines
+# (Windows, Linux, CI) need no Cargo config at all.
+[http]
+cainfo = "/etc/ssl/cert.pem"
+
+[env]
+DEVELOPER_DIR = "/Library/Developer/CommandLineTools"

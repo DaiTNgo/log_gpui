@@ -184,6 +184,20 @@ fn globs_compare_the_file_name_only() {
 }
 
 #[test]
+fn a_local_windows_path_reaches_glob_matching_by_its_name() {
+    use log_gpui::local_path::{PathStyle, file_name};
+    // A local file's display name is its name by Windows rules (`\` separates).
+    let name = file_name(r"C:\logs\access-1.log", PathStyle::Windows).unwrap();
+    assert_eq!(name, "access-1.log");
+    let lib = [fmt("nginx", &["access*.log"])];
+    let none = FormatChoices::default();
+    assert_eq!(resolve(&lib, &none, "s", r"C:\logs\access-1.log", name).map(|f| f.id.as_str()), Some("nginx"));
+    // The folder is not part of what a glob sees.
+    let name = file_name(r"C:\access\app.log", PathStyle::Windows).unwrap();
+    assert!(resolve(&lib, &none, "s", r"C:\access\app.log", name).is_none());
+}
+
+#[test]
 fn file_then_space_then_glob_then_auto_detect() {
     let lib = [fmt("app", &[]), fmt("nginx", &["access*.log"])];
     let mut c = FormatChoices::default();

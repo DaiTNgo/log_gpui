@@ -316,12 +316,14 @@ fn test_chain_marks_the_first_failing_step() {
     assert!(steps[0].result.is_err());
 }
 
+#[cfg(unix)]
 /// A throwaway `ssh-agent` holding the given keys.
 struct Agent {
     socket: String,
     pid: String,
 }
 
+#[cfg(unix)]
 impl Agent {
     fn start(dir: &Path, keys: &[&str]) -> Agent {
         let socket = dir.join("agent.sock").display().to_string();
@@ -341,6 +343,7 @@ impl Agent {
     }
 }
 
+#[cfg(unix)]
 impl Drop for Agent {
     fn drop(&mut self) {
         let _ = Command::new("kill").arg(&self.pid).status();
@@ -358,6 +361,7 @@ fn agent_server(rig: &Rig, socket: &str, preferred: Option<String>) -> Server {
     server
 }
 
+#[cfg(unix)]
 #[test]
 fn the_agent_signs_in_and_then_the_one_time_code_follows() {
     let rig = rig(true);
@@ -376,6 +380,7 @@ fn a_missing_agent_socket_is_reported_with_its_path() {
     assert_eq!(result.clone().unwrap_err().message(), "ssh-agent not available at /nonexistent/agent.sock", "{result:?}");
 }
 
+#[cfg(unix)]
 #[test]
 fn an_agent_without_keys_has_nothing_to_accept() {
     let rig = rig(true);
@@ -385,6 +390,7 @@ fn an_agent_without_keys_has_nothing_to_accept() {
     assert!(matches!(result, Err(ConnectError::AgentRejected { .. })), "{result:?}");
 }
 
+#[cfg(unix)]
 #[test]
 fn a_preferred_key_that_the_agent_lacks_is_not_replaced_by_another() {
     let rig = rig(true);
@@ -395,6 +401,7 @@ fn a_preferred_key_that_the_agent_lacks_is_not_replaced_by_another() {
     assert!(matches!(result, Err(ConnectError::AgentRejected { .. })), "{result:?}");
 }
 
+#[cfg(unix)]
 #[test]
 fn the_preferred_key_is_found_by_its_pub_file() {
     let rig = rig(true);

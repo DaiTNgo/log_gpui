@@ -4,6 +4,7 @@
 //! are understood; the rest is listed as skipped.
 
 use super::browse::glob_match;
+use crate::local_path::{PathStyle, is_absolute, join_like, split_last};
 use super::server::{AgentSocket, AuthMethod, MAX_JUMPS, Origin, Server, ServerStore};
 use std::collections::{HashMap, HashSet};
 
@@ -48,17 +49,17 @@ pub struct Env {
 impl Env {
     pub fn current() -> Self {
         Self {
-            home: std::env::var("HOME").unwrap_or_default(),
-            local_user: std::env::var("USER").unwrap_or_default(),
+            home: crate::workspace::session::home_dir().map(|h| h.display().to_string()).unwrap_or_default(),
+            local_user: crate::workspace::session::user_name().unwrap_or_default(),
         }
     }
 
     fn config_path(&self) -> String {
-        format!("{}/.ssh/config", self.home)
+        join_like(&self.home, ".ssh/config")
     }
 
     fn ssh_dir(&self) -> String {
-        format!("{}/.ssh", self.home)
+        join_like(&self.home, ".ssh")
     }
 }
 
@@ -153,7 +154,7 @@ fn read_items(fs: &dyn ConfigFs, env: &Env, text: &str, depth: usize, items: &mu
                     continue;
                 }
                 for pattern in values {
-                    for path in include_paths(fs, env, &pattern) {
+                    for path in include_paths(fs, env, &pattern, PathStyle::native()) {
                         if let Some(text) = fs.read(&path) {
                             read_items(fs, env, &text, depth + 1, items);
                         }
@@ -167,17 +168,20 @@ fn read_items(fs: &dyn ConfigFs, env: &Env, text: &str, depth: usize, items: &mu
 
 /// The files an `Include` pattern stands for: relative paths start from
 /// `~/.ssh`, the file name part may be a glob.
-fn include_paths(fs: &dyn ConfigFs, env: &Env, pattern: &str) -> Vec<String> {
+fn include_paths(fs: &dyn ConfigFs, env: &Env, pattern: &str, style: PathStyle) -> Vec<String> {
     let expanded = tilde(pattern, env);
-    let full = if expanded.starts_with('/') { expanded } else { format!("{}/{expanded}", env.ssh_dir()) };
-    let (dir, name) = match full.rsplit_once('/') {
-        Some((dir, name)) => (dir.to_string(), name.to_string()),
-        None => return Vec::new(),
-    };
+    let full = if is_absolute(&expanded, style) { expanded } else { join_like(&env.ssh_dir(), &expanded) };
+    let Some((dir, name, sep)) = split_include_glob(&full, style) else { return Vec::new() };
     if !name.contains(['*', '?', '[']) {
         return if fs.exists(&full) { vec![full] } else { Vec::new() };
     }
-    fs.list(&dir).into_iter().filter(|n| glob_match(&name, n)).map(|n| format!("{dir}/{n}")).collect()
+    fs.list(&dir).into_iter().filter(|n| glob_match(&name, n)).map(|n| format!("{dir}{sep}{n}")).collect()
+}
+
+/// An `Include` path cut into its folder, its (possibly glob) file name and
+/// the separator it used.
+fn split_include_glob(full: &str, style: PathStyle) -> Option<(String, String, char)> {
+    split_last(full, style).map(|(dir, name, sep)| (dir.to_string(), name.to_string(), sep))
 }
 
 /// Whether a `Host` pattern list matches `alias`: some pattern matches and
@@ -307,7 +311,7 @@ fn tilde(path: &str, env: &Env) -> String {
     if path == "~" {
         env.home.clone()
     } else if let Some(rest) = path.strip_prefix("~/") {
-        format!("{}/{rest}", env.home)
+        join_like(&env.home, rest)
     } else {
         path.to_string()
     }
@@ -407,6 +411,9 @@ fn parse_jump_spec(text: &str, env: &Env) -> Option<(String, String, u16)> {
 fn agent_socket_for(value: &str) -> AgentSocket {
     if value == "SSH_AUTH_SOCK" || value == "$SSH_AUTH_SOCK" {
         return AgentSocket::System;
+    }
+    if value.eq_ignore_ascii_case(super::server::PAGEANT) {
+        return AgentSocket::Pageant;
     }
     for preset in [AgentSocket::OnePassword, AgentSocket::Secretive] {
         if preset.resolve().as_deref() == Some(value) {
@@ -875,6 +882,25 @@ mod tests {
     }
 
     #[test]
+    fn a_windows_drive_path_in_include_is_absolute() {
+        let fs = MapFs::with(&[
+            (r"C:\ssh\conf.d\a.conf", "Host db\n"),
+            (r"C:\ssh\conf.d\b.conf", "Host cache\n"),
+            (r"C:\ssh\one", "Host one\n"),
+            ("/home/me/.ssh/C:/ssh/one", "relative wrongly\n"),
+        ]);
+        let win = |p: &str| include_paths(&fs, &env(), p, PathStyle::Windows);
+        assert_eq!(win(r"C:\ssh\one"), vec![r"C:\ssh\one".to_string()]);
+        // The listing of a Windows folder is out of MapFs's `/` model; check the split instead.
+        assert_eq!(
+            split_include_glob(r"C:\ssh\conf.d\*.conf", PathStyle::Windows),
+            Some((r"C:\ssh\conf.d".to_string(), "*.conf".to_string(), '\\'))
+        );
+        // On Unix a drive path is relative to ~/.ssh.
+        assert!(include_paths(&fs, &env(), r"C:\ssh\one", PathStyle::Unix).is_empty());
+    }
+
+    #[test]
     fn include_loops_stop() {
         let (parsed, _) = parse("Include loop\nHost a\n  HostName x\n", &[("/home/me/.ssh/loop", "Include loop\nHost b\n")]);
         assert!(parsed.hosts.iter().any(|h| h.alias == "a"));
@@ -937,6 +963,17 @@ mod tests {
         assert_eq!(
             find(&all, "web2").server.auth,
             AuthMethod::Agent { socket: AgentSocket::Path("/tmp/a.sock".into()), preferred_key: None }
+        );
+    }
+
+    #[test]
+    fn identity_agent_pageant_means_pageant_and_a_pipe_path_is_kept() {
+        let config = "Host a\n  IdentityAgent pageant\nHost b\n  IdentityAgent \"\\\\.\\pipe\\my-agent\"\n";
+        let all = list(config, &[], &ServerStore::default());
+        assert_eq!(find(&all, "a").server.auth, AuthMethod::Agent { socket: AgentSocket::Pageant, preferred_key: None });
+        assert_eq!(
+            find(&all, "b").server.auth,
+            AuthMethod::Agent { socket: AgentSocket::Path(r"\\.\pipe\my-agent".into()), preferred_key: None }
         );
     }
 
