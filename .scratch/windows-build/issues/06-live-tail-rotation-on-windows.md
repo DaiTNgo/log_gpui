@@ -6,7 +6,7 @@ Identify the file by its volume serial + file index on Windows (the equivalent o
 
 **Blocked by:** 01 (Windows build goes green on CI)
 
-**Status:** ready-for-agent
+**Status:** resolved (windows-build-integration)
 
 - [ ] Rename-then-recreate within a few seconds is detected as rotation on Windows
 - [ ] Truncation is still detected as before

@@ -4,7 +4,7 @@
 
 **Blocked by:** 01 (Windows build goes green on CI)
 
-**Status:** ready-for-agent
+**Status:** resolved (windows-build-integration)
 
 - [ ] Free bytes for a folder are reported on Windows
 - [ ] A Full Read that does not fit is stopped with the same message as on other platforms

@@ -11,7 +11,7 @@ Scope:
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** resolved (windows-build-integration)
 
 - [ ] A Windows CI job runs build and the test suite and is green
 - [ ] No macOS-only Cargo config is tracked in git; a fresh Windows clone fetches crates without extra setup

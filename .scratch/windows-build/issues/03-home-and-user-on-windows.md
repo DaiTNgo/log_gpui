@@ -6,7 +6,7 @@ Use the app's single home-folder helper (which already falls back to `USERPROFIL
 
 **Blocked by:** 01 (Windows build goes green on CI)
 
-**Status:** ready-for-agent
+**Status:** resolved (windows-build-integration)
 
 Note: touches the same ssh-config reading code as 04; don't run both in parallel on the same branch.
 

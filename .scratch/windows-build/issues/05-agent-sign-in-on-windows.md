@@ -6,7 +6,7 @@ Replaces the "agent unavailable" stub from 01.
 
 **Blocked by:** 01 (Windows build goes green on CI)
 
-**Status:** ready-for-agent
+**Status:** resolved (windows-build-integration)
 
 - [ ] Agent sign-in works through the OpenSSH named pipe on Windows
 - [ ] Agent sign-in works through Pageant

@@ -4,7 +4,7 @@
 
 **Blocked by:** 01 (Windows build goes green on CI)
 
-**Status:** ready-for-agent
+**Status:** resolved (windows-build-integration)
 
 - [ ] Release build on Windows uses the GUI subsystem; no console appears on launch
 - [ ] Debug build on Windows still attaches a console
