@@ -88,7 +88,7 @@ impl AppView {
                 .collect(),
             can_close: self.focus.can_close(),
             find_input,
-            find: self.focus.find().clone(),
+            find: self.focus.find(),
             search_matcher: self.focus.search().matcher.clone(),
             rows: self.focus_rows.clone(),
             source,
@@ -101,7 +101,7 @@ impl AppView {
             selection: self.pane_selection,
             bounds_sink: self.pane_bounds.clone(),
             longest,
-            columns: self.pane_columns(),
+            columns: self.pane_layout(),
         }
     }
 

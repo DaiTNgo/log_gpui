@@ -23,7 +23,7 @@ pub struct ParsedFile {
     /// Every line of the file as stored, empty lines included.
     pub lines: Arc<Vec<String>>,
     /// Breaks of a live file, by position of the line they are drawn above.
-    pub raw_breaks: BTreeMap<usize, Arc<BreakMark>>,
+    pub raw_breaks: Arc<BTreeMap<usize, Arc<BreakMark>>>,
     /// What a live file keeps besides its lines.
     pub live: Option<LiveBuffer>,
     /// Why the file could not be read; it then counts as empty.
@@ -45,7 +45,7 @@ impl ParsedFile {
             entries: parsed.entries,
             max_chars: parsed.max_chars.clone(),
             lines: Arc::new(split_lines(&String::from_utf8_lossy(bytes))),
-            raw_breaks: BTreeMap::new(),
+            raw_breaks: Arc::default(),
             live: None,
             load_error: None,
             format_id: None,
@@ -77,13 +77,13 @@ impl ParsedFile {
     /// Move the Breaks at line positions `from` and below by `by` lines;
     /// Breaks that move below position 0 are dropped.
     pub fn shift_breaks_from(&mut self, from: usize, by: isize) {
-        let moved: Vec<(usize, Arc<BreakMark>)> = std::mem::take(&mut self.raw_breaks)
+        let moved: Vec<(usize, Arc<BreakMark>)> = std::mem::take(Arc::make_mut(&mut self.raw_breaks))
             .into_iter()
             .collect();
         for (pos, mark) in moved {
             let pos = if pos >= from { pos as isize + by } else { pos as isize };
             if pos >= 0 {
-                self.raw_breaks.insert(pos as usize, mark);
+                Arc::make_mut(&mut self.raw_breaks).insert(pos as usize, mark);
             }
         }
     }
