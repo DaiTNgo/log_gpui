@@ -234,6 +234,7 @@ fn file_menu(menu: PopupMenu, file: &FileRef, cx: &mut App) -> PopupMenu {
             } else {
                 menu
             };
+            let menu = local_file_live_items(menu, file, cx);
             let menu = menu.item(PopupMenuItem::new("Remove from Log Space").on_click(
                 move |_, _, app| {
                     let (space, id) = (remove.space_id.clone(), remove.file_id.clone());
@@ -336,6 +337,37 @@ fn file_menu(menu: PopupMenu, file: &FileRef, cx: &mut App) -> PopupMenu {
             )
         }
     }
+}
+
+/// Load More and Back to Live Window of a local file followed live, with what
+/// the file holds on top. Nothing for a file that is not followed.
+fn local_file_live_items(menu: PopupMenu, file: &FileRef, cx: &App) -> PopupMenu {
+    let (info, step) = {
+        let view = file.view.read(cx);
+        (view.hold_info(&file.file_id).filter(|i| i.local), view.live.load_more_step)
+    };
+    let Some(info) = info else { return menu };
+    let (more, back, custom) = (file.clone(), file.clone(), file.clone());
+    let off = info.load_more_off.is_some() || info.loading;
+    let extended = info.extended;
+    menu.item(PopupMenuItem::new(info.tooltip()).disabled(true))
+        .item(
+            PopupMenuItem::new(format!("Load more ({})", info.amount_label(step)))
+                .disabled(off)
+                .on_click(move |_, _, app| {
+                    let id = more.file_id.clone();
+                    more.view.update(app, |this, cx| this.load_more(&id, None, cx));
+                }),
+        )
+        .item(PopupMenuItem::new("Load more (custom number)…").disabled(off).on_click(move |_, window, app| {
+            let id = custom.file_id.clone();
+            custom.view.update(app, |this, cx| this.open_custom_load(&id, window, cx));
+        }))
+        .item(PopupMenuItem::new("Back to Live Window").disabled(!extended).on_click(move |_, _, app| {
+            let id = back.file_id.clone();
+            back.view.update(app, |this, cx| this.back_to_live_window(&id, cx));
+        }))
+        .item(PopupMenuItem::separator())
 }
 
 /// Clear, Load More and Back to Live Window of a Remote File, with what the

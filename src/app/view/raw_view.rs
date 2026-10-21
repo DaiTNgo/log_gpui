@@ -113,13 +113,15 @@ impl AppView {
             .items_center()
             .text_size(px(10.0))
             .child(div().text_color(muted).child(info.tooltip()))
-            .child(
-                Button::new(id("clear"))
-                    .ghost()
-                    .xsmall()
-                    .label("Clear")
-                    .on_click(cx.listener(move |this, _, _, cx| this.request_clear_file(&clear_file, cx))),
-            );
+            .when(!info.local, |row| {
+                row.child(
+                    Button::new(id("clear"))
+                        .ghost()
+                        .xsmall()
+                        .label("Clear")
+                        .on_click(cx.listener(move |this, _, _, cx| this.request_clear_file(&clear_file, cx))),
+                )
+            });
         if command {
             return Some(self.live_row_with_waiting(row, cleared, "Waiting for output", warning, muted));
         }
@@ -129,7 +131,7 @@ impl AppView {
                     .xsmall()
                     .label(load_label)
                     .disabled(info.loading || (info.load_more_off.is_some() && !at_limit))
-                    .tooltip(info.load_more_off.unwrap_or("Read older lines from the Server"))
+                    .tooltip(info.load_more_off.unwrap_or(if info.local { "Read older lines from the file" } else { "Read older lines from the Server" }))
                     .on_click(cx.listener(move |this, _, _, cx| this.load_more(&more_file, None, cx))),
             );
         if info.loading {

@@ -20,3 +20,5 @@ Parent: `.scratch/performance/PRD.md`
 - Load More for local files: `AppView::load_more` sends `LoadMore` with the oldest held line's number and hash; `src/live/local_older.rs` finds that line by counting newlines, checks the hash (else `OlderUnavailable`), and reads the lines above with `BackwardLines`. The hold/menu UI (`hold_info`, Clear, Back to Live Window) is still remote-only; Load More for local is reachable through `AppView::load_more` only, no menu item yet.
 - A local file opened larger than the window is trimmed at its first appended batch (it was loaded whole before that).
 - Tests: `tests/live_local_window_test.rs`.
+
+Menu follow-up: a local file followed live now has Load more, Load more (custom number)… and Back to Live Window in its file menu (Imported Log Spaces) and in the Raw View's actions row, without Clear (`HoldInfo::local`, `local_file_live_items`). `tests/local_hold_menu_test.rs` checks `hold_info` of a local file.
