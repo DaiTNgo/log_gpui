@@ -606,3 +606,32 @@ mod edit {
         assert!(!json.contains("added_seq\":null"));
     }
 }
+
+#[test]
+fn only_several_files_or_a_live_glob_show_a_group() {
+    let empty = imported(&[]);
+    assert!(!empty.shows_group());
+    assert!(empty.single_file().is_none());
+
+    let one = imported(&["/var/log/a.log"]);
+    assert!(!one.shows_group());
+    assert_eq!(one.single_file().map(|f| f.display_name.as_str()), Some("a.log"));
+
+    let two = imported(&["/var/log/a.log", "/var/log/b.log"]);
+    assert!(two.shows_group());
+    assert!(two.single_file().is_none());
+
+    let mut glob = LogSpace::new("g".into(), "Globbed".into(), LogSpaceKind::Remote);
+    glob.add_live_glob("s1", "/var/log/app", "*.log").unwrap();
+    assert!(glob.shows_group());
+    assert!(glob.single_file().is_none());
+}
+
+#[test]
+fn a_space_goes_back_to_a_plain_row_when_a_file_is_removed() {
+    let mut space = imported(&["/var/log/a.log", "/var/log/b.log"]);
+    assert!(space.shows_group());
+    let id = space.files[0].file_id.clone();
+    space.remove_file(&id).unwrap();
+    assert!(!space.shows_group());
+}

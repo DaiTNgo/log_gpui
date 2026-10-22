@@ -1,5 +1,4 @@
 use crate::density::Density;
-use crate::highlight::RowPaint;
 use crate::marker::level_marker;
 use crate::model::{LogEntry, LogLevel};
 use crate::palette::{HighlightColor, Tone, Weight, text_rgb};
@@ -848,13 +847,11 @@ impl RowEnv {
         let cell_ctx = CellCtx {
             colors: &colors,
             entry,
-            paint,
             search_ranges: &[],
             find_ranges: &[],
             line_search: &search_ranges,
             selected: selected_in_line.as_ref(),
             tone: colors.tone(),
-            rule_cell: paint.map(|p| self.rule_color(&p.color, Weight::Cell)),
         };
 
         let view_for_row = self.view.clone();
@@ -1168,7 +1165,6 @@ pub(crate) fn render_break(
 pub(crate) struct CellCtx<'a> {
     pub colors: &'a CanvasColors,
     pub entry: &'a LogEntry,
-    pub paint: Option<&'a RowPaint>,
     /// Matches of Search in the message text.
     pub search_ranges: &'a [(usize, usize)],
     /// Matches of Focus Find (painted in the Focus Pane only), in bytes of
@@ -1180,8 +1176,6 @@ pub(crate) struct CellCtx<'a> {
     /// The selected part of the line, in bytes of the stored line.
     pub selected: Option<&'a std::ops::Range<usize>>,
     pub tone: Tone,
-    /// Paint of the cell that meets the winning Highlight Rule's condition.
-    pub rule_cell: Option<gpui::Hsla>,
 }
 
 fn hsla_of(rgb: u32) -> gpui::Hsla {
@@ -1245,14 +1239,7 @@ pub(crate) fn render_text_cell(ctx: &CellCtx, cell: TextCell) -> gpui::AnyElemen
         }
     }
     let highlights = compose(text, &layers);
-    let rule_cell = ctx
-        .paint
-        .filter(|p| p.column == cell.column_key())
-        .and(ctx.rule_cell);
-    let mut el = div();
-    if let Some(bg) = rule_cell {
-        el = el.bg(bg);
-    }
+    let el = div();
     if highlights.is_empty() {
         el.child(text.to_string()).into_any_element()
     } else {
@@ -1305,28 +1292,18 @@ fn render_field_cell(ctx: &CellCtx, key: crate::model::FieldKey, width: Pixels) 
 
 fn render_source_cell(ctx: &CellCtx, width: Pixels) -> impl IntoElement {
     let source = ctx.entry.source.as_deref().unwrap_or("");
-    let mut cell = div()
+    let cell = div()
         .flex_shrink_0()
         .w(width)
         .px_2()
         .text_color(ctx.colors.muted)
         .truncate();
-    if let (Some(p), Some(bg)) = (ctx.paint, ctx.rule_cell) {
-        if p.column == "source" {
-            cell = cell.bg(bg);
-        }
-    }
     cell.child(source.to_string())
 }
 
 fn render_stream_cell(ctx: &CellCtx, width: Pixels) -> impl IntoElement {
     let text = ctx.entry.stream.map_or("", |s| s.as_str());
-    let mut cell = div().flex_shrink_0().w(width).px_2().text_color(ctx.colors.muted).truncate();
-    if let (Some(p), Some(bg)) = (ctx.paint, ctx.rule_cell) {
-        if p.column == "stream" {
-            cell = cell.bg(bg);
-        }
-    }
+    let cell = div().flex_shrink_0().w(width).px_2().text_color(ctx.colors.muted).truncate();
     cell.child(text.to_string())
 }
 

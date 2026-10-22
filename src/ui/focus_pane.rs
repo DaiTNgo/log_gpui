@@ -585,13 +585,11 @@ impl PaneRows {
         let ctx = CellCtx {
             colors: &colors,
             entry,
-            paint,
             search_ranges: cell_search,
             find_ranges: &find_ranges,
             line_search,
             selected: selected_in_line.as_ref(),
             tone,
-            rule_cell: None,
         };
         let level_symbol = level_marker(entry.level).map_or(" ", |m| m.symbol());
         // The current Match outranks the selected row, as on the Log Canvas.

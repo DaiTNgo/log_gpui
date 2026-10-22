@@ -751,6 +751,21 @@ impl LogSpace {
         seq
     }
 
+    /// The sidebar shows the Log Space as a group (chevron and file rows) only
+    /// with several files or a Live Glob; a single file is one plain row.
+    pub fn shows_group(&self) -> bool {
+        self.files.len() >= 2 || !self.globs.is_empty()
+    }
+
+    /// The only file of a Log Space that is not shown as a group.
+    pub fn single_file(&self) -> Option<&LogFile> {
+        if self.shows_group() {
+            None
+        } else {
+            self.files.first()
+        }
+    }
+
     /// The files in the Log Space's single file order.
     pub fn ordered_files(&self) -> Vec<&LogFile> {
         let mut files: Vec<&LogFile> = self.files.iter().collect();

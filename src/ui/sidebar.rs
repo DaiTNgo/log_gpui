@@ -161,7 +161,11 @@ impl SidebarView {
                     &active_target,
                     Some(TabTarget::LogSpace { space_id }) if *space_id == space.id
                 );
+                let grouped = space.shows_group();
                 let expanded = expanded_spaces.contains(&space.id);
+                let single_file = space.single_file().map(|file| {
+                    Box::new(file_ref(&view, project, space, file, false, renaming, no_timestamp_files, globs))
+                });
                 files = push_space(
                     files,
                     SpaceRef {
@@ -172,11 +176,15 @@ impl SidebarView {
                         kind: space.kind,
                         order: space.file_order,
                         expanded,
+                        grouped,
+                        single_file,
                         active: space_active,
                         rename_input: space_rename_input(renaming, &project.id, &space.id),
                     },
                 );
-                if !expanded {
+                // A Log Space with one file is one plain row; its saved
+                // expand state stays untouched for when it grows.
+                if !grouped || !expanded {
                     continue;
                 }
                 // Live Globs first, each with its files; then the files added

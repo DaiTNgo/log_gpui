@@ -36,6 +36,11 @@ pub struct SpaceRef {
     pub kind: LogSpaceKind,
     pub order: FileOrder,
     pub expanded: bool,
+    /// Several files or a Live Glob: the row has a chevron and file rows below.
+    pub grouped: bool,
+    /// The only file of a Log Space that is not a group; its actions join the
+    /// menu of the row.
+    pub single_file: Option<Box<FileRef>>,
     pub active: bool,
     /// Set while this Log Space is being renamed inline.
     pub rename_input: Option<Entity<InputState>>,
@@ -146,6 +151,12 @@ pub fn space_menu(
     let sort_added = space.clone();
     let sort_name = space.clone();
 
+    // A Log Space of one file has no file row: the file's other actions join
+    // this menu, and its live actions are in the status bar.
+    let menu = match &space.single_file {
+        Some(file) => file_menu(menu, file, true, cx).item(PopupMenuItem::separator()),
+        None => menu,
+    };
     let menu = menu.item(PopupMenuItem::new("Rename").on_click(move |_, window, app| {
         let target = RenameTarget::LogSpace {
             project_id: rename.project_id.clone(),
@@ -219,8 +230,10 @@ pub fn space_menu(
     }))
 }
 
-/// The right-click menu of a file.
-fn file_menu(menu: PopupMenu, file: &FileRef, cx: &mut App) -> PopupMenu {
+/// The right-click menu of a file. `in_space_menu`: the file is the only one of
+/// its Log Space, shown in the menu of the Space row: no live items (they are in
+/// the status bar) and no removal (deleting the Space does it).
+fn file_menu(menu: PopupMenu, file: &FileRef, in_space_menu: bool, cx: &mut App) -> PopupMenu {
     match file.kind {
         LogSpaceKind::Imported => {
             let remove = file.clone();
@@ -234,15 +247,15 @@ fn file_menu(menu: PopupMenu, file: &FileRef, cx: &mut App) -> PopupMenu {
             } else {
                 menu
             };
-            let menu = local_file_live_items(menu, file, cx);
-            let menu = menu.item(PopupMenuItem::new("Remove from Log Space").on_click(
-                move |_, _, app| {
+            let menu = if in_space_menu { menu } else { local_file_live_items(menu, file, cx) };
+            let menu = if in_space_menu {
+                menu
+            } else {
+                menu.item(PopupMenuItem::new("Remove from Log Space").on_click(move |_, _, app| {
                     let (space, id) = (remove.space_id.clone(), remove.file_id.clone());
-                    remove
-                        .view
-                        .update(app, |this, cx| this.remove_file_from_space(&space, &id, cx));
-                },
-            ));
+                    remove.view.update(app, |this, cx| this.remove_file_from_space(&space, &id, cx));
+                }))
+            };
             menu.item(
                 PopupMenuItem::new(crate::ui::platform::REVEAL_IN_FILE_MANAGER)
                     .disabled(file.path.is_none())
@@ -272,18 +285,20 @@ fn file_menu(menu: PopupMenu, file: &FileRef, cx: &mut App) -> PopupMenu {
                 let (space, id) = (on_exit.space_id.clone(), on_exit.file_id.clone());
                 on_exit.view.update(app, |this, cx| this.set_restart_on_exit(&space, &id, !restart_on_exit, cx));
             }))
-            .item(PopupMenuItem::separator())
-            .item(PopupMenuItem::new("Remove from Log Space").on_click(move |_, _, app| {
-                let (space, id) = (remove.space_id.clone(), remove.file_id.clone());
-                remove.view.update(app, |this, cx| this.remove_file_from_space(&space, &id, cx));
-            }))
+            .when_item(!in_space_menu, |menu| {
+                menu.item(PopupMenuItem::separator())
+                    .item(PopupMenuItem::new("Remove from Log Space").on_click(move |_, _, app| {
+                        let (space, id) = (remove.space_id.clone(), remove.file_id.clone());
+                        remove.view.update(app, |this, cx| this.remove_file_from_space(&space, &id, cx));
+                    }))
+            })
         }
         LogSpaceKind::Remote => {
             let remove = file.clone();
             let download = file.clone();
             let full = file.clone();
             let edit = file.clone();
-            let menu = remote_file_live_items(menu, file, cx);
+            let menu = if in_space_menu { menu } else { remote_file_live_items(menu, file, cx) };
             // A file a Live Glob brought is edited through the Live Glob.
             let menu = if file.in_glob {
                 menu
@@ -301,10 +316,12 @@ fn file_menu(menu: PopupMenu, file: &FileRef, cx: &mut App) -> PopupMenu {
                 let (space, id) = (download.space_id.clone(), download.file_id.clone());
                 download.view.update(app, |this, cx| this.download_file(&space, &id, cx));
             }))
-            .item(PopupMenuItem::new("Remove from Log Space").on_click(move |_, _, app| {
-                let (space, id) = (remove.space_id.clone(), remove.file_id.clone());
-                remove.view.update(app, |this, cx| this.remove_file_from_space(&space, &id, cx));
-            }))
+            .when_item(!in_space_menu, |menu| {
+                menu.item(PopupMenuItem::new("Remove from Log Space").on_click(move |_, _, app| {
+                    let (space, id) = (remove.space_id.clone(), remove.file_id.clone());
+                    remove.view.update(app, |this, cx| this.remove_file_from_space(&space, &id, cx));
+                }))
+            })
         }
         LogSpaceKind::Scratch => {
             let rename = file.clone();
@@ -324,17 +341,18 @@ fn file_menu(menu: PopupMenu, file: &FileRef, cx: &mut App) -> PopupMenu {
                     .view
                     .update(app, |this, cx| this.save_as_dialog(&space, &id, cx));
             }))
-            .item(PopupMenuItem::separator())
-            .item(
-                danger_item("Delete")
-                    .disabled(!file.can_delete)
-                    .on_click(move |_, _, app| {
-                        let (space, id) = (delete.space_id.clone(), delete.file_id.clone());
-                        delete.view.update(app, |this, cx| {
-                            this.request_delete_scratch_file(&space, &id, cx)
-                        });
-                    }),
-            )
+            .when_item(!in_space_menu, |menu| {
+                menu.item(PopupMenuItem::separator()).item(
+                    danger_item("Delete")
+                        .disabled(!file.can_delete)
+                        .on_click(move |_, _, app| {
+                            let (space, id) = (delete.space_id.clone(), delete.file_id.clone());
+                            delete.view.update(app, |this, cx| {
+                                this.request_delete_scratch_file(&space, &id, cx)
+                            });
+                        }),
+                )
+            })
         }
     }
 }
@@ -488,7 +506,7 @@ fn space_row(space: SpaceRef, cx: &mut App) -> gpui::AnyElement {
         .when(!active, |this| {
             this.hover(move |s| s.bg(accent.opacity(0.8)).text_color(accent_fg))
         })
-        .child(
+        .child(if space.grouped {
             div()
                 .id(SharedString::from(format!("space-chevron-{}", space.space_id)))
                 .flex()
@@ -505,8 +523,12 @@ fn space_row(space: SpaceRef, cx: &mut App) -> gpui::AnyElement {
                         IconName::ChevronRight
                     })
                     .size_3(),
-                ),
-        )
+                )
+                .into_any_element()
+        } else {
+            // Keeps the icons of plain rows aligned with those of groups.
+            div().w(px(12.0)).flex_shrink_0().into_any_element()
+        })
         .child(Icon::new(kind_icon(space.kind)).size_4())
         .child(div().flex_1().truncate().child(space.name.clone()))
         .on_click(move |_, _, app| {
@@ -668,7 +690,7 @@ pub fn push_file(list: MenuList, file: FileRef, active: bool) -> MenuList {
             }
         })
         .context_menu(move |menu, _, cx| {
-            let menu = file_menu(menu, &context, cx);
+            let menu = file_menu(menu, &context, false, cx);
             file_format_items(menu, &context, cx)
         });
     if file.in_glob { list.grouped_child(item, file.gone) } else { list.nested_child(item) }
@@ -749,3 +771,12 @@ fn file_format_items(menu: PopupMenu, file: &FileRef, cx: &mut App) -> PopupMenu
     let menu = menu.item(PopupMenuItem::separator()).item(PopupMenuItem::label("Log Format"));
     format_menu(menu, &file.view, &file.space_id, Some(&file.file_id), current, &formats)
 }
+
+/// `PopupMenu` has no `when`: apply `f` only if `cond`.
+trait WhenItem: Sized {
+    fn when_item(self, cond: bool, f: impl FnOnce(Self) -> Self) -> Self {
+        if cond { f(self) } else { self }
+    }
+}
+
+impl WhenItem for PopupMenu {}
