@@ -184,8 +184,8 @@ pub fn is_field_name(name: &str) -> bool {
 }
 
 /// The name of a field read from lines: a JSON key, a field of a Log Format,
-/// a Detected Field. Kept once for the whole run, so
-/// it is `Copy` and cheap to compare; it orders by its text.
+/// a Detected Field. Kept once for the whole run, so it is `Copy` and cheap
+/// to compare; it orders by its text.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct FieldKey(&'static str);
 

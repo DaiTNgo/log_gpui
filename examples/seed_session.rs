@@ -2,8 +2,8 @@
 //! `seed_session <session dir> <file>...` makes an Imported Log Space;
 //! with `SEED_REMOTE_PORT` and `SEED_REMOTE_KEY` set, the files are paths on
 //! a Server at 127.0.0.1 (also written to `servers.json`) and the space is a
-//! Remote Log Space. `SEED_RAW` opens it in the Raw View. `SEED_COLUMNS`,
-//! `SEED_HIDE` and `SEED_LABELS` set the Project's Columns section.
+//! Remote Log Space. `SEED_RAW` opens it in the Raw View. `SEED_COLUMNS` and
+//! `SEED_HIDE` set the Project's Columns section.
 
 use log_gpui::remote::{AuthMethod, Server, ServerStore};
 use log_gpui::workspace::log_space::LogSpaceKind;

@@ -333,7 +333,8 @@ fn coverage_room(col: PinnableColumn) -> f32 {
 pub struct PaneColumns {
     /// Fixed columns (TIMESTAMP, LEVEL, MODULE) hidden.
     pub hidden: BTreeSet<PinnableColumn>,
-    /// The Field Columns shown, in order.
+    /// The Field Columns shown. Their order is fixed by source (a Log
+    /// Format's fields, then Detected Fields), not chosen by the user.
     pub fields: Vec<FieldKey>,
     pub source: bool,
     pub stream: bool,

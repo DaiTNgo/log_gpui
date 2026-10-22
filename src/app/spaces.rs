@@ -637,11 +637,6 @@ impl AppView {
 
     // ── Quick Settings ──────────────────────────────────────────────────────
 
-    /// Whether the Source Column is shown in the focused Log Space.
-    pub fn source_column_shown(&self) -> bool {
-        self.column_layout.source_visible
-    }
-
     /// Whether the open Log Space has a Remote Command (so its lines have a
     /// Stream and the Stream Column can be shown).
     pub fn active_space_has_command(&self) -> bool {

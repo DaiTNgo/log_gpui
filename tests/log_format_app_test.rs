@@ -298,3 +298,34 @@ fn a_cell_of_another_file_opens_the_format_of_that_file(cx: &mut TestAppContext)
     h.view.update_in(&mut h.cx, |a, window, cx| a.edit_log_format_of_row(row, window, cx));
     h.view.read_with(&h.cx, |a, _| assert_eq!(a.format_editor.as_ref().unwrap().id.as_deref(), Some(nginx.as_str())));
 }
+
+#[gpui::test]
+fn a_new_format_made_from_a_file_applies_to_that_file_only_under_the_name_typed(cx: &mut TestAppContext) {
+    let mut h = open(cx);
+    let (space, file) = (space_id(&mut h), access_id(&mut h));
+    h.view.update_in(&mut h.cx, |a, window, cx| a.edit_log_format(&space, Some(&file), window, cx));
+    h.cx.run_until_parked();
+    h.view.update_in(&mut h.cx, |a, window, cx| {
+        let e = a.format_editor.as_ref().unwrap();
+        assert_eq!(e.id, None, "no format applies: a new one");
+        let (name, template) = (e.name_input.clone(), e.template_input.clone());
+        // Typing in the box tells the editor; `set_value` alone does not.
+        name.update(cx, |s, cx| {
+            s.set_value("web access", window, cx);
+            cx.emit(gpui_component::input::InputEvent::Change);
+        });
+        template.update(cx, |s, cx| {
+            s.set_value(BUILT_IN[0].1, window, cx);
+            cx.emit(gpui_component::input::InputEvent::Change);
+        });
+    });
+    h.cx.run_until_parked();
+    h.view.update(&mut h.cx, |a, cx| a.save_format_editor(cx));
+    h.cx.run_until_parked();
+    h.view.read_with(&h.cx, |a, _| {
+        let id = a.log_formats().iter().find(|f| f.name == "web access").expect("saved under the typed name").id.clone();
+        assert_eq!(a.file_format_choice(&file), Some(FormatChoice::Format(id)));
+        assert_eq!(a.space_format_choice(&space), None, "the Log Space is not changed");
+    });
+    assert!(columns(&mut h).contains(&field("client")));
+}

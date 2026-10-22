@@ -55,18 +55,24 @@ impl AppView {
         self.sync_pane_columns();
     }
 
-    /// The Field Columns of the Canvas: a Log Format's fields first, then the
-    /// other Detected Fields in the order they
-    /// were found. Only fields with a value in a row.
-    fn canvas_field_keys(&self) -> Vec<crate::model::FieldKey> {
+    /// The Field Columns of a layout, in a fixed order by source: a Log
+    /// Format's fields, then the Detected Fields in the order they were
+    /// found, then `extra` (fields read only while on). Only fields with a
+    /// value in a row that pass `keep`.
+    fn field_keys(&self, extra: Vec<String>, keep: impl Fn(&str) -> bool) -> Vec<crate::model::FieldKey> {
         let mut keys: Vec<String> = self.formats.view_fields.clone();
         keys.extend(self.filter_index.field_columns().map(|c| c.key.clone()));
-        let mut seen = std::collections::HashSet::new();
-        keys.retain(|k| is_pane_field(k) && seen.insert(k.clone()));
-        keys.into_iter()
-            .filter(|k| self.filter_index.coverage(k).0 > 0)
+        keys.extend(extra);
+        crate::columns::pane_fields(keys)
+            .into_iter()
+            .filter(|k| keep(k) && self.filter_index.coverage(k).0 > 0)
             .map(|k| crate::model::FieldKey::new(&k))
             .collect()
+    }
+
+    /// The Field Columns of the Canvas, which shows every one.
+    fn canvas_field_keys(&self) -> Vec<crate::model::FieldKey> {
+        self.field_keys(Vec::new(), |_| true)
     }
 
     /// Lay out the columns of the Focus Pane, which has its own switches in
@@ -85,26 +91,16 @@ impl AppView {
         self.column_layout.set_pane_columns(pane, self.density);
     }
 
-    /// The Field Columns the Focus Pane lays out: the ones on that have a
-    /// value in a row, in a fixed order by source: a Log Format's fields, then the
-    /// Detected Fields in the order they were found (a
+    /// The Field Columns the Focus Pane lays out: the ones switched on (a
     /// `key=value` field read only while on comes last).
     fn pane_field_keys(&self) -> Vec<crate::model::FieldKey> {
-        let settings = self.column_settings();
-        let mut keys: Vec<String> = self.formats.view_fields.clone();
-        keys.extend(self.filter_index.field_columns().map(|c| c.key.clone()));
-        keys.extend(settings.pane.iter().filter(|(_, on)| **on).map(|(k, _)| k.clone()));
-        let mut seen = std::collections::HashSet::new();
-        keys.retain(|k| is_pane_field(k) && seen.insert(k.clone()));
-        keys.into_iter()
-            .filter(|k| self.column_shown(k) && self.filter_index.coverage(k).0 > 0)
-            .map(|k| crate::model::FieldKey::new(&k))
-            .collect()
+        let on = self.column_settings().pane.into_iter().filter(|(_, on)| *on).map(|(k, _)| k).collect();
+        self.field_keys(on, |k| self.column_shown(k))
     }
 
     /// Whether the Focus Pane shows the column `key` when the user made no
-    /// choice: the fixed columns, a Log Format's fields, and
-    /// Source and Stream where the open Log Space has them.
+    /// choice: the fixed columns, a Log Format's fields, and Source and
+    /// Stream where the open Log Space has them.
     fn pane_default(&self, key: &str) -> bool {
         match key {
             "timestamp" | "level" | "module" | MESSAGE_KEY => true,
@@ -147,12 +143,6 @@ impl AppView {
     /// Whether the Parsed View draws a Column Header for `key`.
     pub fn has_column_header(&self, key: &str) -> bool {
         PinnableColumn::from_key(key).is_none_or(|c| self.column_layout.columns().contains(&c))
-    }
-
-    /// What the column `key` is called on screen (Filter, Highlights,
-    /// Columns section).
-    pub fn column_display_name(&self, key: &str) -> String {
-        crate::columns::default_name(key).to_string()
     }
 
     /// The rows of the Columns section, with Detected Fields narrowed to
@@ -207,10 +197,4 @@ impl AppView {
         groups.detected.extend(detected);
         groups
     }
-}
-
-/// Whether `key` can be a Field Column of the Focus Pane: a field of the
-/// lines, not one of the fixed columns.
-fn is_pane_field(key: &str) -> bool {
-    crate::model::is_field_name(key) && !BUILT_IN.iter().any(|(k, _)| *k == key)
 }

@@ -1,6 +1,6 @@
 //! Context menu of a cell in the Parsed View: color commands and "Log
-//! Format…" of the cell's file. There is no command to filter from here. Also the menu of the
-//! Focus Pane's lines.
+//! Format…" of the cell's file. There is no command to filter from here.
+//! Also the menu of the Focus Pane's lines.
 
 use crate::app::AppView;
 use gpui::{App, Entity};
@@ -52,7 +52,7 @@ pub fn cell_menu(menu: PopupMenu, view: &Entity<AppView>, cx: &App) -> PopupMenu
         let label = if column == crate::highlight::MESSAGE_COLUMN {
             format!("Highlight rows where message contains “{value}”")
         } else {
-            format!("Highlight rows where {} = {value}", this.column_display_name(&column))
+            format!("Highlight rows where {} = {value}", crate::columns::default_name(&column))
         };
         menu = menu.item(PopupMenuItem::separator()).item(PopupMenuItem::new(label).on_click(
             move |_, _, app| {

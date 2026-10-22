@@ -62,7 +62,7 @@ impl AppView {
             let reason = self.unread_column(&c.column)?;
             (reason != UnreadReason::NotRead).then(|| crate::focus::FocusPaneNotice::UnreadColumn {
                 key: c.column.clone(),
-                name: self.column_display_name(&c.column),
+                name: crate::columns::default_name(&c.column).to_string(),
                 reason: reason.text().to_string(),
                 can_turn_on: reason.can_turn_on(),
             })
@@ -83,12 +83,7 @@ impl AppView {
         // one the line has already (a JSON key, a Log Format's) is not read
         // again.
         let settings = self.column_settings();
-        let on_in_pane = settings.pane.iter().filter(|(_, on)| **on).map(|(k, _)| k.clone());
-        let mut kv: Vec<String> = on_in_pane
-            .filter(|f| crate::model::is_field_name(f) && !crate::columns::BUILT_IN.iter().any(|(k, _)| k == f))
-            .collect();
-        let mut seen = std::collections::HashSet::new();
-        kv.retain(|f| seen.insert(f.clone()));
+        let kv = crate::columns::pane_fields(settings.pane.into_iter().filter(|(_, on)| *on).map(|(k, _)| k));
         if self.line_cache.kv != kv {
             self.line_cache.config = Arc::new(LineConfig::new(&kv));
             self.line_cache.kv = kv;

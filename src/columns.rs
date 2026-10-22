@@ -22,6 +22,15 @@ pub const BUILT_IN: [(&str, &str); 6] = [
     (MESSAGE_KEY, "MESSAGE"),
 ];
 
+/// The keys that can be Field Columns of the Focus Pane, from `keys`: the
+/// fields of the lines, not the fixed columns, each once, in first-seen order.
+pub fn pane_fields(keys: impl IntoIterator<Item = String>) -> Vec<String> {
+    let mut seen = std::collections::HashSet::new();
+    keys.into_iter()
+        .filter(|k| crate::model::is_field_name(k) && !BUILT_IN.iter().any(|(b, _)| b == k) && seen.insert(k.clone()))
+        .collect()
+}
+
 /// The name a column shows.
 pub fn default_name(key: &str) -> &str {
     BUILT_IN.iter().find(|(k, _)| *k == key).map_or(key, |(_, name)| name)
@@ -31,8 +40,7 @@ pub fn default_name(key: &str) -> &str {
 pub struct ColumnSettings {
     /// What the user chose for the Focus Pane in the Columns section, by
     /// column key. A column without a choice follows its default: the fixed
-    /// columns, a Log Format's fields are on,
-    /// Detected Fields are off.
+    /// columns and a Log Format's fields are on, Detected Fields are off.
     #[serde(default)]
     pub pane: BTreeMap<String, bool>,
 }
