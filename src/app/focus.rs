@@ -206,13 +206,35 @@ impl AppView {
             .count()
     }
 
-    /// Switch the open tab's Find Filter on or off.
+    /// Switch the open tab's Find Filter on or off, keeping the user's place:
+    /// switched on, a current line it drops moves to the nearest kept row
+    /// (above, else below); switched off, the current line stays and the pane
+    /// centers it among the restored rows.
     pub fn toggle_find_filter(&mut self, cx: &mut Context<Self>) {
         let find = self.focus.find_mut();
         find.filter = !find.filter;
         self.refresh_focus();
-        self.scroll_pane_to_current();
+        if self.focus.find().is_filtering() && self.pane_selected_index().is_none() {
+            if let Some(index) = self.nearest_kept_row() {
+                self.goto_pane_row(index, Origin::Jump, cx);
+                return;
+            }
+        }
+        match self.pane_selected_index() {
+            // Centered even when already in sight: the rows around it changed.
+            Some(index) => self.focus_scroll.scroll_to_item_strict(index, ScrollStrategy::Center),
+            None => self.scroll_pane_to_current(),
+        }
         cx.notify();
+    }
+
+    /// The pane row closest to the current line: the nearest one above it,
+    /// else the nearest one below.
+    fn nearest_kept_row(&self) -> Option<usize> {
+        let current = self.current_line()?;
+        let sections = self.sections_if_raw();
+        let row = self.focus_row_of_line(&current, &sections)?;
+        nearest_row_before(&self.focus_rows, row).or((!self.focus_rows.is_empty()).then_some(0))
     }
 
     /// `refresh_focus` after rows were appended to the view: the pane lists
