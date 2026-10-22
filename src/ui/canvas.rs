@@ -59,6 +59,13 @@ pub struct CanvasColors {
     pub dark: bool,
 }
 
+/// The single Match color: shared Match paint when Phrase colors are off, the
+/// current-Match outline and the faint tint on Matching rows. Fixed, the same
+/// in both themes.
+pub fn search_match_color(_dark: bool) -> gpui::Hsla {
+    gpui::hsla(0.55, 0.85, 0.55, 1.0)
+}
+
 /// The color the line number of a stderr line is drawn in: a soft red that is
 /// not the red of the Level Marker.
 pub fn stderr_color(dark: bool) -> gpui::Hsla {

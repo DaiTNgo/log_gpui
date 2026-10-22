@@ -42,7 +42,6 @@ pub mod text_select;
 mod tabs;
 mod view;
 mod view_settings;
-pub use view_settings::MatchKind;
 mod workspace_items;
 
 use crate::column::ColumnLayoutState;

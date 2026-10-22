@@ -4,9 +4,7 @@
 //! Opened from the title bar.
 
 use crate::app::AppView;
-use crate::app::MatchKind;
 use crate::density::Density;
-use crate::palette::Hue;
 use gpui::{
     div, px, AnyElement, App, Entity, InteractiveElement, IntoElement, ParentElement,
     prelude::FluentBuilder as _, SharedString, StatefulInteractiveElement, Styled, Window,
@@ -77,7 +75,6 @@ struct Values {
     phrase_colors: bool,
     wrap: bool,
     density: Density,
-    colors: crate::palette::MatchColors,
     /// The Log Format library: id, name, template.
     formats: Vec<(String, String, String)>,
     keymap: crate::keymap::Keymap,
@@ -102,7 +99,6 @@ pub fn open_settings_dialog(view: Entity<AppView>, window: &mut Window, cx: &mut
                     phrase_colors: v.phrase_colors(),
                     wrap: v.raw.soft_wrap,
                     density: v.density,
-                    colors: v.workspace_state.match_colors,
                     formats: v.log_formats().iter().map(|f| (f.id.clone(), f.name.clone(), f.template.clone())).collect(),
                     keymap: v.keymap.clone(),
                     recording: v.keymap_recording,
@@ -560,11 +556,6 @@ fn rows_of(section: SettingsSection, view: &Entity<AppView>, v: &Values, cx: &Ap
                         .into_any_element(),
                 },
                 Row {
-                    title: "Search match color",
-                    description: "Paint of the lines a Search Expression finds, in the view and in the Focus Pane.",
-                    control: match_color_swatches(view, MatchKind::Search, v.colors.search, cx),
-                },
-                Row {
                     title: "Search Highlight in the Focus Pane",
                     description: "Paint Search Matches in the Focus Pane. Every line there already matches the Search, so the paint can be turned off; Focus Find matches stay painted.",
                     control: Switch::new("show-search-highlight")
@@ -575,11 +566,6 @@ fn rows_of(section: SettingsSection, view: &Entity<AppView>, v: &Values, cx: &Ap
                             window.refresh();
                         })
                         .into_any_element(),
-                },
-                Row {
-                    title: "Focus Find match color",
-                    description: "Paint of the text Focus Find finds in the Focus Pane.",
-                    control: match_color_swatches(view, MatchKind::Find, v.colors.find, cx),
                 },
             ]
         }
@@ -600,52 +586,6 @@ fn rows_of(section: SettingsSection, view: &Entity<AppView>, v: &Values, cx: &Ap
         }
         SettingsSection::Keymap => keymap_rows(view, v, cx),
     }
-}
-
-/// "Default" and one swatch per hue.
-fn match_color_swatches(
-    view: &Entity<AppView>,
-    kind: MatchKind,
-    current: Option<Hue>,
-    cx: &App,
-) -> AnyElement {
-    let (border, selected_border) = {
-        let theme = cx.theme();
-        (theme.border, theme.foreground)
-    };
-    let tag = if kind == MatchKind::Search { "search" } else { "find" };
-    let v_default = view.clone();
-    let mut swatches = h_flex().gap_1().items_center();
-    swatches = swatches.child(
-        Button::new(SharedString::from(format!("match-{tag}-default")))
-            .ghost()
-            .xsmall()
-            .label("Default")
-            .selected(current.is_none())
-            .on_click(move |_, window, app| {
-                v_default.update(app, |this, cx| this.set_match_color(kind, None, cx));
-                window.refresh();
-            }),
-    );
-    for hue in Hue::ALL {
-        let (h, s, l) = hue.vivid_hsl();
-        let v = view.clone();
-        swatches = swatches.child(
-            div()
-                .id(SharedString::from(format!("match-{tag}-{}", hue.name())))
-                .size(px(20.0))
-                .rounded_sm()
-                .cursor_pointer()
-                .bg(gpui::hsla(h, s, l, 1.0))
-                .border_1()
-                .border_color(if current == Some(hue) { selected_border } else { border })
-                .on_click(move |_, window, app| {
-                    v.update(app, |this, cx| this.set_match_color(kind, Some(hue), cx));
-                    window.refresh();
-                }),
-        );
-    }
-    swatches.into_any_element()
 }
 
 /// Paint a nav entry's background when it is the open page.

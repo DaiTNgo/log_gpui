@@ -19,9 +19,6 @@ pub struct WorkspaceState {
     /// a tab.
     #[serde(default)]
     pub focus_pane: FocusPaneState,
-    /// Colors of the Search and Focus Find matches: an app setting.
-    #[serde(default)]
-    pub match_colors: crate::palette::MatchColors,
     /// Newest lines kept for each Remote File: an app setting.
     #[serde(default = "default_live_window")]
     pub live_window: usize,
@@ -88,7 +85,6 @@ impl Default for WorkspaceState {
             projects: Vec::new(),
             active_project_id: None,
             focus_pane: FocusPaneState::default(),
-            match_colors: Default::default(),
             live_window: default_live_window(),
             load_more_step: default_load_more_step(),
             full_read_limit_lines: default_full_read_limit(),

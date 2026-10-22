@@ -359,23 +359,16 @@ fn test_focus_pane_height_keeps_room_for_the_view() {
 }
 
 #[test]
-fn test_match_colors_survive_a_restart_and_default_to_the_theme() {
-    use log_gpui::palette::Hue;
-    let mut ws = build_workspace();
-    assert_eq!(ws.match_colors.search, None);
-    assert_eq!(ws.match_colors.find, None);
-    ws.match_colors.search = Some(Hue::Green);
-    ws.match_colors.find = Some(Hue::Pink);
+fn test_a_manifest_from_before_match_colors_were_removed_still_loads() {
+    let ws = build_workspace();
     let json = SessionManifest::from_workspace(&ws).to_json().unwrap();
-    let restored = SessionManifest::from_json(&json).unwrap().into_workspace();
-    assert_eq!(restored.match_colors.search, Some(Hue::Green));
-    assert_eq!(restored.match_colors.find, Some(Hue::Pink));
-
-    // A manifest from before the setting has none.
     let mut value: serde_json::Value = serde_json::from_str(&json).unwrap();
-    value.as_object_mut().unwrap().remove("match_colors");
-    let old = SessionManifest::from_json(&value.to_string()).unwrap().into_workspace();
-    assert_eq!(old.match_colors.search, None);
+    value.as_object_mut().unwrap().insert(
+        "match_colors".into(),
+        serde_json::json!({ "search": "Green", "find": "Pink" }),
+    );
+    let restored = SessionManifest::from_json(&value.to_string()).unwrap().into_workspace();
+    assert_eq!(restored.live_window, ws.live_window);
 }
 
 // Extraction Rules were removed: rules saved by an older version are ignored

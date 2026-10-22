@@ -69,24 +69,6 @@ impl Hue {
     }
 }
 
-/// Which hue paints a kind of match; `None` follows the theme's own color.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
-pub struct MatchColors {
-    /// Search Expression matches, in the view and in the Focus Pane.
-    #[serde(default)]
-    pub search: Option<Hue>,
-    /// Focus Find matches, in the Focus Pane.
-    #[serde(default)]
-    pub find: Option<Hue>,
-}
-
-impl Hue {
-    /// The hue as a bright `(h, s, l)` for painting text matches, `h` in 0..1.
-    pub fn vivid_hsl(self) -> (f32, f32, f32) {
-        (self.degrees() / 360.0, 0.85, 0.55)
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Shade {
     Light,
