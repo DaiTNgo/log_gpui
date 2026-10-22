@@ -35,7 +35,7 @@ pub struct SessionManifest {
     #[serde(default = "crate::workspace::state::default_true")]
     pub show_minimap: bool,
     #[serde(default = "crate::workspace::state::default_true")]
-    pub keyword_colors: bool,
+    pub phrase_colors: bool,
     #[serde(default = "crate::workspace::state::default_true")]
     pub raw_soft_wrap: bool,
     #[serde(default)]
@@ -110,7 +110,7 @@ impl SessionManifest {
             live_glob_interval: ws.live_glob_interval,
             density: ws.density,
             show_minimap: ws.show_minimap,
-            keyword_colors: ws.keyword_colors,
+            phrase_colors: ws.phrase_colors,
             raw_soft_wrap: ws.raw_soft_wrap,
             show_source: ws.show_source,
             show_stream: ws.show_stream,
@@ -145,7 +145,7 @@ impl SessionManifest {
         ws.live_glob_interval = self.live_glob_interval;
         ws.density = self.density;
         ws.show_minimap = self.show_minimap;
-        ws.keyword_colors = self.keyword_colors;
+        ws.phrase_colors = self.phrase_colors;
         ws.raw_soft_wrap = self.raw_soft_wrap;
         ws.show_source = self.show_source;
         ws.show_stream = self.show_stream;

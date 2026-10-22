@@ -5,65 +5,81 @@ fn matcher(q: &str) -> Matcher {
 }
 
 #[test]
-fn each_top_level_or_branch_is_one_color_group() {
-    assert_eq!(matcher("a && b || c").group_keys(), ["a", "c"]);
-    assert_eq!(matcher("timeout && refused || panic").group_keys(), ["timeout", "panic"]);
-    assert_eq!(matcher("a || b || c").group_keys().len(), 3);
+fn every_distinct_phrase_is_its_own_color_whatever_the_operators() {
+    assert_eq!(matcher("a && b || c").phrase_keys(), ["a", "b", "c"]);
+    assert_eq!(matcher("timeout && refused || panic").phrase_keys(), ["timeout", "refused", "panic"]);
+    assert_eq!(matcher("(a || b) && c").phrase_keys(), ["a", "b", "c"]);
+    assert_eq!(matcher("error && \"error code\"").phrase_keys(), ["error", "error code"]);
+    assert_eq!(matcher("a").phrase_keys(), ["a"]);
 }
 
 #[test]
-fn and_and_parentheses_never_split_a_group() {
-    assert_eq!(matcher("(a || b) && c").group_keys(), ["a"]);
-    assert_eq!(matcher("a && (b || c)").group_keys(), ["a"]);
-    assert_eq!(matcher("a").group_keys(), ["a"]);
+fn identical_phrases_in_one_expression_share_one_color() {
+    assert_eq!(matcher("error || (error && x)").phrase_keys(), ["error", "x"]);
+    let m = matcher("error || (error && x)");
+    // Both `error` occurrences are the same phrase index.
+    assert_eq!(m.find_phrase_ranges("error x"), [gr(0, 5, 0), gr(6, 7, 1)]);
 }
 
 #[test]
-fn group_key_is_the_first_phrase_case_folded() {
-    assert_eq!(matcher("Connection REFUSED && x || y").group_keys(), ["connection refused", "y"]);
+fn phrase_key_is_case_folded() {
+    assert_eq!(matcher("Connection REFUSED && Y").phrase_keys(), ["connection refused", "y"]);
+    assert_eq!(matcher("ERROR || error").phrase_keys(), ["error"]);
 }
 
-// ---- ranges per group ----
+// ---- ranges per phrase ----
 
-use log_gpui::search_expr::GroupRange;
+use log_gpui::search_expr::PhraseRange;
 
-fn gr(start: usize, end: usize, group: usize) -> GroupRange {
-    GroupRange { start, end, group }
+fn gr(start: usize, end: usize, phrase: usize) -> PhraseRange {
+    PhraseRange { start, end, phrase }
 }
 
 #[test]
-fn ranges_carry_their_group() {
+fn ranges_carry_their_phrase() {
     let m = matcher("a && b || c");
-    assert_eq!(m.find_group_ranges("a b c"), [gr(0, 1, 0), gr(2, 3, 0), gr(4, 5, 1)]);
+    assert_eq!(m.find_phrase_ranges("a b c"), [gr(0, 1, 0), gr(2, 3, 1), gr(4, 5, 2)]);
 }
 
 #[test]
-fn longer_phrase_wins_where_groups_overlap() {
+fn longer_phrase_wins_where_phrases_overlap() {
     let m = matcher("err || error");
-    assert_eq!(m.find_group_ranges("an error"), [gr(3, 8, 1)]);
+    assert_eq!(m.find_phrase_ranges("an error"), [gr(3, 8, 1)]);
+    // `error` inside `"error code"`, with `&&` between them.
+    let m = matcher("error && \"error code\"");
+    assert_eq!(m.find_phrase_ranges("error: error code"), [gr(0, 5, 0), gr(7, 17, 1)]);
     // Partial overlap: "abc" (3 bytes) beats "cd" (2 bytes) on the shared "c".
     let m = matcher("abc || cd");
-    assert_eq!(m.find_group_ranges("abcd"), [gr(0, 3, 0), gr(3, 4, 1)]);
+    assert_eq!(m.find_phrase_ranges("abcd"), [gr(0, 3, 0), gr(3, 4, 1)]);
 }
 
 #[test]
-fn equal_length_overlap_goes_to_the_earlier_group() {
+fn equal_length_overlap_goes_to_the_earlier_phrase() {
     let m = matcher("ab || bc");
-    assert_eq!(m.find_group_ranges("abc"), [gr(0, 2, 0), gr(2, 3, 1)]);
+    assert_eq!(m.find_phrase_ranges("abc"), [gr(0, 2, 0), gr(2, 3, 1)]);
 }
 
 #[test]
-fn overlapping_phrases_of_one_group_merge() {
+fn overlapping_phrases_with_and_stay_separate_colors() {
     let m = matcher("ab && bc");
-    assert_eq!(m.find_group_ranges("abc"), [gr(0, 3, 0)]);
+    assert_eq!(m.find_phrase_ranges("abc"), [gr(0, 2, 0), gr(2, 3, 1)]);
 }
 
 #[test]
-fn group_ranges_cover_exactly_the_plain_ranges() {
+fn phrases_in_lists_every_phrase_on_the_line_even_when_covered() {
+    let m = matcher("error && \"error code\" || zzz");
+    // `error` is fully covered by `"error code"` in the ranges, but occurs.
+    assert_eq!(m.find_phrase_ranges("error code"), [gr(0, 10, 1)]);
+    assert_eq!(m.phrases_in("error code"), [0, 1]);
+    assert_eq!(m.phrases_in("zzz error"), [0, 2]);
+}
+
+#[test]
+fn phrase_ranges_cover_exactly_the_plain_ranges() {
     let m = matcher("err || error || x && y");
     let line = "an error and x and y errors";
     let mut covered: Vec<(usize, usize)> = Vec::new();
-    for r in m.find_group_ranges(line) {
+    for r in m.find_phrase_ranges(line) {
         match covered.last_mut() {
             Some(last) if r.start <= last.1 => last.1 = last.1.max(r.end),
             _ => covered.push((r.start, r.end)),
@@ -74,18 +90,18 @@ fn group_ranges_cover_exactly_the_plain_ranges() {
 
 // ---- canvas paint ----
 
-use log_gpui::ui::canvas::{search_group_fills, search_paints};
+use log_gpui::ui::canvas::{search_phrase_fills, search_paints};
 
 #[test]
-fn canvas_paints_each_range_in_its_groups_color_and_the_current_match_stronger() {
+fn canvas_paints_each_range_in_its_phrases_color_and_the_current_match_stronger() {
     let m = matcher("a || b");
-    let fills = search_group_fills(&m.group_keys(), Tone::Light);
+    let fills = search_phrase_fills(&m.phrase_keys(), Tone::Light);
     assert_eq!(fills.len(), 2);
     assert_ne!(fills[0].normal.h, fills[1].normal.h);
     assert!(fills[0].current.a > fills[0].normal.a);
     assert_eq!(fills[0].current.h, fills[0].normal.h);
 
-    let ranges = m.find_group_ranges("a b");
+    let ranges = m.find_phrase_ranges("a b");
     let plain = search_paints(&ranges, &fills, false);
     let current = search_paints(&ranges, &fills, true);
     assert_eq!((plain[0].start, plain[0].end, plain[1].start, plain[1].end), (0, 1, 2, 3));
@@ -95,10 +111,40 @@ fn canvas_paints_each_range_in_its_groups_color_and_the_current_match_stronger()
 }
 
 #[test]
-fn the_same_keyword_paints_the_same_color_in_every_matcher() {
-    let one = search_group_fills(&matcher("timeout").group_keys(), Tone::Dark);
-    let other = search_group_fills(&matcher("Timeout && x").group_keys(), Tone::Dark);
+fn the_same_phrase_paints_the_same_color_in_every_matcher() {
+    let one = search_phrase_fills(&matcher("timeout").phrase_keys(), Tone::Dark);
+    let other = search_phrase_fills(&matcher("Timeout && x").phrase_keys(), Tone::Dark);
     assert_eq!(one[0].normal, other[0].normal);
+}
+
+#[test]
+fn a_phrase_keeps_its_color_whatever_operators_surround_it() {
+    let one = search_phrase_fills(&matcher("timeout").phrase_keys(), Tone::Dark);
+    let other = search_phrase_fills(&matcher("TIMEOUT || x").phrase_keys(), Tone::Dark);
+    assert_eq!(one[0], other[0]);
+}
+
+#[test]
+fn identical_phrases_get_one_fill_and_distinct_ones_differ() {
+    let m = matcher("error || (error && x)");
+    let fills = search_phrase_fills(&m.phrase_keys(), Tone::Dark);
+    assert_eq!(fills.len(), 2);
+    assert_ne!(fills[0].normal.h, fills[1].normal.h);
+}
+
+#[test]
+fn hues_are_separated_over_distinct_phrases_only() {
+    // 8 distinct phrases among 12 words, all at least 30 degrees apart.
+    let m = matcher("p0 && p1 || p2 && (p3 || p4) || p0 && p5 || p6 && p7 && p1 || p2");
+    let keys = m.phrase_keys();
+    assert_eq!(keys.len(), 8);
+    let hues = search_color::phrase_hues(&keys);
+    for i in 0..hues.len() {
+        for j in i + 1..hues.len() {
+            assert!(hue_distance(hues[i], hues[j]) >= 30.0, "{i} {j} {hues:?}");
+        }
+    }
+    assert_eq!(hues, search_color::phrase_hues(&keys));
 }
 
 // ---- hue ----
@@ -109,36 +155,36 @@ use log_gpui::palette::Tone;
 use log_gpui::search_color::{self, hue_distance};
 
 #[test]
-fn hue_of_a_keyword_is_stable_and_case_blind() {
+fn hue_of_a_phrase_is_stable_and_case_blind() {
     let h = search_color::hue_for_key("timeout");
     assert_eq!(h, search_color::hue_for_key("timeout"));
     assert!((0.0..360.0).contains(&h));
-    assert_eq!(search_color::group_hues(&["timeout"]), [h]);
+    assert_eq!(search_color::phrase_hues(&["timeout"]), [h]);
     assert_eq!(
-        search_color::group_hues(&matcher("TimeOut").group_keys()),
-        search_color::group_hues(&matcher("timeout").group_keys())
+        search_color::phrase_hues(&matcher("TimeOut").phrase_keys()),
+        search_color::phrase_hues(&matcher("timeout").phrase_keys())
     );
     assert_ne!(search_color::hue_for_key("timeout"), search_color::hue_for_key("panic"));
 }
 
 #[test]
-fn hue_of_a_keyword_never_changes_between_releases() {
+fn hue_of_a_phrase_never_changes_between_releases() {
     // Golden value: if this moves, every user's colors move with it.
     assert_eq!(search_color::hue_for_key("timeout"), GOLDEN_TIMEOUT_HUE);
 }
 
 #[test]
 fn close_hues_are_pushed_apart_in_order_of_appearance() {
-    let hues = search_color::group_hues(&["a", "a"]);
+    let hues = search_color::phrase_hues(&["a", "a"]);
     assert_eq!(hues[0], search_color::hue_for_key("a"));
     assert!(hue_distance(hues[0], hues[1]) >= 30.0);
 }
 
 #[test]
-fn up_to_eight_groups_are_all_at_least_30_degrees_apart() {
+fn up_to_eight_phrases_are_all_at_least_30_degrees_apart() {
     let keys: Vec<String> = (0..8).map(|i| format!("kw{i}")).collect();
     let keys: Vec<&str> = keys.iter().map(String::as_str).collect();
-    let hues = search_color::group_hues(&keys);
+    let hues = search_color::phrase_hues(&keys);
     for i in 0..hues.len() {
         for j in i + 1..hues.len() {
             assert!(hue_distance(hues[i], hues[j]) >= 30.0, "{i} {j} {hues:?}");
@@ -147,13 +193,13 @@ fn up_to_eight_groups_are_all_at_least_30_degrees_apart() {
 }
 
 #[test]
-fn past_twelve_groups_closeness_is_accepted_but_hues_stay_valid_and_deterministic() {
+fn past_twelve_phrases_closeness_is_accepted_but_hues_stay_valid_and_deterministic() {
     let keys: Vec<String> = (0..40).map(|i| format!("kw{i}")).collect();
     let keys: Vec<&str> = keys.iter().map(String::as_str).collect();
-    let a = search_color::group_hues(&keys);
+    let a = search_color::phrase_hues(&keys);
     assert_eq!(a.len(), 40);
     assert!(a.iter().all(|h| (0.0..360.0).contains(h)));
-    assert_eq!(a, search_color::group_hues(&keys));
+    assert_eq!(a, search_color::phrase_hues(&keys));
 }
 
 #[test]
@@ -192,7 +238,7 @@ fn colors_keep_text_readable_in_light_and_dark_for_every_hue() {
     for (tone, page, text) in [(Tone::Light, 0xffffff_u32, 0x1f2328_u32), (Tone::Dark, 0x1e1e1e, 0xd4d4d4)] {
         for step in 0..36 {
             let hue = step as f32 * 10.0;
-            let rgb = search_color::group_rgb(hue, tone);
+            let rgb = search_color::phrase_rgb(hue, tone);
             for opacity in [search_color::MATCH_OPACITY, search_color::CURRENT_MATCH_OPACITY] {
                 let bg = blend(rgb, page, opacity);
                 assert!(contrast(bg, text) >= 4.5, "{tone:?} hue {hue} opacity {opacity}");
@@ -207,16 +253,16 @@ fn current_match_is_stronger_than_other_matches() {
 }
 
 #[test]
-fn with_keyword_colors_off_every_match_paints_the_one_shared_color() {
+fn with_phrase_colors_off_every_match_paints_the_one_shared_color() {
     use log_gpui::ui::canvas::shared_search_paints;
     let m = matcher("a || b");
-    let ranges = m.find_group_ranges("a b");
+    let ranges = m.find_phrase_ranges("a b");
     let shared = gpui::hsla(0.1, 0.5, 0.5, 1.0);
     let paints = shared_search_paints(&ranges, shared);
     assert_eq!(paints.len(), 2);
     assert_eq!((paints[0].start, paints[0].end, paints[1].start, paints[1].end), (0, 1, 2, 3));
     assert_eq!(paints[0].fill, paints[1].fill);
-    assert_eq!(paints[0].fill, shared.opacity(0.55));
+    assert_eq!(paints[0].fill, shared.opacity(search_color::SHARED_SEARCH_OPACITY));
 }
 
 // ---- minimap ticks ----
@@ -227,12 +273,12 @@ fn shared_tick_color() -> gpui::Hsla {
     gpui::hsla(0.1, 0.9, 0.5, 1.0)
 }
 
-fn three_fills() -> Vec<log_gpui::ui::canvas::GroupFill> {
-    search_group_fills(&matcher("a || b || c").group_keys(), Tone::Light)
+fn three_fills() -> Vec<log_gpui::ui::canvas::PhraseFill> {
+    search_phrase_fills(&matcher("a || b || c").phrase_keys(), Tone::Light)
 }
 
 #[test]
-fn a_single_group_line_ticks_in_that_groups_color() {
+fn a_single_phrase_line_ticks_in_that_phrases_color() {
     let fills = three_fills();
     let tick = minimap_tick(&[1], &fills, 40.0, false, true, shared_tick_color());
     assert_eq!(tick.stripes.len(), 1);
@@ -241,7 +287,7 @@ fn a_single_group_line_ticks_in_that_groups_color() {
 }
 
 #[test]
-fn a_multi_group_line_shows_one_stripe_per_color_in_expression_order() {
+fn a_multi_phrase_line_shows_one_stripe_per_color_in_expression_order() {
     let fills = three_fills();
     let tick = minimap_tick(&[0, 2], &fills, 40.0, false, true, shared_tick_color());
     assert_eq!(tick.stripes.len(), 2);
@@ -252,7 +298,7 @@ fn a_multi_group_line_shows_one_stripe_per_color_in_expression_order() {
 }
 
 #[test]
-fn a_tick_too_narrow_for_stripes_takes_the_first_groups_color() {
+fn a_tick_too_narrow_for_stripes_takes_the_first_phrases_color() {
     let fills = three_fills();
     let tick = minimap_tick(&[0, 1, 2], &fills, 4.0, false, true, shared_tick_color());
     assert_eq!(tick.stripes.len(), 1);
@@ -271,37 +317,37 @@ fn the_current_match_tick_is_stronger_and_so_is_its_row_tint() {
 }
 
 #[test]
-fn with_keyword_colors_off_the_tick_is_the_single_shared_color() {
+fn with_phrase_colors_off_the_tick_is_the_single_shared_color() {
     let fills = three_fills();
     let shared = shared_tick_color();
     let tick = minimap_tick(&[0, 1], &fills, 40.0, false, false, shared);
     assert_eq!(tick.stripes.len(), 1);
     assert_eq!((tick.stripes[0].offset, tick.stripes[0].width), (0.0, 40.0));
     assert_eq!(tick.stripes[0].color, shared);
-    assert_eq!(tick.tint, shared.opacity(0.3));
-    assert_eq!(minimap_tick(&[0], &fills, 40.0, true, false, shared).tint, shared.opacity(0.6));
+    assert_eq!(tick.tint, shared.opacity(search_color::MINIMAP_TINT_OPACITY));
+    assert_eq!(minimap_tick(&[0], &fills, 40.0, true, false, shared).tint, shared.opacity(search_color::MINIMAP_CURRENT_TINT_OPACITY));
 }
 
 #[test]
-fn a_line_with_no_known_group_ticks_in_the_shared_color() {
+fn a_line_with_no_known_phrase_ticks_in_the_shared_color() {
     let tick = minimap_tick(&[], &[], 40.0, false, true, shared_tick_color());
     assert_eq!(tick.stripes.len(), 1);
     assert_eq!(tick.stripes[0].color, shared_tick_color());
 }
 
-// ---- Raw view: the same group colors as the Canvas ----
+// ---- Raw view: the same phrase colors as the Canvas ----
 
-fn shared_fill() -> log_gpui::ui::canvas::GroupFill {
-    log_gpui::ui::canvas::GroupFill {
+fn shared_fill() -> log_gpui::ui::canvas::PhraseFill {
+    log_gpui::ui::canvas::PhraseFill {
         normal: gpui::hsla(0.55, 0.85, 0.55, 0.35),
         current: gpui::hsla(0.55, 0.9, 0.55, 0.7),
     }
 }
 
-fn raw_paints(q: &str, line: &str, current: bool, keyword_colors: bool) -> Vec<(usize, usize, gpui::Hsla)> {
+fn raw_paints(q: &str, line: &str, current: bool, phrase_colors: bool) -> Vec<(usize, usize, gpui::Hsla)> {
     let m = matcher(q);
-    let fills = log_gpui::ui::canvas::search_group_fills(&m.group_keys(), Tone::Dark);
-    let fills = keyword_colors.then_some(fills.as_slice());
+    let fills = log_gpui::ui::canvas::search_phrase_fills(&m.phrase_keys(), Tone::Dark);
+    let fills = phrase_colors.then_some(fills.as_slice());
     log_gpui::ui::canvas::line_match_paints(&m, line, current, fills, shared_fill())
         .iter()
         .map(|p| (p.start, p.end, p.fill))
@@ -309,23 +355,23 @@ fn raw_paints(q: &str, line: &str, current: bool, keyword_colors: bool) -> Vec<(
 }
 
 #[test]
-fn raw_view_paints_each_group_in_its_canvas_color() {
-    let fills = log_gpui::ui::canvas::search_group_fills(&matcher("a || b").group_keys(), Tone::Dark);
+fn raw_view_paints_each_phrase_in_its_canvas_color() {
+    let fills = log_gpui::ui::canvas::search_phrase_fills(&matcher("a || b").phrase_keys(), Tone::Dark);
     let p = raw_paints("a || b", "a b a", false, true);
     assert_eq!(p, [(0, 1, fills[0].normal), (2, 3, fills[1].normal), (4, 5, fills[0].normal)]);
     assert_ne!(fills[0].normal, fills[1].normal);
 }
 
 #[test]
-fn raw_view_current_match_uses_the_stronger_group_color() {
-    let fills = log_gpui::ui::canvas::search_group_fills(&matcher("a || b").group_keys(), Tone::Dark);
+fn raw_view_current_match_uses_the_stronger_phrase_color() {
+    let fills = log_gpui::ui::canvas::search_phrase_fills(&matcher("a || b").phrase_keys(), Tone::Dark);
     assert_eq!(raw_paints("a || b", "b", true, true), [(0, 1, fills[1].current)]);
 }
 
 #[test]
 fn raw_view_longer_phrase_wins_an_overlap() {
     let q = "connection || connection refused";
-    let fills = log_gpui::ui::canvas::search_group_fills(&matcher(q).group_keys(), Tone::Dark);
+    let fills = log_gpui::ui::canvas::search_phrase_fills(&matcher(q).phrase_keys(), Tone::Dark);
     assert_eq!(raw_paints(q, "connection refused", false, true), [(0, 18, fills[1].normal)]);
 }
 
@@ -340,4 +386,62 @@ fn raw_view_toggle_off_paints_everything_in_the_old_single_color() {
 fn raw_view_paints_nothing_on_a_line_that_fails_the_whole_expression() {
     assert!(raw_paints("a && b", "only a here", false, true).is_empty());
     assert!(raw_paints("a && b", "only a here", false, false).is_empty());
+}
+
+#[test]
+fn a_phrase_fully_covered_by_a_longer_one_still_gets_its_stripe() {
+    let m = matcher("error && \"error code\"");
+    let line = "error code";
+    // Only the longer phrase survives overlap resolution...
+    assert_eq!(m.find_phrase_ranges(line).len(), 1);
+    // ...but the minimap stripes come from the phrases that occur.
+    let fills = search_phrase_fills(&m.phrase_keys(), Tone::Light);
+    let tick = minimap_tick(&m.phrases_in(line), &fills, 40.0, false, true, shared_tick_color());
+    assert_eq!(tick.stripes.len(), 2);
+    assert_eq!(tick.stripes[0].color.h, fills[0].normal.h);
+    assert_eq!(tick.stripes[1].color.h, fills[1].normal.h);
+}
+
+// ---- Focus Find follows Search for shared phrases ----
+
+#[test]
+fn focus_find_reuses_searchs_hue_for_a_shared_phrase_and_separates_the_rest() {
+    let search = ["a", "b", "c"];
+    let search_hues = search_color::phrase_hues(&search);
+    let find = ["z", "c", "a", "y"];
+    let hues = search_color::phrase_hues_following(&find, &search);
+    assert_eq!(hues[1], search_hues[2]);
+    assert_eq!(hues[2], search_hues[0]);
+    // The others keep 30 degrees from everything already placed.
+    for (i, &h) in hues.iter().enumerate() {
+        if i == 1 || i == 2 {
+            continue;
+        }
+        for j in [1usize, 2] {
+            assert!(hue_distance(h, hues[j]) >= 30.0, "{i} {j} {hues:?}");
+        }
+    }
+    assert_eq!(hues, search_color::phrase_hues_following(&find, &search));
+}
+
+#[test]
+fn without_a_search_expression_focus_find_hues_are_the_plain_ones() {
+    let find = ["z", "c", "a"];
+    assert_eq!(search_color::phrase_hues_following(&find, &[]), search_color::phrase_hues(&find));
+}
+
+#[test]
+fn find_fills_match_search_fills_for_a_shared_phrase_even_when_plain_hues_would_collide() {
+    // Find a pair of keys whose plain hues are within the gap, so that in
+    // `x || y` the second one is pushed but alone it would not be.
+    let keys: Vec<String> = (0..200).map(|i| format!("k{i}")).collect();
+    let (x, y) = keys
+        .iter()
+        .flat_map(|a| keys.iter().map(move |b| (a, b)))
+        .find(|(a, b)| a != b && hue_distance(search_color::hue_for_key(a), search_color::hue_for_key(b)) < 30.0)
+        .unwrap();
+    let search = search_phrase_fills(&[x.as_str(), y.as_str()], Tone::Dark);
+    let find = log_gpui::ui::canvas::find_phrase_fills(&[y.as_str()], &[x.as_str(), y.as_str()], Tone::Dark);
+    assert_eq!(find[0], search[1]);
+    assert_ne!(search[1].normal.h, search_phrase_fills(&[y.as_str()], Tone::Dark)[0].normal.h);
 }

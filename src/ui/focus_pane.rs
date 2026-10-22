@@ -14,7 +14,8 @@ use crate::palette::Weight;
 use crate::search_expr::Matcher;
 use crate::text_selection::TextSelection;
 use crate::ui::canvas::{
-    CanvasColors, CellCtx, SearchPaint, render_text_cell, search_group_fills, search_paints, shared_search_paints,
+    CanvasColors, CellCtx, SearchPaint, find_phrase_fills, flat_paints, render_text_cell, search_paints,
+    search_phrase_fills, shared_search_paints,
 };
 use crate::ui::cells::TextCell;
 use gpui::prelude::FluentBuilder as _;
@@ -473,35 +474,32 @@ pub struct MatchPaints {
 }
 
 /// The paint of the Search Matches and Focus Find finds of `line`. With
-/// keyword colors on, both are painted per Color Group with the same colors
-/// the Canvas uses, so a keyword has one color in Search and in Focus Find;
+/// Phrase colors on, both are painted per Phrase with the same colors the
+/// Canvas uses, and a Phrase in both expressions has one color in Search and
+/// in Focus Find (Focus Find takes Search's hue for it);
 /// off, Search uses the single Match color and Focus Find its own.
 pub fn match_paints(
     line: &str,
     search: Option<&Matcher>,
     find: &FocusFind,
-    keyword_colors: bool,
+    phrase_colors: bool,
     colors: &CanvasColors,
 ) -> MatchPaints {
     let tone = colors.tone();
     let search_ranges = match search {
-        Some(m) if m.is_match(line) => m.find_group_ranges(line),
+        Some(m) if m.is_match(line) => m.find_phrase_ranges(line),
         _ => Vec::new(),
     };
-    let find_ranges = find.find_group_ranges(line);
-    if !keyword_colors {
+    let find_ranges = find.find_phrase_ranges(line);
+    if !phrase_colors {
         return MatchPaints {
             search: shared_search_paints(&search_ranges, colors.search),
-            find: find_ranges
-                .iter()
-                .map(|r| SearchPaint { start: r.start, end: r.end, fill: colors.find.opacity(0.6) })
-                .collect(),
+            find: flat_paints(&find_ranges, colors.find.opacity(crate::search_color::FIND_OPACITY)),
         };
     }
-    let search_fills = search
-        .map(|m| search_group_fills(&m.group_keys(), tone))
-        .unwrap_or_default();
-    let find_fills = search_group_fills(&find.group_keys(), tone);
+    let search_keys = search.map(Matcher::phrase_keys).unwrap_or_default();
+    let search_fills = search_phrase_fills(&search_keys, tone);
+    let find_fills = find_phrase_fills(&find.phrase_keys(), &search_keys, tone);
     MatchPaints {
         search: search_paints(&search_ranges, &search_fills, false),
         find: search_paints(&find_ranges, &find_fills, false),
@@ -585,7 +583,7 @@ impl PaneRows {
             Some(m) if m.is_match(&entry.raw_line) => m.find_ranges(&entry.raw_line),
             _ => Vec::new(),
         };
-        let mut paints = match_paints(&entry.raw_line, self.search_matcher.as_ref(), find, app.keyword_colors(), &colors);
+        let mut paints = match_paints(&entry.raw_line, self.search_matcher.as_ref(), find, app.phrase_colors(), &colors);
         // Focus Find paints over Search, as before.
         let mut search_paints = std::mem::take(&mut paints.search);
         search_paints.append(&mut paints.find);

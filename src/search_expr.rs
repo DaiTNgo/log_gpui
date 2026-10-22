@@ -254,7 +254,8 @@ pub fn parse(input: &str) -> Result<Option<SearchExpr>, SearchError> {
 
 #[derive(Debug, Clone)]
 enum Node {
-    Phrase(Vec<Needle>),
+    /// A Phrase and its index among the distinct Phrases of the expression.
+    Phrase(usize, Vec<Needle>),
     And(Vec<Node>),
     Or(Vec<Node>),
 }
@@ -263,60 +264,46 @@ enum Node {
 #[derive(Debug, Clone)]
 pub struct Matcher {
     root: Node,
-    /// The Color Groups: one per top-level `||` branch, in order of appearance.
-    groups: Vec<ColorGroup>,
+    /// The distinct Phrases, case-folded, in order of first appearance. Each
+    /// is painted in a color of its own, generated from this key.
+    keys: Vec<String>,
 }
 
-#[derive(Debug, Clone)]
-struct ColorGroup {
-    /// The group's first Phrase, case-folded: what the group's hue comes from.
-    key: String,
-    node: Node,
-}
-
-/// A byte range of a line that belongs to Color Group `group`.
+/// A byte range of a line that holds an occurrence of Phrase `phrase` (an
+/// index into `Matcher::phrase_keys`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct GroupRange {
+pub struct PhraseRange {
     pub start: usize,
     pub end: usize,
-    pub group: usize,
-}
-
-fn first_phrase_key(expr: &SearchExpr) -> String {
-    match expr {
-        SearchExpr::Phrase(words) => crate::unicode_text::fold(&words.join(" ")),
-        SearchExpr::And(parts) | SearchExpr::Or(parts) => {
-            parts.first().map(first_phrase_key).unwrap_or_default()
-        }
-    }
+    pub phrase: usize,
 }
 
 impl Matcher {
     pub fn compile(expr: &SearchExpr) -> Self {
-        fn build(expr: &SearchExpr) -> Node {
+        fn build(expr: &SearchExpr, keys: &mut Vec<String>) -> Node {
             match expr {
                 SearchExpr::Phrase(words) => {
-                    Node::Phrase(words.iter().map(|w| Needle::new(w)).collect())
+                    let key = crate::unicode_text::fold(&words.join(" "));
+                    let id = keys.iter().position(|k| *k == key).unwrap_or_else(|| {
+                        keys.push(key);
+                        keys.len() - 1
+                    });
+                    Node::Phrase(id, words.iter().map(|w| Needle::new(w)).collect())
                 }
-                SearchExpr::And(parts) => Node::And(parts.iter().map(build).collect()),
-                SearchExpr::Or(parts) => Node::Or(parts.iter().map(build).collect()),
+                SearchExpr::And(parts) => Node::And(parts.iter().map(|p| build(p, keys)).collect()),
+                SearchExpr::Or(parts) => Node::Or(parts.iter().map(|p| build(p, keys)).collect()),
             }
         }
-        let branches: Vec<&SearchExpr> = match expr {
-            SearchExpr::Or(parts) => parts.iter().collect(),
-            other => vec![other],
-        };
-        let groups = branches
-            .into_iter()
-            .map(|b| ColorGroup { key: first_phrase_key(b), node: build(b) })
-            .collect();
-        Self { root: build(expr), groups }
+        let mut keys = Vec::new();
+        let root = build(expr, &mut keys);
+        Self { root, keys }
     }
 
-    /// The key of each Color Group, in order of appearance: its first Phrase,
-    /// case-folded. The group's color is generated from it.
-    pub fn group_keys(&self) -> Vec<&str> {
-        self.groups.iter().map(|g| g.key.as_str()).collect()
+    /// The distinct Phrases, case-folded, in order of first appearance.
+    /// `||`, `&&` and parentheses do not matter: `a && b || c` has three. A
+    /// Phrase's color is generated from its key.
+    pub fn phrase_keys(&self) -> Vec<&str> {
+        self.keys.iter().map(String::as_str).collect()
     }
 
     /// Whether `line` satisfies the expression.
@@ -324,32 +311,39 @@ impl Matcher {
         eval(&self.root, line)
     }
 
+    /// Indices (into `phrase_keys`) of the Phrases that occur in `line`, in
+    /// expression order, whether or not a longer Phrase covers them.
+    pub fn phrases_in(&self, line: &str) -> Vec<usize> {
+        let mut found = Vec::new();
+        collect(&self.root, line, &mut found);
+        let mut phrases: Vec<usize> = found.into_iter().map(|(_, _, p)| p).collect();
+        phrases.sort_unstable();
+        phrases.dedup();
+        phrases
+    }
+
     /// Byte ranges of every Phrase occurrence in `line`, each tagged with its
-    /// Color Group: sorted and not overlapping. Where Phrases of different
-    /// groups overlap the longer Phrase's group owns the shared bytes (a tie
-    /// goes to the earlier group). The union of the ranges is `find_ranges`.
-    pub fn find_group_ranges(&self, line: &str) -> Vec<GroupRange> {
+    /// Phrase: sorted and not overlapping. Where occurrences of different
+    /// Phrases overlap the longer Phrase owns the shared bytes (a tie goes to
+    /// the earlier Phrase). The union of the ranges is `find_ranges`.
+    pub fn find_phrase_ranges(&self, line: &str) -> Vec<PhraseRange> {
         let mut occurrences: Vec<(usize, usize, usize)> = Vec::new();
-        for (group, g) in self.groups.iter().enumerate() {
-            let mut found = Vec::new();
-            collect(&g.node, line, &mut found);
-            occurrences.extend(found.into_iter().map(|(s, e)| (s, e, group)));
-        }
+        collect(&self.root, line, &mut occurrences);
         let mut points: Vec<usize> = occurrences.iter().flat_map(|&(s, e, _)| [s, e]).collect();
         points.sort_unstable();
         points.dedup();
-        let mut out: Vec<GroupRange> = Vec::new();
+        let mut out: Vec<PhraseRange> = Vec::new();
         for w in points.windows(2) {
             let (start, end) = (w[0], w[1]);
             let owner = occurrences
                 .iter()
                 .filter(|&&(s, e, _)| s <= start && end <= e)
-                .min_by_key(|&&(s, e, g)| (std::cmp::Reverse(e - s), g))
-                .map(|&(_, _, g)| g);
-            let Some(group) = owner else { continue };
+                .min_by_key(|&&(s, e, p)| (std::cmp::Reverse(e - s), p))
+                .map(|&(_, _, p)| p);
+            let Some(phrase) = owner else { continue };
             match out.last_mut() {
-                Some(last) if last.group == group && last.end == start => last.end = end,
-                _ => out.push(GroupRange { start, end, group }),
+                Some(last) if last.phrase == phrase && last.end == start => last.end = end,
+                _ => out.push(PhraseRange { start, end, phrase }),
             }
         }
         out
@@ -358,8 +352,9 @@ impl Matcher {
     /// Byte ranges of every occurrence of every phrase in `line`, sorted and
     /// with overlaps merged.
     pub fn find_ranges(&self, line: &str) -> Vec<(usize, usize)> {
-        let mut out = Vec::new();
-        collect(&self.root, line, &mut out);
+        let mut found = Vec::new();
+        collect(&self.root, line, &mut found);
+        let mut out: Vec<(usize, usize)> = found.into_iter().map(|(s, e, _)| (s, e)).collect();
         out.sort();
         let mut merged: Vec<(usize, usize)> = Vec::with_capacity(out.len());
         for (s, e) in out {
@@ -374,15 +369,17 @@ impl Matcher {
 
 fn eval(node: &Node, line: &str) -> bool {
     match node {
-        Node::Phrase(words) => !phrase_occurrences(words, line, true).is_empty(),
+        Node::Phrase(_, words) => !phrase_occurrences(words, line, true).is_empty(),
         Node::And(parts) => parts.iter().all(|p| eval(p, line)),
         Node::Or(parts) => parts.iter().any(|p| eval(p, line)),
     }
 }
 
-fn collect(node: &Node, line: &str, out: &mut Vec<(usize, usize)>) {
+fn collect(node: &Node, line: &str, out: &mut Vec<(usize, usize, usize)>) {
     match node {
-        Node::Phrase(words) => out.extend(phrase_occurrences(words, line, false)),
+        Node::Phrase(id, words) => {
+            out.extend(phrase_occurrences(words, line, false).into_iter().map(|(s, e)| (s, e, *id)))
+        }
         Node::And(parts) | Node::Or(parts) => {
             for p in parts {
                 collect(p, line, out);

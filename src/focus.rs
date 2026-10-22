@@ -265,16 +265,16 @@ impl FocusFind {
         self.hits.binary_search(&row).is_ok()
     }
 
-    /// The Color Groups of the expression (see `Matcher::group_keys`); none
-    /// without an expression.
-    pub fn group_keys(&self) -> Vec<&str> {
-        self.matcher.as_ref().map(Matcher::group_keys).unwrap_or_default()
+    /// The distinct Phrases of the expression (see `Matcher::phrase_keys`);
+    /// none without an expression.
+    pub fn phrase_keys(&self) -> Vec<&str> {
+        self.matcher.as_ref().map(Matcher::phrase_keys).unwrap_or_default()
     }
 
-    /// Like `find_ranges`, each range tagged with its Color Group.
-    pub fn find_group_ranges(&self, text: &str) -> Vec<crate::search_expr::GroupRange> {
+    /// Like `find_ranges`, each range tagged with its Phrase.
+    pub fn find_phrase_ranges(&self, text: &str) -> Vec<crate::search_expr::PhraseRange> {
         match &self.matcher {
-            Some(m) if m.is_match(text) => m.find_group_ranges(text),
+            Some(m) if m.is_match(text) => m.find_phrase_ranges(text),
             _ => Vec::new(),
         }
     }

@@ -748,9 +748,9 @@ impl AppView {
         let all_bg = hsla(0.55, 0.85, 0.55, 0.35);
         let current_bg = hsla(0.55, 0.9, 0.55, 0.7);
         let tone = if cx.theme().is_dark() { Tone::Dark } else { Tone::Light };
-        let group_fills = (self.keyword_colors() && matcher.is_some()).then(|| {
-            let keys = matcher.as_ref().map(|m| m.group_keys()).unwrap_or_default();
-            crate::ui::canvas::search_group_fills(&keys, tone)
+        let phrase_fills = (self.phrase_colors() && matcher.is_some()).then(|| {
+            let keys = matcher.as_ref().map(|m| m.phrase_keys()).unwrap_or_default();
+            crate::ui::canvas::search_phrase_fills(&keys, tone)
         });
         // Markers of each file, leaving out those of a line edited since.
         let stored: HashMap<String, Vec<(usize, std::ops::Range<usize>, HighlightColor)>> = sections
@@ -787,8 +787,8 @@ impl AppView {
                         matcher,
                         line,
                         is_current,
-                        group_fills.as_deref(),
-                        crate::ui::canvas::GroupFill { normal: all_bg, current: current_bg },
+                        phrase_fills.as_deref(),
+                        crate::ui::canvas::PhraseFill { normal: all_bg, current: current_bg },
                     );
                     for p in paints {
                         decorations.push(TextDecoration::new(

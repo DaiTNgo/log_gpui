@@ -100,14 +100,14 @@ impl AppView {
         cx.notify();
     }
 
-    /// Whether Search Matches are painted per keyword (the Settings toggle).
+    /// Whether Search Matches are painted per Phrase (the Settings toggle).
     /// The Canvas, minimap, Focus Pane and Raw View read it here.
-    pub fn keyword_colors(&self) -> bool {
-        self.workspace_state.keyword_colors
+    pub fn phrase_colors(&self) -> bool {
+        self.workspace_state.phrase_colors
     }
 
-    pub fn set_keyword_colors(&mut self, on: bool, cx: &mut Context<Self>) {
-        self.workspace_state.keyword_colors = on;
+    pub fn set_phrase_colors(&mut self, on: bool, cx: &mut Context<Self>) {
+        self.workspace_state.phrase_colors = on;
         self.update_raw_highlights(cx);
         self.schedule_session_save(cx);
         cx.notify();
