@@ -85,6 +85,8 @@ pub struct PaneState<'a> {
     pub find: &'a FocusFind,
     /// Search Highlight is on (the toggle's state).
     pub search_highlight: bool,
+    /// Phrase colors are on (the Settings toggle): the Phrase chips show.
+    pub phrase_colors: bool,
     /// The matcher whose Matches the rows paint: none while Search
     /// Highlight is off.
     pub search_matcher: Option<Matcher>,
@@ -175,6 +177,16 @@ impl FocusPane {
                 }),
         );
 
+        let find_chips_el = {
+            let search_keys = state.search_matcher.as_ref().map(Matcher::phrase_keys).unwrap_or_default();
+            let chips = crate::ui::phrase_chips::find_chips(
+                &state.find.phrase_keys(),
+                &search_keys,
+                state.colors.tone(),
+                state.phrase_colors,
+            );
+            crate::ui::phrase_chips::render_chips(&chips, crate::ui::phrase_chips::FIND_MAX_CHIPS, cx)
+        };
         let find_label = state.find.label();
         let find_error = state.find.parse_error.is_some();
         let (v_prev, v_next, v_hide) = (state.view.clone(), state.view.clone(), state.view.clone());
@@ -211,6 +223,7 @@ impl FocusPane {
                     )
                     .when(find_error, |this| this.child(Tag::danger().child("!"))),
             )
+            .children(find_chips_el)
             .child(
                 Button::new("focus-find-prev")
                     .ghost()

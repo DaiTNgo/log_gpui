@@ -9,6 +9,7 @@ pub mod inspector;
 pub mod main_view;
 pub mod menu_list;
 pub mod mono;
+pub mod phrase_chips;
 pub mod platform;
 pub mod project_node;
 pub mod project_switcher;

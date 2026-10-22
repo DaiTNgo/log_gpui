@@ -68,6 +68,7 @@ impl AppView {
                                             .h(px(28.0)),
                                     ),
                             )
+                            .children(self.search_phrase_chips(cx))
                             .when(
                                 self.focus.search().is_open && !self.focus.search().query.is_empty(),
                                 |this| {

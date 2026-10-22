@@ -99,6 +99,7 @@ impl AppView {
             find_input,
             find: self.focus.find(),
             search_highlight: self.workspace_state.show_search_highlight,
+            phrase_colors: self.phrase_colors(),
             search_matcher: self.focus_pane_search_matcher(),
             rows: self.focus_rows.clone(),
             source,
