@@ -34,6 +34,7 @@ impl AppView {
             Command::ToggleFocusPane => self.toggle_focus_pane(cx),
             Command::MoveFocusToWindow => self.move_focus_to_window(window, cx),
             Command::ToggleFindFilter => self.toggle_find_filter(cx),
+            Command::ToggleSearchHighlight => self.toggle_search_highlight(cx),
             Command::ToggleFilter => self.toggle_filter_builder(cx),
             Command::GoNextError => self.jump_to_next_error(cx),
             Command::GoPrevError => self.jump_to_prev_error(cx),

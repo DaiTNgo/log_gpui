@@ -100,6 +100,19 @@ impl AppView {
         cx.notify();
     }
 
+    /// Search Highlight: whether the Focus Pane paints Search Matches. One
+    /// setting for every Focus Tab and Focus Pane.
+    pub fn set_show_search_highlight(&mut self, show: bool, cx: &mut Context<Self>) {
+        self.workspace_state.show_search_highlight = show;
+        self.schedule_session_save(cx);
+        cx.notify();
+    }
+
+    pub fn toggle_search_highlight(&mut self, cx: &mut Context<Self>) {
+        let show = !self.workspace_state.show_search_highlight;
+        self.set_show_search_highlight(show, cx);
+    }
+
     pub fn toggle_pin_column(&mut self, col: crate::column::PinnableColumn, cx: &mut Context<Self>) {
         self.column_layout.toggle_pin(col);
         cx.notify();

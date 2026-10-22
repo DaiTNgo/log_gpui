@@ -21,6 +21,7 @@ pub enum Command {
     ToggleFocusPane,
     MoveFocusToWindow,
     ToggleFindFilter,
+    ToggleSearchHighlight,
     ShowHighlights,
     GoNextError,
     GoPrevError,
@@ -52,7 +53,7 @@ pub enum Command {
 
 impl Command {
     /// In the order the Command Palette and the Keymap settings list them.
-    pub const ALL: [Command; 34] = [
+    pub const ALL: [Command; 35] = [
         Command::ToggleSearch,
         Command::NextMatch,
         Command::PrevMatch,
@@ -60,6 +61,7 @@ impl Command {
         Command::ToggleFocusPane,
         Command::MoveFocusToWindow,
         Command::ToggleFindFilter,
+        Command::ToggleSearchHighlight,
         Command::ShowHighlights,
         Command::GoNextError,
         Command::GoPrevError,
@@ -113,6 +115,9 @@ impl Command {
             Command::ToggleFocusPane => ("focus_pane.toggle", "Focus Pane: Show or Hide", &["cmd-j"]),
             Command::MoveFocusToWindow => ("focus_pane.to_window", "Focus Pane: Move to Window", &[]),
             Command::ToggleFindFilter => ("focus_pane.toggle_find_filter", "Focus Pane: Toggle Find Filter", &[]),
+            Command::ToggleSearchHighlight => {
+                ("focus_pane.toggle_search_highlight", "Focus Pane: Toggle Search Highlight", &[])
+            }
             Command::ShowHighlights => ("highlights.open", "Highlights: Open Highlight Rules", &["cmd-shift-m"]),
             Command::GoNextError => ("navigate.next_error", "Navigate: Jump to Next Error", &["cmd-e"]),
             Command::GoPrevError => ("navigate.prev_error", "Navigate: Jump to Previous Error", &["cmd-shift-e"]),
