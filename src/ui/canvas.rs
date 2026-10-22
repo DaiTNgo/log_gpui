@@ -1340,6 +1340,30 @@ pub fn minimap_tick(
     MinimapTick { tint, stripes }
 }
 
+/// The paints of the Matches of one line outside the Canvas (the Raw view).
+/// A line that fails the whole expression has none. `group_fills` colors each
+/// Match by its Color Group; `None` (keyword colors off) paints them all in
+/// `shared`.
+pub fn line_match_paints(
+    matcher: &crate::search_expr::Matcher,
+    line: &str,
+    current: bool,
+    group_fills: Option<&[GroupFill]>,
+    shared: GroupFill,
+) -> Vec<SearchPaint> {
+    if !matcher.is_match(line) {
+        return Vec::new();
+    }
+    let ranges = matcher.find_group_ranges(line);
+    match group_fills {
+        Some(fills) => search_paints(&ranges, fills, current),
+        None => {
+            let fill = if current { shared.current } else { shared.normal };
+            ranges.iter().map(|r| SearchPaint { start: r.start, end: r.end, fill }).collect()
+        }
+    }
+}
+
 /// What a cell needs to know about its row.
 pub(crate) struct CellCtx<'a> {
     pub colors: &'a CanvasColors,
