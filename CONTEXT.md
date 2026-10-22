@@ -254,13 +254,21 @@ _Avoid_: Match Pane, Filter Log, result pane, search results.
 A separate window the Focus Pane can be moved into, to be made larger or put on another screen. While it is open the Focus Pane exists only there, together with the Search field of the open Focus Tab. It always follows the view open in the main window, and closing it or choosing "Move back" returns the Focus Pane under the main window. It is not reopened after a restart.
 _Avoid_: Popup, second window, detached pane.
 
+**Search Highlight**:
+Whether the Focus Pane paints Search Matches, in both the Parsed and the Raw View. Every line there already matches the Search, so the user can turn it off from the Focus Pane, Settings or a Keymap command. One app-wide setting for every Focus Tab, on by default and kept across restarts. It never changes the view's painting, Highlight Rules or Focus Find.
+_Avoid_: Match paint toggle, pane highlighting.
+
 **Focus Tab**:
 One numbered tab (1, 2, 3, …) of the Focus Pane with its own Search Expression and its own Focus Find. The Search field in the toolbar always edits the open Focus Tab's Search Expression, and only the open tab's Matches are marked in the view. Numbers are never reused while the tab is open, and a new tab takes the next number after the highest. The last remaining Focus Tab cannot be closed.
 _Avoid_: Search tab, result tab.
 
 **Focus Find**:
-Finding and jumping between the lines a Focus Tab already lists, written like a Search Expression. It never narrows the Focus Tab, and its finds are marked only in the Focus Pane.
+Finding and jumping between the lines a Focus Tab already lists, written like a Search Expression. On its own it never narrows the Focus Tab (the Find Filter does), and its finds are marked only in the Focus Pane.
 _Avoid_: Pane search, sub-search.
+
+**Find Filter**:
+A mode of Focus Find, switched on and off per Focus Tab with the funnel in the find bar or the Keymap command `focus_pane.toggle_find_filter`: while on and the find text is not empty, the Focus Pane lists only the lines Focus Find finds among those Search and Filter selected, including lines appended later, and the counter reads "N of M lines". With empty find text it narrows nothing. It is never remembered: it is off whenever the app or the Log Space opens again, while the find text is kept.
+_Avoid_: Pane filter, find-only mode.
 
 **Inspector**:
 The right sidebar section that shows the stored text of the selected line, with its Continuation Lines, in both the Raw and the Parsed View.

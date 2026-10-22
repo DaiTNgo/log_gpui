@@ -26,6 +26,23 @@ fn trimming_one_file_equals_building_the_view_again(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn trimming_with_the_find_filter_on_keeps_its_counter(cx: &mut TestAppContext) {
+    let mut f = open(cx, &[("alpha", 0)], 120, 150);
+    setup(&mut f);
+    f.h.view.update(&mut f.h.cx, |app, cx| app.toggle_find_filter(cx));
+    let label = |f: &mut Files| f.h.view.read_with(&f.h.cx, |app, _| app.focus.find().label());
+    for n in 0..3 {
+        let start = 120 + n * 40;
+        f.send("alpha", lines("alpha", start..start + 40, 0));
+        f.pump();
+        let in_place = label(&mut f);
+        assert!(in_place.ends_with(" lines"), "batch {n}: {in_place}");
+        check_against_rebuild(&mut f, &format!("batch {n}"));
+        assert_eq!(in_place, label(&mut f), "batch {n}: counter");
+    }
+}
+
+#[gpui::test]
 fn only_the_trimmed_files_rows_leave_a_merged_space(cx: &mut TestAppContext) {
     let mut f = open(cx, &[("alpha", 0), ("beta", 1)], 100, 130);
     setup(&mut f);

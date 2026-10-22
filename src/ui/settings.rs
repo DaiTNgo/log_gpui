@@ -73,6 +73,7 @@ struct Values {
     glob_limit: usize,
     glob_interval: u64,
     minimap: bool,
+    search_highlight: bool,
     wrap: bool,
     density: Density,
     colors: crate::palette::MatchColors,
@@ -96,6 +97,7 @@ pub fn open_settings_dialog(view: Entity<AppView>, window: &mut Window, cx: &mut
                     glob_limit: v.live.glob_limit,
                     glob_interval: v.live.glob_interval,
                     minimap: v.show_minimap,
+                    search_highlight: v.workspace_state.show_search_highlight,
                     wrap: v.raw.soft_wrap,
                     density: v.density,
                     colors: v.workspace_state.match_colors,
@@ -504,6 +506,7 @@ fn rows_of(section: SettingsSection, view: &Entity<AppView>, v: &Values, cx: &Ap
         }
         SettingsSection::Appearance => {
             let (v_density, v_minimap) = (view.clone(), view.clone());
+            let v_highlight = view.clone();
             let densities = [
                 (Density::Comfortable, "Comfortable"),
                 (Density::Compact, "Compact"),
@@ -545,6 +548,18 @@ fn rows_of(section: SettingsSection, view: &Entity<AppView>, v: &Values, cx: &Ap
                     title: "Search match color",
                     description: "Paint of the lines a Search Expression finds, in the view and in the Focus Pane.",
                     control: match_color_swatches(view, MatchKind::Search, v.colors.search, cx),
+                },
+                Row {
+                    title: "Search Highlight in the Focus Pane",
+                    description: "Paint Search Matches in the Focus Pane. Every line there already matches the Search, so the paint can be turned off; Focus Find matches stay painted.",
+                    control: Switch::new("show-search-highlight")
+                        .checked(v.search_highlight)
+                        .on_click(move |checked: &bool, window, app| {
+                            let on = *checked;
+                            v_highlight.update(app, |this, cx| this.set_show_search_highlight(on, cx));
+                            window.refresh();
+                        })
+                        .into_any_element(),
                 },
                 Row {
                     title: "Focus Find match color",

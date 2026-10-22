@@ -14,7 +14,7 @@ use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::checkbox::Checkbox;
 use gpui_component::input::Input;
 use gpui_component::switch::Switch;
-use gpui_component::tag::Tag;
+use crate::ui::context_sidebar::count_badge;
 use gpui_component::{ActiveTheme as _, Icon, Sizable as _, h_flex, v_flex};
 use gpui_kit::assets::IconName;
 
@@ -116,7 +116,7 @@ impl AppView {
                             .child(rule.summary()),
                     ),
             )
-            .child(Tag::secondary().child(matches.to_string()))
+            .child(count_badge(matches.to_string(), cx))
             .child(
                 Switch::new(ElementId::from(format!("hl-switch-{id}")))
                     .checked(enabled)
@@ -166,11 +166,17 @@ impl AppView {
         if let Some(key) = form.column.as_deref() {
             if key == MESSAGE_COLUMN {
                 card = card.child(div().text_xs().text_color(muted).child("Rows whose message contains the added text."));
-            } else if let Some(col) = self.filter_index.column(key) {
+            } else if let Some(col) = self.filter_index.column(key).filter(|c| c.is_filterable()) {
                 let view = cx.entity();
-                // No height cap: the panel scrolls, like the Filter value list.
+                let query = crate::unicode_text::fold(self.rule_search.read(cx).value().trim());
+                // Capped so ticking values leaves the rest of the sidebar where it is.
                 let mut list = v_flex().w_full().gap_0p5();
+                let mut shown = 0;
                 for (vix, value) in col.values.iter().enumerate() {
+                    if !query.is_empty() && !value.folded.contains(&query) {
+                        continue;
+                    }
+                    shown += 1;
                     let display = value.display.clone();
                     let checked = form.values.iter().any(|v| *v == value.display);
                     let view = view.clone();
@@ -184,7 +190,25 @@ impl AppView {
                             }),
                     );
                 }
-                card = card.child(list);
+                if shown == 0 {
+                    list = list.child(div().text_xs().text_color(muted).child("No value matches."));
+                }
+                let many = col.values.len() >= 12;
+                card = card.child(Input::new(&self.rule_search).small());
+                card = card.child(
+                    div()
+                        .id("hl-form-values")
+                        .w_full()
+                        .when(many, |d| d.h(px(220.0)))
+                        .max_h(px(220.0))
+                        .overflow_y_scroll()
+                        .child(list),
+                );
+            } else if self.filter_index.column(key).is_some() {
+                card = card.child(div().text_xs().text_color(muted).child(format!(
+                    "More than {} values: add text the value contains.",
+                    crate::filter_index::MAX_DISTINCT
+                )));
             }
             if !form.custom.is_empty() {
                 let mut chips = h_flex().w_full().flex_wrap().gap_1();

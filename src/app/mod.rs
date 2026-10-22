@@ -65,7 +65,7 @@ use gpui_component::color_picker::{ColorPickerEvent, ColorPickerState};
 use std::cell::Cell;
 use std::rc::Rc;
 use std::collections::{HashMap, HashSet};
-use gpui_component::input::{InputEvent, InputState};
+use gpui_component::input::{EditorState, InputEvent, InputState};
 use std::sync::Arc;
 
 /// `n` with a comma between each group of three digits: 12345 -> "12,345".
@@ -182,6 +182,13 @@ pub struct AppView {
     /// The "+ Add rule" form of the Highlights section.
     pub rule_form: Option<highlights::RuleForm>,
     pub rule_input: Entity<InputState>,
+    /// Narrows the value list of the New rule form.
+    pub rule_search: Entity<InputState>,
+    pub rule_search_scope: Option<String>,
+    /// Read-only editor showing the selected line, so its text can be selected and copied.
+    pub inspector_editor: Entity<EditorState>,
+    /// What `inspector_editor` currently holds (`None`: no line selected).
+    pub inspector_text: Option<String>,
     pub is_palette_open: bool,
 
     pub file_name: String,
@@ -436,6 +443,20 @@ impl AppView {
             }
         })
         .detach();
+        let inspector_editor = cx.new(|cx| {
+            let mut state = EditorState::new(window, cx);
+            state.set_soft_wrap(true, window, cx);
+            // One stored line has no use for a gutter number.
+            state.set_line_number(false, window, cx);
+            state
+        });
+        let rule_search = cx.new(|cx| InputState::new(window, cx).placeholder("Search values…"));
+        cx.subscribe(&rule_search, |_this: &mut Self, _, event: &InputEvent, cx| {
+            if matches!(event, InputEvent::Change) {
+                cx.notify();
+            }
+        })
+        .detach();
         let rule_input = cx.new(|cx| InputState::new(window, cx).placeholder("Add value…  (contains)"));
         cx.subscribe_in(
             &rule_input,
@@ -496,6 +517,10 @@ impl AppView {
             cell_target: None,
             rule_form: None,
             rule_input,
+            rule_search,
+            rule_search_scope: None,
+            inspector_editor,
+            inspector_text: None,
             is_palette_open: false,
             file_name: String::new(),
             file_format: "Text Log".to_string(),

@@ -46,6 +46,10 @@ pub struct WorkspaceState {
     /// Whether the Raw View wraps long lines: an app setting.
     #[serde(default = "default_true")]
     pub raw_soft_wrap: bool,
+    /// Whether the Focus Pane paints Search Matches (Search Highlight): an
+    /// app setting.
+    #[serde(default = "default_true")]
+    pub show_search_highlight: bool,
 }
 
 /// Default Live Window.
@@ -88,6 +92,7 @@ impl Default for WorkspaceState {
             density: Default::default(),
             show_minimap: true,
             raw_soft_wrap: true,
+            show_search_highlight: true,
         }
     }
 }

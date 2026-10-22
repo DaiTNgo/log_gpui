@@ -409,3 +409,19 @@ fn test_project_with_saved_extraction_rules_opens_and_drops_them_on_save() {
     let again = serde_json::to_string(&project).unwrap();
     assert!(!again.contains("extraction_rules"), "rules are dropped on the next save");
 }
+
+#[test]
+fn test_search_highlight_survives_a_restart_and_defaults_to_on() {
+    let mut ws = build_workspace();
+    assert!(ws.show_search_highlight);
+    ws.show_search_highlight = false;
+    let json = SessionManifest::from_workspace(&ws).to_json().unwrap();
+    let restored = SessionManifest::from_json(&json).unwrap().into_workspace();
+    assert!(!restored.show_search_highlight);
+
+    // A manifest from before the setting loads with Search Highlight on.
+    let mut value: serde_json::Value = serde_json::from_str(&json).unwrap();
+    value.as_object_mut().unwrap().remove("show_search_highlight");
+    let old = SessionManifest::from_json(&value.to_string()).unwrap().into_workspace();
+    assert!(old.show_search_highlight);
+}

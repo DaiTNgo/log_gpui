@@ -136,7 +136,6 @@ impl AppView {
         let mut columns: Vec<(String, String)> = self
             .filter_index
             .columns_in_use()
-            .filter(|c| c.is_filterable())
             .map(|c| (c.key.clone(), c.label.clone()))
             .collect();
         columns.push((MESSAGE_COLUMN.to_string(), "Message".to_string()));
