@@ -280,6 +280,12 @@ impl LogCanvas {
         let minimap_selected = state.selected_row_pos;
         let minimap_handle = state.scroll_handle.clone();
         let minimap_current = state.search_state.current_match_pos();
+        let minimap_matcher = state.search_state.matcher.clone();
+        let minimap_keyword_colors = state.keyword_colors;
+        let minimap_fills = minimap_matcher
+            .as_ref()
+            .map(|m| search_group_fills(&m.group_keys(), colors.tone()))
+            .unwrap_or_default();
         let minimap_canvas = gpui::canvas(
             |_, _, _| (),
             move |bounds, _, window, cx| {
@@ -299,13 +305,28 @@ impl LogCanvas {
                     };
                     let y = bounds.origin.y + px(r as f32 * MINIMAP_ROW_PX);
                     let is_match = minimap_matches.binary_search(&pos).is_ok();
-                    if is_match || minimap_selected == Some(pos) {
-                        let tint = if minimap_selected == Some(pos) {
-                            colors.selected
-                        } else if minimap_current == Some(pos) {
-                            colors.search.opacity(0.6)
-                        } else {
-                            colors.search.opacity(0.3)
+                    let is_selected = minimap_selected == Some(pos);
+                    let width = (entry.payload().len() as f32 / 160.0).clamp(0.0, 1.0) * bar_max;
+                    let width = width.max(3.0);
+                    // Only the lines drawn here are asked which groups they hit.
+                    let match_tick = is_match.then(|| {
+                        let groups = minimap_matcher
+                            .as_ref()
+                            .map(|m| line_groups(&m.find_group_ranges(&entry.raw_line)))
+                            .unwrap_or_default();
+                        minimap_tick(
+                            &groups,
+                            &minimap_fills,
+                            width,
+                            minimap_current == Some(pos),
+                            minimap_keyword_colors,
+                            colors.search,
+                        )
+                    });
+                    if is_match || is_selected {
+                        let tint = match (&match_tick, is_selected) {
+                            (_, true) | (None, _) => colors.selected,
+                            (Some(tick), false) => tick.tint,
                         };
                         window.paint_quad(gpui::fill(
                             gpui::Bounds::new(
@@ -315,26 +336,32 @@ impl LogCanvas {
                             tint,
                         ));
                     }
-                    let color = if let Some(marker) = entry.markers.first() {
-                        gpui::rgb(marker.color.rgb(colors.tone())).into()
-                    } else if is_match {
-                        colors.search
+                    let stripes = if let Some(marker) = entry.markers.first() {
+                        vec![TickStripe {
+                            offset: 0.0,
+                            width,
+                            color: gpui::rgb(marker.color.rgb(colors.tone())).into(),
+                        }]
+                    } else if let Some(tick) = match_tick {
+                        tick.stripes
                     } else {
-                        match entry.level {
+                        let color = match entry.level {
                             LogLevel::Fatal | LogLevel::Error | LogLevel::Warn => {
                                 colors.level(entry.level)
                             }
                             _ => colors.muted.opacity(0.5),
-                        }
+                        };
+                        vec![TickStripe { offset: 0.0, width, color }]
                     };
-                    let width = (entry.payload().len() as f32 / 160.0).clamp(0.0, 1.0) * bar_max;
-                    window.paint_quad(gpui::fill(
-                        gpui::Bounds::new(
-                            gpui::point(bounds.origin.x + px(4.0), y),
-                            gpui::size(px(width.max(3.0)), px(MINIMAP_ROW_PX - 1.0)),
-                        ),
-                        color,
-                    ));
+                    for stripe in stripes {
+                        window.paint_quad(gpui::fill(
+                            gpui::Bounds::new(
+                                gpui::point(bounds.origin.x + px(4.0 + stripe.offset), y),
+                                gpui::size(px(stripe.width), px(MINIMAP_ROW_PX - 1.0)),
+                            ),
+                            stripe.color,
+                        ));
+                    }
                 }
 
                 let top = ((first_visible - start as f32) * MINIMAP_ROW_PX).max(0.0);
@@ -1239,6 +1266,78 @@ pub fn shared_search_paints(ranges: &[crate::search_expr::GroupRange], color: gp
         .iter()
         .map(|r| SearchPaint { start: r.start, end: r.end, fill: color.opacity(0.55) })
         .collect()
+}
+
+/// The Color Groups a line hit, in expression order, each once.
+fn line_groups(ranges: &[crate::search_expr::GroupRange]) -> Vec<usize> {
+    let mut groups: Vec<usize> = ranges.iter().map(|r| r.group).collect();
+    groups.sort_unstable();
+    groups.dedup();
+    groups
+}
+
+/// Narrowest a stripe of a minimap tick may be, in pixels.
+pub const MIN_STRIPE_PX: f32 = 2.0;
+
+/// One vertical stripe of a minimap tick: `offset` and `width` in pixels from
+/// the tick's left edge.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TickStripe {
+    pub offset: f32,
+    pub width: f32,
+    pub color: gpui::Hsla,
+}
+
+/// How the minimap draws a Matching line: the tint behind its row and the
+/// stripes of its tick.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MinimapTick {
+    pub tint: gpui::Hsla,
+    pub stripes: Vec<TickStripe>,
+}
+
+/// The tick of a Matching line on the minimap. `groups` are the Color Groups
+/// the line hit, in expression order. One group: its color. Several: one
+/// stripe each, or the first group's color when the tick is too narrow for
+/// them. `current` (the Current Match) draws stronger. With `keyword_colors`
+/// off, or no group known, the single `shared` color is used.
+pub fn minimap_tick(
+    groups: &[usize],
+    fills: &[GroupFill],
+    width: f32,
+    current: bool,
+    keyword_colors: bool,
+    shared: gpui::Hsla,
+) -> MinimapTick {
+    let tint_opacity = if current { 0.6 } else { 0.3 };
+    let colors: Vec<gpui::Hsla> = if keyword_colors {
+        groups
+            .iter()
+            .filter_map(|&g| fills.get(g))
+            .map(|f| gpui::Hsla { a: if current { 1.0 } else { 0.8 }, ..f.normal })
+            .collect()
+    } else {
+        Vec::new()
+    };
+    let Some(&first) = colors.first() else {
+        return MinimapTick {
+            tint: shared.opacity(tint_opacity),
+            stripes: vec![TickStripe { offset: 0.0, width, color: shared }],
+        };
+    };
+    let tint = gpui::Hsla { a: tint_opacity, ..first };
+    let n = colors.len();
+    let stripes = if n > 1 && width / n as f32 >= MIN_STRIPE_PX {
+        let each = width / n as f32;
+        colors
+            .into_iter()
+            .enumerate()
+            .map(|(i, color)| TickStripe { offset: i as f32 * each, width: each, color })
+            .collect()
+    } else {
+        vec![TickStripe { offset: 0.0, width, color: first }]
+    };
+    MinimapTick { tint, stripes }
 }
 
 /// The paints of the Matches of one line outside the Canvas (the Raw view).

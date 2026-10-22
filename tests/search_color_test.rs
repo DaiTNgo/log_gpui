@@ -219,6 +219,76 @@ fn with_keyword_colors_off_every_match_paints_the_one_shared_color() {
     assert_eq!(paints[0].fill, shared.opacity(0.55));
 }
 
+// ---- minimap ticks ----
+
+use log_gpui::ui::canvas::minimap_tick;
+
+fn shared_tick_color() -> gpui::Hsla {
+    gpui::hsla(0.1, 0.9, 0.5, 1.0)
+}
+
+fn three_fills() -> Vec<log_gpui::ui::canvas::GroupFill> {
+    search_group_fills(&matcher("a || b || c").group_keys(), Tone::Light)
+}
+
+#[test]
+fn a_single_group_line_ticks_in_that_groups_color() {
+    let fills = three_fills();
+    let tick = minimap_tick(&[1], &fills, 40.0, false, true, shared_tick_color());
+    assert_eq!(tick.stripes.len(), 1);
+    assert_eq!((tick.stripes[0].offset, tick.stripes[0].width), (0.0, 40.0));
+    assert_eq!(tick.stripes[0].color.h, fills[1].normal.h);
+}
+
+#[test]
+fn a_multi_group_line_shows_one_stripe_per_color_in_expression_order() {
+    let fills = three_fills();
+    let tick = minimap_tick(&[0, 2], &fills, 40.0, false, true, shared_tick_color());
+    assert_eq!(tick.stripes.len(), 2);
+    assert_eq!((tick.stripes[0].offset, tick.stripes[0].width), (0.0, 20.0));
+    assert_eq!((tick.stripes[1].offset, tick.stripes[1].width), (20.0, 20.0));
+    assert_eq!(tick.stripes[0].color.h, fills[0].normal.h);
+    assert_eq!(tick.stripes[1].color.h, fills[2].normal.h);
+}
+
+#[test]
+fn a_tick_too_narrow_for_stripes_takes_the_first_groups_color() {
+    let fills = three_fills();
+    let tick = minimap_tick(&[0, 1, 2], &fills, 4.0, false, true, shared_tick_color());
+    assert_eq!(tick.stripes.len(), 1);
+    assert_eq!(tick.stripes[0].width, 4.0);
+    assert_eq!(tick.stripes[0].color.h, fills[0].normal.h);
+}
+
+#[test]
+fn the_current_match_tick_is_stronger_and_so_is_its_row_tint() {
+    let fills = three_fills();
+    let plain = minimap_tick(&[0], &fills, 40.0, false, true, shared_tick_color());
+    let current = minimap_tick(&[0], &fills, 40.0, true, true, shared_tick_color());
+    assert_eq!(current.stripes[0].color.h, plain.stripes[0].color.h);
+    assert!(current.stripes[0].color.a > plain.stripes[0].color.a);
+    assert!(current.tint.a > plain.tint.a);
+}
+
+#[test]
+fn with_keyword_colors_off_the_tick_is_the_single_shared_color() {
+    let fills = three_fills();
+    let shared = shared_tick_color();
+    let tick = minimap_tick(&[0, 1], &fills, 40.0, false, false, shared);
+    assert_eq!(tick.stripes.len(), 1);
+    assert_eq!((tick.stripes[0].offset, tick.stripes[0].width), (0.0, 40.0));
+    assert_eq!(tick.stripes[0].color, shared);
+    assert_eq!(tick.tint, shared.opacity(0.3));
+    assert_eq!(minimap_tick(&[0], &fills, 40.0, true, false, shared).tint, shared.opacity(0.6));
+}
+
+#[test]
+fn a_line_with_no_known_group_ticks_in_the_shared_color() {
+    let tick = minimap_tick(&[], &[], 40.0, false, true, shared_tick_color());
+    assert_eq!(tick.stripes.len(), 1);
+    assert_eq!(tick.stripes[0].color, shared_tick_color());
+}
+
 // ---- Raw view: the same group colors as the Canvas ----
 
 fn shared_fill() -> log_gpui::ui::canvas::GroupFill {
