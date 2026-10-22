@@ -43,6 +43,11 @@ pub struct WorkspaceState {
     /// Whether the minimap is shown: an app setting.
     #[serde(default = "default_true")]
     pub show_minimap: bool,
+    /// Whether Search Matches are painted in a color per Phrase;
+    /// off paints them all in the one shared Match color: an app
+    /// setting.
+    #[serde(default = "default_true")]
+    pub phrase_colors: bool,
     /// Whether the Raw View wraps long lines: an app setting.
     #[serde(default = "default_true")]
     pub raw_soft_wrap: bool,
@@ -98,6 +103,7 @@ impl Default for WorkspaceState {
             live_glob_interval: default_glob_interval(),
             density: Default::default(),
             show_minimap: true,
+            phrase_colors: true,
             raw_soft_wrap: true,
             show_search_highlight: true,
             show_source: None,

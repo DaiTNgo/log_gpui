@@ -97,6 +97,8 @@ pub struct CanvasViewState<'a> {
     pub density: Density,
     /// Whether the minimap shows beside the table.
     pub show_minimap: bool,
+    /// Whether Matches are painted per Phrase (else one shared color).
+    pub phrase_colors: bool,
     pub column_layout: &'a crate::column::ColumnLayoutState,
     pub search_state: &'a SearchState,
     pub colors: CanvasColors,
@@ -232,6 +234,15 @@ impl LogCanvas {
             view: state.view.clone(),
             colors: state.colors,
             selected_pos: state.selected_row_pos,
+            phrase_colors: state.phrase_colors,
+            phrase_fills: Arc::new(
+                state
+                    .search_state
+                    .matcher
+                    .as_ref()
+                    .map(|m| search_phrase_fills(&m.phrase_keys(), state.colors.tone()))
+                    .unwrap_or_default(),
+            ),
             search_matcher: state.search_state.matcher.clone(),
             matched_positions: state.search_state.matched_visible_indices.clone(),
             current_match_pos: state.search_state.current_match_pos(),
@@ -269,6 +280,12 @@ impl LogCanvas {
         let minimap_selected = state.selected_row_pos;
         let minimap_handle = state.scroll_handle.clone();
         let minimap_current = state.search_state.current_match_pos();
+        let minimap_matcher = state.search_state.matcher.clone();
+        let minimap_phrase_colors = state.phrase_colors;
+        let minimap_fills = minimap_matcher
+            .as_ref()
+            .map(|m| search_phrase_fills(&m.phrase_keys(), colors.tone()))
+            .unwrap_or_default();
         let minimap_canvas = gpui::canvas(
             |_, _, _| (),
             move |bounds, _, window, cx| {
@@ -288,13 +305,28 @@ impl LogCanvas {
                     };
                     let y = bounds.origin.y + px(r as f32 * MINIMAP_ROW_PX);
                     let is_match = minimap_matches.binary_search(&pos).is_ok();
-                    if is_match || minimap_selected == Some(pos) {
-                        let tint = if minimap_selected == Some(pos) {
-                            colors.selected
-                        } else if minimap_current == Some(pos) {
-                            colors.search.opacity(0.6)
-                        } else {
-                            colors.search.opacity(0.3)
+                    let is_selected = minimap_selected == Some(pos);
+                    let width = (entry.payload().len() as f32 / 160.0).clamp(0.0, 1.0) * bar_max;
+                    let width = width.max(3.0);
+                    // Only the lines drawn here are asked which Phrases they hold.
+                    let match_tick = is_match.then(|| {
+                        let phrases = minimap_matcher
+                            .as_ref()
+                            .map(|m| m.phrases_in(&entry.raw_line))
+                            .unwrap_or_default();
+                        minimap_tick(
+                            &phrases,
+                            &minimap_fills,
+                            width,
+                            minimap_current == Some(pos),
+                            minimap_phrase_colors,
+                            colors.search,
+                        )
+                    });
+                    if is_match || is_selected {
+                        let tint = match (&match_tick, is_selected) {
+                            (_, true) | (None, _) => colors.selected,
+                            (Some(tick), false) => tick.tint,
                         };
                         window.paint_quad(gpui::fill(
                             gpui::Bounds::new(
@@ -304,26 +336,32 @@ impl LogCanvas {
                             tint,
                         ));
                     }
-                    let color = if let Some(marker) = entry.markers.first() {
-                        gpui::rgb(marker.color.rgb(colors.tone())).into()
-                    } else if is_match {
-                        colors.search
+                    let stripes = if let Some(marker) = entry.markers.first() {
+                        vec![TickStripe {
+                            offset: 0.0,
+                            width,
+                            color: gpui::rgb(marker.color.rgb(colors.tone())).into(),
+                        }]
+                    } else if let Some(tick) = match_tick {
+                        tick.stripes
                     } else {
-                        match entry.level {
+                        let color = match entry.level {
                             LogLevel::Fatal | LogLevel::Error | LogLevel::Warn => {
                                 colors.level(entry.level)
                             }
                             _ => colors.muted.opacity(0.5),
-                        }
+                        };
+                        vec![TickStripe { offset: 0.0, width, color }]
                     };
-                    let width = (entry.payload().len() as f32 / 160.0).clamp(0.0, 1.0) * bar_max;
-                    window.paint_quad(gpui::fill(
-                        gpui::Bounds::new(
-                            gpui::point(bounds.origin.x + px(4.0), y),
-                            gpui::size(px(width.max(3.0)), px(MINIMAP_ROW_PX - 1.0)),
-                        ),
-                        color,
-                    ));
+                    for stripe in stripes {
+                        window.paint_quad(gpui::fill(
+                            gpui::Bounds::new(
+                                gpui::point(bounds.origin.x + px(4.0 + stripe.offset), y),
+                                gpui::size(px(stripe.width), px(MINIMAP_ROW_PX - 1.0)),
+                            ),
+                            stripe.color,
+                        ));
+                    }
                 }
 
                 let top = ((first_visible - start as f32) * MINIMAP_ROW_PX).max(0.0);
@@ -767,6 +805,9 @@ fn header_menu(
 /// Everything one row needs to draw itself, cloned out of the view state so
 /// the virtualized list can build rows on its own.
 struct RowEnv {
+    phrase_colors: bool,
+    /// Paint of each Phrase of the Search Expression.
+    phrase_fills: Arc<Vec<PhraseFill>>,
     visible: Arc<Vec<usize>>,
     view: gpui::Entity<crate::app::AppView>,
     colors: CanvasColors,
@@ -833,9 +874,15 @@ impl RowEnv {
         };
         // Search matches the whole line; each shown cell paints the Matches
         // it holds, and a line whose Matches are all out of sight says so.
-        let search_ranges = match (&self.search_matcher, is_match) {
-            (Some(m), true) => m.find_ranges(&entry.raw_line),
+        let phrase_ranges = match (&self.search_matcher, is_match) {
+            (Some(m), true) => m.find_phrase_ranges(&entry.raw_line),
             _ => Vec::new(),
+        };
+        let search_ranges: Vec<(usize, usize)> = phrase_ranges.iter().map(|r| (r.start, r.end)).collect();
+        let search_paints = if self.phrase_colors {
+            search_paints(&phrase_ranges, &self.phrase_fills, is_current_match)
+        } else {
+            shared_search_paints(&phrase_ranges, colors.search)
         };
         let hidden_match = crate::ui::cells::hidden_matches(entry, &search_ranges, &self.layout)
             .map(|hidden| crate::ui::cells::hidden_matches_tooltip(&hidden, &self.layout));
@@ -851,7 +898,8 @@ impl RowEnv {
             paint,
             search_ranges: &[],
             find_ranges: &[],
-            line_search: &search_ranges,
+            line_search: &[],
+            search_paints: &search_paints,
             selected: selected_in_line.as_ref(),
             tone: colors.tone(),
             rule_cell: paint.map(|p| self.rule_color(&p.color, Weight::Cell)),
@@ -1164,6 +1212,166 @@ pub(crate) fn render_break(
         .into_any_element()
 }
 
+/// The paint of one Phrase of the Search Expression: behind an ordinary
+/// Match, and behind the Current Match (the same color, stronger).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PhraseFill {
+    pub normal: gpui::Hsla,
+    pub current: gpui::Hsla,
+}
+
+/// One Match range of a line, painted in its Phrase's color.
+#[derive(Debug, Clone, Copy)]
+pub struct SearchPaint {
+    pub start: usize,
+    pub end: usize,
+    pub fill: gpui::Hsla,
+}
+
+fn phrase_fills_of_hues(hues: Vec<f32>, tone: Tone) -> Vec<PhraseFill> {
+    hues.into_iter()
+        .map(|hue| {
+            let color = hsla_of(crate::search_color::phrase_rgb(hue, tone));
+            PhraseFill {
+                normal: color.opacity(crate::search_color::MATCH_OPACITY),
+                current: color.opacity(crate::search_color::CURRENT_MATCH_OPACITY),
+            }
+        })
+        .collect()
+}
+
+/// The paint of every distinct Phrase, from the `Matcher::phrase_keys` of a
+/// Search Expression, for the given theme. Hues are generated (see
+/// `search_color`).
+pub fn search_phrase_fills(keys: &[&str], tone: Tone) -> Vec<PhraseFill> {
+    phrase_fills_of_hues(crate::search_color::phrase_hues(keys), tone)
+}
+
+/// The paint of every distinct Phrase of a Focus Find expression. A Phrase
+/// that is also in the Search Expression (`search_keys`) has the color it has
+/// there, so one Phrase is one color on every surface.
+pub fn find_phrase_fills(keys: &[&str], search_keys: &[&str], tone: Tone) -> Vec<PhraseFill> {
+    phrase_fills_of_hues(crate::search_color::phrase_hues_following(keys, search_keys), tone)
+}
+
+/// The Match ranges of a line (`Matcher::find_phrase_ranges`) with the paint
+/// of their Phrases; `current` picks the stronger paint of the Current Match.
+pub fn search_paints(
+    ranges: &[crate::search_expr::PhraseRange],
+    fills: &[PhraseFill],
+    current: bool,
+) -> Vec<SearchPaint> {
+    ranges
+        .iter()
+        .filter_map(|r| {
+            let fill = fills.get(r.phrase)?;
+            Some(SearchPaint { start: r.start, end: r.end, fill: if current { fill.current } else { fill.normal } })
+        })
+        .collect()
+}
+
+/// The ranges of a line all in one `fill`.
+pub fn flat_paints(ranges: &[crate::search_expr::PhraseRange], fill: gpui::Hsla) -> Vec<SearchPaint> {
+    ranges.iter().map(|r| SearchPaint { start: r.start, end: r.end, fill }).collect()
+}
+
+/// The Match ranges of a line, all in the one shared Match color (the
+/// look with Phrase colors off).
+pub fn shared_search_paints(ranges: &[crate::search_expr::PhraseRange], color: gpui::Hsla) -> Vec<SearchPaint> {
+    flat_paints(ranges, color.opacity(crate::search_color::SHARED_SEARCH_OPACITY))
+}
+
+/// Narrowest a stripe of a minimap tick may be, in pixels.
+pub const MIN_STRIPE_PX: f32 = 2.0;
+
+/// One vertical stripe of a minimap tick: `offset` and `width` in pixels from
+/// the tick's left edge.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TickStripe {
+    pub offset: f32,
+    pub width: f32,
+    pub color: gpui::Hsla,
+}
+
+/// How the minimap draws a Matching line: the tint behind its row and the
+/// stripes of its tick.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MinimapTick {
+    pub tint: gpui::Hsla,
+    pub stripes: Vec<TickStripe>,
+}
+
+/// The tick of a Matching line on the minimap. `phrases` are the distinct
+/// Phrases that occur on the line (`Matcher::phrases_in`), in expression
+/// order, even those a longer Phrase covers. One Phrase: its color. Several:
+/// one stripe each, or the first Phrase's color when the tick is too narrow
+/// for them. `current` (the Current Match) draws stronger. With
+/// `phrase_colors` off, or no Phrase known, the single `shared` color is used.
+pub fn minimap_tick(
+    phrases: &[usize],
+    fills: &[PhraseFill],
+    width: f32,
+    current: bool,
+    phrase_colors: bool,
+    shared: gpui::Hsla,
+) -> MinimapTick {
+    use crate::search_color::*;
+    let tint_opacity = if current { MINIMAP_CURRENT_TINT_OPACITY } else { MINIMAP_TINT_OPACITY };
+    let tick_opacity = if current { MINIMAP_CURRENT_TICK_OPACITY } else { MINIMAP_TICK_OPACITY };
+    let colors: Vec<gpui::Hsla> = if phrase_colors {
+        phrases
+            .iter()
+            .filter_map(|&p| fills.get(p))
+            .map(|f| gpui::Hsla { a: tick_opacity, ..f.normal })
+            .collect()
+    } else {
+        Vec::new()
+    };
+    let Some(&first) = colors.first() else {
+        return MinimapTick {
+            tint: shared.opacity(tint_opacity),
+            stripes: vec![TickStripe { offset: 0.0, width, color: shared }],
+        };
+    };
+    let tint = gpui::Hsla { a: tint_opacity, ..first };
+    let n = colors.len();
+    let stripes = if n > 1 && width / n as f32 >= MIN_STRIPE_PX {
+        let each = width / n as f32;
+        colors
+            .into_iter()
+            .enumerate()
+            .map(|(i, color)| TickStripe { offset: i as f32 * each, width: each, color })
+            .collect()
+    } else {
+        vec![TickStripe { offset: 0.0, width, color: first }]
+    };
+    MinimapTick { tint, stripes }
+}
+
+/// The paints of the Matches of one line outside the Canvas (the Raw view).
+/// A line that fails the whole expression has none. `phrase_fills` colors each
+/// Match by its Phrase; `None` (Phrase colors off) paints them all in
+/// `shared`.
+pub fn line_match_paints(
+    matcher: &crate::search_expr::Matcher,
+    line: &str,
+    current: bool,
+    phrase_fills: Option<&[PhraseFill]>,
+    shared: PhraseFill,
+) -> Vec<SearchPaint> {
+    if !matcher.is_match(line) {
+        return Vec::new();
+    }
+    let ranges = matcher.find_phrase_ranges(line);
+    match phrase_fills {
+        Some(fills) => search_paints(&ranges, fills, current),
+        None => {
+            let fill = if current { shared.current } else { shared.normal };
+            flat_paints(&ranges, fill)
+        }
+    }
+}
+
 /// What a cell needs to know about its row.
 pub(crate) struct CellCtx<'a> {
     pub colors: &'a CanvasColors,
@@ -1177,6 +1385,9 @@ pub(crate) struct CellCtx<'a> {
     /// Matches of Search in bytes of the stored line (the Focus Pane, which
     /// finds them in the whole line), painted on whichever cell holds them.
     pub line_search: &'a [(usize, usize)],
+    /// Matches of Search in bytes of the stored line, each in the color of its
+    /// Phrase (see `search_paints`). Painted like `line_search`.
+    pub search_paints: &'a [SearchPaint],
     /// The selected part of the line, in bytes of the stored line.
     pub selected: Option<&'a std::ops::Range<usize>>,
     pub tone: Tone,
@@ -1222,6 +1433,15 @@ pub(crate) fn render_text_cell(ctx: &CellCtx, cell: TextCell) -> gpui::AnyElemen
                         color: None,
                     });
                 }
+            }
+        }
+        for paint in ctx.search_paints {
+            if let Some(part) = clip_to_span(&(paint.start..paint.end), span) {
+                layers.push(Layer {
+                    range: part.start - span.start..part.end - span.start,
+                    background: Some(paint.fill),
+                    color: None,
+                });
             }
         }
         for marker in &ctx.entry.markers {

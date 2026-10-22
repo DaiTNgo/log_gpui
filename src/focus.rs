@@ -286,6 +286,20 @@ impl FocusFind {
         self.hits.binary_search(&row).is_ok()
     }
 
+    /// The distinct Phrases of the expression (see `Matcher::phrase_keys`);
+    /// none without an expression.
+    pub fn phrase_keys(&self) -> Vec<&str> {
+        self.matcher.as_ref().map(Matcher::phrase_keys).unwrap_or_default()
+    }
+
+    /// Like `find_ranges`, each range tagged with its Phrase.
+    pub fn find_phrase_ranges(&self, text: &str) -> Vec<crate::search_expr::PhraseRange> {
+        match &self.matcher {
+            Some(m) if m.is_match(text) => m.find_phrase_ranges(text),
+            _ => Vec::new(),
+        }
+    }
+
     /// Byte ranges to paint in `text`. A line that does not satisfy the
     /// whole expression has none.
     pub fn find_ranges(&self, text: &str) -> Vec<(usize, usize)> {
