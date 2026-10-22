@@ -3,7 +3,6 @@
 mod chrome;
 mod color_bar;
 mod columns_panel;
-mod new_column_view;
 mod format_editor_view;
 mod command_views;
 mod connection_view;
@@ -86,7 +85,7 @@ impl Render for AppView {
                     .iter()
                     .map(|k| (*k, self.filter_index.coverage(k.as_str())))
                     .collect(),
-                reading_fields: self.rule_cache.reading,
+                reading_fields: self.line_cache.reading,
             })
         };
 
@@ -109,7 +108,6 @@ impl Render for AppView {
             cx,
         );
         let new_space_dialog = self.render_new_space_dialog(cx);
-        let new_column_dialog = self.render_new_column(cx);
         let format_editor = self.render_format_editor(cx);
         let confirm = self.render_confirm(cx);
         let custom_load = self.render_custom_load(cx);
@@ -214,7 +212,6 @@ impl Render for AppView {
             .child(command_palette)
             .child(project_switcher)
             .child(new_space_dialog)
-            .child(new_column_dialog)
             .child(format_editor)
             .child(custom_load)
             .child(servers_dialog)

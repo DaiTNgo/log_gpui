@@ -291,16 +291,12 @@ A From/To bound on the `timestamp` column, typed in any time form the app can re
 _Avoid_: Date filter, time slider.
 
 **Field Column**:
-A column of the Parsed View besides TIMESTAMP, LEVEL, MODULE and MESSAGE that shows a named field read from the line: a JSON key, the field of an Extraction Rule or of a Log Format, or a Detected Field turned on. Its cell is a stretch of the line's text.
-_Avoid_: Custom column, extra column, dynamic column.
+A column of the Parsed View besides TIMESTAMP, LEVEL, MODULE and MESSAGE that shows a named field read from the line: a JSON key, a field of a Log Format, or a Detected Field turned on. Its cell is a stretch of the line's text.
+_Avoid_: Custom column, extra column, dynamic column. A column made from a stretch of text is made by editing a Log Format.
 
 **Coverage**:
 The share of Parent Lines that have a value in a column, over the lines the view holds.
 _Avoid_: Fill rate, match rate.
-
-**Extraction Rule**:
-A name and a regex with exactly one capture group, belonging to the Project. It reads a Field Column from every line of every Log Space in the Project.
-_Avoid_: Parser, pattern, custom field.
 
 **Log Format**:
 A named template describing a whole line with Format Tokens, shared by the whole app. It is chosen for a Log Space or a Source File, or applies on its own by a file name glob.
@@ -319,7 +315,7 @@ A field the app finds in lines on its own (a JSON key, or a `key=value` pair in 
 _Avoid_: Suggested column, auto column.
 
 **Columns** (section of the context sidebar):
-The one place to show or hide the columns of the Focus Pane (Source and Stream included; Detected Fields are off by default), kept per Project, and to manage Extraction Rules. Each column is a switch and nothing else: columns are not reordered (the Focus Pane keeps the order by source) and not renamed, and the Log Format is chosen and edited from the sidebar's "Log Format…". It never changes the Unified Canvas, which shows every column.
+The one place to show or hide the columns of the Focus Pane (Source and Stream included; Detected Fields are off by default), kept per Project. Each column is a switch and nothing else: columns are not reordered (the Focus Pane keeps the order by source) and not renamed, and the Log Format is chosen and edited from the sidebar's "Log Format…". It never changes the Unified Canvas, which shows every column.
 _Avoid_: Column manager, view panel.
 
 ## Rules & Constraints
@@ -374,13 +370,13 @@ L26. **Full Read Never Cuts Silently**: Open in full reads no more than the Full
 14. **Filter Has No Regex**: Filter matches by equality (Filter Value) or contains (Custom Value) only.
 15. **Filter Counts Ignore Other Filters**: A column's Filter Values and their row counts never change because other filters are applied. They count the lines the view holds: computed when the file is loaded, new values appended unticked and counts grown as lines arrive, and counts shrunk as lines leave a Live Window. A column that grows past 500 distinct values keeps the conditions already set but accepts no new ones.
 16. **Search Counts Only Filtered Lines**: In the Parsed View, only lines that pass Filter count as Matches. The Match count, next/previous, the overview ruler, the highlights in the view and the Focus Pane all use this one set. In the Raw View, Filter is ignored.
-17. **Quick Settings Only**: There is no View panel. Column pinning stays on the Column Header and column width stays adjustable by drag and Auto-fit. Quick Settings holds only display switches (density). Showing and hiding the Focus Pane's columns and Extraction Rules live in the Columns section, and Log Formats are edited from "Log Format…"; the Canvas has no switch for its columns.
+17. **Quick Settings Only**: There is no View panel. Column pinning stays on the Column Header and column width stays adjustable by drag and Auto-fit. Quick Settings holds only display switches (density). Showing and hiding the Focus Pane's columns lives in the Columns section, and Log Formats are edited from "Log Format…"; the Canvas has no switch for its columns.
 18. **Missing Value Never Matches**: A row with no value in a column never matches any Filter Value or Custom Value of that column. It is hidden when the column shows only the chosen values, and stays visible in Hide Mode. There is no "(empty)" value.
 19. **Continuation Lines Inherit**: A Continuation Line takes the timestamp, level, module and every other value of its Parent Line, so Filter, Time Range and Highlight Rules treat it like its Parent Line; it passes Filter when its Parent Line does. Its own text stays its message. Filter counts and Level Markers count only the Parent Line. Lines before the first timestamp have no Parent Line and are always shown. Times are compared in the file's own clock, with no timezone conversion.
 20. **Filter Per View, Marker Per Line**: A Log Space's Filter is shared by all its files, and each File View has its own separate Filter; both are remembered automatically and restored when reopened. A Marker belongs to one line of one file and shows wherever that line is shown; removing the file from the Log Space removes its Markers. Focus Tabs, with their Search Expressions, Focus Finds and current lines, are remembered per view in the same way. There are no project-level saved presets.
-21. **No Quick Filter Menu**: There is no quick menu for filtering by a cell value; filtering is done from the Filter section only. A cell's context menu may offer "Highlight rows where…", which creates an ordinary Highlight Rule managed with all the others, and "Make column…", which creates an Extraction Rule.
+21. **No Quick Filter Menu**: There is no quick menu for filtering by a cell value; filtering is done from the Filter section only. A cell's context menu may offer "Highlight rows where…", which creates an ordinary Highlight Rule managed with all the others, and "Log Format…", which opens the Log Format editor on the cell's file with one of its lines as the sample.
 22. **Interleave By Timestamp**: A Log Space's rows are ordered by timestamp across files. Equal timestamps keep the order of files in the Log Space, then line order. Continuation lines stay with their parent row. Lines before a file's first timestamp take that first timestamp. A file with no timestamps goes after all other rows and is flagged.
-23. **Columns Are United By Name**: A Log Space's columns are the union of columns detected in its files, matched by name. Field Columns from JSON, Extraction Rules, Log Formats and Detected Fields are united by field name too.
+23. **Columns Are United By Name**: A Log Space's columns are the union of columns detected in its files, matched by name. Field Columns from JSON, Log Formats and Detected Fields are united by field name too.
 24. **Space Kinds Never Mix**: An Imported Log Space only gains files and Archive Entries by import, and Remote Copies by Open in full; a Scratch Log Space only gains new empty scratch files; a Remote Log Space only gains Remote Files.
 25. **Imported And Remote Files Are Read-Only**: The app never changes an imported file, an Archive Entry (or its Archive) or a Remote File. Removing it from a Log Space leaves it untouched on disk or on its server. An Archive Entry is static: it does not follow the Archive if it changes. A Remote Copy is static too: it does not follow the Remote File when it changes, until the user chooses Read again. Removing a Remote Copy from a Log Space deletes its content from the app's data folder.
 26. **Scratch Edits Happen In Raw View**: The Parsed View of a scratch file is read-only and is re-parsed when switching from Raw View. Editing a line drops that line's Marker; the Filter keeps its conditions while its values are re-detected.
@@ -393,8 +389,8 @@ L26. **Full Read Never Cuts Silently**: Open in full reads no more than the Full
 33. **Highlight Rules Belong To The Project**: Highlight Rules are shared by every Log Space in a Project, remembered automatically, and each can be switched off without being deleted. They apply only in the Parsed View, and in the Focus Pane while the view above is the Parsed View.
 34. **One Row Per Stored Line**: Every stored line is its own row in the Parsed View, continuation lines included, so line numbers match the Raw View. A continuation line fills only the `message` column.
 35. **Selection Is Stored Text**: A selection in the Parsed View may run across cells and rows, and copying it gives the stored text of the selected range. Copying from the Focus Pane gives only the lines it lists.
-36. **Regex Only Reads Columns**: Regex is used only in Extraction Rules and Log Formats, to decide which stretch of text a cell takes. Search and Filter still have no regex (rules 9 and 14).
+36. **Regex Only Reads Columns**: Regex is used only in Log Formats, to decide which stretch of text a cell takes. Search and Filter still have no regex (rules 9 and 14). (Retired: Extraction Rules. Rules saved by an older version are ignored and dropped on the next save.)
 37. **No Column Renaming**: A column always shows its own name; there is no alias. (Retired: Column Labels. A label saved by an older version is ignored.)
-38. **One Value Per Field Per Line**: When several sources give a value for the same field name on a line, the value is taken in this order: fixed column or JSON, then Log Format, then Extraction Rules (in the order of the *Rules* group), then Detected Fields.
-39. **Unmatched Lines Lose Nothing**: A line that a Log Format or Extraction Rule does not match is still one row, keeps its text in MESSAGE, and only leaves empty the cells that could not be read.
-40. **Invalid Patterns Keep Last Preview**: While the regex of an Extraction Rule or the template of a Log Format is invalid, the Preview keeps the result of the last valid one. The error shows only once the user stops typing or leaves the field.
+38. **One Value Per Field Per Line**: When several sources give a value for the same field name on a line, the value is taken in this order: fixed column or JSON, then Log Format, then Detected Fields.
+39. **Unmatched Lines Lose Nothing**: A line that a Log Format does not match is still one row, keeps its text in MESSAGE, and only leaves empty the cells that could not be read.
+40. **Invalid Patterns Keep Last Preview**: While the template of a Log Format is invalid, the Preview keeps the result of the last valid one. The error shows only once the user stops typing or leaves the field.

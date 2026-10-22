@@ -3,8 +3,7 @@
 //! with `SEED_REMOTE_PORT` and `SEED_REMOTE_KEY` set, the files are paths on
 //! a Server at 127.0.0.1 (also written to `servers.json`) and the space is a
 //! Remote Log Space. `SEED_RAW` opens it in the Raw View. `SEED_COLUMNS`,
-//! `SEED_HIDE` and `SEED_LABELS` set the Project's Columns section;
-//! `SEED_RULES` adds Extraction Rules.
+//! `SEED_HIDE` and `SEED_LABELS` set the Project's Columns section.
 
 use log_gpui::remote::{AuthMethod, Server, ServerStore};
 use log_gpui::workspace::log_space::LogSpaceKind;
@@ -60,20 +59,6 @@ fn main() {
     }
     for key in list("SEED_HIDE") {
         project.columns.set_pane_shown(&key, false);
-    }
-    // `SEED_RULES="user=user=(\w+);;ms=took=(\d+)ms"` adds Extraction Rules.
-    if let Ok(rules) = std::env::var("SEED_RULES") {
-        for (name, pattern) in rules.split(";;").filter_map(|r| r.split_once('=')) {
-            let id = log_gpui::extract::next_rule_id(&project.extraction_rules);
-            project.extraction_rules.push(log_gpui::extract::ExtractionRule {
-                id,
-                name: name.into(),
-                pattern: pattern.into(),
-                scope: Default::default(),
-                description: "custom regex".into(),
-                enabled: true,
-            });
-        }
     }
     // `SEED_FILTER=level=warn` sets a Filter, which opens the Focus Pane.
     if let Some((column, value)) = std::env::var("SEED_FILTER").ok().as_deref().and_then(|f| f.split_once('=')) {

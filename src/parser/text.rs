@@ -143,7 +143,7 @@ pub fn parse_entries(content: &str) -> Vec<LogEntry> {
 #[derive(Debug, Clone, Default)]
 pub struct LineParser {
     parent: Option<usize>,
-    /// Fields read beyond Auto-detect (Extraction Rules).
+    /// Fields read beyond Auto-detect (Detected Fields).
     config: Arc<LineConfig>,
     /// The Log Format of the file, if it has one.
     format: Option<Arc<CompiledFormat>>,
@@ -184,7 +184,7 @@ impl LineParser {
         self.parent = parent;
     }
 
-    /// Whether `other` reads lines the same way: the same Extraction Rules
+    /// Whether `other` reads lines the same way: the same Detected Fields
     /// and the same Log Format (the same ones, not equal ones).
     pub fn reads_like(&self, other: &LineParser) -> bool {
         Arc::ptr_eq(&self.config, &other.config)

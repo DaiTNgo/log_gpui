@@ -263,3 +263,38 @@ fn with_no_format_applied_the_editor_opens_new_with_a_sample_line_and_applies_to
         assert_eq!(a.space_format_choice(&space), None, "not to the whole Log Space");
     });
 }
+
+/// The row of the open view whose line is from `file`.
+fn row_of_file(h: &mut Harness, file: &str) -> usize {
+    h.view.read_with(&h.cx, |a, _| {
+        (0..a.visible_indices.len())
+            .find(|&r| a.all_entries[a.visible_indices[r]].file_id.as_deref() == Some(file))
+            .expect("a row of the file")
+    })
+}
+
+#[gpui::test]
+fn a_cell_opens_the_log_format_editor_on_its_own_file_with_a_sample_line(cx: &mut TestAppContext) {
+    let mut h = open(cx);
+    let app = file_id_of(&mut h, "app.log");
+    let row = row_of_file(&mut h, &app);
+    h.view.update_in(&mut h.cx, |a, window, cx| a.edit_log_format_of_row(row, window, cx));
+    h.cx.run_until_parked();
+    h.view.read_with(&h.cx, |a, cx| {
+        let e = a.format_editor.as_ref().expect("the editor is open");
+        assert_eq!(e.id, None);
+        assert_eq!(e.template_input.read(cx).value().to_string(), "2026-10-20 10:00:02 [INFO] [api] order received");
+        assert_eq!(e.apply_to_file.as_deref(), Some(app.as_str()));
+    });
+}
+
+#[gpui::test]
+fn a_cell_of_another_file_opens_the_format_of_that_file(cx: &mut TestAppContext) {
+    let mut h = open(cx);
+    let nginx = add_nginx(&mut h);
+    choose_for_access(&mut h, &nginx);
+    let access = access_id(&mut h);
+    let row = row_of_file(&mut h, &access);
+    h.view.update_in(&mut h.cx, |a, window, cx| a.edit_log_format_of_row(row, window, cx));
+    h.view.read_with(&h.cx, |a, _| assert_eq!(a.format_editor.as_ref().unwrap().id.as_deref(), Some(nginx.as_str())));
+}

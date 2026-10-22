@@ -25,29 +25,12 @@ pub struct ColumnRow {
     pub switchable: bool,
 }
 
-/// An Extraction Rule in the *Rules* group.
-#[derive(Debug, Clone, PartialEq)]
-pub struct RuleRow {
-    pub id: u64,
-    /// Place in the group, which is the rule's priority.
-    pub ix: usize,
-    /// The field's name.
-    pub name: String,
-    /// How the rule matches, in words.
-    pub description: String,
-    /// Parent Lines with a value in the field.
-    pub lines: usize,
-    pub enabled: bool,
-}
-
 /// The groups of the Columns section; an empty group is not shown.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct ColumnGroups {
     pub built_in: Vec<ColumnRow>,
     /// Fields of the Log Formats the view uses, in template order.
     pub from_format: Vec<ColumnRow>,
-    /// Extraction Rules in priority order.
-    pub rules: Vec<RuleRow>,
     /// Detected Fields (JSON keys): the ones turned on first, then the others
     /// with the most lines first, at most [`DETECTED_SHOWN`] of them unless
     /// searched for.
@@ -72,12 +55,11 @@ impl AppView {
         self.sync_pane_columns();
     }
 
-    /// The Field Columns of the Canvas: a Log Format's fields first, then an
-    /// Extraction Rule's, then the other Detected Fields in the order they
+    /// The Field Columns of the Canvas: a Log Format's fields first, then the
+    /// other Detected Fields in the order they
     /// were found. Only fields with a value in a row.
     fn canvas_field_keys(&self) -> Vec<crate::model::FieldKey> {
         let mut keys: Vec<String> = self.formats.view_fields.clone();
-        keys.extend(self.extraction_rules().iter().map(|r| r.name.clone()));
         keys.extend(self.filter_index.field_columns().map(|c| c.key.clone()));
         let mut seen = std::collections::HashSet::new();
         keys.retain(|k| is_pane_field(k) && seen.insert(k.clone()));
@@ -104,13 +86,12 @@ impl AppView {
     }
 
     /// The Field Columns the Focus Pane lays out: the ones on that have a
-    /// value in a row, in a fixed order by source: a Log Format's fields, a
-    /// rule's, then the Detected Fields in the order they were found (a
+    /// value in a row, in a fixed order by source: a Log Format's fields, then the
+    /// Detected Fields in the order they were found (a
     /// `key=value` field read only while on comes last).
     fn pane_field_keys(&self) -> Vec<crate::model::FieldKey> {
         let settings = self.column_settings();
         let mut keys: Vec<String> = self.formats.view_fields.clone();
-        keys.extend(self.extraction_rules().iter().map(|r| r.name.clone()));
         keys.extend(self.filter_index.field_columns().map(|c| c.key.clone()));
         keys.extend(settings.pane.iter().filter(|(_, on)| **on).map(|(k, _)| k.clone()));
         let mut seen = std::collections::HashSet::new();
@@ -122,17 +103,14 @@ impl AppView {
     }
 
     /// Whether the Focus Pane shows the column `key` when the user made no
-    /// choice: the fixed columns, a Log Format's and a rule's fields, and
+    /// choice: the fixed columns, a Log Format's fields, and
     /// Source and Stream where the open Log Space has them.
     fn pane_default(&self, key: &str) -> bool {
         match key {
             "timestamp" | "level" | "module" | MESSAGE_KEY => true,
             "source" => self.active_space().is_some_and(|s| s.files.len() > 1),
             "stream" => self.active_space_has_command(),
-            _ => {
-                self.formats.view_fields.iter().any(|f| f == key)
-                    || self.extraction_rules().iter().any(|r| r.name == key)
-            }
+            _ => self.formats.view_fields.iter().any(|f| f == key),
         }
     }
 
@@ -209,28 +187,16 @@ impl AppView {
             groups.from_format.push(row(key, index.coverage(key).0, self.column_shown(key), true));
         }
         let format_fields = &self.formats.view_fields;
-        let mut rule_names: Vec<&str> = self.extraction_rules().iter().map(|r| r.name.as_str()).collect();
-        rule_names.extend(format_fields.iter().map(String::as_str));
-        for (ix, r) in self.extraction_rules().iter().enumerate() {
-            groups.rules.push(RuleRow {
-                id: r.id,
-                ix,
-                name: r.name.clone(),
-                description: r.description.clone(),
-                lines: if r.enabled { index.coverage(&r.name).0 } else { 0 },
-                enabled: r.enabled,
-            });
-        }
         let query = query.trim().to_lowercase();
         let mut detected: Vec<ColumnRow> = index
             .field_columns()
-            .filter(|c| !rule_names.contains(&c.key.as_str()))
+            .filter(|c| !format_fields.contains(&c.key))
             .map(|c| row(&c.key, c.covered(), self.column_shown(&c.key), true))
             .filter(|r| query.is_empty() || r.key.to_lowercase().contains(&query) || r.name.to_lowercase().contains(&query))
             .collect();
         for (key, n) in index.kv_counts() {
             let key = key.as_str();
-            let listed = rule_names.contains(&key) || detected.iter().any(|r| r.key == key);
+            let listed = format_fields.iter().any(|f| f == key) || detected.iter().any(|r| r.key == key);
             if !listed && (query.is_empty() || key.to_lowercase().contains(&query)) {
                 detected.push(row(key, *n, self.column_shown(key), true));
             }

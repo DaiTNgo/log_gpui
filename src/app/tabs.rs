@@ -278,7 +278,7 @@ impl AppView {
         self.all_entries = built.entries;
         self.filter_index = built.index;
         self.column_layout.max_chars = built.max_chars;
-        self.read_rule_fields();
+        self.read_detected_fields();
         self.column_layout.set_source_visible(source_visible);
         self.sync_stream_column();
         self.sync_pane_columns();
@@ -415,7 +415,7 @@ impl AppView {
         self.filter_ui.expanded = None;
         self.filter_ui.inputs_dirty = true;
         self.column_layout.max_chars = built.max_chars;
-        self.read_rule_fields();
+        self.read_detected_fields();
         self.column_layout.set_source_visible(source_visible);
         self.sync_stream_column();
         self.sync_pane_columns();

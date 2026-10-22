@@ -183,8 +183,8 @@ pub fn is_field_name(name: &str) -> bool {
     !NOT_FIELDS.contains(&name)
 }
 
-/// The name of a field read from lines: a JSON key, a field of a Log Format
-/// or an Extraction Rule, a Detected Field. Kept once for the whole run, so
+/// The name of a field read from lines: a JSON key, a field of a Log Format,
+/// a Detected Field. Kept once for the whole run, so
 /// it is `Copy` and cheap to compare; it orders by its text.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct FieldKey(&'static str);
@@ -343,9 +343,9 @@ pub struct LogEntry {
     /// Byte range in `raw_line` of each field read from the line.
     #[serde(default)]
     pub spans: Spans,
-    /// Fields Extraction Rules read from the line. A field `spans` already
-    /// has keeps its value there (rule 38). Worked out again when the rules
-    /// change.
+    /// Fields read from the line beyond those `spans` has (`key=value`
+    /// Detected Fields). A field `spans` already has keeps its value there.
+    /// Worked out again when the Detected Fields turned on change.
     #[serde(skip)]
     pub extra: Spans,
     /// Line number of the Parent Line when this is a Continuation Line.
@@ -499,7 +499,7 @@ impl LogEntry {
     }
 
     /// Where the field `name` is in the line: read with the line, or else
-    /// by an Extraction Rule.
+    /// as a Detected Field.
     pub fn span(&self, name: &str) -> Option<Range<usize>> {
         self.spans.get(name).or_else(|| self.extra.get(name))
     }
@@ -510,7 +510,7 @@ impl LogEntry {
     }
 
     /// Each field of the line (not the fixed cells) with its text: the ones
-    /// read with the line by name, then those of Extraction Rules.
+    /// read with the line by name, then the Detected Fields.
     pub fn fields(&self) -> impl Iterator<Item = (FieldKey, &str)> {
         let rules = self.extra.fields().filter(|(key, _)| self.spans.get(key.as_str()).is_none());
         self.spans.fields().chain(rules).filter_map(|(key, r)| Some((key, self.raw_line.get(r.clone())?)))

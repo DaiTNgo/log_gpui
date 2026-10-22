@@ -7,8 +7,7 @@ pub mod color;
 mod connection_details;
 mod commands;
 pub mod columns;
-pub mod rules;
-pub mod new_column;
+pub mod line_config;
 pub mod formats;
 pub mod format_editor;
 mod filter;
@@ -240,14 +239,12 @@ pub struct AppView {
 
     /// Inline rename of a sidebar row (project, Log Space or file), if any.
     pub renaming: Option<rename::RenameState>,
-    /// The New Column dialog ("Make column…", or "Edit" on a rule).
-    pub new_column: Option<new_column::NewColumnDialog>,
     /// The Log Format editor, when open.
     pub format_editor: Option<format_editor::FormatEditor>,
     /// The Log Format library (app config) and its compiled templates.
     pub formats: formats::FormatLibrary,
-    /// The compiled Extraction Rules and their background reading.
-    pub rule_cache: rules::RuleCache,
+    /// The compiled line reading (Detected Fields) and its background reading.
+    pub line_cache: line_config::LineCache,
     /// Search of the Detected Fields in the Columns section.
     pub columns_query: Entity<InputState>,
 
@@ -532,8 +529,7 @@ impl AppView {
             expanded_projects,
             expanded_spaces,
             renaming: None,
-            rule_cache: Default::default(),
-            new_column: None,
+            line_cache: Default::default(),
             format_editor: None,
             formats: formats::FormatLibrary::load(formats_path),
             columns_query,

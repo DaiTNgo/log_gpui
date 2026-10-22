@@ -1,5 +1,5 @@
-//! Context menu of a cell in the Parsed View: color commands and "Make
-//! column…". There is no command to filter from here. Also the menu of the
+//! Context menu of a cell in the Parsed View: color commands and "Log
+//! Format…" of the cell's file. There is no command to filter from here. Also the menu of the
 //! Focus Pane's lines.
 
 use crate::app::AppView;
@@ -34,14 +34,15 @@ pub fn cell_menu(menu: PopupMenu, view: &Entity<AppView>, cx: &App) -> PopupMenu
                 remove_view.update(app, |this, cx| this.remove_marker_under(row, byte, cx));
             }));
     }
-    if let Some((row, sel)) = this.make_column_target() {
-        let make_view = view.clone();
-        menu = menu.item(PopupMenuItem::separator()).item(PopupMenuItem::new("Make column…").on_click(
+    if this.log_format_target_of_row(target.row).is_some() {
+        let row = target.row;
+        let format_view = view.clone();
+        menu = menu.item(PopupMenuItem::separator()).item(PopupMenuItem::new("Log Format…").on_click(
             move |_, window, app| {
-                let (view, sel) = (make_view.clone(), sel.clone());
+                let view = format_view.clone();
                 // Deferred so the closing menu cannot steal the input focus.
                 window.defer(app, move |window, app| {
-                    view.update(app, |this, cx| this.open_new_column(row, sel, window, cx));
+                    view.update(app, |this, cx| this.edit_log_format_of_row(row, window, cx));
                 });
             },
         ));
@@ -63,16 +64,16 @@ pub fn cell_menu(menu: PopupMenu, view: &Entity<AppView>, cx: &App) -> PopupMenu
     menu
 }
 
-/// Menu of the Focus Pane's lines: "Make column…" from text selected in one
-/// line.
+/// Menu of the Focus Pane's lines: "Log Format…" for the line selected (or
+/// the one selected text is in).
 pub fn pane_menu(menu: PopupMenu, view: &Entity<AppView>, cx: &App) -> PopupMenu {
-    let target = view.read(cx).pane_make_column_target();
-    let make_view = view.clone();
-    menu.item(PopupMenuItem::new("Make column…").disabled(target.is_none()).on_click(move |_, window, app| {
-        let Some((row, sel)) = target.clone() else { return };
-        let view = make_view.clone();
+    let target = view.read(cx).pane_log_format_row();
+    let format_view = view.clone();
+    menu.item(PopupMenuItem::new("Log Format…").disabled(target.is_none()).on_click(move |_, window, app| {
+        let Some(row) = target else { return };
+        let view = format_view.clone();
         window.defer(app, move |window, app| {
-            view.update(app, |this, cx| this.open_new_column(row, sel, window, cx));
+            view.update(app, |this, cx| this.edit_log_format_of_row(row, window, cx));
         });
     }))
 }

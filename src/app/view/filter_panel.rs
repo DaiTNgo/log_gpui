@@ -207,7 +207,7 @@ impl AppView {
             .child(header)
             .when_some(col.is_none().then(|| self.unread_column(key)).flatten(), |card, reason| {
                 let note = match reason {
-                    crate::app::rules::UnreadReason::NotRead => "column no longer read".to_string(),
+                    crate::app::line_config::UnreadReason::NotRead => "column no longer read".to_string(),
                     other => format!("column no longer read ({})", other.text()),
                 };
                 card.child(div().text_xs().text_color(cx.theme().muted_foreground).child(note))

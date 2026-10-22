@@ -126,7 +126,6 @@ impl WorkspaceState {
             highlight_rules: Vec::new(),
             recent_colors: Default::default(),
             columns: Default::default(),
-            extraction_rules: Vec::new(),
             format_choices: Default::default(),
         };
         self.projects.push(project);

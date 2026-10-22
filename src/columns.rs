@@ -31,7 +31,7 @@ pub fn default_name(key: &str) -> &str {
 pub struct ColumnSettings {
     /// What the user chose for the Focus Pane in the Columns section, by
     /// column key. A column without a choice follows its default: the fixed
-    /// columns, a Log Format's and an Extraction Rule's fields are on,
+    /// columns, a Log Format's fields are on,
     /// Detected Fields are off.
     #[serde(default)]
     pub pane: BTreeMap<String, bool>,

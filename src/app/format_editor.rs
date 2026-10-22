@@ -123,6 +123,33 @@ impl AppView {
         }
     }
 
+    /// The Log Space and Source File of the line at `row` of the open view,
+    /// when it is a Log Space's.
+    pub fn log_format_target_of_row(&self, row: usize) -> Option<(String, String)> {
+        let entry = self.all_entries.get(*self.visible_indices.get(row)?)?;
+        let file = entry.file_id.as_deref()?;
+        let space = self.active_space()?;
+        space.file(file)?;
+        Some((space.id.clone(), file.to_string()))
+    }
+
+    /// The row of the open view a "Log Format…" of the Focus Pane is about:
+    /// the line the selection is in, else the selected row.
+    pub fn pane_log_format_row(&self) -> Option<usize> {
+        let from_selection = self.pane_selection.filter(|s| !s.is_empty()).and_then(|sel| {
+            let crate::focus::FocusRow::Entry(ix) = *self.focus_rows.get(sel.ordered().0.row)? else { return None };
+            self.visible_indices.iter().position(|&i| i == ix)
+        });
+        from_selection.or(self.selected_row_pos).filter(|&r| self.log_format_target_of_row(r).is_some())
+    }
+
+    /// "Log Format…" on a cell of the row `row` of the open view: the editor
+    /// on the Log Format of that line's file, with the line as the sample.
+    pub fn edit_log_format_of_row(&mut self, row: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let Some((space, file)) = self.log_format_target_of_row(row) else { return };
+        self.edit_log_format(&space, Some(&file), window, cx);
+    }
+
     /// The Log Format a Source File is read with (a Log Space: the one chosen
     /// for it, else the one of its first file that has one).
     fn applied_format_id(&self, space_id: &str, file_id: Option<&str>) -> Option<String> {
@@ -152,6 +179,14 @@ impl AppView {
         match file_id {
             Some(id) => first(id),
             None => space.files.iter().find_map(|f| first(&f.file_id)),
+        }
+    }
+
+    /// A line of the preview was clicked: the view goes to it, the editor
+    /// stays open.
+    pub fn jump_to_preview_line(&mut self, entry_ix: usize, cx: &mut Context<Self>) {
+        if let Some(pos) = self.visible_indices.iter().position(|&i| i == entry_ix) {
+            self.jump_to_row(pos, cx);
         }
     }
 

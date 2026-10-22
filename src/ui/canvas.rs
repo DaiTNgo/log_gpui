@@ -103,7 +103,7 @@ pub struct CanvasViewState<'a> {
     /// Coverage of each Field Column laid out: Parent Lines with a value,
     /// and all Parent Lines.
     pub coverage: std::collections::HashMap<crate::model::FieldKey, (usize, usize)>,
-    /// Whether the Field Columns are being read again (rules changed): their
+    /// Whether the Field Columns are being read again (a Detected Field turned on or off): their
     /// headers show a thin bar meanwhile.
     pub reading_fields: bool,
 }
