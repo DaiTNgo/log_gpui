@@ -334,7 +334,7 @@ impl LeftSidebarState {
 pub enum ContextSection {
     Filter,
     Highlights,
-    /// Which columns the Parsed View shows, their order and Column Labels.
+    /// Which columns the Focus Pane shows.
     Columns,
     Inspector,
 }

@@ -240,8 +240,6 @@ pub struct AppView {
 
     /// Inline rename of a sidebar row (project, Log Space or file), if any.
     pub renaming: Option<rename::RenameState>,
-    /// A Column Label being edited on its Column Header.
-    pub label_edit: Option<columns::LabelEdit>,
     /// The New Column dialog ("Make column…", or "Edit" on a rule).
     pub new_column: Option<new_column::NewColumnDialog>,
     /// The Log Format editor, when open.
@@ -250,8 +248,6 @@ pub struct AppView {
     pub formats: formats::FormatLibrary,
     /// The compiled Extraction Rules and their background reading.
     pub rule_cache: rules::RuleCache,
-    /// Row of the Columns section picked out by "Manage columns…".
-    pub columns_highlighted: Option<String>,
     /// Search of the Detected Fields in the Columns section.
     pub columns_query: Entity<InputState>,
 
@@ -536,12 +532,10 @@ impl AppView {
             expanded_projects,
             expanded_spaces,
             renaming: None,
-            label_edit: None,
             rule_cache: Default::default(),
             new_column: None,
             format_editor: None,
             formats: formats::FormatLibrary::load(formats_path),
-            columns_highlighted: None,
             columns_query,
             view_mode: ViewMode::Parsed,
             raw: raw::RawViewState::new(),

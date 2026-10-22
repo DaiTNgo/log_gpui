@@ -328,12 +328,6 @@ fn coverage_room(col: PinnableColumn) -> f32 {
     if col.is_field() { crate::ui::mono::header_text_width("99%") + 22.0 } else { 0.0 }
 }
 
-/// The narrowest a column shows a Column Label in full.
-pub fn label_header_width(col: PinnableColumn, label: &str) -> f32 {
-    let side_padding = if col.is_compact() { 8.0 } else { 16.0 };
-    crate::ui::mono::header_text_width(label) + side_padding + 2.0 + coverage_room(col)
-}
-
 /// Which columns the Focus Pane lays out, apart from the Canvas's.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct PaneColumns {
@@ -369,9 +363,6 @@ pub struct ColumnLayoutState {
     /// Project and the view's rows.
     #[serde(default)]
     pub fields: Vec<FieldKey>,
-    /// Column Labels by column key, from the Project.
-    #[serde(default)]
-    pub labels: HashMap<String, String>,
     /// The columns of the Focus Pane, which has its own switches: the
     /// fields above are not read for it.
     #[serde(default)]
@@ -415,7 +406,6 @@ impl ColumnLayoutState {
             stream_visible: false,
             hidden: BTreeSet::new(),
             fields: Vec::new(),
-            labels: HashMap::new(),
             pane: PaneColumns::default(),
             is_resizing: None,
             resize_start_x: None,
@@ -576,9 +566,9 @@ impl ColumnLayoutState {
         layout
     }
 
-    /// The text of a column's Column Header: its Column Label, or its name.
+    /// The text of a column's Column Header: its name.
     pub fn header_text(&self, col: PinnableColumn) -> &str {
-        self.labels.get(col.key()).map(String::as_str).unwrap_or(col.label())
+        col.label()
     }
 
     /// Show or hide the Stream Column.
@@ -824,11 +814,7 @@ impl ColumnLayoutState {
     pub fn auto_fit(&mut self, col: PinnableColumn, density: Density) {
         let count = self.max_chars.of(col);
         let min = self.min_width(col);
-        let mut calculated = compute_column_width(col, count, density.font_size(), min);
-        if let Some(label) = self.labels.get(col.key()) {
-            calculated = calculated.max(px(label_header_width(col, label)));
-        }
-        self.widths.insert(col, calculated);
+        self.widths.insert(col, compute_column_width(col, count, density.font_size(), min));
     }
 
     /// Computes the sticky offset needed for the Gutter inside a horizontally scrolled row

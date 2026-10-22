@@ -67,7 +67,7 @@ pub enum FocusPaneNotice {
     UnreadColumn {
         /// The column's key.
         key: String,
-        /// Its Column Label or name.
+        /// Its name.
         name: String,
         /// Why it is not read ("rule turned off").
         reason: String,

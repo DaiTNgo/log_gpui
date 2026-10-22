@@ -717,24 +717,6 @@ pub fn format_menu(
         let c = FormatChoice::Format(id.clone());
         menu = menu.item(PopupMenuItem::new(name.clone()).checked(current.as_ref() == Some(&c)).on_click(choose(Some(c))));
     }
-    let (new_view, edit_view) = (view.clone(), view.clone());
-    let apply_to = file_id.is_none().then(|| space_id.to_string());
-    menu = menu.item(PopupMenuItem::separator()).item(PopupMenuItem::new("New Log Format…").on_click(
-        move |_, window, app| {
-            let (view, apply_to) = (new_view.clone(), apply_to.clone());
-            window.defer(app, move |window, app| {
-                view.update(app, |this, cx| this.open_format_editor(None, apply_to, window, cx));
-            });
-        },
-    ));
-    if let Some(FormatChoice::Format(id)) = current {
-        menu = menu.item(PopupMenuItem::new("Edit this Log Format…").on_click(move |_, window, app| {
-            let (view, id) = (edit_view.clone(), id.clone());
-            window.defer(app, move |window, app| {
-                view.update(app, |this, cx| this.open_format_editor(Some(&id), None, window, cx));
-            });
-        }));
-    }
     menu
 }
 

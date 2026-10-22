@@ -78,7 +78,7 @@ pub struct Project {
     /// The colors used most recently for Markers and Highlight Rules.
     #[serde(default)]
     pub recent_colors: RecentColors,
-    /// The Columns section: shown columns, their order and Column Labels.
+    /// The Columns section: the columns the Focus Pane shows.
     #[serde(default)]
     pub columns: crate::columns::ColumnSettings,
     /// Extraction Rules read from every Log Space, in priority order.

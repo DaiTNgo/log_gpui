@@ -87,11 +87,6 @@ impl Render for AppView {
                     .map(|k| (*k, self.filter_index.coverage(k.as_str())))
                     .collect(),
                 reading_fields: self.rule_cache.reading,
-                label_edit: self.label_edit.as_ref().filter(|e| !e.in_panel).map(|e| crate::ui::canvas::HeaderEdit {
-                    key: e.key.clone(),
-                    input: e.input.clone(),
-                    error: e.error.clone(),
-                }),
             })
         };
 

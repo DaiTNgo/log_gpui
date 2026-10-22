@@ -98,7 +98,7 @@ pub struct PaneState<'a> {
     /// renders inside the AppView's own render, so it must not read it back.
     pub longest: usize,
     /// In the Parsed View, the view's columns: the pane shows the same ones,
-    /// in the same order and widths, under their Column Labels. `None` in the
+    /// in the same order and widths, under their names. `None` in the
     /// Raw View, where the pane shows each raw line.
     pub columns: Option<&'a crate::column::ColumnLayoutState>,
 }
@@ -671,7 +671,7 @@ impl PaneRows {
 }
 
 /// The Column Headers of the pane in the Parsed View: the view's columns
-/// under their Column Labels, sliding with the pane's horizontal scroll.
+/// under their names, sliding with the pane's horizontal scroll.
 fn render_column_header(
     layout: &crate::column::ColumnLayoutState,
     scroll_handle: &gpui::UniformListScrollHandle,
@@ -695,7 +695,7 @@ fn render_column_header(
                 .child(layout.header_text(col).to_string()),
         );
     }
-    let message = layout.labels.get("message").cloned().unwrap_or_else(|| "MESSAGE".to_string());
+    let message = "MESSAGE".to_string();
     row = row.child(div().px_2().whitespace_nowrap().child(message));
     div()
         .id("focus-pane-column-header")

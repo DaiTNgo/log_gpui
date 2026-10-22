@@ -48,7 +48,7 @@ pub fn header_label_width(col: PinnableColumn) -> f32 {
     ratio * HEADER_FONT_SIZE
 }
 
-/// Width in pixels of any Column Header text (a Column Label, a field name),
+/// Width in pixels of any Column Header text (a column name),
 /// estimated from its length.
 pub fn header_text_width(text: &str) -> f32 {
     text.chars().count() as f32 * DEFAULT_HEADER_RATIO * HEADER_FONT_SIZE

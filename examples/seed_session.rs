@@ -50,21 +50,16 @@ fn main() {
         space.add_imported_files(&files).unwrap();
         space.id.clone()
     };
-    // `SEED_COLUMNS=user,region` turns Field Columns on, `SEED_HIDE=level`
-    // hides fixed columns and `SEED_LABELS=module=Service` names columns.
+    // `SEED_COLUMNS=user,region` turns Field Columns on in the Focus Pane and
+    // `SEED_HIDE=level` hides columns there.
     let list = |name: &str| -> Vec<String> {
         std::env::var(name).map(|v| v.split(',').map(str::to_string).collect()).unwrap_or_default()
     };
     for key in list("SEED_COLUMNS") {
-        project.columns.set_shown(&key, true);
+        project.columns.set_pane_shown(&key, true);
     }
     for key in list("SEED_HIDE") {
-        project.columns.set_shown(&key, false);
-    }
-    for pair in list("SEED_LABELS") {
-        if let Some((key, label)) = pair.split_once('=') {
-            project.columns.labels.insert(key.to_string(), label.to_string());
-        }
+        project.columns.set_pane_shown(&key, false);
     }
     // `SEED_RULES="user=user=(\w+);;ms=took=(\d+)ms"` adds Extraction Rules.
     if let Ok(rules) = std::env::var("SEED_RULES") {
@@ -78,7 +73,6 @@ fn main() {
                 description: "custom regex".into(),
                 enabled: true,
             });
-            project.columns.set_shown(name, true);
         }
     }
     // `SEED_FILTER=level=warn` sets a Filter, which opens the Focus Pane.

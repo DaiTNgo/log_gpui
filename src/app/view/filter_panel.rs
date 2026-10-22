@@ -19,11 +19,9 @@ use gpui_component::{h_flex, v_flex, ActiveTheme as _, Icon, Selectable as _, Si
 use gpui_kit::assets::IconName;
 
 impl AppView {
-    /// The name Filter shows for a column: its Column Label, or `fallback`.
-    fn filter_column_name(&self, key: &str, fallback: &str) -> String {
-        self.active_project()
-            .and_then(|p| p.columns.label(key))
-            .map_or_else(|| fallback.to_string(), str::to_string)
+    /// The name Filter shows for a column: `fallback`.
+    fn filter_column_name(&self, _key: &str, fallback: &str) -> String {
+        fallback.to_string()
     }
 
     /// Keys of the columns shown as cards: those with a condition, plus the

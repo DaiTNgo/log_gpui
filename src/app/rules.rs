@@ -106,7 +106,6 @@ impl AppView {
                 let Some(project) = self.active_project_mut() else { return };
                 rule.id = next_rule_id(&project.extraction_rules);
                 rule.enabled = true;
-                project.columns.set_shown(&rule.name, true);
                 project.extraction_rules.push(rule);
                 self.extraction_rules_changed(cx);
             }
@@ -125,11 +124,7 @@ impl AppView {
         // one the line has already (a JSON key, a rule's) is not read again.
         let settings = self.column_settings();
         let on_in_pane = settings.pane.iter().filter(|(_, on)| **on).map(|(k, _)| k.clone());
-        let mut kv: Vec<String> = settings
-            .fields
-            .iter()
-            .cloned()
-            .chain(on_in_pane)
+        let mut kv: Vec<String> = on_in_pane
             .filter(|f| !rules.iter().any(|r| r.name == *f))
             .filter(|f| crate::model::is_field_name(f) && !crate::columns::BUILT_IN.iter().any(|(k, _)| k == f))
             .collect();
@@ -231,7 +226,6 @@ impl AppView {
             description: description.to_string(),
             enabled: true,
         };
-        project.columns.set_shown(&rule.name, true);
         project.extraction_rules.push(rule);
         self.extraction_rules_changed(cx);
         Ok(())
@@ -250,14 +244,10 @@ impl AppView {
         crate::extract::compile_pattern(pattern)?;
         let Some(project) = self.active_project_mut() else { return Ok(()) };
         let Some(rule) = project.extraction_rules.iter_mut().find(|r| r.id == id) else { return Ok(()) };
-        let old = std::mem::replace(&mut rule.name, name.trim().to_string());
+        rule.name = name.trim().to_string();
         rule.pattern = pattern.to_string();
         rule.scope = scope;
         rule.description = description.to_string();
-        let new = rule.name.clone();
-        if old != new {
-            rename_shown_field(project, &old, &new);
-        }
         self.extraction_rules_changed(cx);
         Ok(())
     }
@@ -268,10 +258,6 @@ impl AppView {
         let Some(project) = self.active_project_mut() else { return };
         let Some(rule) = project.extraction_rules.iter_mut().find(|r| r.id == id) else { return };
         rule.enabled = enabled;
-        if enabled {
-            let name = rule.name.clone();
-            project.columns.set_shown(&name, true);
-        }
         self.extraction_rules_changed(cx);
     }
 
@@ -283,8 +269,7 @@ impl AppView {
         if name.is_empty() || rule.name == name {
             return;
         }
-        let old = std::mem::replace(&mut rule.name, name.to_string());
-        rename_shown_field(project, &old, name);
+        rule.name = name.to_string();
         self.extraction_rules_changed(cx);
     }
 
@@ -292,9 +277,6 @@ impl AppView {
         let Some(project) = self.active_project_mut() else { return };
         let Some(at) = project.extraction_rules.iter().position(|r| r.id == id) else { return };
         let rule = project.extraction_rules.remove(at);
-        if !project.extraction_rules.iter().any(|r| r.name == rule.name) {
-            project.columns.set_shown(&rule.name, false);
-        }
         self.rule_cache.removed.push(rule);
         self.extraction_rules_changed(cx);
     }
@@ -309,15 +291,5 @@ impl AppView {
         let r = rules.remove(from);
         rules.insert(to.min(rules.len()), r);
         self.extraction_rules_changed(cx);
-    }
-}
-
-/// Keep a renamed field's place among the Field Columns shown.
-fn rename_shown_field(project: &mut crate::workspace::project::Project, old: &str, new: &str) {
-    let still_read = project.extraction_rules.iter().any(|r| r.name == old);
-    let fields = &mut project.columns.fields;
-    match fields.iter().position(|f| f == old) {
-        Some(i) if !still_read && !fields.iter().any(|f| f == new) => fields[i] = new.to_string(),
-        _ => project.columns.set_shown(new, true),
     }
 }

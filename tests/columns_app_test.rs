@@ -6,7 +6,6 @@ use common::Harness;
 use gpui::TestAppContext;
 use log_gpui::column::PinnableColumn;
 use log_gpui::model::FieldKey;
-use log_gpui::palette::{HighlightColor, Hue, Shade};
 use log_gpui::ui::cells::{TextCell, shows_placeholder};
 
 fn json_lines() -> Vec<String> {
@@ -110,55 +109,6 @@ fn coverage_shows_99_percent(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn renaming_a_column_keeps_filter_and_highlight_rules(cx: &mut TestAppContext) {
-    let mut h = common::open_app_with_lines(cx, &json_lines());
-    h.view.update(&mut h.cx, |app, cx| {
-        app.filter_toggle_value("module", "DB", cx);
-        app.add_highlight_rule("module", &["DB".into()], &[], HighlightColor::palette(Hue::Red, Shade::Medium), cx)
-            .unwrap();
-    });
-    h.cx.run_until_parked();
-    let before = visible(&mut h);
-
-    h.view.update_in(&mut h.cx, |app, window, cx| app.begin_column_rename("module", false, window, cx));
-    h.cx.run_until_parked();
-    h.cx.simulate_input("Service");
-    h.cx.simulate_keystrokes("enter");
-    h.cx.run_until_parked();
-
-    let (name, header, editing) = h.view.read_with(&h.cx, |app, _| {
-        (app.column_display_name("module"), app.column_layout.header_text(PinnableColumn::Module).to_string(), app.label_edit.is_some())
-    });
-    assert_eq!(name, "Service");
-    assert_eq!(header, "Service");
-    assert!(!editing);
-    assert_eq!(visible(&mut h), before);
-    let painted = h.view.read_with(&h.cx, |app, _| app.highlight_paints.iter().filter(|p| p.is_some()).count());
-    assert!(painted > 0);
-}
-
-#[gpui::test]
-fn a_label_taken_by_another_column_is_refused_until_changed(cx: &mut TestAppContext) {
-    let mut h = common::open_app_with_lines(cx, &json_lines());
-    h.view.update_in(&mut h.cx, |app, window, cx| app.begin_column_rename("region", false, window, cx));
-    h.cx.run_until_parked();
-    h.cx.simulate_input("user");
-    let error_while_typing = h.view.read_with(&h.cx, |app, _| app.label_edit.as_ref().and_then(|e| e.error.clone()));
-    assert!(error_while_typing.is_none(), "no error while typing");
-    h.cx.simulate_keystrokes("enter");
-    h.cx.run_until_parked();
-    let error = h.view.read_with(&h.cx, |app, _| app.label_edit.as_ref().and_then(|e| e.error.clone()));
-    assert!(error.is_some_and(|e| e.contains("user")));
-    h.cx.simulate_input("2");
-    h.cx.run_until_parked();
-    let error = h.view.read_with(&h.cx, |app, _| app.label_edit.as_ref().and_then(|e| e.error.clone()));
-    assert!(error.is_none(), "typing hides the error");
-    h.cx.simulate_keystrokes("enter");
-    h.cx.run_until_parked();
-    assert_eq!(h.view.read_with(&h.cx, |app, _| app.column_display_name("region")), "user2");
-}
-
-#[gpui::test]
 fn a_continuation_line_shows_the_placeholder_in_field_columns(cx: &mut TestAppContext) {
     let h = common::open_app_with_lines(cx, &json_lines());
     let placeholder = h.view.read_with(&h.cx, |app, _| {
@@ -178,21 +128,6 @@ fn source_is_an_ordinary_column_of_the_focus_pane(cx: &mut TestAppContext) {
     assert!(row.expect("Source has a switch").shown);
     show(&mut h, "source", false);
     assert!(!pane(&mut h).contains(&PinnableColumn::Source));
-}
-
-#[gpui::test]
-fn manage_columns_opens_the_section_on_the_column(cx: &mut TestAppContext) {
-    let mut h = common::open_app_with_lines(cx, &json_lines());
-    h.view.update(&mut h.cx, |app, cx| app.manage_columns(Some("user"), cx));
-    let (collapsed, picked) = h.view.read_with(&h.cx, |app, _| {
-        (
-            app.context_sidebar.is_collapsed(log_gpui::workspace::state::ContextSection::Columns),
-            app.columns_highlighted.clone(),
-        )
-    });
-    assert!(!collapsed);
-    assert_eq!(picked.as_deref(), Some("user"));
-    h.cx.run_until_parked();
 }
 
 #[gpui::test]
@@ -258,4 +193,31 @@ fn a_file_with_many_json_keys_gets_a_column_for_each(cx: &mut TestAppContext) {
     for k in 0..30 {
         assert!(cols.contains(&field(&format!("key{k}"))), "key{k} is a column");
     }
+}
+
+#[gpui::test]
+fn the_focus_pane_orders_fields_by_source_whatever_order_they_were_turned_on(cx: &mut TestAppContext) {
+    let mut h = common::open_app_with_lines(cx, &json_lines());
+    let canvas: Vec<PinnableColumn> = columns(&mut h).into_iter().filter(|c| matches!(c, PinnableColumn::Field(_))).collect();
+    let (a, b) = (canvas.iter().position(|c| *c == field("user")).unwrap(), canvas.iter().position(|c| *c == field("region")).unwrap());
+    let (first, second) = if a < b { ("user", "region") } else { ("region", "user") };
+    show(&mut h, second, true);
+    show(&mut h, first, true);
+    let fields: Vec<PinnableColumn> = pane(&mut h).into_iter().filter(|c| matches!(c, PinnableColumn::Field(_))).collect();
+    assert_eq!(fields, vec![field(first), field(second)], "Detected Fields keep the order they were found in");
+}
+
+#[gpui::test]
+fn an_old_session_with_column_labels_opens_and_shows_original_names(cx: &mut TestAppContext) {
+    let h = common::open_app_with_lines(cx, &json_lines());
+    let manifest = h.view.read_with(&h.cx, |app, _| {
+        log_gpui::workspace::session::SessionManifest::from_workspace(&app.workspace_state)
+    });
+    let mut value: serde_json::Value = serde_json::from_str(&manifest.to_json().unwrap()).unwrap();
+    value["projects"][0]["columns"] = serde_json::json!({"labels": {"module": "Service"}, "fields": ["user"]});
+    let json = value.to_string();
+    assert!(json.contains("Service"), "the old shape is in the file");
+    let ws = log_gpui::workspace::session::SessionManifest::from_json(&json).unwrap().into_workspace();
+    assert_eq!(ws.projects[0].columns, Default::default());
+    assert_eq!(h.view.read_with(&h.cx, |app, _| app.column_layout.header_text(PinnableColumn::Module).to_string()), "MODULE");
 }
