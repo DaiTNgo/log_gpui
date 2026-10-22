@@ -72,13 +72,8 @@ struct Values {
     full_read_limit: usize,
     glob_limit: usize,
     glob_interval: u64,
-    shown: bool,
-    /// The Stream Column is on, and whether the open Log Space has a command.
-    stream: bool,
-    has_command: bool,
     minimap: bool,
     search_highlight: bool,
-    in_space: bool,
     wrap: bool,
     density: Density,
     colors: crate::palette::MatchColors,
@@ -101,12 +96,8 @@ pub fn open_settings_dialog(view: Entity<AppView>, window: &mut Window, cx: &mut
                     full_read_limit: v.live.full_read_limit,
                     glob_limit: v.live.glob_limit,
                     glob_interval: v.live.glob_interval,
-                    shown: v.source_column_shown(),
-                    stream: v.stream_column_setting(),
-                    has_command: v.active_space_has_command(),
                     minimap: v.show_minimap,
                     search_highlight: v.workspace_state.show_search_highlight,
-                    in_space: v.active_is_log_space(),
                     wrap: v.raw.soft_wrap,
                     density: v.density,
                     colors: v.workspace_state.match_colors,
@@ -514,8 +505,7 @@ fn rows_of(section: SettingsSection, view: &Entity<AppView>, v: &Values, cx: &Ap
             }]
         }
         SettingsSection::Appearance => {
-            let (v_source, v_density, v_minimap) = (view.clone(), view.clone(), view.clone());
-            let v_stream = view.clone();
+            let (v_density, v_minimap) = (view.clone(), view.clone());
             let v_highlight = view.clone();
             let densities = [
                 (Density::Comfortable, "Comfortable"),
@@ -550,32 +540,6 @@ fn rows_of(section: SettingsSection, view: &Entity<AppView>, v: &Values, cx: &Ap
                         .on_click(move |checked: &bool, window, app| {
                             let on = *checked;
                             v_minimap.update(app, |this, cx| this.set_show_minimap(on, cx));
-                            window.refresh();
-                        })
-                        .into_any_element(),
-                },
-                Row {
-                    title: "Show source file",
-                    description: "Add a column with the file each line came from. Applies to a Log Space.",
-                    control: Switch::new("show-source")
-                        .checked(v.shown)
-                        .disabled(!v.in_space)
-                        .on_click(move |checked: &bool, window, app| {
-                            let on = *checked;
-                            v_source.update(app, |this, cx| this.set_show_source(on, cx));
-                            window.refresh();
-                        })
-                        .into_any_element(),
-                },
-                Row {
-                    title: "Show stream",
-                    description: "Add a column saying whether each line of a remote command came from its standard output or its standard error. Shows in a Log Space that has a remote command.",
-                    control: Switch::new("show-stream")
-                        .checked(v.stream)
-                        .disabled(!v.in_space || !v.has_command)
-                        .on_click(move |checked: &bool, window, app| {
-                            let on = *checked;
-                            v_stream.update(app, |this, cx| this.set_show_stream(on, cx));
                             window.refresh();
                         })
                         .into_any_element(),

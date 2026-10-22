@@ -204,6 +204,7 @@ pub fn space_menu(
             }))
         }
     };
+    let menu = log_format_items(menu, &space.view, &space.project_id, &space.space_id, None, window, cx);
     menu.submenu("Sort files by", window, cx, move |menu, _, _| {
         let (a, n) = (sort_added.clone(), sort_name.clone());
         menu.item(
@@ -689,9 +690,9 @@ pub fn push_file(list: MenuList, file: FileRef, active: bool) -> MenuList {
                 defer_rename(open.view.clone(), target, open.display_name.clone(), window, app);
             }
         })
-        .context_menu(move |menu, _, cx| {
+        .context_menu(move |menu, window, cx| {
             let menu = file_menu(menu, &context, false, cx);
-            file_format_items(menu, &context, cx)
+            file_format_items(menu, &context, window, cx)
         });
     if file.in_glob { list.grouped_child(item, file.gone) } else { list.nested_child(item) }
 }
@@ -738,38 +739,54 @@ pub fn format_menu(
         let c = FormatChoice::Format(id.clone());
         menu = menu.item(PopupMenuItem::new(name.clone()).checked(current.as_ref() == Some(&c)).on_click(choose(Some(c))));
     }
-    let (new_view, edit_view) = (view.clone(), view.clone());
-    let apply_to = file_id.is_none().then(|| space_id.to_string());
-    menu = menu.item(PopupMenuItem::separator()).item(PopupMenuItem::new("New Log Format…").on_click(
-        move |_, window, app| {
-            let (view, apply_to) = (new_view.clone(), apply_to.clone());
-            window.defer(app, move |window, app| {
-                view.update(app, |this, cx| this.open_format_editor(None, apply_to, window, cx));
-            });
-        },
-    ));
-    if let Some(FormatChoice::Format(id)) = current {
-        menu = menu.item(PopupMenuItem::new("Edit this Log Format…").on_click(move |_, window, app| {
-            let (view, id) = (edit_view.clone(), id.clone());
-            window.defer(app, move |window, app| {
-                view.update(app, |this, cx| this.open_format_editor(Some(&id), None, window, cx));
-            });
-        }));
-    }
     menu
 }
 
 /// The Log Format of a Source File of the active Project, chosen for the
 /// file alone: a "Log Format" section of the file's menu.
-fn file_format_items(menu: PopupMenu, file: &FileRef, cx: &mut App) -> PopupMenu {
-    let this = file.view.read(cx);
-    if this.workspace_state.active_project_id.as_deref() != Some(file.project_id.as_str()) {
+fn file_format_items(
+    menu: PopupMenu,
+    file: &FileRef,
+    window: &mut Window,
+    cx: &mut App,
+) -> PopupMenu {
+    log_format_items(menu, &file.view, &file.project_id, &file.space_id, Some(file.file_id.clone()), window, cx)
+}
+
+/// "Log Format…" (the editor, on the format that applies) and the submenu
+/// "Log Format" that chooses another one, for a Log Space (`file_id` `None`)
+/// or for a Source File of the active Project.
+fn log_format_items(
+    menu: PopupMenu,
+    view: &Entity<AppView>,
+    project_id: &str,
+    space_id: &str,
+    file_id: Option<String>,
+    window: &mut Window,
+    cx: &mut App,
+) -> PopupMenu {
+    let this = view.read(cx);
+    if this.workspace_state.active_project_id.as_deref() != Some(project_id) {
         return menu;
     }
-    let current = this.file_format_choice(&file.file_id);
+    let current = match &file_id {
+        Some(file) => this.file_format_choice(file),
+        None => this.space_format_choice(space_id),
+    };
     let formats: Vec<(String, String)> = this.log_formats().iter().map(|f| (f.id.clone(), f.name.clone())).collect();
-    let menu = menu.item(PopupMenuItem::separator()).item(PopupMenuItem::label("Log Format"));
-    format_menu(menu, &file.view, &file.space_id, Some(&file.file_id), current, &formats)
+    let (edit_view, edit_space, edit_file) = (view.clone(), space_id.to_string(), file_id.clone());
+    let (pick_view, pick_space) = (view.clone(), space_id.to_string());
+    let choose = PopupMenu::build(window, cx, move |menu, _, _| {
+        format_menu(menu, &pick_view, &pick_space, file_id.as_deref(), current.clone(), &formats)
+    });
+    menu.item(PopupMenuItem::separator())
+        .item(PopupMenuItem::new("Log Format…").on_click(move |_, window, app| {
+            let (view, space, file) = (edit_view.clone(), edit_space.clone(), edit_file.clone());
+            window.defer(app, move |window, app| {
+                view.update(app, |this, cx| this.edit_log_format(&space, file.as_deref(), window, cx));
+            });
+        }))
+        .item(PopupMenuItem::submenu("Log Format", choose))
 }
 
 /// `PopupMenu` has no `when`: apply `f` only if `cond`.

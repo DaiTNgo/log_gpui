@@ -1,7 +1,8 @@
-//! Timings of custom-columns task 4.1 on 1,000,000 lines. Run with
+//! Timings of reading `key=value` Detected Fields on 1,000,000 lines, and of
+//! changing the Log Format. Run with
 //! `cargo test --release --test custom_columns_perf_test -- --ignored --nocapture`.
 
-use log_gpui::extract::{ExtractionRule, LineConfig, RuleScope, snapshot};
+use log_gpui::extract::{LineConfig, snapshot};
 use log_gpui::filter_index::FilterIndex;
 use log_gpui::log_format::compile_template;
 use log_gpui::parser::text::{adopt, parse_text_bytes, reread, stored_lines};
@@ -30,35 +31,27 @@ fn ms(t: Instant) -> u128 {
 
 #[test]
 #[ignore]
-fn rule_and_format_on_a_million_lines() {
+fn detected_fields_and_format_on_a_million_lines() {
     let text = text();
     let t = Instant::now();
     let mut entries = parse_text_bytes(text.as_bytes()).unwrap();
     println!("parse (Auto-detect):                 {:>6} ms", ms(t));
     let mut index = FilterIndex::build(&entries);
 
-    // Adding an Extraction Rule.
-    let rule = ExtractionRule {
-        id: 1,
-        name: "user".into(),
-        pattern: r"(?:^|[^\w.\-])user=([\w.\-]+)".into(),
-        scope: RuleScope::Line,
-        description: String::new(),
-        enabled: true,
-    };
-    let config = LineConfig::new(&[rule]);
+    // Turning on the `user=value` Detected Field.
+    let config = LineConfig::new(&["user".to_string()]);
     let t = Instant::now();
     let lines = snapshot(&entries);
-    println!("rule: copy lines out (UI thread):    {:>6} ms", ms(t));
+    println!("field: copy lines out (UI thread):   {:>6} ms", ms(t));
     let t = Instant::now();
     let read = config.read_snapshot(&lines);
-    println!("rule: read spans (background):       {:>6} ms", ms(t));
+    println!("field: read spans (background):      {:>6} ms", ms(t));
     let t = Instant::now();
     for (e, x) in entries.iter_mut().zip(read) {
         e.extra = x;
     }
     index.rebuild_fields(&entries);
-    println!("rule: adopt + Filter columns (UI):   {:>6} ms", ms(t));
+    println!("field: adopt + Filter columns (UI):  {:>6} ms", ms(t));
     assert_eq!(index.coverage("user").0, LINES);
 
     // Changing the Log Format.

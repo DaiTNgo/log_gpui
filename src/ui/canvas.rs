@@ -13,7 +13,6 @@ use gpui::{
     UniformListScrollHandle, Window, div, prelude::FluentBuilder as _, px, uniform_list,
 };
 use gpui_component::Icon;
-use gpui_component::Sizable as _;
 use gpui_component::menu::ContextMenuExt as _;
 use gpui_component::scroll::ScrollableElement as _;
 use std::sync::Arc;
@@ -103,19 +102,9 @@ pub struct CanvasViewState<'a> {
     /// Coverage of each Field Column laid out: Parent Lines with a value,
     /// and all Parent Lines.
     pub coverage: std::collections::HashMap<crate::model::FieldKey, (usize, usize)>,
-    /// The Column Label being edited on its Column Header.
-    pub label_edit: Option<HeaderEdit>,
-    /// Whether the Field Columns are being read again (rules changed): their
+    /// Whether the Field Columns are being read again (a Detected Field turned on or off): their
     /// headers show a thin bar meanwhile.
     pub reading_fields: bool,
-}
-
-/// A Column Label being edited on a Column Header.
-#[derive(Clone)]
-pub struct HeaderEdit {
-    pub key: String,
-    pub input: gpui::Entity<gpui_component::input::InputState>,
-    pub error: Option<String>,
 }
 
 pub struct LogCanvas;
@@ -184,7 +173,7 @@ impl LogCanvas {
                 scrolling_header_cols.child(render_pinnable_column_header(*col, w, false, &state));
         }
 
-        scrolling_header_cols = scrolling_header_cols.child(render_message_header(&state));
+        scrolling_header_cols = scrolling_header_cols.child(render_message_header());
 
         let header = div()
             .h(px(26.0))
@@ -627,12 +616,11 @@ fn render_pinnable_column_header(
             cx.stop_propagation();
         });
 
-    let key = col.key();
     let coverage = match col {
         PinnableColumn::Field(k) => state.coverage.get(&k).copied(),
         _ => None,
     };
-    let title = header_title(key, state.column_layout.header_text(col).to_string(), state);
+    let title = header_title(state.column_layout.header_text(col).to_string());
     let coverage_el = coverage.and_then(|(covered, total)| {
         let label = crate::columns::coverage_label(covered, total)?;
         let tip = crate::columns::coverage_tooltip(covered, total);
@@ -647,7 +635,6 @@ fn render_pinnable_column_header(
                 .tooltip(move |window, cx| gpui_component::tooltip::Tooltip::new(tip.clone()).build(window, cx)),
         )
     });
-    let menu_view = state.view.clone();
     let reading = (state.reading_fields && col.is_field()).then(|| {
         div().absolute().left_0().right_0().bottom_0().h(px(2.0)).bg(state.colors.info.opacity(0.7))
     });
@@ -655,7 +642,6 @@ fn render_pinnable_column_header(
         .child(title)
         .children(coverage_el)
         .children(reading)
-        .context_menu(move |menu, _window, _cx| header_menu(menu, &menu_view, key, true))
         .child(
             // Overlaid on the right edge so the label keeps the full width
             // while the toggle is hidden.
@@ -671,96 +657,20 @@ fn render_pinnable_column_header(
         .child(resize_handle)
 }
 
-/// The text of a Column Header, or the field editing its Column Label.
-/// Double-clicking the text starts editing it.
-fn header_title(key: &'static str, text: String, state: &CanvasViewState) -> gpui::AnyElement {
-    if let Some(edit) = state.label_edit.as_ref().filter(|e| e.key == key) {
-        let cancel_view = state.view.clone();
-        return div()
-            .flex_1()
-            .min_w_0()
-            .flex()
-            .items_center()
-            .gap_1()
-            .on_key_down(move |event: &gpui::KeyDownEvent, _window, cx| {
-                if event.keystroke.key == "escape" {
-                    cx.stop_propagation();
-                    cancel_view.update(cx, |this, cx| this.cancel_column_label(cx));
-                }
-            })
-            .child(
-                div().flex_1().min_w_0().child(
-                    gpui_component::input::Input::new(&edit.input)
-                        .xsmall()
-                        .when(edit.error.is_some(), |i| i.border_color(state.colors.danger)),
-                ),
-            )
-            .when_some(edit.error.clone(), |d, error| {
-                d.child(
-                    div()
-                        .id(gpui::SharedString::from(format!("label-error-{key}")))
-                        .flex_shrink_0()
-                        .text_color(state.colors.danger)
-                        .child(Icon::new(gpui_kit::assets::IconName::TriangleAlert).size_3())
-                        .tooltip(move |window, cx| gpui_component::tooltip::Tooltip::new(error.clone()).build(window, cx)),
-                )
-            })
-            .into_any_element();
-    }
-    let rename_view = state.view.clone();
-    div()
-        .flex_1()
-        .min_w_0()
-        .truncate()
-        .child(text)
-        .on_mouse_down(MouseButton::Left, move |event, window, cx| {
-            if event.click_count >= 2 {
-                cx.stop_propagation();
-                rename_view.update(cx, |this, cx| this.begin_column_rename(key, false, window, cx));
-            }
-        })
-        .into_any_element()
+/// The text of a Column Header.
+fn header_title(text: String) -> gpui::AnyElement {
+    div().flex_1().min_w_0().truncate().child(text).into_any_element()
 }
 
-/// The MESSAGE Column Header: never hidden or pinned, but it can be renamed.
-fn render_message_header(state: &CanvasViewState) -> gpui::AnyElement {
-    let text = state.column_layout.labels.get("message").cloned().unwrap_or_else(|| "MESSAGE".to_string());
-    let menu_view = state.view.clone();
+/// The MESSAGE Column Header: never hidden or pinned.
+fn render_message_header() -> gpui::AnyElement {
     div()
         .id("header_col-message")
         .flex_1()
         .px_2()
         .flex()
-        .child(header_title("message", text, state))
-        .context_menu(move |menu, _window, _cx| header_menu(menu, &menu_view, "message", false))
+        .child(header_title("MESSAGE".to_string()))
         .into_any_element()
-}
-
-/// Right-click menu of a Column Header.
-fn header_menu(
-    menu: gpui_component::menu::PopupMenu,
-    view: &gpui::Entity<crate::app::AppView>,
-    key: &'static str,
-    can_hide: bool,
-) -> gpui_component::menu::PopupMenu {
-    use gpui_component::menu::PopupMenuItem;
-    let (hide_view, rename_view, manage_view) = (view.clone(), view.clone(), view.clone());
-    let mut menu = menu;
-    if can_hide {
-        menu = menu.item(PopupMenuItem::new("Hide column").on_click(move |_, _, app| {
-            hide_view.update(app, |this, cx| this.set_column_shown(key, false, cx));
-        }));
-    }
-    menu.item(PopupMenuItem::new("Rename").on_click(move |_, window, app| {
-        let view = rename_view.clone();
-        // Deferred so the closing menu cannot steal the input focus.
-        window.defer(app, move |window, app| {
-            view.update(app, |this, cx| this.begin_column_rename(key, false, window, cx));
-        });
-    }))
-    .item(PopupMenuItem::new("Manage columns…").on_click(move |_, _, app| {
-        manage_view.update(app, |this, cx| this.manage_columns(Some(key), cx));
-    }))
 }
 
 /// Everything one row needs to draw itself, cloned out of the view state so

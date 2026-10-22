@@ -38,10 +38,6 @@ pub struct SessionManifest {
     pub raw_soft_wrap: bool,
     #[serde(default = "crate::workspace::state::default_true")]
     pub show_search_highlight: bool,
-    #[serde(default)]
-    pub show_source: Option<bool>,
-    #[serde(default)]
-    pub show_stream: bool,
 }
 
 /// Project-level snapshot inside a session manifest.
@@ -59,8 +55,6 @@ pub struct ProjectSnapshot {
     pub recent_colors: crate::palette::RecentColors,
     #[serde(default)]
     pub columns: crate::columns::ColumnSettings,
-    #[serde(default)]
-    pub extraction_rules: Vec<crate::extract::ExtractionRule>,
     #[serde(default)]
     pub format_choices: crate::log_format::FormatChoices,
 }
@@ -92,7 +86,6 @@ impl SessionManifest {
                 highlight_rules: p.highlight_rules.clone(),
                 recent_colors: p.recent_colors.clone(),
                 columns: p.columns.clone(),
-                extraction_rules: p.extraction_rules.clone(),
                 format_choices: p.format_choices.clone(),
             })
             .collect();
@@ -112,8 +105,6 @@ impl SessionManifest {
             show_minimap: ws.show_minimap,
             raw_soft_wrap: ws.raw_soft_wrap,
             show_search_highlight: ws.show_search_highlight,
-            show_source: ws.show_source,
-            show_stream: ws.show_stream,
         }
     }
 
@@ -131,7 +122,6 @@ impl SessionManifest {
                 highlight_rules: p.highlight_rules,
                 recent_colors: p.recent_colors,
                 columns: p.columns,
-                extraction_rules: p.extraction_rules,
                 format_choices: p.format_choices,
             });
         }
@@ -147,8 +137,6 @@ impl SessionManifest {
         ws.show_minimap = self.show_minimap;
         ws.raw_soft_wrap = self.raw_soft_wrap;
         ws.show_search_highlight = self.show_search_highlight;
-        ws.show_source = self.show_source;
-        ws.show_stream = self.show_stream;
         ws
     }
 

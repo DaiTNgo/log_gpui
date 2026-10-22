@@ -221,11 +221,20 @@ pub fn hidden_matches(
     ranges: &[(usize, usize)],
     layout: &ColumnLayoutState,
 ) -> Option<Vec<PinnableColumn>> {
+    hidden_matches_in(entry, ranges, &layout.columns())
+}
+
+/// [`hidden_matches`] for the columns `shown`, which the Focus Pane has of
+/// its own.
+pub fn hidden_matches_in(
+    entry: &LogEntry,
+    ranges: &[(usize, usize)],
+    shown: &[PinnableColumn],
+) -> Option<Vec<PinnableColumn>> {
     if ranges.is_empty() {
         return None;
     }
     let overlaps = |span: Range<usize>| ranges.iter().any(|&(s, e)| s < span.end && span.start < e);
-    let shown = layout.columns();
     let visible = shown
         .iter()
         .filter_map(|c| TextCell::from_column(*c))

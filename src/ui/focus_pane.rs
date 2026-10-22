@@ -102,7 +102,7 @@ pub struct PaneState<'a> {
     /// renders inside the AppView's own render, so it must not read it back.
     pub longest: usize,
     /// In the Parsed View, the view's columns: the pane shows the same ones,
-    /// in the same order and widths, under their Column Labels. `None` in the
+    /// in the same order and widths, under their names. `None` in the
     /// Raw View, where the pane shows each raw line.
     pub columns: Option<&'a crate::column::ColumnLayoutState>,
 }
@@ -576,7 +576,7 @@ impl PaneRows {
         let selected_in_line = self.selection.and_then(|s| s.range_in_row(index, entry.raw_line.len()));
         let columns = (self.columns && parsed).then_some(&app.column_layout);
         let hidden_match = columns.and_then(|layout| {
-            crate::ui::cells::hidden_matches(entry, &search_ranges, layout)
+            crate::ui::cells::hidden_matches_in(entry, &search_ranges, &layout.pane_columns())
                 .map(|hidden| crate::ui::cells::hidden_matches_tooltip(&hidden, layout))
         });
         // In columns, Search is painted on whichever cell holds each Match.
@@ -654,7 +654,7 @@ impl PaneRows {
                 })
                 .when_some(columns, |this, layout| {
                     let mut this = this;
-                    for col in layout.columns() {
+                    for col in layout.pane_columns() {
                         this = this.child(crate::ui::canvas::render_column_cell(col, layout, &ctx));
                     }
                     this.child(
@@ -700,7 +700,7 @@ impl PaneRows {
 }
 
 /// The Column Headers of the pane in the Parsed View: the view's columns
-/// under their Column Labels, sliding with the pane's horizontal scroll.
+/// under their names, sliding with the pane's horizontal scroll.
 fn render_column_header(
     layout: &crate::column::ColumnLayoutState,
     scroll_handle: &gpui::UniformListScrollHandle,
@@ -713,7 +713,7 @@ fn render_column_header(
         .h_full()
         .items_center()
         .child(div().flex_shrink_0().w(px(NUMBER_WIDTH + LEVEL_WIDTH)));
-    for col in layout.columns() {
+    for col in layout.pane_columns() {
         row = row.child(
             div()
                 .flex_shrink_0()
@@ -724,7 +724,7 @@ fn render_column_header(
                 .child(layout.header_text(col).to_string()),
         );
     }
-    let message = layout.labels.get("message").cloned().unwrap_or_else(|| "MESSAGE".to_string());
+    let message = "MESSAGE".to_string();
     row = row.child(div().px_2().whitespace_nowrap().child(message));
     div()
         .id("focus-pane-column-header")

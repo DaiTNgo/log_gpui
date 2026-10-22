@@ -78,12 +78,9 @@ pub struct Project {
     /// The colors used most recently for Markers and Highlight Rules.
     #[serde(default)]
     pub recent_colors: RecentColors,
-    /// The Columns section: shown columns, their order and Column Labels.
+    /// The Columns section: the columns the Focus Pane shows.
     #[serde(default)]
     pub columns: crate::columns::ColumnSettings,
-    /// Extraction Rules read from every Log Space, in priority order.
-    #[serde(default)]
-    pub extraction_rules: Vec<crate::extract::ExtractionRule>,
     /// Log Formats chosen by hand for Log Spaces and Source Files.
     #[serde(default)]
     pub format_choices: crate::log_format::FormatChoices,
@@ -101,7 +98,6 @@ impl Project {
             highlight_rules: Vec::new(),
             recent_colors: RecentColors::new(),
             columns: Default::default(),
-            extraction_rules: Vec::new(),
             format_choices: Default::default(),
         }
     }

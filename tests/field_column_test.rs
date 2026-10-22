@@ -143,15 +143,6 @@ fn an_old_session_file_still_opens() {
     assert!(layout.is_pinned(PinnableColumn::Level));
 }
 
-#[test]
-fn header_shows_the_column_label() {
-    let mut layout = layout_with(&["user"]);
-    assert_eq!(layout.header_text(PinnableColumn::Module), "MODULE");
-    layout.labels.insert("module".into(), "Service".into());
-    assert_eq!(layout.header_text(PinnableColumn::Module), "Service");
-    assert_eq!(layout.header_text(field("user")), "user");
-}
-
 // ─── Cells ───────────────────────────────────────────────────────────────────
 
 #[test]
@@ -179,61 +170,7 @@ fn a_continuation_line_shows_the_placeholder() {
 
 // ─── Columns section ─────────────────────────────────────────────────────────
 
-use log_gpui::columns::{ColumnSettings, LabelError, coverage_label, coverage_tooltip};
-
-const VIEW: [&str; 8] = ["timestamp", "level", "module", "source", "message", "user", "uid", "region"];
-
-#[test]
-fn a_label_names_a_column_and_blank_gives_its_name_back() {
-    let mut s = ColumnSettings::default();
-    s.set_label("module", "Service", &VIEW).unwrap();
-    assert_eq!(s.display_name("module"), "Service");
-    s.set_label("module", "  ", &VIEW).unwrap();
-    assert_eq!(s.display_name("module"), "MODULE");
-}
-
-#[test]
-fn a_label_cannot_take_another_columns_name_or_label() {
-    let mut s = ColumnSettings::default();
-    assert_eq!(s.set_label("uid", "user", &VIEW), Err(LabelError::Taken("user".into())));
-    assert_eq!(s.set_label("uid", "Level", &VIEW), Err(LabelError::Taken("Level".into())));
-    s.set_label("module", "Service", &VIEW).unwrap();
-    assert!(s.set_label("uid", "service", &VIEW).is_err());
-    assert!(s.label("uid").is_none());
-    s.set_label("module", "Service", &VIEW).unwrap();
-}
-
-#[test]
-fn fields_turned_on_go_to_the_end_and_can_be_moved() {
-    let mut s = ColumnSettings::default();
-    for f in ["client", "user", "region"] {
-        s.set_shown(f, true);
-    }
-    s.move_field(2, 0);
-    assert_eq!(s.fields, vec!["region", "client", "user"]);
-    s.set_shown("client", false);
-    s.set_shown("client", true);
-    assert_eq!(s.fields, vec!["region", "user", "client"]);
-}
-
-#[test]
-fn fixed_columns_hide_but_message_never_does() {
-    let mut s = ColumnSettings::default();
-    s.set_shown("level", false);
-    s.set_shown("message", false);
-    assert!(!s.is_shown("level"));
-    assert!(s.is_shown("message"));
-    assert_eq!(s.hidden_columns(), BTreeSet::from([PinnableColumn::Level]));
-}
-
-#[test]
-fn only_fields_with_a_value_in_the_view_are_laid_out() {
-    let mut s = ColumnSettings::default();
-    s.set_shown("user", true);
-    s.set_shown("tenant", true);
-    let index = FilterIndex::build(&rows());
-    assert_eq!(s.view_fields(&index), vec![FieldKey::new("user")]);
-}
+use log_gpui::columns::{ColumnSettings, coverage_label, coverage_tooltip};
 
 #[test]
 fn settings_of_an_old_project_are_empty() {
@@ -274,8 +211,7 @@ fn a_match_only_in_hidden_columns_names_them() {
     assert_eq!(hidden, vec![PinnableColumn::Level]);
     let hidden = hidden_matches(&es[0], &ranges(&es[0].raw_line, "alice"), &layout).unwrap();
     assert_eq!(hidden, vec![field("user")]);
-    layout.labels.insert("user".into(), "User".into());
-    assert_eq!(hidden_matches_tooltip(&hidden, &layout), "Matches in hidden column: User");
+    assert_eq!(hidden_matches_tooltip(&hidden, &layout), "Matches in hidden column: user");
 }
 
 #[test]
@@ -285,4 +221,11 @@ fn a_match_in_text_no_column_shows_is_said_so() {
     let hidden = hidden_matches(&es[0], &ranges(&es[0].raw_line, "\"msg\""), &layout).unwrap();
     assert!(hidden.is_empty());
     assert_eq!(hidden_matches_tooltip(&hidden, &layout), "Matches only text no column shows");
+}
+
+#[test]
+fn saved_column_labels_and_pane_order_are_ignored() {
+    let s: ColumnSettings = serde_json::from_str(r#"{"labels":{"module":"Service"},"fields":["user"],"pane":{"user":true}}"#).unwrap();
+    assert_eq!(s.pane_choice("user"), Some(true));
+    assert_eq!(serde_json::to_string(&s).unwrap(), r#"{"pane":{"user":true}}"#);
 }

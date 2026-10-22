@@ -1,3 +1,5 @@
+> **Đã bị thay thế một phần (ADR-0015).** Extraction Rule, "Make column…" và Column Label đã bị gỡ; Log Format là cách duy nhất để định nghĩa cột, và mục Columns chỉ bật/tắt cột của Focus Pane. Các nhắc đến Extraction Rule không còn hiệu lực. Các phần nhắc đến chúng dưới đây chỉ còn là lịch sử, không còn đúng với app. Xem `docs/adr/0015-log-format-is-the-only-way-to-define-columns.md` và `CONTEXT.md`.
+
 ## ADDED Requirements
 
 ### Requirement: Field Column là nguồn cột của Filter

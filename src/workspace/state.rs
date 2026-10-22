@@ -50,13 +50,6 @@ pub struct WorkspaceState {
     /// app setting.
     #[serde(default = "default_true")]
     pub show_search_highlight: bool,
-    /// Whether Log Space views show the Source Column; `None` until chosen,
-    /// then a Log Space shows it when it has two or more files.
-    #[serde(default)]
-    pub show_source: Option<bool>,
-    /// Whether Log Spaces with a Remote Command show the Stream Column.
-    #[serde(default)]
-    pub show_stream: bool,
 }
 
 /// Default Live Window.
@@ -100,8 +93,6 @@ impl Default for WorkspaceState {
             show_minimap: true,
             raw_soft_wrap: true,
             show_search_highlight: true,
-            show_source: None,
-            show_stream: false,
         }
     }
 }
@@ -140,7 +131,6 @@ impl WorkspaceState {
             highlight_rules: Vec::new(),
             recent_colors: Default::default(),
             columns: Default::default(),
-            extraction_rules: Vec::new(),
             format_choices: Default::default(),
         };
         self.projects.push(project);
@@ -348,7 +338,7 @@ impl LeftSidebarState {
 pub enum ContextSection {
     Filter,
     Highlights,
-    /// Which columns the Parsed View shows, their order and Column Labels.
+    /// Which columns the Focus Pane shows.
     Columns,
     Inspector,
 }

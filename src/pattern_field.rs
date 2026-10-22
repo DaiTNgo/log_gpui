@@ -1,5 +1,4 @@
-//! When a field that takes a pattern (the regex of an Extraction Rule, the
-//! template of a Log Format) or a name shows its error: never while the user
+//! When a field that takes a pattern (the template of a Log Format) or a name shows its error: never while the user
 //! is typing, only once they stop for [`SETTLE`] or leave the field, and no
 //! longer as soon as they type again (rule 40). Whether the current text is
 //! usable is known at every keystroke, so Save can be off before any error

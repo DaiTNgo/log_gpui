@@ -25,11 +25,9 @@ const VALUE_LIST_MAX_HEIGHT: f32 = 220.0;
 const VALUE_LIST_FIXED_FROM: usize = 12;
 
 impl AppView {
-    /// The name Filter shows for a column: its Column Label, or `fallback`.
-    fn filter_column_name(&self, key: &str, fallback: &str) -> String {
-        self.active_project()
-            .and_then(|p| p.columns.label(key))
-            .map_or_else(|| fallback.to_string(), str::to_string)
+    /// The name Filter shows for a column: `fallback`.
+    fn filter_column_name(&self, _key: &str, fallback: &str) -> String {
+        fallback.to_string()
     }
 
     /// Keys of the columns shown as cards: those with a condition, plus the
@@ -248,7 +246,7 @@ impl AppView {
             .child(header)
             .when_some(col.is_none().then(|| self.unread_column(key)).flatten(), |card, reason| {
                 let note = match reason {
-                    crate::app::rules::UnreadReason::NotRead => "column no longer read".to_string(),
+                    crate::app::line_config::UnreadReason::NotRead => "column no longer read".to_string(),
                     other => format!("column no longer read ({})", other.text()),
                 };
                 card.child(div().text_xs().text_color(cx.theme().muted_foreground).child(note))

@@ -378,6 +378,38 @@ fn test_match_colors_survive_a_restart_and_default_to_the_theme() {
     assert_eq!(old.match_colors.search, None);
 }
 
+// Extraction Rules were removed: rules saved by an older version are ignored
+// when read and dropped on the next save.
+
+const OLD_RULES: &str = r#"[{"id": 1, "name": "user", "pattern": "user=(\\S+)", "scope": "Line", "description": "after `user=`", "enabled": true}]"#;
+
+#[test]
+fn test_session_manifest_with_saved_extraction_rules_opens_and_drops_them_on_save() {
+    let json = SessionManifest::from_workspace(&build_workspace()).to_json().unwrap();
+    let mut value: serde_json::Value = serde_json::from_str(&json).unwrap();
+    value["projects"][0]["extraction_rules"] = serde_json::from_str(OLD_RULES).unwrap();
+    let old = value.to_string();
+    assert!(old.contains("extraction_rules"));
+
+    let ws = SessionManifest::from_json(&old).expect("a manifest with saved rules opens").into_workspace();
+    assert_eq!(ws.projects[0].name, "Payment Service");
+    let again = SessionManifest::from_workspace(&ws).to_json().unwrap();
+    assert!(!again.contains("extraction_rules"), "rules are dropped on the next save");
+}
+
+#[test]
+fn test_project_with_saved_extraction_rules_opens_and_drops_them_on_save() {
+    let ws = build_workspace();
+    let mut value = serde_json::to_value(&ws.projects[0]).unwrap();
+    value["extraction_rules"] = serde_json::from_str(OLD_RULES).unwrap();
+
+    let project: log_gpui::workspace::project::Project =
+        serde_json::from_value(value).expect("a Project with saved rules opens");
+    assert_eq!(project.name, "Payment Service");
+    let again = serde_json::to_string(&project).unwrap();
+    assert!(!again.contains("extraction_rules"), "rules are dropped on the next save");
+}
+
 #[test]
 fn test_search_highlight_survives_a_restart_and_defaults_to_on() {
     let mut ws = build_workspace();

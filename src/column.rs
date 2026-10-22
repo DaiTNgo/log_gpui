@@ -328,10 +328,16 @@ fn coverage_room(col: PinnableColumn) -> f32 {
     if col.is_field() { crate::ui::mono::header_text_width("99%") + 22.0 } else { 0.0 }
 }
 
-/// The narrowest a column shows a Column Label in full.
-pub fn label_header_width(col: PinnableColumn, label: &str) -> f32 {
-    let side_padding = if col.is_compact() { 8.0 } else { 16.0 };
-    crate::ui::mono::header_text_width(label) + side_padding + 2.0 + coverage_room(col)
+/// Which columns the Focus Pane lays out, apart from the Canvas's.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct PaneColumns {
+    /// Fixed columns (TIMESTAMP, LEVEL, MODULE) hidden.
+    pub hidden: BTreeSet<PinnableColumn>,
+    /// The Field Columns shown. Their order is fixed by source (a Log
+    /// Format's fields, then Detected Fields), not chosen by the user.
+    pub fields: Vec<FieldKey>,
+    pub source: bool,
+    pub stream: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -358,9 +364,10 @@ pub struct ColumnLayoutState {
     /// Project and the view's rows.
     #[serde(default)]
     pub fields: Vec<FieldKey>,
-    /// Column Labels by column key, from the Project.
+    /// The columns of the Focus Pane, which has its own switches: the
+    /// fields above are not read for it.
     #[serde(default)]
-    pub labels: HashMap<String, String>,
+    pub pane: PaneColumns,
     pub is_resizing: Option<(PinnableColumn, Pixels)>,
     pub resize_start_x: Option<Pixels>,
     pub hovered_header: Option<PinnableColumn>,
@@ -400,7 +407,7 @@ impl ColumnLayoutState {
             stream_visible: false,
             hidden: BTreeSet::new(),
             fields: Vec::new(),
-            labels: HashMap::new(),
+            pane: PaneColumns::default(),
             is_resizing: None,
             resize_start_x: None,
             hovered_header: None,
@@ -515,9 +522,54 @@ impl ColumnLayoutState {
         self.sync_ordered_pinned();
     }
 
-    /// The text of a column's Column Header: its Column Label, or its name.
+    /// Set the columns the Focus Pane lays out. A new Field Column is
+    /// fitted to its values, Source and Stream to their names.
+    pub fn set_pane_columns(&mut self, pane: PaneColumns, density: Density) {
+        for key in &pane.fields {
+            if !self.widths.contains_key(&PinnableColumn::Field(*key)) {
+                self.auto_fit(PinnableColumn::Field(*key), density);
+            }
+        }
+        if pane.source && !self.pane.source {
+            self.auto_fit(PinnableColumn::Source, density);
+        }
+        if pane.stream && !self.pane.stream {
+            self.max_chars.stream = self.max_chars.stream.max(6);
+            self.auto_fit(PinnableColumn::Stream, density);
+        }
+        self.pane = pane;
+    }
+
+    /// The columns the Focus Pane lays out, in the Canvas's order. None is
+    /// pinned: the pane scrolls as one.
+    pub fn pane_columns(&self) -> Vec<PinnableColumn> {
+        PinnableColumn::ALL
+            .iter()
+            .copied()
+            .chain(self.pane.fields.iter().map(|k| PinnableColumn::Field(*k)))
+            .filter(|c| match c {
+                PinnableColumn::Source => self.pane.source,
+                PinnableColumn::Stream => self.pane.stream,
+                PinnableColumn::Field(_) => true,
+                fixed => !self.pane.hidden.contains(fixed),
+            })
+            .collect()
+    }
+
+    /// This layout as the Focus Pane draws it: its columns, none pinned.
+    pub fn as_pane(&self) -> ColumnLayoutState {
+        let mut layout = self.clone();
+        layout.unpin_all();
+        layout.hidden = self.pane.hidden.clone();
+        layout.fields = self.pane.fields.clone();
+        layout.source_visible = self.pane.source;
+        layout.stream_visible = self.pane.stream;
+        layout
+    }
+
+    /// The text of a column's Column Header: its name.
     pub fn header_text(&self, col: PinnableColumn) -> &str {
-        self.labels.get(col.key()).map(String::as_str).unwrap_or(col.label())
+        col.label()
     }
 
     /// Show or hide the Stream Column.
@@ -763,11 +815,7 @@ impl ColumnLayoutState {
     pub fn auto_fit(&mut self, col: PinnableColumn, density: Density) {
         let count = self.max_chars.of(col);
         let min = self.min_width(col);
-        let mut calculated = compute_column_width(col, count, density.font_size(), min);
-        if let Some(label) = self.labels.get(col.key()) {
-            calculated = calculated.max(px(label_header_width(col, label)));
-        }
-        self.widths.insert(col, calculated);
+        self.widths.insert(col, compute_column_width(col, count, density.font_size(), min));
     }
 
     /// Computes the sticky offset needed for the Gutter inside a horizontally scrolled row

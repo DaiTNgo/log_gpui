@@ -63,13 +63,13 @@ pub enum FocusPaneNotice {
     /// Filter alone leaves no line (only in the Parsed View).
     FilterExcludesAll,
     /// Filter leaves no line because a condition is on a column that is no
-    /// longer read (its Extraction Rule is off or deleted).
+    /// longer read (its Detected Field is turned off).
     UnreadColumn {
         /// The column's key.
         key: String,
-        /// Its Column Label or name.
+        /// Its name.
         name: String,
-        /// Why it is not read ("rule turned off").
+        /// Why it is not read ("column turned off").
         reason: String,
         /// Whether "Turn column back on" can read it again.
         can_turn_on: bool,

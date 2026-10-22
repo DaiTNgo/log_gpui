@@ -278,9 +278,10 @@ impl AppView {
         self.all_entries = built.entries;
         self.filter_index = built.index;
         self.column_layout.max_chars = built.max_chars;
-        self.read_rule_fields();
+        self.read_detected_fields();
         self.column_layout.set_source_visible(source_visible);
         self.sync_stream_column();
+        self.sync_pane_columns();
     }
 
     /// Load every file of the Log Space into the cache and re-parse the
@@ -315,10 +316,7 @@ impl AppView {
                     built,
                     filter: space.filter.clone(),
                     focus: space.focus.clone(),
-                    source_visible: self
-                        .workspace_state
-                        .show_source
-                        .unwrap_or_else(|| space.source_column_shown()),
+                    source_visible: space.source_column_shown(),
                     name: space.name.clone(),
                 })
             }
@@ -417,9 +415,10 @@ impl AppView {
         self.filter_ui.expanded = None;
         self.filter_ui.inputs_dirty = true;
         self.column_layout.max_chars = built.max_chars;
-        self.read_rule_fields();
+        self.read_detected_fields();
         self.column_layout.set_source_visible(source_visible);
         self.sync_stream_column();
+        self.sync_pane_columns();
         if fresh {
             self.column_layout.update_from_entries(&self.all_entries, self.density);
         }

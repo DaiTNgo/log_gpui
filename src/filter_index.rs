@@ -437,7 +437,7 @@ impl FilterIndex {
     }
 
     /// Detect the Field Columns again, the others kept: after the fields
-    /// read from the rows changed (an Extraction Rule was added or changed).
+    /// read from the rows changed (a Detected Field was turned on or off).
     pub fn rebuild_fields(&mut self, entries: &[LogEntry]) {
         debug_assert_eq!(entries.len(), self.rows);
         self.columns.retain(|c| c.field().is_none());
