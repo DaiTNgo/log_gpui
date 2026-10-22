@@ -113,6 +113,19 @@ impl AppView {
         self.set_show_search_highlight(show, cx);
     }
 
+    /// Whether Search Matches are painted per Phrase (the Settings toggle).
+    /// The Canvas, minimap, Focus Pane and Raw View read it here.
+    pub fn phrase_colors(&self) -> bool {
+        self.workspace_state.phrase_colors
+    }
+
+    pub fn set_phrase_colors(&mut self, on: bool, cx: &mut Context<Self>) {
+        self.workspace_state.phrase_colors = on;
+        self.update_raw_highlights(cx);
+        self.schedule_session_save(cx);
+        cx.notify();
+    }
+
     pub fn toggle_pin_column(&mut self, col: crate::column::PinnableColumn, cx: &mut Context<Self>) {
         self.column_layout.toggle_pin(col);
         cx.notify();

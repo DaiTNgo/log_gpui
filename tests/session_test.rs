@@ -425,3 +425,18 @@ fn test_search_highlight_survives_a_restart_and_defaults_to_on() {
     let old = SessionManifest::from_json(&value.to_string()).unwrap().into_workspace();
     assert!(old.show_search_highlight);
 }
+
+#[test]
+fn test_phrase_colors_default_on_survive_a_restart_and_old_manifests_load_on() {
+    let mut ws = build_workspace();
+    assert!(ws.phrase_colors);
+    ws.phrase_colors = false;
+    let json = SessionManifest::from_workspace(&ws).to_json().unwrap();
+    let restored = SessionManifest::from_json(&json).unwrap().into_workspace();
+    assert!(!restored.phrase_colors);
+
+    let mut value: serde_json::Value = serde_json::from_str(&json).unwrap();
+    value.as_object_mut().unwrap().remove("phrase_colors");
+    let old = SessionManifest::from_json(&value.to_string()).unwrap().into_workspace();
+    assert!(old.phrase_colors);
+}

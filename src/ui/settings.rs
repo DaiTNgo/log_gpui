@@ -74,6 +74,7 @@ struct Values {
     glob_interval: u64,
     minimap: bool,
     search_highlight: bool,
+    phrase_colors: bool,
     wrap: bool,
     density: Density,
     colors: crate::palette::MatchColors,
@@ -98,6 +99,7 @@ pub fn open_settings_dialog(view: Entity<AppView>, window: &mut Window, cx: &mut
                     glob_interval: v.live.glob_interval,
                     minimap: v.show_minimap,
                     search_highlight: v.workspace_state.show_search_highlight,
+                    phrase_colors: v.phrase_colors(),
                     wrap: v.raw.soft_wrap,
                     density: v.density,
                     colors: v.workspace_state.match_colors,
@@ -506,6 +508,7 @@ fn rows_of(section: SettingsSection, view: &Entity<AppView>, v: &Values, cx: &Ap
         }
         SettingsSection::Appearance => {
             let (v_density, v_minimap) = (view.clone(), view.clone());
+            let v_phrase_colors = view.clone();
             let v_highlight = view.clone();
             let densities = [
                 (Density::Comfortable, "Comfortable"),
@@ -540,6 +543,18 @@ fn rows_of(section: SettingsSection, view: &Entity<AppView>, v: &Values, cx: &Ap
                         .on_click(move |checked: &bool, window, app| {
                             let on = *checked;
                             v_minimap.update(app, |this, cx| this.set_show_minimap(on, cx));
+                            window.refresh();
+                        })
+                        .into_any_element(),
+                },
+                Row {
+                    title: "Color Matches by Phrase",
+                    description: "Paint each Phrase of a Search in its own color. Off uses the single Match color.",
+                    control: Switch::new("phrase-colors")
+                        .checked(v.phrase_colors)
+                        .on_click(move |checked: &bool, window, app| {
+                            let on = *checked;
+                            v_phrase_colors.update(app, |this, cx| this.set_phrase_colors(on, cx));
                             window.refresh();
                         })
                         .into_any_element(),

@@ -748,6 +748,10 @@ impl AppView {
         let all_bg = hsla(0.55, 0.85, 0.55, 0.35);
         let current_bg = hsla(0.55, 0.9, 0.55, 0.7);
         let tone = if cx.theme().is_dark() { Tone::Dark } else { Tone::Light };
+        let phrase_fills = (self.phrase_colors() && matcher.is_some()).then(|| {
+            let keys = matcher.as_ref().map(|m| m.phrase_keys()).unwrap_or_default();
+            crate::ui::canvas::search_phrase_fills(&keys, tone)
+        });
         // Markers of each file, leaving out those of a line edited since.
         let stored: HashMap<String, Vec<(usize, std::ops::Range<usize>, HighlightColor)>> = sections
             .iter()
@@ -779,12 +783,18 @@ impl AppView {
                     let is_current = current.is_some_and(|m| m.section == si && m.line == li);
                     // Only a line that satisfies the whole expression is a Match;
                     // `a && b` must not paint `a` on a line without `b`.
-                    let ranges = if matcher.is_match(line) { matcher.find_ranges(line) } else { Vec::new() };
-                    for (s, e) in ranges {
+                    let paints = crate::ui::canvas::line_match_paints(
+                        matcher,
+                        line,
+                        is_current,
+                        phrase_fills.as_deref(),
+                        crate::ui::canvas::PhraseFill { normal: all_bg, current: current_bg },
+                    );
+                    for p in paints {
                         decorations.push(TextDecoration::new(
-                            offset + s..offset + e,
+                            offset + p.start..offset + p.end,
                             HighlightStyle {
-                                background_color: Some(if is_current { current_bg } else { all_bg }),
+                                background_color: Some(p.fill),
                                 ..Default::default()
                             },
                         ));

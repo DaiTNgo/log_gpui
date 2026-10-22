@@ -117,8 +117,11 @@ impl AppView {
                                     })),
                             )
                             .child(
+                                // Room for "99999/99999" so the buttons don't shift as counts grow
                                 div()
-                                    .min_w(px(48.0))
+                                    .flex_none()
+                                    .min_w(px(88.0))
+                                    .whitespace_nowrap()
                                     .text_sm()
                                     .child(match_label),
                             ),
