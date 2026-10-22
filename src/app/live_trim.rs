@@ -81,7 +81,7 @@ impl AppView {
         let longest_row = shifted(self.longest_row, &dropped);
 
         // Rows the tab would list without the Find Filter that leave.
-        let lost_before_filter = self.focus_rows_among(&dropped);
+        let lost_before_filter = self.rows_before_find_filter_among(&dropped);
 
         let removed: Vec<LogEntry> = take_positions(&mut self.all_entries, &dropped);
         let rows = self.all_entries.len();
@@ -140,7 +140,7 @@ impl AppView {
                 });
             }
             let find = self.focus.find_mut();
-            find.rows_before_filter = find.rows_before_filter.saturating_sub(lost_before_filter);
+            find.rows_before_find_filter = find.rows_before_find_filter.saturating_sub(lost_before_filter);
             let current = find.current;
             let lost_before = find.hits[..current.min(find.hits.len())]
                 .iter()

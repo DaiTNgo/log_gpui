@@ -11,6 +11,7 @@ use crate::highlight::RowPaint;
 use crate::marker::{TextMarker, level_marker};
 use crate::model::{LogEntry, LogLevel};
 use crate::palette::Weight;
+use crate::search_expr::Matcher;
 use crate::text_selection::TextSelection;
 use crate::ui::canvas::{CanvasColors, CellCtx, render_text_cell};
 use crate::ui::cells::TextCell;
@@ -79,8 +80,11 @@ pub struct PaneState<'a> {
     pub can_close: bool,
     pub find_input: &'a gpui::Entity<InputState>,
     pub find: &'a FocusFind,
-    /// Search Highlight is on: Search Matches are painted.
+    /// Search Highlight is on (the toggle's state).
     pub search_highlight: bool,
+    /// The matcher whose Matches the rows paint: none while Search
+    /// Highlight is off.
+    pub search_matcher: Option<Matcher>,
     pub rows: Arc<Vec<FocusRow>>,
     pub source: PaneSource,
     /// Index in `rows` of the current line, when the tab lists it.
@@ -173,7 +177,8 @@ impl FocusPane {
         let (v_prev, v_next, v_hide) = (state.view.clone(), state.view.clone(), state.view.clone());
         let v_detach = state.view.clone();
         let v_filter = state.view.clone();
-        let find_filtering = state.find.is_filtering();
+        let find_filtering = state.find.find_filter_narrows();
+        let find_filter_on = state.find.find_filter;
         let v_highlight = state.view.clone();
         let search_highlight = state.search_highlight;
         let find_box = h_flex()
@@ -223,7 +228,11 @@ impl FocusPane {
                     .xsmall()
                     .icon(IconName::Funnel)
                     .selected(find_filtering)
-                    .tooltip("Find Filter: list only the lines found")
+                    .tooltip(if find_filter_on {
+                        "Find Filter: show all lines"
+                    } else {
+                        "Find Filter: list only the lines found"
+                    })
                     .on_click(move |_, _w, cx| v_filter.update(cx, |this, cx| this.toggle_find_filter(cx))),
             )
             .child(div().min_w(px(40.0)).text_xs().text_color(muted).child(find_label))
@@ -402,6 +411,7 @@ impl FocusPane {
             rows: state.rows,
             source: state.source,
             selected: state.selected,
+            search_matcher: state.search_matcher,
             show_source: state.show_source,
             colors: state.colors,
             selection: state.selection,
@@ -495,6 +505,7 @@ struct PaneRows {
     rows: Arc<Vec<FocusRow>>,
     source: PaneSource,
     selected: Option<usize>,
+    search_matcher: Option<Matcher>,
     show_source: bool,
     colors: CanvasColors,
     selection: Option<TextSelection>,
@@ -557,7 +568,10 @@ impl PaneRows {
         };
         let is_selected = self.selected == Some(index);
         let is_find_current = find.current_row() == Some(index);
-        let search_ranges = app.focus_pane_search_ranges(&entry.raw_line);
+        let search_ranges = match &self.search_matcher {
+            Some(m) if m.is_match(&entry.raw_line) => m.find_ranges(&entry.raw_line),
+            _ => Vec::new(),
+        };
         let find_ranges = find.find_ranges(&entry.raw_line);
         let selected_in_line = self.selection.and_then(|s| s.range_in_row(index, entry.raw_line.len()));
         let columns = (self.columns && parsed).then_some(&app.column_layout);

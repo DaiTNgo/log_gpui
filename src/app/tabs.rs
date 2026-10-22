@@ -600,20 +600,32 @@ impl AppView {
         };
         self.persist_active_session();
         let session = self.new_tab_session(&space);
-        let target = TabTarget::LogSpace { space_id: space_id.to_string() };
+        self.find_filter_off_when_opened_again(&TabTarget::LogSpace { space_id: space_id.to_string() });
         if let Some(proj) = self.active_project_mut() {
-            if proj.working_set.find_tab(&target).is_none() {
-                // Opened again: the Find Filter starts off.
-                if let Some(space) = proj.log_space_mut(space_id) {
-                    space.focus.clear_find_filters();
-                }
-            }
             proj.open_log_space(space_id, session);
         }
         self.expanded_spaces.insert(space_id.to_string());
         self.restore_active_session(cx);
         self.schedule_session_save(cx);
         cx.notify();
+    }
+
+    /// A view opened again (no tab shows `target` yet): its Find Filter
+    /// starts off on every Focus Tab, while the find text is kept.
+    fn find_filter_off_when_opened_again(&mut self, target: &TabTarget) {
+        let Some(proj) = self.active_project_mut() else { return };
+        if proj.working_set.find_tab(target).is_some() {
+            return;
+        }
+        let Some(space) = target.space_id().and_then(|id| proj.log_space_mut(id)) else { return };
+        let focus = match target {
+            TabTarget::LogSpace { .. } => Some(&mut space.focus),
+            TabTarget::FileView { file_id, .. } => space.file_focus.get_mut(file_id),
+            TabTarget::InvestigationBoard { .. } => None,
+        };
+        if let Some(focus) = focus {
+            focus.clear_find_filters();
+        }
     }
 
     /// Open one file of a Log Space on its own, or focus its tab.
@@ -626,16 +638,11 @@ impl AppView {
         }
         self.persist_active_session();
         let session = self.new_tab_session(&space);
-        let target = TabTarget::FileView { space_id: space_id.to_string(), file_id: file_id.to_string() };
+        self.find_filter_off_when_opened_again(&TabTarget::FileView {
+            space_id: space_id.to_string(),
+            file_id: file_id.to_string(),
+        });
         if let Some(proj) = self.active_project_mut() {
-            if proj.working_set.find_tab(&target).is_none() {
-                // Opened again: the Find Filter starts off.
-                if let Some(space) = proj.log_space_mut(space_id) {
-                    if let Some(focus) = space.file_focus.get_mut(file_id) {
-                        focus.clear_find_filters();
-                    }
-                }
-            }
             proj.open_file_view(space_id, file_id, session);
         }
         self.restore_active_session(cx);

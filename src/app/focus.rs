@@ -163,37 +163,30 @@ impl AppView {
     /// Keep the rows Focus Find finds when the Find Filter narrows the open
     /// tab, and remember how many there were before.
     fn apply_find_filter(&mut self, rows: Vec<FocusRow>, sections: &[RawSection]) -> Vec<FocusRow> {
-        let find = self.focus.find();
-        if !find.is_filtering() {
-            self.focus.find_mut().rows_before_filter = rows.len();
-            return rows;
-        }
-        let before = rows.len();
-        let kept: Vec<FocusRow> = {
-            let texts = Self::focus_row_texts(&self.all_entries, sections, &rows);
-            rows.iter().zip(texts).filter(|(_, text)| find.matches(text)).map(|(row, _)| *row).collect()
-        };
-        self.focus.find_mut().rows_before_filter = before;
-        kept
+        self.focus.find_mut().rows_before_find_filter = rows.len();
+        self.keep_found_rows(rows, sections)
     }
 
     /// `apply_find_filter` for rows appended after the tab's rows (Parsed View).
     fn apply_find_filter_appended(&mut self, new_rows: Vec<FocusRow>) -> Vec<FocusRow> {
+        self.focus.find_mut().rows_before_find_filter += new_rows.len();
+        self.keep_found_rows(new_rows, &[])
+    }
+
+    /// The `rows` Focus Find finds while the Find Filter narrows the open
+    /// tab; all of them otherwise.
+    fn keep_found_rows(&self, rows: Vec<FocusRow>, sections: &[RawSection]) -> Vec<FocusRow> {
         let find = self.focus.find();
-        let added = new_rows.len();
-        let kept: Vec<FocusRow> = if find.is_filtering() {
-            let texts = Self::focus_row_texts(&self.all_entries, &[], &new_rows);
-            new_rows.iter().zip(texts).filter(|(_, text)| find.matches(text)).map(|(row, _)| *row).collect()
-        } else {
-            new_rows
-        };
-        self.focus.find_mut().rows_before_filter += added;
-        kept
+        if !find.find_filter_narrows() {
+            return rows;
+        }
+        let texts = Self::focus_row_texts(&self.all_entries, sections, &rows);
+        rows.iter().zip(texts).filter(|(_, text)| find.matches(text)).map(|(row, _)| *row).collect()
     }
 
     /// How many of the entries at `positions` (ascending) the open tab lists
     /// before the Find Filter, in the Parsed View.
-    pub(crate) fn focus_rows_among(&self, positions: &[usize]) -> usize {
+    pub(crate) fn rows_before_find_filter_among(&self, positions: &[usize]) -> usize {
         let limited = self.filter_limits_focus();
         let search = self.focus.search();
         if search.matcher.is_none() && !limited {
@@ -212,18 +205,22 @@ impl AppView {
     /// centers it among the restored rows.
     pub fn toggle_find_filter(&mut self, cx: &mut Context<Self>) {
         let find = self.focus.find_mut();
-        find.filter = !find.filter;
+        find.find_filter = !find.find_filter;
         self.refresh_focus();
-        if self.focus.find().is_filtering() && self.pane_selected_index().is_none() {
+        let narrowing = self.focus.find().find_filter_narrows();
+        if narrowing && self.pane_selected_index().is_none() {
             if let Some(index) = self.nearest_kept_row() {
                 self.goto_pane_row(index, Origin::Jump, cx);
                 return;
             }
         }
         match self.pane_selected_index() {
-            // Centered even when already in sight: the rows around it changed.
-            Some(index) => self.focus_scroll.scroll_to_item_strict(index, ScrollStrategy::Center),
-            None => self.scroll_pane_to_current(),
+            // Switched off: centered even when already in sight, as the rows
+            // around it changed. Switched on, the selection stays.
+            Some(index) if !self.focus.find().find_filter => {
+                self.focus_scroll.scroll_to_item_strict(index, ScrollStrategy::Center)
+            }
+            _ => self.scroll_pane_to_current(),
         }
         cx.notify();
     }
@@ -472,7 +469,7 @@ impl AppView {
         let texts: Vec<&str> =
             Self::focus_row_texts(&self.all_entries, &sections, &self.focus_rows).collect();
         self.focus.find_mut().set_query(text, texts.into_iter());
-        if self.focus.find().filter {
+        if self.focus.find().find_filter {
             // The rows the tab lists change with the text.
             self.refresh_focus();
         }

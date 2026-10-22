@@ -59,7 +59,7 @@ fn with_empty_text_the_find_filter_narrows_nothing(cx: &mut TestAppContext) {
     search(&mut h, "INFO");
     toggle(&mut h);
     assert_eq!(row_count(&mut h), 4);
-    let filtering = h.view.read_with(&h.cx, |app, _| app.focus.find().is_filtering());
+    let filtering = h.view.read_with(&h.cx, |app, _| app.focus.find().find_filter_narrows());
     assert!(!filtering, "the funnel is not shown as active");
 
     // Typing while it is on narrows at once.
@@ -134,9 +134,36 @@ fn reopening_the_log_space_starts_with_the_find_filter_off(cx: &mut TestAppConte
     h.view.update(&mut h.cx, |app, cx| app.open_log_space_tab(&space_id, cx));
     h.cx.run_until_parked();
 
-    let (text, filter) = h.view.read_with(&h.cx, |app, _| (app.focus.find().query.clone(), app.focus.find().filter));
+    let (text, filter) = h.view.read_with(&h.cx, |app, _| (app.focus.find().query.clone(), app.focus.find().find_filter));
     assert_eq!(text, "db", "the find text is restored");
     assert!(!filter);
+    assert_eq!(row_count(&mut h), 4);
+}
+
+#[gpui::test]
+fn reopening_a_file_view_starts_with_the_find_filter_off(cx: &mut TestAppContext) {
+    let mut h = common::open_app_with_lines(cx, &lines());
+    let (space_id, file_id) = h.view.read_with(&h.cx, |app, _| {
+        let project = app.workspace_state.active_project().unwrap();
+        let space_id = project.working_set.active_tab().unwrap().target.space_id().unwrap().to_string();
+        let file_id = project.log_space(&space_id).unwrap().files[0].file_id.clone();
+        (space_id, file_id)
+    });
+    h.view.update(&mut h.cx, |app, cx| app.open_file_view_tab(&space_id, &file_id, cx));
+    h.cx.run_until_parked();
+    search(&mut h, "INFO");
+    find(&mut h, "db");
+    toggle(&mut h);
+    assert_eq!(row_count(&mut h), 2);
+
+    h.view.update(&mut h.cx, |app, cx| app.close_active_tab(cx));
+    h.cx.run_until_parked();
+    h.view.update(&mut h.cx, |app, cx| app.open_file_view_tab(&space_id, &file_id, cx));
+    h.cx.run_until_parked();
+
+    let (text, on) = h.view.read_with(&h.cx, |app, _| (app.focus.find().query.clone(), app.focus.find().find_filter));
+    assert_eq!(text, "db", "the find text is restored");
+    assert!(!on);
     assert_eq!(row_count(&mut h), 4);
 }
 
@@ -156,11 +183,11 @@ fn the_keymap_command_toggles_the_find_filter(cx: &mut TestAppContext) {
 fn the_find_filter_is_not_stored() {
     let mut tabs = log_gpui::focus::FocusTabs::default();
     tabs.find_mut().query = "db".into();
-    tabs.find_mut().filter = true;
+    tabs.find_mut().find_filter = true;
     let json = serde_json::to_string(&tabs).unwrap();
     let back: log_gpui::focus::FocusTabs = serde_json::from_str(&json).unwrap();
     assert_eq!(back.find().query, "db");
-    assert!(!back.find().filter);
+    assert!(!back.find().find_filter);
 }
 
 fn select_view_row(h: &mut Harness, pos: usize) {
@@ -204,7 +231,14 @@ fn switching_on_keeps_a_current_line_the_find_filter_keeps(cx: &mut TestAppConte
     search(&mut h, "INFO");
     find(&mut h, "db");
     select_view_row(&mut h, 3); // "db retry", line 4
-    toggle(&mut h);
+    // What the pane is told to scroll to, read before the pane draws it.
+    let strict = h.view.update(&mut h.cx, |app, cx| {
+        app.focus_scroll.0.borrow_mut().deferred_scroll_to_item = None;
+        app.toggle_find_filter(cx);
+        app.focus_scroll.0.borrow().deferred_scroll_to_item.as_ref().is_some_and(|d| d.scroll_strict)
+    });
+    assert!(!strict, "the selection stays where it is: only switching off recenters");
+    h.cx.run_until_parked();
     assert_eq!(current(&mut h), Some(4));
     assert_eq!(pane_selected(&mut h), Some(1));
 }

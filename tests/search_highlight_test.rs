@@ -31,6 +31,14 @@ fn is_on(h: &mut Harness) -> bool {
     h.view.read_with(&h.cx, |app, _| app.workspace_state.show_search_highlight)
 }
 
+/// The parts of `line` the Focus Pane paints as Search Matches.
+fn pane_search_ranges(h: &mut Harness, line: &str) -> Vec<(usize, usize)> {
+    h.view.read_with(&h.cx, |app, _| match app.focus_pane_search_matcher() {
+        Some(m) if m.is_match(line) => m.find_ranges(line),
+        _ => Vec::new(),
+    })
+}
+
 const LINE: &str = "2026-10-19 10:00:02 INFO db timeout";
 
 #[test]
@@ -44,7 +52,7 @@ fn the_focus_pane_paints_search_matches_by_default(cx: &mut TestAppContext) {
     let mut h = common::open_app_with_lines(cx, &lines());
     type_search(&mut h, "timeout");
     assert!(is_on(&mut h));
-    let ranges = h.view.read_with(&h.cx, |app, _| app.focus_pane_search_ranges(LINE));
+    let ranges = pane_search_ranges(&mut h, LINE);
     assert_eq!(ranges, vec![(28, 35)]);
 }
 
@@ -55,14 +63,14 @@ fn the_command_turns_search_painting_off_and_on(cx: &mut TestAppContext) {
 
     run(&mut h, Command::ToggleSearchHighlight);
     assert!(!is_on(&mut h));
-    let ranges = h.view.read_with(&h.cx, |app, _| app.focus_pane_search_ranges(LINE));
+    let ranges = pane_search_ranges(&mut h, LINE);
     assert!(ranges.is_empty());
     // The Focus Tab still lists the same lines.
     assert_eq!(h.view.read_with(&h.cx, |app, _| app.focus_rows.len()), 2);
 
     run(&mut h, Command::ToggleSearchHighlight);
     assert!(is_on(&mut h));
-    let ranges = h.view.read_with(&h.cx, |app, _| app.focus_pane_search_ranges(LINE));
+    let ranges = pane_search_ranges(&mut h, LINE);
     assert_eq!(ranges, vec![(28, 35)]);
 }
 
@@ -88,6 +96,19 @@ fn the_setting_is_app_wide(cx: &mut TestAppContext) {
     h.view.update_in(&mut h.cx, |app, window, cx| app.add_focus_tab(window, cx));
     h.cx.run_until_parked();
     type_search(&mut h, "cache");
-    let ranges = h.view.read_with(&h.cx, |app, _| app.focus_pane_search_ranges("INFO cache timeout"));
+    let ranges = pane_search_ranges(&mut h, "INFO cache timeout");
     assert!(ranges.is_empty());
+}
+
+#[gpui::test]
+fn search_highlight_off_paints_no_search_matches_in_the_raw_view(cx: &mut TestAppContext) {
+    let mut h = common::open_app_with_lines(cx, &lines());
+    h.view.update(&mut h.cx, |app, cx| app.set_view_mode(log_gpui::workspace::working_set::ViewMode::Raw, cx));
+    h.cx.run_until_parked();
+    type_search(&mut h, "timeout");
+    assert_eq!(pane_search_ranges(&mut h, LINE), vec![(28, 35)]);
+
+    run(&mut h, Command::ToggleSearchHighlight);
+    assert!(pane_search_ranges(&mut h, LINE).is_empty());
+    assert_eq!(h.view.read_with(&h.cx, |app, _| app.focus_rows.len()), 2, "the same lines are listed");
 }

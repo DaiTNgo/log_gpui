@@ -267,7 +267,7 @@ Finding and jumping between the lines a Focus Tab already lists, written like a 
 _Avoid_: Pane search, sub-search.
 
 **Find Filter**:
-A mode of Focus Find, switched on and off per Focus Tab with the funnel in the find bar: while on and the find text is not empty, the Focus Pane lists only the lines Focus Find finds among those Search and Filter selected, including lines appended later, and the counter reads "N of M lines". With empty find text it narrows nothing. It is never remembered: it is off whenever the app or the Log Space opens again, while the find text is kept.
+A mode of Focus Find, switched on and off per Focus Tab with the funnel in the find bar or the Keymap command `focus_pane.toggle_find_filter`: while on and the find text is not empty, the Focus Pane lists only the lines Focus Find finds among those Search and Filter selected, including lines appended later, and the counter reads "N of M lines". With empty find text it narrows nothing. It is never remembered: it is off whenever the app or the Log Space opens again, while the find text is kept.
 _Avoid_: Pane filter, find-only mode.
 
 **Inspector**:
