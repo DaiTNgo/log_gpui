@@ -16,6 +16,15 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 impl AppView {
+    /// The matcher whose Matches the Focus Pane paints: the open tab's
+    /// Search, none while Search Highlight is off.
+    pub fn focus_pane_search_matcher(&self) -> Option<crate::search_expr::Matcher> {
+        if !self.workspace_state.show_search_highlight {
+            return None;
+        }
+        self.focus.search().matcher.clone()
+    }
+
     /// The Markers of each file of the Raw View by line, leaving out those of
     /// a line edited since.
     fn raw_pane_markers(
@@ -89,7 +98,8 @@ impl AppView {
             can_close: self.focus.can_close(),
             find_input,
             find: self.focus.find(),
-            search_matcher: self.focus.search().matcher.clone(),
+            search_highlight: self.workspace_state.show_search_highlight,
+            search_matcher: self.focus_pane_search_matcher(),
             rows: self.focus_rows.clone(),
             source,
             selected: self.pane_selected_index(),
