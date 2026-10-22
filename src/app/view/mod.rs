@@ -246,11 +246,8 @@ impl AppView {
             header_fg: cx.theme().table_head_foreground,
             border: cx.theme().border,
             selected: cx.theme().list_active,
-            search: self.workspace_state.match_colors.search.map_or(
-                gpui::hsla(0.55, 0.85, 0.55, 1.0),
-                hue_color,
-            ),
-            find: self.workspace_state.match_colors.find.map_or(cx.theme().warning, hue_color),
+            search: crate::ui::canvas::search_match_color(cx.theme().is_dark()),
+            find: cx.theme().warning,
             muted: cx.theme().muted_foreground,
             danger: cx.theme().danger,
             warning: cx.theme().warning,
@@ -274,10 +271,4 @@ fn sync_editor_colors(cx: &mut gpui::App) {
     let highlight = Arc::make_mut(&mut theme.highlight_theme);
     highlight.style.editor_background = Some(main_bg);
     highlight.style.editor_gutter_background = Some(main_bg);
-}
-
-/// The bright paint a hue gives to text matches.
-fn hue_color(hue: crate::palette::Hue) -> gpui::Hsla {
-    let (h, s, l) = hue.vivid_hsl();
-    gpui::hsla(h, s, l, 1.0)
 }

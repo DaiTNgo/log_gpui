@@ -15,9 +15,6 @@ pub struct SessionManifest {
     /// Focus Pane visibility and height.
     #[serde(default)]
     pub focus_pane: crate::workspace::state::FocusPaneState,
-    /// Colors of the Search and Focus Find matches.
-    #[serde(default)]
-    pub match_colors: crate::palette::MatchColors,
     /// Newest lines kept for each Remote File.
     #[serde(default = "crate::workspace::state::default_live_window")]
     pub live_window: usize,
@@ -97,7 +94,6 @@ impl SessionManifest {
             active_project_id: ws.active_project_id.clone(),
             projects,
             focus_pane: ws.focus_pane.clone(),
-            match_colors: ws.match_colors,
             live_window: ws.live_window,
             load_more_step: ws.load_more_step,
             full_read_limit_lines: ws.full_read_limit_lines,
@@ -130,7 +126,6 @@ impl SessionManifest {
         }
         ws.active_project_id = self.active_project_id;
         ws.focus_pane = self.focus_pane;
-        ws.match_colors = self.match_colors;
         ws.live_window = self.live_window;
         ws.load_more_step = self.load_more_step;
         ws.full_read_limit_lines = self.full_read_limit_lines;

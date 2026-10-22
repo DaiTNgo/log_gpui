@@ -445,3 +445,11 @@ fn find_fills_match_search_fills_for_a_shared_phrase_even_when_plain_hues_would_
     assert_eq!(find[0], search[1]);
     assert_ne!(search[1].normal.h, search_phrase_fills(&[y.as_str()], Tone::Dark)[0].normal.h);
 }
+
+#[test]
+fn test_the_shared_match_color_is_a_fixed_blue_in_both_themes() {
+    use log_gpui::ui::canvas::search_match_color;
+    let expected = gpui::hsla(0.55, 0.85, 0.55, 1.0);
+    assert_eq!(search_match_color(false), expected);
+    assert_eq!(search_match_color(true), expected);
+}
