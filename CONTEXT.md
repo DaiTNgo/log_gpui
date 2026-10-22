@@ -311,7 +311,7 @@ How a line is read when no Log Format applies to it: JSON and the built-in layou
 _Avoid_: Default parser.
 
 **Detected Field**:
-A field the app finds in lines on its own (a JSON key, or a `key=value` pair in MESSAGE), listed in the *Detected* group of the Columns section with its line count and a switch, off by default.
+A field the app finds in lines on its own (a JSON key, or a `key=value` pair in MESSAGE), listed in the *Detected* group of the Columns section with its line count and a switch, off by default. A `key=value` field is read only while its switch is on, so it shows in the Canvas only while on there (ADR-0015).
 _Avoid_: Suggested column, auto column.
 
 **Columns** (section of the context sidebar):

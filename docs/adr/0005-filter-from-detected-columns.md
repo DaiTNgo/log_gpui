@@ -2,7 +2,7 @@
 
 _Partly superseded by ADR-0008: Search and Filter now narrow the Focus Pane, and the view always shows every line._
 
-_Extended by ADR-0013: a Filterable Column is a column the app detects or one the user defines (Extraction Rule, Log Format, Detected Field). Filter still has no regex._
+_Extended by ADR-0013: a Filterable Column is a column the app detects or one the user defines (Log Format, Detected Field; the Extraction Rule it named was removed by ADR-0015). Filter still has no regex._
 
 ## Context
 

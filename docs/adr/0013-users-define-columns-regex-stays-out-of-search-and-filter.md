@@ -1,5 +1,7 @@
 # 0013. Users Define Columns; Regex Stays Out Of Search And Filter
 
+_Partly superseded by [ADR-0015](0015-log-format-is-the-only-way-to-define-columns.md): the Extraction Rule ("Make column…", way 1 below), Column Labels and the reordering and renaming in the Columns section are gone; Log Format is the only way to define columns, and the Canvas shows every column._
+
 Extends ADR-0005: a Filterable Column is a column the app detects *or* one the user defines.
 
 ## Context

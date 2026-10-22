@@ -1,3 +1,5 @@
+> **Đã bị thay thế một phần (ADR-0015).** Extraction Rule, "Make column…" và Column Label đã bị gỡ; Log Format là cách duy nhất để định nghĩa cột, và mục Columns chỉ bật/tắt cột của Focus Pane.  Các phần nhắc đến chúng dưới đây chỉ còn là lịch sử, không còn đúng với app. Xem `docs/adr/0015-log-format-is-the-only-way-to-define-columns.md` và `CONTEXT.md`.
+
 ## Why
 
 Parsed View chỉ có bốn cột cố định: TIMESTAMP, LEVEL, MODULE, MESSAGE. Ngoài JSON và ba định dạng có sẵn (standard, logcat, syslog), mọi thứ còn lại của dòng đều dồn vào MESSAGE. Thực tế một dòng log thường chứa nhiều trường đa dạng như `user=alice`, `req=7f3a…`, IP, thời gian xử lý, mã HTTP. Người dùng không tách được, không đặt tên được, nên không lọc, không tô màu và không ghim được những trường đó. ADR-0005 đã ghi rõ hệ quả: "cột nào không được phát hiện thì không lọc được". Change này cho người dùng tự đặt tên và tách cột, chia làm ba giai đoạn, mỗi giai đoạn dùng được ngay khi xong.

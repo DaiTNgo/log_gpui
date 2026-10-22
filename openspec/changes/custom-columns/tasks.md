@@ -1,3 +1,5 @@
+> **Đã bị thay thế một phần (ADR-0015).** Extraction Rule, "Make column…" và Column Label đã bị gỡ; Log Format là cách duy nhất để định nghĩa cột, và mục Columns chỉ bật/tắt cột của Focus Pane. Các task về Extraction Rule và Column Label đã làm xong rồi bị gỡ. Các phần nhắc đến chúng dưới đây chỉ còn là lịch sử, không còn đúng với app. Xem `docs/adr/0015-log-format-is-the-only-way-to-define-columns.md` và `CONTEXT.md`.
+
 ## 0. Giai đoạn 0 — Nền Field Column
 
 - [x] 0.1 Đo bộ nhớ của `Spans` với 10 trường × 1.000.000 dòng. Ghi kết quả vào design.md, và chọn giữ `(&'static str, Range<usize>)` hay nén thành `(u16, u32, u32)`
