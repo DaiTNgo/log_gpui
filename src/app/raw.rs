@@ -16,7 +16,10 @@ use gpui::{
     AppContext as _, Context, HighlightStyle, ScrollHandle, Subscription,
     UniformListScrollHandle, Window, hsla, point, px,
 };
-use gpui_component::input::{EditorState, Position, InputEvent, TextDecoration, TextDecorationCollection};
+use gpui_component::input::{
+    EditorState, InputEvent, Position, RangeDecoration, RangeDecorationCollection, RangeDecorationStyle,
+    TextDecoration, TextDecorationCollection,
+};
 use gpui_component::ActiveTheme as _;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
@@ -77,6 +80,10 @@ pub struct RawViewState {
     pending_reveal: Option<(String, usize)>,
     /// The imported line selected for copying: `(file_id, 0-based line)`.
     pub selected: Option<(String, usize)>,
+    /// The line a jump last landed on, flashed in its editor, and the jump's
+    /// count (an older flash stops fading once a newer one starts).
+    flash: Option<RangeDecorationCollection>,
+    flash_count: u64,
     /// The split lines of each edited scratch file, so rendering does not
     /// split the whole text again every frame.
     /// Selection each editor had when the view last re-rendered for it.
@@ -107,6 +114,8 @@ impl RawViewState {
             soft_wrap: true,
             pending_reveal: None,
             selected: None,
+            flash: None,
+            flash_count: 0,
             last_selection: HashMap::new(),
             lines_cache: Default::default(),
             pending_appends: HashMap::new(),
@@ -738,6 +747,62 @@ impl AppView {
         let target = (offset - 80.0).max(0.0);
         self.raw.section_scroll.set_offset(point(px(0.0), px(-target)));
         self.raw.pending_reveal = Some((section.file_id.clone(), line));
+    }
+
+    /// Flash `line` of the file's editor so the eye finds the line a jump
+    /// landed on: a fill that fades out over [`crate::ui::canvas::ROW_FLASH`].
+    pub(crate) fn flash_raw_line(&mut self, file_id: &str, line: usize, cx: &mut Context<Self>) {
+        if let Some(old) = self.raw.flash.take() {
+            old.dispose(cx);
+        }
+        let sections = self.raw_sections();
+        let Some((si, section)) = sections.iter().enumerate().find(|(_, s)| *s.file_id == *file_id) else { return };
+        let Some(text) = section.lines.get(line) else { return };
+        let Some(editor) = self.raw.editors.get(file_id) else { return };
+        let start = raw_view::line_starts(section.lines.as_slice())[line];
+        // An empty line still shows: its newline is filled.
+        let range = start..start + text.len().max(1);
+        let colors = self.canvas_colors(cx);
+        let is_match = self.raw.matches.get(self.raw.current).is_some_and(|m| m.section == si && m.line == line);
+        let color = if is_match { colors.search } else { colors.header_fg };
+        let decoration = move |t: f32| {
+            RangeDecoration::new(range.clone())
+                .with_style(RangeDecorationStyle::Fill)
+                .with_color(color.opacity(0.35 * (1.0 - gpui::ease_in_out(t))))
+        };
+        let collection = editor
+            .state
+            .update(cx, |state, cx| state.create_range_decorations_collection(vec![decoration(0.0)], cx));
+        self.raw.flash = Some(collection);
+        self.raw.flash_count += 1;
+        let count = self.raw.flash_count;
+        let started = std::time::Instant::now();
+        let duration = crate::ui::canvas::ROW_FLASH;
+        cx.spawn(async move |this, cx| loop {
+            cx.background_executor().timer(Duration::from_millis(16)).await;
+            let t = (started.elapsed().as_secs_f32() / duration.as_secs_f32()).min(1.0);
+            let going = this
+                .update(cx, |this, cx| {
+                    if this.raw.flash_count != count {
+                        return false;
+                    }
+                    if t >= 1.0 {
+                        if let Some(done) = this.raw.flash.take() {
+                            done.dispose(cx);
+                        }
+                        return false;
+                    }
+                    if let Some(flash) = &this.raw.flash {
+                        flash.set(vec![decoration(t)], cx);
+                    }
+                    true
+                })
+                .unwrap_or(false);
+            if !going {
+                break;
+            }
+        })
+        .detach();
     }
 
     /// Highlight every Match in the scratch editors; the current one stronger.

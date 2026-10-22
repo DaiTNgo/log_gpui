@@ -304,6 +304,7 @@ impl AppView {
                     self.selected_row_pos = Some(ix);
                     if origin != Origin::View {
                         self.scroll_handle.scroll_to_item(ix, ScrollStrategy::Center);
+                        self.flash_row(ix);
                     }
                 }
             }
@@ -314,6 +315,7 @@ impl AppView {
                         let sections = self.raw_sections();
                         if let Some(section) = sections.iter().position(|s| *s.file_id == *line.file_id) {
                             self.reveal_raw_line(section, raw_line, cx);
+                            self.flash_raw_line(&line.file_id, raw_line, cx);
                         }
                     }
                 }
@@ -334,10 +336,17 @@ impl AppView {
                 self.selected_row_pos = Some(entry_ix);
                 if origin != Origin::View {
                     self.scroll_handle.scroll_to_item(entry_ix, ScrollStrategy::Center);
+                    self.flash_row(entry_ix);
                 }
                 cx.notify();
             }
         }
+    }
+
+    /// Flash the view row at `pos` so the eye finds the line a jump landed on.
+    fn flash_row(&mut self, pos: usize) {
+        let count = self.row_flash.map_or(0, |(_, n, _)| n + 1);
+        self.row_flash = Some((pos, count, std::time::Instant::now()));
     }
 
     /// Select a row of the pane as the current line.

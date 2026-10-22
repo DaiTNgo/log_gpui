@@ -159,6 +159,9 @@ pub struct AppView {
     pub scroll_handle: UniformListScrollHandle,
 
     pub selected_row_pos: Option<usize>,
+    /// The row the view last jumped to, flashed briefly so it can be found:
+    /// (row position, jump count, when).
+    pub row_flash: Option<(usize, u64, std::time::Instant)>,
     /// Text selected with the mouse in the Parsed View.
     pub text_selection: Option<crate::text_selection::TextSelection>,
     /// The mouse button is down and the selection follows the pointer.
@@ -504,6 +507,7 @@ impl AppView {
             search_input_dirty: true,
             scroll_handle,
             selected_row_pos: None,
+            row_flash: None,
             text_selection: None,
             selecting: false,
             autoscroll_dir: (0, 0),

@@ -71,6 +71,11 @@ impl Render for AppView {
                 visible_indices: self.visible_indices.clone(),
                 longest_row: self.longest_row,
                 selected_row_pos: self.selected_row_pos,
+                // Dropped once over, so a row scrolled back into sight does not flash again.
+                row_flash: self
+                    .row_flash
+                    .filter(|(_, _, at)| at.elapsed() < crate::ui::canvas::ROW_FLASH)
+                    .map(|(pos, n, _)| (pos, n)),
                 density: self.density,
                 show_minimap: self.show_minimap,
                 phrase_colors: self.phrase_colors(),

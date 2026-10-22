@@ -6,6 +6,7 @@ use crate::search::SearchState;
 use crate::text_selection::{TextSelection, clip_to_span};
 use crate::ui::cells::{Layer, TextCell, cell_text, compose, shows_placeholder};
 use gpui_component::ActiveTheme as _;
+use gpui::AnimationExt as _;
 use gpui::StyledText;
 use gpui::{
     AppContext as _, ElementId, InteractiveElement, IntoElement, ListHorizontalSizingBehavior,
@@ -87,6 +88,8 @@ pub struct CanvasViewState<'a> {
     /// Position of the row with the longest message (sets the list's width).
     pub longest_row: usize,
     pub selected_row_pos: Option<usize>,
+    /// The row a jump just landed on, and the jump's count: it flashes.
+    pub row_flash: Option<(usize, u64)>,
     /// The Highlight Rule paint of each entry (by entry position).
     pub paints: Arc<crate::highlight::RowPaints>,
     pub selection: Option<TextSelection>,
@@ -110,6 +113,9 @@ pub struct CanvasViewState<'a> {
 }
 
 pub struct LogCanvas;
+
+/// How long the row a jump lands on stays flashed.
+pub const ROW_FLASH: std::time::Duration = std::time::Duration::from_millis(900);
 
 impl LogCanvas {
     pub fn render(state: CanvasViewState) -> gpui::AnyElement {
@@ -222,6 +228,7 @@ impl LogCanvas {
             view: state.view.clone(),
             colors: state.colors,
             selected_pos: state.selected_row_pos,
+            row_flash: state.row_flash,
             phrase_colors: state.phrase_colors,
             phrase_fills: Arc::new(
                 state
@@ -721,6 +728,7 @@ struct RowEnv {
     view: gpui::Entity<crate::app::AppView>,
     colors: CanvasColors,
     selected_pos: Option<usize>,
+    row_flash: Option<(usize, u64)>,
     search_matcher: Option<crate::search_expr::Matcher>,
     matched_positions: Arc<Vec<usize>>,
     current_match_pos: Option<usize>,
@@ -934,6 +942,20 @@ impl RowEnv {
         });
         let label_left = scroll_x + anchored_width + px(8.0);
         let break_after = entry.break_after.as_ref().map(|mark| mark.label.clone());
+        let flash = self.row_flash.filter(|&(pos, _)| pos == vis_pos).map(|(_, n)| {
+            let color = outline.unwrap_or(colors.header_fg);
+            div()
+                .absolute()
+                .top_0()
+                .left_0()
+                .right_0()
+                .bottom_0()
+                .with_animation(
+                    ElementId::from(("row-flash", n as usize)),
+                    gpui::Animation::new(ROW_FLASH).with_easing(gpui::ease_in_out),
+                    move |d, t| d.bg(color.opacity(0.35 * (1.0 - t))),
+                )
+        });
         Some(
             row_element
                 .when_some(outline, |row, color| {
@@ -948,6 +970,7 @@ impl RowEnv {
                             .border_color(color),
                     )
                 })
+                .when_some(flash, |row, flash| row.child(flash))
                 .when_some(break_label, |row, label| {
                     row.child(render_break(label, label_left, &colors, break_actions, false))
                 })
