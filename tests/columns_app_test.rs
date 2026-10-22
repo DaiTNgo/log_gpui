@@ -43,12 +43,6 @@ fn show(h: &mut Harness, key: &str, shown: bool) {
     h.cx.run_until_parked();
 }
 
-/// "Hide column" of a Column Header: the Canvas only.
-fn show_in_canvas(h: &mut Harness, key: &str, shown: bool) {
-    h.view.update(&mut h.cx, |app, cx| app.set_canvas_column_shown(key, shown, cx));
-    h.cx.run_until_parked();
-}
-
 /// The columns the Focus Pane lays out in the Parsed View.
 fn pane(h: &mut Harness) -> Vec<PinnableColumn> {
     h.view.read_with(&h.cx, |app, _| app.pane_columns().expect("Parsed View").columns())
@@ -61,7 +55,7 @@ fn visible(h: &mut Harness) -> usize {
 #[gpui::test]
 fn turning_a_json_field_on_shows_its_column_in_the_focus_pane(cx: &mut TestAppContext) {
     let mut h = common::open_app_with_lines(cx, &json_lines());
-    assert!(!columns(&mut h).contains(&field("region")), "Detected Fields start off");
+    assert!(columns(&mut h).contains(&field("region")), "the Canvas shows every Detected Field");
     let detected = h.view.read_with(&h.cx, |app, _| app.column_groups("").detected);
     let region = detected.iter().find(|r| r.key == "region").expect("region is detected");
     assert!(!region.shown);
@@ -70,7 +64,10 @@ fn turning_a_json_field_on_shows_its_column_in_the_focus_pane(cx: &mut TestAppCo
     assert!(!pane(&mut h).contains(&field("region")), "Detected Fields start off in the Focus Pane");
     show(&mut h, "region", true);
     assert_eq!(pane(&mut h).last(), Some(&field("region")));
-    assert!(!columns(&mut h).contains(&field("region")), "the Canvas is not changed");
+    assert!(columns(&mut h).contains(&field("region")), "the Canvas is not changed");
+    show(&mut h, "region", false);
+    assert!(!pane(&mut h).contains(&field("region")));
+    assert!(columns(&mut h).contains(&field("region")), "hiding in the Focus Pane never changes the Canvas");
     h.cx.simulate_resize(gpui::size(gpui::px(1400.0), gpui::px(900.0)));
     h.cx.run_until_parked();
 }
@@ -86,21 +83,8 @@ fn a_hidden_column_still_filters(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn dragging_reorders_field_columns(cx: &mut TestAppContext) {
-    let mut h = common::open_app_with_lines(cx, &json_lines());
-    for key in ["msg", "user", "region"] {
-        show_in_canvas(&mut h, key, true);
-    }
-    h.view.update(&mut h.cx, |app, cx| app.move_field_column(2, 0, cx));
-    h.cx.run_until_parked();
-    let fields: Vec<PinnableColumn> = columns(&mut h).into_iter().filter(|c| c.is_field()).collect();
-    assert_eq!(fields, vec![field("region"), field("msg"), field("user")]);
-}
-
-#[gpui::test]
 fn field_columns_pin_in_view_order_and_auto_fit(cx: &mut TestAppContext) {
     let mut h = common::open_app_with_lines(cx, &json_lines());
-    show_in_canvas(&mut h, "user", true);
     h.view.update(&mut h.cx, |app, cx| {
         app.toggle_pin_column(field("user"), cx);
         app.toggle_pin_column(PinnableColumn::Level, cx);
@@ -119,7 +103,7 @@ fn field_columns_pin_in_view_order_and_auto_fit(cx: &mut TestAppContext) {
 
 #[gpui::test]
 fn coverage_shows_99_percent(cx: &mut TestAppContext) {
-    let mut h = common::open_app_with_lines(cx, &json_lines());
+    let h = common::open_app_with_lines(cx, &json_lines());
     let (covered, total) = h.view.read_with(&h.cx, |app, _| app.filter_index.coverage("region"));
     assert_eq!((covered, total), (99, 100));
     assert_eq!(log_gpui::columns::coverage_label(covered, total).as_deref(), Some("99%"));
@@ -176,8 +160,7 @@ fn a_label_taken_by_another_column_is_refused_until_changed(cx: &mut TestAppCont
 
 #[gpui::test]
 fn a_continuation_line_shows_the_placeholder_in_field_columns(cx: &mut TestAppContext) {
-    let mut h = common::open_app_with_lines(cx, &json_lines());
-    show_in_canvas(&mut h, "user", true);
+    let h = common::open_app_with_lines(cx, &json_lines());
     let placeholder = h.view.read_with(&h.cx, |app, _| {
         let last = app.all_entries.last().unwrap();
         last.is_continuation() && shows_placeholder(last, TextCell::Field(FieldKey::new("user")))
@@ -190,7 +173,7 @@ fn source_is_an_ordinary_column_of_the_focus_pane(cx: &mut TestAppContext) {
     let mut h = common::open_app_with_lines(cx, &json_lines());
     show(&mut h, "source", true);
     assert!(pane(&mut h).contains(&PinnableColumn::Source));
-    assert!(!h.view.read_with(&h.cx, |app, _| app.source_column_shown()), "the Canvas is not changed");
+    assert!(!h.view.read_with(&h.cx, |app, _| app.column_layout.source_visible), "the Canvas is not changed");
     let row = h.view.read_with(&h.cx, |app, _| app.column_groups("").built_in.into_iter().find(|r| r.key == "source"));
     assert!(row.expect("Source has a switch").shown);
     show(&mut h, "source", false);
@@ -217,14 +200,12 @@ fn column_settings_survive_a_save(cx: &mut TestAppContext) {
     let mut h = common::open_app_with_lines(cx, &json_lines());
     show(&mut h, "user", true);
     show(&mut h, "level", false);
-    show_in_canvas(&mut h, "module", false);
     let manifest = h.view.read_with(&h.cx, |app, _| {
         log_gpui::workspace::session::SessionManifest::from_workspace(&app.workspace_state)
     });
     let back = log_gpui::workspace::session::SessionManifest::from_json(&manifest.to_json().unwrap()).unwrap();
     let ws = back.into_workspace();
     let columns = &ws.projects[0].columns;
-    assert!(!columns.is_shown("module"), "the Canvas choice is kept");
     assert_eq!(columns.pane_choice("user"), Some(true));
     assert_eq!(columns.pane_choice("level"), Some(false));
 }
@@ -241,4 +222,40 @@ fn the_focus_pane_has_its_own_columns(cx: &mut TestAppContext) {
     assert!(pane.pinned_columns().is_empty(), "the pane scrolls as one");
     h.view.update(&mut h.cx, |app, _| app.view_mode = log_gpui::workspace::working_set::ViewMode::Raw);
     assert!(h.view.read_with(&h.cx, |app, _| app.pane_columns()).is_none(), "the Raw View lists raw lines");
+}
+
+#[gpui::test]
+fn the_canvas_shows_every_detected_field_without_any_choice(cx: &mut TestAppContext) {
+    let mut h = common::open_app_with_lines(cx, &json_lines());
+    let cols = columns(&mut h);
+    assert!(cols.contains(&field("user")) && cols.contains(&field("region")), "{cols:?}");
+    assert!(cols.contains(&PinnableColumn::Timestamp) && cols.contains(&PinnableColumn::Level) && cols.contains(&PinnableColumn::Module));
+    assert!(!cols.contains(&PinnableColumn::Source) && !cols.contains(&PinnableColumn::Stream), "one file has no Source or Stream");
+}
+
+#[gpui::test]
+fn hiding_fixed_columns_in_the_focus_pane_leaves_the_canvas_alone(cx: &mut TestAppContext) {
+    let mut h = common::open_app_with_lines(cx, &json_lines());
+    for key in ["timestamp", "level", "module"] {
+        show(&mut h, key, false);
+    }
+    let pane = pane(&mut h);
+    assert!(!pane.contains(&PinnableColumn::Level));
+    let cols = columns(&mut h);
+    assert!(cols.contains(&PinnableColumn::Timestamp) && cols.contains(&PinnableColumn::Level) && cols.contains(&PinnableColumn::Module));
+}
+
+#[gpui::test]
+fn a_file_with_many_json_keys_gets_a_column_for_each(cx: &mut TestAppContext) {
+    let lines: Vec<String> = (0..5)
+        .map(|i| {
+            let keys: String = (0..30).map(|k| format!(r#","key{k}":"v{i}""#)).collect();
+            format!(r#"{{"time":"2026-10-19T10:00:0{i}Z","level":"info","msg":"m"{keys}}}"#)
+        })
+        .collect();
+    let mut h = common::open_app_with_lines(cx, &lines);
+    let cols = columns(&mut h);
+    for k in 0..30 {
+        assert!(cols.contains(&field(&format!("key{k}"))), "key{k} is a column");
+    }
 }

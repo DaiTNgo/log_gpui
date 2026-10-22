@@ -46,13 +46,6 @@ pub struct WorkspaceState {
     /// Whether the Raw View wraps long lines: an app setting.
     #[serde(default = "default_true")]
     pub raw_soft_wrap: bool,
-    /// Whether Log Space views show the Source Column; `None` until chosen,
-    /// then a Log Space shows it when it has two or more files.
-    #[serde(default)]
-    pub show_source: Option<bool>,
-    /// Whether Log Spaces with a Remote Command show the Stream Column.
-    #[serde(default)]
-    pub show_stream: bool,
 }
 
 /// Default Live Window.
@@ -95,8 +88,6 @@ impl Default for WorkspaceState {
             density: Default::default(),
             show_minimap: true,
             raw_soft_wrap: true,
-            show_source: None,
-            show_stream: false,
         }
     }
 }

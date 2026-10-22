@@ -656,7 +656,7 @@ fn render_pinnable_column_header(
         .child(title)
         .children(coverage_el)
         .children(reading)
-        .context_menu(move |menu, _window, _cx| header_menu(menu, &menu_view, key, true))
+        .context_menu(move |menu, _window, _cx| header_menu(menu, &menu_view, key))
         .child(
             // Overlaid on the right edge so the label keeps the full width
             // while the toggle is hidden.
@@ -733,34 +733,25 @@ fn render_message_header(state: &CanvasViewState) -> gpui::AnyElement {
         .px_2()
         .flex()
         .child(header_title("message", text, state))
-        .context_menu(move |menu, _window, _cx| header_menu(menu, &menu_view, "message", false))
+        .context_menu(move |menu, _window, _cx| header_menu(menu, &menu_view, "message"))
         .into_any_element()
 }
 
-/// Right-click menu of a Column Header.
+/// Right-click menu of a Column Header: the Canvas shows every column, so
+/// there is nothing to hide.
 fn header_menu(
     menu: gpui_component::menu::PopupMenu,
     view: &gpui::Entity<crate::app::AppView>,
     key: &'static str,
-    can_hide: bool,
 ) -> gpui_component::menu::PopupMenu {
     use gpui_component::menu::PopupMenuItem;
-    let (hide_view, rename_view, manage_view) = (view.clone(), view.clone(), view.clone());
-    let mut menu = menu;
-    if can_hide {
-        menu = menu.item(PopupMenuItem::new("Hide column").on_click(move |_, _, app| {
-            hide_view.update(app, |this, cx| this.set_canvas_column_shown(key, false, cx));
-        }));
-    }
+    let rename_view = view.clone();
     menu.item(PopupMenuItem::new("Rename").on_click(move |_, window, app| {
         let view = rename_view.clone();
         // Deferred so the closing menu cannot steal the input focus.
         window.defer(app, move |window, app| {
             view.update(app, |this, cx| this.begin_column_rename(key, false, window, cx));
         });
-    }))
-    .item(PopupMenuItem::new("Manage columns…").on_click(move |_, _, app| {
-        manage_view.update(app, |this, cx| this.manage_columns(Some(key), cx));
     }))
 }
 

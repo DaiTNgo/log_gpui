@@ -3,10 +3,9 @@
 //! column key (`level`, `source`, a field name), the same key Filter and
 //! Highlight Rules use, so a Column Label never changes what they match.
 
-use crate::filter_index::FilterIndex;
-use crate::model::{FieldKey, is_field_name};
+use crate::model::is_field_name;
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, HashMap};
 
 /// Column key of MESSAGE, which is always shown.
 pub const MESSAGE_KEY: &str = "message";
@@ -48,10 +47,7 @@ pub struct ColumnSettings {
     /// Column Labels by column key.
     #[serde(default)]
     pub labels: HashMap<String, String>,
-    /// Fixed columns the user hid (`timestamp`, `level`, `module`).
-    #[serde(default)]
-    pub hidden: BTreeSet<String>,
-    /// Field Columns turned on, in the order the Parsed View draws them.
+    /// Field Columns in the order the Focus Pane draws them.
     #[serde(default)]
     pub fields: Vec<String>,
     /// What the user chose for the Focus Pane in the Columns section, by
@@ -86,61 +82,20 @@ impl ColumnSettings {
         self.label(key).unwrap_or_else(|| default_name(key))
     }
 
-    /// Whether the column `key` is shown (the Source and Stream Columns have
-    /// switches of their own).
-    pub fn is_shown(&self, key: &str) -> bool {
-        if is_field_name(key) && !matches!(key, "source" | "stream") {
-            self.fields.iter().any(|f| f == key)
-        } else {
-            !self.hidden.contains(key)
-        }
-    }
-
-    /// Show or hide the column `key`. MESSAGE is always shown; a Field
-    /// Column turned on goes to the end.
+    /// Add the Field Column `key` to the end of the Focus Pane's order, or
+    /// take it out.
     pub fn set_shown(&mut self, key: &str, shown: bool) {
-        if key == MESSAGE_KEY {
+        if key == MESSAGE_KEY || !is_field_name(key) || matches!(key, "source" | "stream") {
             return;
         }
-        if is_field_name(key) && !matches!(key, "source" | "stream") {
-            let at = self.fields.iter().position(|f| f == key);
-            match (shown, at) {
-                (true, None) => self.fields.push(key.to_string()),
-                (false, Some(i)) => {
-                    self.fields.remove(i);
-                }
-                _ => {}
+        let at = self.fields.iter().position(|f| f == key);
+        match (shown, at) {
+            (true, None) => self.fields.push(key.to_string()),
+            (false, Some(i)) => {
+                self.fields.remove(i);
             }
-        } else if shown {
-            self.hidden.remove(key);
-        } else {
-            self.hidden.insert(key.to_string());
+            _ => {}
         }
-    }
-
-    /// Show or hide a field shown unless hidden: a field of the Log Format in
-    /// use.
-    pub fn set_default_shown(&mut self, key: &str, shown: bool) {
-        if shown {
-            self.hidden.remove(key);
-        } else {
-            self.hidden.insert(key.to_string());
-            self.fields.retain(|f| f != key);
-        }
-    }
-
-    /// The Field Columns the view lays out: the ones turned on that have a
-    /// value in a row, then the `default_on` fields (of the Log Format in
-    /// use) not hidden, in their order.
-    pub fn view_fields_with(&self, index: &FilterIndex, default_on: &[String]) -> Vec<FieldKey> {
-        let mut out = self.view_fields(index);
-        for f in default_on {
-            let key = FieldKey::new(f);
-            if !self.hidden.contains(f) && !out.contains(&key) && index.coverage(f).0 > 0 {
-                out.push(key);
-            }
-        }
-        out
     }
 
     /// Move the Field Column at `from` to `to` in the drawing order.
@@ -150,26 +105,6 @@ impl ColumnSettings {
         }
         let f = self.fields.remove(from);
         self.fields.insert(to.min(self.fields.len()), f);
-    }
-
-    /// Fixed columns hidden, as Parsed View columns.
-    pub fn hidden_columns(&self) -> BTreeSet<crate::column::PinnableColumn> {
-        use crate::column::PinnableColumn;
-        self.hidden
-            .iter()
-            .filter_map(|k| PinnableColumn::from_key(k))
-            .filter(|c| matches!(c, PinnableColumn::Timestamp | PinnableColumn::Level | PinnableColumn::Module))
-            .collect()
-    }
-
-    /// The Field Columns the view lays out: the ones turned on that have a
-    /// value in at least one row, in order.
-    pub fn view_fields(&self, index: &FilterIndex) -> Vec<FieldKey> {
-        self.fields
-            .iter()
-            .filter(|f| index.coverage(f).0 > 0)
-            .map(|f| FieldKey::new(f))
-            .collect()
     }
 
     /// Give the column `key` the Column Label `text`; blank gives it back

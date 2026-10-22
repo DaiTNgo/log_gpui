@@ -147,7 +147,7 @@ One file's block in the Raw View, headed by the file name and folder, that can b
 _Avoid_: Excerpt, file panel.
 
 **Parsed View**:
-The Unified Canvas: the file split into detected columns, with Search, Markers and Highlight Rules. It always shows every line; Filter narrows only the Focus Pane below it.
+The Unified Canvas: the file split into detected columns, with Search, Markers and Highlight Rules. It always shows every line and every column (every Detected Field, Source for a Log Space of two or more files, Stream for a Log Space with a Remote Command), scrolling sideways when they do not fit; Filter narrows only the Focus Pane below it.
 _Avoid_: Table view, grid view.
 
 ### Marking
@@ -181,7 +181,7 @@ _Avoid_: Head line, main line.
 ### Canvas, Search and Filter
 
 **Column Header**:
-The top-anchored label area of a data column providing title identification, resize handling, and column-level controls.
+The top-anchored label area of a data column providing title identification, resize handling, and column-level controls (Rename and the Sticky Column pin; a column cannot be hidden on the Canvas).
 _Avoid_: Column title, table header.
 
 **Sticky Column**:
@@ -203,7 +203,7 @@ The persistent non-scrolling leftmost margin displaying line numbers and row mar
 _Avoid_: Margin, line number bar.
 
 **Unified Canvas**:
-The continuous scrollable rendering surface encompassing both sticky and free-scrolling columns, governed by a single full-width horizontal scrollbar.
+The continuous scrollable rendering surface encompassing both sticky and free-scrolling columns, governed by a single full-width horizontal scrollbar. It shows every column of the lines and the Log Space; the user cannot hide one.
 _Avoid_: Split pane, dual grid.
 
 **Partition Divider**:
@@ -323,7 +323,7 @@ A field the app finds in lines on its own (a JSON key, or a `key=value` pair in 
 _Avoid_: Suggested column, auto column.
 
 **Columns** (section of the context sidebar):
-The one place to show or hide the columns of the Focus Pane (Source and Stream included; Detected Fields are off by default), kept per Project, and to order columns, manage Extraction Rules and choose a Log Format.
+The one place to show or hide the columns of the Focus Pane (Source and Stream included; Detected Fields are off by default), kept per Project, and to order columns, manage Extraction Rules and choose a Log Format. It never changes the Unified Canvas, which shows every column.
 _Avoid_: Column manager, view panel.
 
 ## Rules & Constraints
@@ -378,7 +378,7 @@ L26. **Full Read Never Cuts Silently**: Open in full reads no more than the Full
 14. **Filter Has No Regex**: Filter matches by equality (Filter Value) or contains (Custom Value) only.
 15. **Filter Counts Ignore Other Filters**: A column's Filter Values and their row counts never change because other filters are applied. They count the lines the view holds: computed when the file is loaded, new values appended unticked and counts grown as lines arrive, and counts shrunk as lines leave a Live Window. A column that grows past 500 distinct values keeps the conditions already set but accepts no new ones.
 16. **Search Counts Only Filtered Lines**: In the Parsed View, only lines that pass Filter count as Matches. The Match count, next/previous, the overview ruler, the highlights in the view and the Focus Pane all use this one set. In the Raw View, Filter is ignored.
-17. **Quick Settings Only**: There is no View panel. Column pinning stays on the Column Header and column width stays adjustable by drag and Auto-fit. Quick Settings holds only display switches (Source Column, density). Showing, hiding and ordering columns, Extraction Rules and Log Formats live in the Columns section; the Source Column switch in both places is one setting.
+17. **Quick Settings Only**: There is no View panel. Column pinning stays on the Column Header and column width stays adjustable by drag and Auto-fit. Quick Settings holds only display switches (density). Showing, hiding and ordering the Focus Pane's columns, Extraction Rules and Log Formats live in the Columns section; the Canvas has no switch for its columns.
 18. **Missing Value Never Matches**: A row with no value in a column never matches any Filter Value or Custom Value of that column. It is hidden when the column shows only the chosen values, and stays visible in Hide Mode. There is no "(empty)" value.
 19. **Continuation Lines Inherit**: A Continuation Line takes the timestamp, level, module and every other value of its Parent Line, so Filter, Time Range and Highlight Rules treat it like its Parent Line; it passes Filter when its Parent Line does. Its own text stays its message. Filter counts and Level Markers count only the Parent Line. Lines before the first timestamp have no Parent Line and are always shown. Times are compared in the file's own clock, with no timezone conversion.
 20. **Filter Per View, Marker Per Line**: A Log Space's Filter is shared by all its files, and each File View has its own separate Filter; both are remembered automatically and restored when reopened. A Marker belongs to one line of one file and shows wherever that line is shown; removing the file from the Log Space removes its Markers. Focus Tabs, with their Search Expressions, Focus Finds and current lines, are remembered per view in the same way. There are no project-level saved presets.

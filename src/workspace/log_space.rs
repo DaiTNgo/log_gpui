@@ -702,10 +702,6 @@ pub struct LogSpace {
     /// The separate Focus Tabs of each File View.
     #[serde(default)]
     pub file_focus: HashMap<String, crate::focus::FocusTabs>,
-    /// Whether the Source Column is shown; `None` means the default (shown
-    /// when the space has two or more files).
-    #[serde(default)]
-    pub show_source: Option<bool>,
     /// The view last used on this space, reopened as it was.
     #[serde(default)]
     pub last_mode: crate::workspace::working_set::ViewMode,
@@ -727,7 +723,6 @@ impl LogSpace {
             file_filters: HashMap::new(),
             focus: Default::default(),
             file_focus: HashMap::new(),
-            show_source: None,
             last_mode: Default::default(),
             next_seq: 1,
         }
@@ -770,9 +765,10 @@ impl LogSpace {
         self.file_order = order;
     }
 
-    /// Whether the Source Column is shown.
+    /// Whether the Canvas shows the Source Column: the space has two or more
+    /// files.
     pub fn source_column_shown(&self) -> bool {
-        self.show_source.unwrap_or(self.files.len() >= 2)
+        self.files.len() >= 2
     }
 
     /// Add a Remote Copy (from `LogFile::remote_copy`) to an Imported Log

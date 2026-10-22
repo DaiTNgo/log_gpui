@@ -217,25 +217,6 @@ fn fields_turned_on_go_to_the_end_and_can_be_moved() {
 }
 
 #[test]
-fn fixed_columns_hide_but_message_never_does() {
-    let mut s = ColumnSettings::default();
-    s.set_shown("level", false);
-    s.set_shown("message", false);
-    assert!(!s.is_shown("level"));
-    assert!(s.is_shown("message"));
-    assert_eq!(s.hidden_columns(), BTreeSet::from([PinnableColumn::Level]));
-}
-
-#[test]
-fn only_fields_with_a_value_in_the_view_are_laid_out() {
-    let mut s = ColumnSettings::default();
-    s.set_shown("user", true);
-    s.set_shown("tenant", true);
-    let index = FilterIndex::build(&rows());
-    assert_eq!(s.view_fields(&index), vec![FieldKey::new("user")]);
-}
-
-#[test]
 fn settings_of_an_old_project_are_empty() {
     let s: ColumnSettings = serde_json::from_str("{}").unwrap();
     assert_eq!(s, ColumnSettings::default());

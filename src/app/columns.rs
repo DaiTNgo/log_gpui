@@ -81,15 +81,31 @@ impl AppView {
         self.active_project().map(|p| p.columns.clone()).unwrap_or_default()
     }
 
-    /// Lay out the columns the Project shows: the fixed ones not hidden and
-    /// the Field Columns turned on that have a value in the view.
+    /// Lay out the columns of the Canvas, which shows every column of the
+    /// lines and the Log Space: the fixed ones, Source and Stream where the
+    /// open view has them, and a Field Column for every Detected Field.
     pub(crate) fn sync_view_columns(&mut self) {
         let settings = self.column_settings();
         self.formats.view_fields = self.format_fields_in_view();
-        let fields = settings.view_fields_with(&self.filter_index, &self.formats.view_fields);
+        let fields = self.canvas_field_keys();
         self.column_layout.labels = settings.labels.clone();
-        self.column_layout.set_view_columns(settings.hidden_columns(), fields, self.density);
+        self.column_layout.set_view_columns(Default::default(), fields, self.density);
         self.sync_pane_columns();
+    }
+
+    /// The Field Columns of the Canvas: a Log Format's fields first, then an
+    /// Extraction Rule's, then the other Detected Fields in the order they
+    /// were found. Only fields with a value in a row.
+    fn canvas_field_keys(&self) -> Vec<crate::model::FieldKey> {
+        let mut keys: Vec<String> = self.formats.view_fields.clone();
+        keys.extend(self.extraction_rules().iter().map(|r| r.name.clone()));
+        keys.extend(self.filter_index.field_columns().map(|c| c.key.clone()));
+        let mut seen = std::collections::HashSet::new();
+        keys.retain(|k| is_pane_field(k) && seen.insert(k.clone()));
+        keys.into_iter()
+            .filter(|k| self.filter_index.coverage(k).0 > 0)
+            .map(|k| crate::model::FieldKey::new(&k))
+            .collect()
     }
 
     /// Lay out the columns of the Focus Pane, which has its own switches in
@@ -157,28 +173,6 @@ impl AppView {
         self.columns_changed(cx);
         // A `key=value` field is read only while it is on.
         self.reread_if_config_changed(cx);
-    }
-
-    /// "Hide column" of a Column Header: the Canvas only.
-    pub fn set_canvas_column_shown(&mut self, key: &str, shown: bool, cx: &mut Context<Self>) {
-        match key {
-            MESSAGE_KEY => {}
-            "source" => self.set_show_source(shown, cx),
-            "stream" => self.set_show_stream(shown, cx),
-            _ => {
-                let from_format = self.formats.view_fields.iter().any(|f| f == key);
-                if let Some(project) = self.active_project_mut() {
-                    if from_format {
-                        project.columns.set_default_shown(key, shown);
-                    } else {
-                        project.columns.set_shown(key, shown);
-                    }
-                }
-                self.columns_changed(cx);
-                // A `key=value` field is read only while it is on.
-                self.reread_if_config_changed(cx);
-            }
-        }
     }
 
     /// Whether the Focus Pane shows the column `key` (its switch in the

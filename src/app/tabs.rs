@@ -316,10 +316,7 @@ impl AppView {
                     built,
                     filter: space.filter.clone(),
                     focus: space.focus.clone(),
-                    source_visible: self
-                        .workspace_state
-                        .show_source
-                        .unwrap_or_else(|| space.source_column_shown()),
+                    source_visible: space.source_column_shown(),
                     name: space.name.clone(),
                 })
             }

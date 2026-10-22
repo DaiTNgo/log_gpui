@@ -642,39 +642,19 @@ impl AppView {
         self.column_layout.source_visible
     }
 
-    /// The "Show source file" switch of Settings; one choice for every Log Space.
-    pub fn set_show_source(&mut self, shown: bool, cx: &mut Context<Self>) {
-        if !self.active_is_log_space() {
-            return;
-        }
-        self.workspace_state.show_source = Some(shown);
-        self.column_layout.set_source_visible(shown);
-        if shown {
-            self.column_layout
-                .auto_fit(crate::column::PinnableColumn::Source, self.density);
-        }
-        self.schedule_session_save(cx);
-        cx.notify();
-    }
-
     /// Whether the open Log Space has a Remote Command (so its lines have a
     /// Stream and the Stream Column can be shown).
     pub fn active_space_has_command(&self) -> bool {
         self.active_space().is_some_and(|s| s.files.iter().any(|f| f.is_remote_command()))
     }
 
-    /// Whether the Stream Column is on in Settings (it shows only in a Log
-    /// Space with a Remote Command).
-    pub fn stream_column_setting(&self) -> bool {
-        self.workspace_state.show_stream
-    }
-
-    /// Whether the Stream Column is laid out in the open view.
+    /// Whether the Stream Column is laid out in the open view: the Canvas
+    /// has it whenever the open Log Space has a Remote Command.
     pub fn stream_column_visible(&self) -> bool {
-        self.workspace_state.show_stream && self.active_space_has_command()
+        self.active_space_has_command()
     }
 
-    /// Show or hide the Stream Column to match Settings and the open view.
+    /// Show or hide the Stream Column to match the open view.
     pub(crate) fn sync_stream_column(&mut self) {
         let visible = self.stream_column_visible();
         if self.column_layout.stream_visible != visible {
@@ -684,19 +664,6 @@ impl AppView {
                 self.column_layout.auto_fit(crate::column::PinnableColumn::Stream, self.density);
             }
         }
-    }
-
-    /// The "Show stream" switch of Settings; one choice for every Log Space.
-    pub fn set_show_stream(&mut self, shown: bool, cx: &mut Context<Self>) {
-        self.workspace_state.show_stream = shown;
-        let visible = self.stream_column_visible();
-        self.column_layout.set_stream_visible(visible);
-        if visible {
-            self.column_layout.max_chars.stream = self.column_layout.max_chars.stream.max(6);
-            self.column_layout.auto_fit(crate::column::PinnableColumn::Stream, self.density);
-        }
-        self.schedule_session_save(cx);
-        cx.notify();
     }
 
     /// Why a scratch file cannot be deleted, if so.

@@ -180,8 +180,6 @@ fn the_source_column_defaults_to_two_or_more_files() {
     assert!(!space.source_column_shown());
     space.add_imported_files(&["/b.log".to_string()]).unwrap();
     assert!(space.source_column_shown());
-    space.show_source = Some(false);
-    assert!(!space.source_column_shown());
 }
 
 // ─── Tabs ────────────────────────────────────────────────────────────────────
