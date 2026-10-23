@@ -52,6 +52,13 @@ impl HoldInfo {
         }
     }
 
+    /// Whether Load more is shown at all: only while older lines are left to
+    /// read. A file held from its first line, or a Remote Command, has none;
+    /// a disabled button would only say something is missing.
+    pub fn offers_load_more(&self) -> bool {
+        !self.command && !self.at_start
+    }
+
     /// "120,000 lines held (≈160 MB) · Extended".
     pub fn tooltip(&self) -> String {
         let mut text = format!("{} lines held (≈{} MB)", group_digits(self.lines), self.approx_mb());

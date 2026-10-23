@@ -125,7 +125,7 @@ impl AppView {
         if command {
             return Some(self.live_row_with_waiting(row, cleared, "Waiting for output", warning, muted));
         }
-        row = row.child(
+        row = row.when(info.offers_load_more(), |row| row.child(
                 Button::new(id("more"))
                     .ghost()
                     .xsmall()
@@ -133,7 +133,7 @@ impl AppView {
                     .disabled(info.loading || (info.load_more_off.is_some() && !at_limit))
                     .tooltip(info.load_more_off.unwrap_or(if info.local { "Read older lines from the file" } else { "Read older lines from the Server" }))
                     .on_click(cx.listener(move |this, _, _, cx| this.load_more(&more_file, None, cx))),
-            );
+            ));
         if info.loading {
             row = row.child(
                 Button::new(id("cancel"))

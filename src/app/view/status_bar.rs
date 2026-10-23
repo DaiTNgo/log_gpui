@@ -72,7 +72,7 @@ impl AppView {
         let Some(info) = self.hold_info(&file_id) else { return bar };
         let step = self.live.load_more_step;
         bar = bar.left(Button::new("status-file-name").ghost().xsmall().label(file.display_name.clone()).tooltip(info.tooltip()));
-        if !info.command {
+        if info.offers_load_more() {
             let id = file_id.clone();
             let at_limit = info.load_more_off == Some(crate::app::live_more::AT_FULL_READ_LIMIT);
             let off = (info.load_more_off.is_some() && !at_limit) || info.loading;
@@ -94,6 +94,8 @@ impl AppView {
                         .on_click(cx.listener(move |this, _, _window, _cx| this.cancel_load_more(&id))),
                 );
             }
+        }
+        if !info.command {
             let id = file_id.clone();
             bar = bar.right(
                 Button::new("status-back-to-live")

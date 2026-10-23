@@ -371,19 +371,22 @@ fn local_file_live_items(menu: PopupMenu, file: &FileRef, cx: &App) -> PopupMenu
     let (more, back, custom) = (file.clone(), file.clone(), file.clone());
     let off = info.load_more_off.is_some() || info.loading;
     let extended = info.extended;
+    let offers = info.offers_load_more();
     menu.item(PopupMenuItem::new(info.tooltip()).disabled(true))
-        .item(
-            PopupMenuItem::new(format!("Load more ({})", info.amount_label(step)))
-                .disabled(off)
-                .on_click(move |_, _, app| {
-                    let id = more.file_id.clone();
-                    more.view.update(app, |this, cx| this.load_more(&id, None, cx));
-                }),
-        )
-        .item(PopupMenuItem::new("Load more (custom number)…").disabled(off).on_click(move |_, window, app| {
-            let id = custom.file_id.clone();
-            custom.view.update(app, |this, cx| this.open_custom_load(&id, window, cx));
-        }))
+        .when(offers, |menu| {
+            menu.item(
+                PopupMenuItem::new(format!("Load more ({})", info.amount_label(step)))
+                    .disabled(off)
+                    .on_click(move |_, _, app| {
+                        let id = more.file_id.clone();
+                        more.view.update(app, |this, cx| this.load_more(&id, None, cx));
+                    }),
+            )
+            .item(PopupMenuItem::new("Load more (custom number)…").disabled(off).on_click(move |_, window, app| {
+                let id = custom.file_id.clone();
+                custom.view.update(app, |this, cx| this.open_custom_load(&id, window, cx));
+            }))
+        })
         .item(PopupMenuItem::new("Back to Live Window").disabled(!extended).on_click(move |_, _, app| {
             let id = back.file_id.clone();
             back.view.update(app, |this, cx| this.back_to_live_window(&id, cx));
@@ -424,8 +427,11 @@ fn remote_file_live_items(menu: PopupMenu, file: &FileRef, cx: &App) -> PopupMen
         .item(PopupMenuItem::new("Clear").on_click(move |_, _, app| {
             let id = clear.file_id.clone();
             clear.view.update(app, |this, cx| this.request_clear_file(&id, cx));
-        }))
-        .item(
+        }));
+    let menu = if !info.offers_load_more() {
+        menu
+    } else {
+        let menu = menu.item(
             PopupMenuItem::new(format!("Load more ({})", info.amount_label(step)))
                 .disabled(load_off)
                 .on_click(move |_, _, app| {
@@ -433,24 +439,25 @@ fn remote_file_live_items(menu: PopupMenu, file: &FileRef, cx: &App) -> PopupMen
                     more.view.update(app, |this, cx| this.load_more(&id, None, cx));
                 }),
         );
-    let mut menu = menu;
-    for lines in [1_000usize, 10_000, 100_000] {
-        let file = file.clone();
-        menu = menu.item(
-            PopupMenuItem::new(format!("Load more ({} lines)", info.amount_label(lines)))
-            .disabled(load_off)
-            .on_click(move |_, _, app| {
-                let id = file.file_id.clone();
-                file.view.update(app, |this, cx| this.load_more(&id, Some(lines), cx));
-            }),
-        );
-    }
-    let menu = menu.item(PopupMenuItem::new("Load more (custom number)…").disabled(load_off).on_click(
-        move |_, window, app| {
-            let id = custom.file_id.clone();
-            custom.view.update(app, |this, cx| this.open_custom_load(&id, window, cx));
-        },
-    ));
+        let mut menu = menu;
+        for lines in [1_000usize, 10_000, 100_000] {
+            let file = file.clone();
+            menu = menu.item(
+                PopupMenuItem::new(format!("Load more ({} lines)", info.amount_label(lines)))
+                .disabled(load_off)
+                .on_click(move |_, _, app| {
+                    let id = file.file_id.clone();
+                    file.view.update(app, |this, cx| this.load_more(&id, Some(lines), cx));
+                }),
+            );
+        }
+        menu.item(PopupMenuItem::new("Load more (custom number)…").disabled(load_off).on_click(
+            move |_, window, app| {
+                let id = custom.file_id.clone();
+                custom.view.update(app, |this, cx| this.open_custom_load(&id, window, cx));
+            },
+        ))
+    };
     let menu = if loading {
         menu.item(PopupMenuItem::new("Cancel loading").on_click(move |_, _, app| {
             let id = cancel.file_id.clone();
