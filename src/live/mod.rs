@@ -21,7 +21,7 @@ pub use local::LocalFileSource;
 pub use remote::RemoteFileSource;
 pub use source::{
     BreakKind, LineSource, LOCAL_POLL_INTERVAL, RestartKind, SourceCommand, SourceEvent, SourceHandle,
-    SourceStatus, StreamMask, clock_text,
+    SourceStatus, StatusTone, StreamMask, clock_text,
 };
 pub use resume::{ResumePoint, Timestamp, Verdict, parse_timestamp};
 pub use splitter::LineSplitter;

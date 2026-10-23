@@ -72,10 +72,10 @@ fn removing_and_resetting() {
     keymap.remove(Command::NextMatch, &sc("enter"));
     assert_eq!(keymap.shortcuts(Command::NextMatch), vec![sc("cmd-g")]);
     assert_eq!(keymap.command_for(&sc("enter")), None);
-    keymap.add(Command::ToggleFollow, sc("enter")).unwrap();
+    keymap.add(Command::MoveFocusToWindow, sc("enter")).unwrap();
     keymap.reset(Command::NextMatch);
     assert_eq!(keymap.command_for(&sc("enter")), Some(Command::NextMatch), "reset takes its default back");
-    assert!(keymap.shortcuts(Command::ToggleFollow).is_empty());
+    assert!(keymap.shortcuts(Command::MoveFocusToWindow).is_empty());
     keymap.reset_all();
     assert!(!keymap.has_changes());
 }
@@ -95,13 +95,13 @@ fn the_file_keeps_only_the_changed_commands() {
     assert_eq!(Keymap::load(&path), Ok(Keymap::default()), "no file is the defaults");
 
     let mut keymap = Keymap::default();
-    keymap.add(Command::ToggleFollow, sc("cmd-shift-l")).unwrap();
+    keymap.add(Command::MoveFocusToWindow, sc("cmd-shift-l")).unwrap();
     keymap.remove(Command::CloseTab, &sc("cmd-w"));
     keymap.save_to(&path).unwrap();
     let json: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
     assert_eq!(
         json,
-        serde_json::json!({ "shortcuts": { "live.follow": ["cmd-shift-l"], "tabs.close": [] } })
+        serde_json::json!({ "shortcuts": { "focus_pane.to_window": ["cmd-shift-l"], "tabs.close": [] } })
     );
     assert_eq!(Keymap::load(&path), Ok(keymap));
 }

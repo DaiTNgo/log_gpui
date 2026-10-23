@@ -140,6 +140,19 @@ pub enum SourceStatus {
     Error(String),
 }
 
+/// How a connection state reads at a glance in the status bar.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StatusTone {
+    /// Reading: nothing to do.
+    Good,
+    /// On its way: wait.
+    Busy,
+    /// Not reading, but the app or the user can bring it back.
+    Warning,
+    /// Failed.
+    Bad,
+}
+
 impl SourceStatus {
     /// Higher is worse; the status bar shows the worst status of the files.
     pub fn severity(&self) -> u8 {
@@ -155,6 +168,18 @@ impl SourceStatus {
             SourceStatus::AuthFailed => 5,
             SourceStatus::Disconnected => 5,
             SourceStatus::Error(_) => 6,
+        }
+    }
+
+    /// How the status bar colours this state.
+    pub fn tone(&self) -> StatusTone {
+        match self {
+            SourceStatus::Live | SourceStatus::Gone | SourceStatus::Exited(_) => StatusTone::Good,
+            SourceStatus::Connecting | SourceStatus::WaitingForFile => StatusTone::Busy,
+            SourceStatus::Reconnecting | SourceStatus::NeedsSecret | SourceStatus::SignInRequired(_) => {
+                StatusTone::Warning
+            }
+            SourceStatus::Disconnected | SourceStatus::AuthFailed | SourceStatus::Error(_) => StatusTone::Bad,
         }
     }
 

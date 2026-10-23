@@ -2,11 +2,14 @@
 
 use super::AppView;
 use crate::app::format_count;
-use gpui::{Context, IntoElement};
+use crate::keymap::Command;
+use crate::live::StatusTone;
+use gpui::prelude::FluentBuilder as _;
+use gpui::{Context, IntoElement, Styled as _};
 use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::popover::Popover;
 use gpui_component::status_bar::StatusBar;
-use gpui_component::{Disableable as _, Selectable as _, Sizable as _};
+use gpui_component::{ActiveTheme as _, Disableable as _, IconName, Selectable as _, Sizable as _};
 
 impl AppView {
     /// The live state of the open Log Space as one label: the worst status of
@@ -140,6 +143,22 @@ impl AppView {
         labels
     }
 
+    /// The words on the Follow and Pause controls: "Following" or "Follow",
+    /// "Resume" while paused or "Pause".
+    pub fn live_control_labels(&self) -> (String, String) {
+        let follow = if self.live.follow { "Following" } else { "Follow" };
+        let pause = if self.active_space_paused() { "Resume" } else { "Pause" };
+        (follow.into(), pause.into())
+    }
+
+    /// `text`, with the first Shortcut of `command` when it has one.
+    fn with_shortcut(&self, text: &str, command: Command) -> String {
+        match self.keymap.shortcuts(command).first() {
+            Some(shortcut) => format!("{text} ({})", crate::app::shortcuts::shortcut_label(shortcut)),
+            None => text.to_string(),
+        }
+    }
+
     /// Status bar: line number, event counts, filter ratio, focus tag, and the
     /// live state (Follow, Pause and the connection) of the open Log Space.
     pub(super) fn render_status_bar(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
@@ -153,7 +172,15 @@ impl AppView {
         }
 
         if let Some((label, list)) = self.live_status_label() {
-            let trigger = Button::new("status-live").ghost().xsmall().label(label);
+            let worst = self.worst_live_status().map(|(status, ..)| status.tone());
+            let theme = cx.theme();
+            let (icon, color) = match worst {
+                Some(StatusTone::Good) => (IconName::CircleCheck, theme.success),
+                Some(StatusTone::Warning) => (IconName::RefreshCw, theme.warning),
+                Some(StatusTone::Bad) => (IconName::CircleX, theme.danger),
+                Some(StatusTone::Busy) | None => (IconName::LoaderCircle, theme.muted_foreground),
+            };
+            let trigger = Button::new("status-live").ghost().xsmall().icon(icon).label(label).text_color(color);
             bar = match self.connection_snapshot() {
                 // Connection Details opens from here (L7).
                 Some(snapshot) => {
@@ -214,16 +241,26 @@ impl AppView {
             );
         }
         bar = self.single_file_live_buttons(bar, cx);
+        let (follow, pause) = self.live_control_labels();
+        let paused = self.active_space_paused();
+        let pause_tip = self.with_shortcut(
+            if paused { "Take in the lines written while paused" } else { "Stop taking in new lines" },
+            Command::TogglePause,
+        );
+        let follow_tip = self.with_shortcut(
+            if self.live.follow { "Keeping the newest line in sight" } else { "Scroll to each new line as it arrives" },
+            Command::ToggleFollow,
+        );
+        let warning = cx.theme().warning;
         bar.right(
             Button::new("status-pause")
                 .ghost()
                 .xsmall()
-                .selected(self.active_space_paused())
-                .label(if self.active_space_paused() {
-                    "Paused"
-                } else {
-                    "Pause"
-                })
+                .selected(paused)
+                .icon(if paused { IconName::Play } else { IconName::Pause })
+                .label(pause)
+                .when(paused, |b| b.text_color(warning))
+                .tooltip(pause_tip)
                 .on_click(cx.listener(|this, _, _window, cx| this.toggle_pause(cx))),
         )
         .right(
@@ -231,7 +268,9 @@ impl AppView {
                 .ghost()
                 .xsmall()
                 .selected(self.live.follow)
-                .label("Follow")
+                .icon(IconName::ArrowDown)
+                .label(follow)
+                .tooltip(follow_tip)
                 .on_click(cx.listener(|this, _, _window, cx| this.toggle_follow(cx))),
         )
         .into_any_element()

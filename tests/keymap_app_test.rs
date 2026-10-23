@@ -88,9 +88,10 @@ fn escape_cancels_recording_and_fixed_keys_are_refused(cx: &mut TestAppContext) 
 fn the_palette_shows_the_current_shortcut(cx: &mut TestAppContext) {
     let mut h = common::open_app(cx);
     record(&mut h, Command::ToggleFollow, "cmd-shift-l");
-    let label = h.view.read_with(&h.cx, |app, _| {
-        app.keymap.shortcuts(Command::ToggleFollow).first().map(log_gpui::app::shortcut_label)
+    // Live: Toggle Follow also has its default Shortcut.
+    let labels: Vec<String> = h.view.read_with(&h.cx, |app, _| {
+        app.keymap.shortcuts(Command::ToggleFollow).iter().map(log_gpui::app::shortcut_label).collect()
     });
     let expected = if cfg!(target_os = "macos") { "⌘⇧L" } else { "Ctrl+Shift+L" };
-    assert_eq!(label.as_deref(), Some(expected));
+    assert!(labels.iter().any(|l| l == expected), "{labels:?}");
 }
