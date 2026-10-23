@@ -38,6 +38,8 @@ impl AppView {
             Command::ToggleFilter => self.toggle_filter_builder(cx),
             Command::GoNextError => self.jump_to_next_error(cx),
             Command::GoPrevError => self.jump_to_prev_error(cx),
+            Command::CopyFocusLines => self.copy_focus_pane_lines(cx),
+            Command::SaveFocusLines => self.save_focus_pane_lines(cx),
             Command::ZoomIn => self.zoom_text(1, cx),
             Command::ZoomOut => self.zoom_text(-1, cx),
             Command::ResetZoom => self.set_text_zoom(0, cx),

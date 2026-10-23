@@ -262,6 +262,28 @@ impl FocusPane {
                     .child(find_label),
             )
             .child(
+                Button::new("focus-copy-lines")
+                    .ghost()
+                    .xsmall()
+                    .icon(IconName::Copy)
+                    .tooltip("Copy all lines")
+                    .on_click({
+                        let view = state.view.clone();
+                        move |_, _w, cx| view.update(cx, |this, cx| this.copy_focus_pane_lines(cx))
+                    }),
+            )
+            .child(
+                Button::new("focus-save-lines")
+                    .ghost()
+                    .xsmall()
+                    .icon(gpui_kit::assets::IconName::Download)
+                    .tooltip("Save lines as…")
+                    .on_click({
+                        let view = state.view.clone();
+                        move |_, _w, cx| view.update(cx, |this, cx| this.save_focus_pane_lines(cx))
+                    }),
+            )
+            .child(
                 Button::new("focus-search-highlight")
                     .ghost()
                     .xsmall()

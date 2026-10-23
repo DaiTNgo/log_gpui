@@ -742,3 +742,99 @@ impl AppView {
         }
     }
 }
+
+impl AppView {
+    /// The lines the open Focus Tab lists, as text to take out: each one's
+    /// stored text in view order, the Continuation Lines of a listed line
+    /// with it, one per line. In a Log Space of several files whose Focus
+    /// Pane shows the Source Column, each line starts with its file's name.
+    /// Also how many lines the text holds.
+    pub fn focus_pane_export(&self) -> (String, usize) {
+        let named = self.active_space().is_some_and(|s| s.files.len() > 1) && self.column_shown("source");
+        let sections = if self.focus_rows.iter().any(|r| matches!(r, FocusRow::Raw { .. })) {
+            self.raw_sections()
+        } else {
+            Vec::new()
+        };
+        let mut text = String::new();
+        let mut count = 0;
+        let mut push = |source: Option<&str>, line: &str| {
+            if let Some(name) = source.filter(|_| named) {
+                text.push_str(name);
+                text.push_str(": ");
+            }
+            text.push_str(line);
+            text.push('\n');
+            count += 1;
+        };
+        let mut taken_until = 0usize;
+        for row in self.focus_rows.iter() {
+            match *row {
+                FocusRow::Entry(ix) if ix >= taken_until => {
+                    let Some(entry) = self.all_entries.get(ix) else { continue };
+                    push(entry.source.as_deref(), &entry.raw_line);
+                    // Its Continuation Lines follow it.
+                    let mut next = ix + 1;
+                    while let Some(more) = self.all_entries.get(next) {
+                        if more.has_time || more.parent.is_none() || more.file_id != entry.file_id {
+                            break;
+                        }
+                        push(more.source.as_deref(), &more.raw_line);
+                        next += 1;
+                    }
+                    taken_until = next;
+                }
+                FocusRow::Entry(_) => {}
+                FocusRow::Raw { section, line } => {
+                    if let Some(s) = sections.get(section) {
+                        if let Some(text) = s.lines.get(line) {
+                            push(Some(s.display_name.as_str()), text);
+                        }
+                    }
+                }
+            }
+        }
+        (text, count)
+    }
+
+    /// Put the lines the Focus Pane lists on the clipboard.
+    pub fn copy_focus_pane_lines(&mut self, cx: &mut Context<Self>) {
+        let (text, count) = self.focus_pane_export();
+        self.notice = Some(if count == 0 {
+            "The Focus Pane lists no lines".to_string()
+        } else {
+            cx.write_to_clipboard(gpui::ClipboardItem::new_string(text));
+            format!("Copied {} {}", crate::app::format_count(count), if count == 1 { "line" } else { "lines" })
+        });
+        cx.notify();
+    }
+
+    /// Write the lines the Focus Pane lists to a `.log` file the user picks.
+    pub fn save_focus_pane_lines(&mut self, cx: &mut Context<Self>) {
+        let (text, count) = self.focus_pane_export();
+        if count == 0 {
+            self.notice = Some("The Focus Pane lists no lines".to_string());
+            cx.notify();
+            return;
+        }
+        let name = format!("{}-focus.log", self.active_space().map_or("lines", |s| s.name.as_str()));
+        cx.spawn(async move |this, cx| {
+            let Some(handle) = rfd::AsyncFileDialog::new().set_file_name(&name).save_file().await else { return };
+            let result = std::fs::write(handle.path(), text);
+            this.update(cx, |this, cx| {
+                this.notice = Some(match result {
+                    Ok(()) => format!(
+                        "Saved {} {} to {}",
+                        crate::app::format_count(count),
+                        if count == 1 { "line" } else { "lines" },
+                        handle.path().display()
+                    ),
+                    Err(e) => format!("Could not save: {e}"),
+                });
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+}
