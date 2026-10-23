@@ -9,3 +9,7 @@
 - [ ] With the default sidebar width, `java.log` and `worker.log` flagged "No timestamps" show their full names
 - [ ] The flag is an icon; hovering it shows "No timestamps — these lines go after all others"
 - [ ] Long names truncate with an ellipsis; the full name is in a tooltip
+
+## Comments
+
+- 2026-10-23: Re-checked: `api.log` and `worker.log` show as "api.lc" and "work" next to the "No timestamps" badge at the default sidebar width. Still open — P0 (goes away for these files once 01 lands, but any file with no timestamps still hits it).

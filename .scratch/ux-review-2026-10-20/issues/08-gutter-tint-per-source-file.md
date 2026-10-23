@@ -10,3 +10,7 @@
 - [ ] The tint shows in the Gutter, beside the file in the sidebar, and in the Source Column
 - [ ] A Log Space with one file shows no tint
 - [ ] Tints keep line numbers readable on the dark theme (contrast checked)
+
+## Comments
+
+- 2026-10-23: Re-checked with two interleaved files: the Gutter reads 3229, 1606, 3230, 1607… with nothing telling the files apart except the Source Column further right. Still open — P1.
