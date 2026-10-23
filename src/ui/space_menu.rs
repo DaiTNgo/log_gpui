@@ -611,6 +611,9 @@ fn glob_menu(menu: PopupMenu, glob: &GlobRef) -> PopupMenu {
     }))
 }
 
+/// The tooltip of the flag on a file row whose lines have no timestamps.
+pub const NO_TIMESTAMPS_TIP: &str = "No timestamps — these lines go after all others";
+
 /// Append a file row (indented under its Log Space) to `list`.
 pub fn push_file(list: MenuList, file: FileRef, active: bool) -> MenuList {
     if let Some(input) = file.rename_input.clone() {
@@ -643,14 +646,19 @@ pub fn push_file(list: MenuList, file: FileRef, active: bool) -> MenuList {
                     .tooltip(move |window, cx| gpui_component::tooltip::Tooltip::new(tip.clone()).build(window, cx))
             })
         })
+        // The name keeps the room: a long one ends in an ellipsis, and the
+        // "No timestamps" flag is an icon that explains itself on hover.
+        .label_style(gpui::StyleRefinement::default().block().min_w_0().truncate())
         .when(no_timestamps, |item| {
             item.suffix(|_, cx| {
-                h_flex()
-                    .gap_1()
-                    .text_xs()
+                div()
+                    .id("no-timestamps-flag")
+                    .flex_shrink_0()
                     .text_color(cx.theme().muted_foreground)
                     .child(Icon::new(IconName::Flag).size(px(12.0)))
-                    .child("No timestamps")
+                    .tooltip(|window, cx| {
+                        gpui_component::tooltip::Tooltip::new(NO_TIMESTAMPS_TIP).build(window, cx)
+                    })
             })
         })
         .when(remote && !no_timestamps, |item| {
