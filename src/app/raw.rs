@@ -97,6 +97,8 @@ pub struct RawViewState {
     /// Live files whose editor must be built again (lines were inserted
     /// above, dropped or renumbered).
     pub stale: HashSet<String>,
+    /// Follow wants every File Section at its last line on the next render.
+    pub scroll_to_end: bool,
 }
 
 impl RawViewState {
@@ -113,6 +115,7 @@ impl RawViewState {
             current: 0,
             soft_wrap: true,
             pending_reveal: None,
+            scroll_to_end: false,
             selected: None,
             flash: None,
             flash_count: 0,
@@ -359,6 +362,16 @@ impl AppView {
         }
         if created {
             self.update_raw_highlights(cx);
+        }
+        // Follow: every File Section shows its last line. The offset past the
+        // end is clamped to the bottom once the editor is laid out.
+        if std::mem::take(&mut self.raw.scroll_to_end) && self.live.follow {
+            for editor in self.raw.editors.values() {
+                editor.state.update(cx, |state, cx| {
+                    let x = state.scroll_offset().x;
+                    state.set_scroll_offset(point(x, px(-1.0e7)), cx);
+                });
+            }
         }
         if let Some((file_id, line)) = self.raw.pending_reveal.take() {
             if let Some(editor) = self.raw.editors.get(&file_id) {

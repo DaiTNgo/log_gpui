@@ -22,7 +22,39 @@ impl AppView {
         if sections.is_empty() {
             return self.render_empty_state(cx);
         }
-        self.render_scratch_sections(sections, cx)
+        // Scrolling up to read older lines turns Follow off (L2), as in the
+        // Parsed View; the Follow button or End turns it back on.
+        // The editors take the wheel for themselves, so it is watched in the
+        // capture phase, before them.
+        let view = cx.entity().downgrade();
+        let watch_wheel = gpui::canvas(
+            |_, _, _| (),
+            move |bounds, _, window, _| {
+                let view = view.clone();
+                window.on_mouse_event(move |event: &gpui::ScrollWheelEvent, phase, _, cx| {
+                    let up = event.delta.pixel_delta(px(20.0)).y > px(0.0);
+                    if phase == gpui::DispatchPhase::Capture && up && bounds.contains(&event.position) {
+                        view.update(cx, |this, cx| {
+                            if this.live.follow {
+                                this.live.follow = false;
+                                cx.notify();
+                            }
+                        })
+                        .ok();
+                    }
+                });
+            },
+        )
+        .absolute()
+        .size_full();
+        div()
+            .relative()
+            .size_full()
+            .min_w(px(0.0))
+            .flex()
+            .child(self.render_scratch_sections(sections, cx))
+            .child(watch_wheel)
+            .into_any_element()
     }
 
     /// One File Section header: chevron, file name, folder, line count.

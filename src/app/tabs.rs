@@ -381,6 +381,10 @@ impl AppView {
 
         self.live.follow = true;
         self.live.unseen = 0;
+        // A live Log Space opens at its newest lines, in either view (L3).
+        if self.active_space_is_live() {
+            self.scroll_to_newest();
+        }
         self.sync_live_sources(cx);
         self.apply_filters_and_refresh(cx);
         if self.view_mode == ViewMode::Raw {

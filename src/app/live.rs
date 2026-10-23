@@ -383,7 +383,7 @@ impl AppView {
     pub(crate) fn scroll_to_newest(&mut self) {
         match self.view_mode {
             ViewMode::Parsed => self.scroll_handle.scroll_to_bottom(),
-            ViewMode::Raw => self.raw.scroll.scroll_to_bottom(),
+            ViewMode::Raw => self.raw.scroll_to_end = true,
         }
     }
 
