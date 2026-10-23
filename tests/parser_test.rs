@@ -47,3 +47,40 @@ fn test_json_lines_with_a_time_have_it() {
     assert!(entries[0].has_time);
     assert!(!entries[1].has_time);
 }
+
+#[test]
+fn test_logback_lines_with_a_comma_fraction_have_time_and_level() {
+    let log = b"2026-10-20 10:00:08,123 ERROR [main] c.a.OrderService - failed to place order\njava.lang.IllegalStateException: boom\n\tat com.acme.Pay.charge(Pay.java:42)\n2026-10-20 10:00:09,500 INFO  [main] c.a.OrderService - retried\n";
+    let entries = parse_text_bytes(log).unwrap();
+
+    assert!(entries[0].has_time);
+    assert_eq!(entries[0].level, LogLevel::Error);
+    assert_eq!(entries[0].tag(), "main");
+    assert_eq!(entries[0].payload(), "c.a.OrderService - failed to place order");
+    assert!((entries[3].timestamp - entries[0].timestamp - 1.377).abs() < 1e-6);
+    assert!(!entries[1].has_time, "the exception line belongs to the line above");
+    assert!(!entries[2].has_time);
+}
+
+#[test]
+fn test_python_logging_default_lines_have_time_level_and_logger() {
+    let log = b"2026-10-20 10:00:08,123 - payments.api - WARNING - card declined\n2026-10-20 10:00:09,004 - payments.api - CRITICAL - gave up\n";
+    let entries = parse_text_bytes(log).unwrap();
+
+    assert!(entries[0].has_time);
+    assert_eq!(entries[0].level, LogLevel::Warn);
+    assert_eq!(entries[0].tag(), "payments.api");
+    assert_eq!(entries[0].payload(), "card declined");
+    assert_eq!(entries[1].level, LogLevel::Fatal);
+    assert!(entries[1].timestamp > entries[0].timestamp);
+}
+
+#[test]
+fn test_comma_fraction_lines_without_a_fraction_still_read() {
+    let entries = parse_text_bytes(b"2026-10-20 10:00:08 ERROR [main] boom\n2026-10-20 10:00:08 - app - INFO - up\n").unwrap();
+    assert!(entries[0].has_time);
+    assert_eq!(entries[0].level, LogLevel::Error);
+    assert!(entries[1].has_time);
+    assert_eq!(entries[1].level, LogLevel::Info);
+    assert_eq!(entries[1].tag(), "app");
+}

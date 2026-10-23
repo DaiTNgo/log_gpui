@@ -15,13 +15,20 @@ static RE_STANDARD: LazyLock<Regex> = LazyLock::new(|| {
     // Matches: 2026-09-05 12:34:56.789 [INFO] [auth] Message
     // Matches: [2026-09-05T12:34:56.789Z] [WARN] [api] Message
     // Matches: 2026-09-05 12:34:56 ERROR: Something went wrong
-    Regex::new(r#"^(?:\[?(\d{4}[-/]\d{2}[-/]\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?)\]?\s+)?(?:\[?([A-Za-z]{1,7})\]?:?\s+)?(?:\[([a-zA-Z0-9_\-.]+)\]:?\s+)?(.*)$"#)
+    // Matches: 2026-09-05 12:34:56,789 ERROR [main] c.a.Service - Message (logback, log4j)
+    Regex::new(r#"^(?:\[?(\d{4}[-/]\d{2}[-/]\d{2}[T ]\d{2}:\d{2}:\d{2}(?:[.,]\d+)?(?:Z|[+-]\d{2}:?\d{2})?)\]?\s+)?(?:\[?([A-Za-z]{1,7})\]?:?\s+)?(?:\[([a-zA-Z0-9_\-.]+)\]:?\s+)?(.*)$"#)
         .unwrap()
 });
 
 static RE_STANDARD_NO_LEVEL: LazyLock<Regex> = LazyLock::new(|| {
     // The same line when the word after the timestamp is not a level.
-    Regex::new(r#"^(?:\[?(\d{4}[-/]\d{2}[-/]\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?)\]?\s+)?(?:\[([a-zA-Z0-9_\-.]+)\]:?\s+)?(.*)$"#)
+    Regex::new(r#"^(?:\[?(\d{4}[-/]\d{2}[-/]\d{2}[T ]\d{2}:\d{2}:\d{2}(?:[.,]\d+)?(?:Z|[+-]\d{2}:?\d{2})?)\]?\s+)?(?:\[([a-zA-Z0-9_\-.]+)\]:?\s+)?(.*)$"#)
+        .unwrap()
+});
+
+static RE_PYTHON: LazyLock<Regex> = LazyLock::new(|| {
+    // Python logging's default: 2026-09-05 12:34:56,789 - payments.api - WARNING - Message
+    Regex::new(r#"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:[.,]\d+)?) - (\S+) - ([A-Za-z]+) - (.*)$"#)
         .unwrap()
 });
 
@@ -267,6 +274,26 @@ fn parse_line(index: usize, raw_line: &str, format: Option<&CompiledFormat>) -> 
             if let Some(event) = parse_json_log_event(index, &json_val, raw_line) {
                 return event;
             }
+        }
+    }
+
+    // Try Python logging's default format. Its level sits after the logger,
+    // so it is a level only when the word is one.
+    if let Some(caps) = RE_PYTHON
+        .captures(line_trimmed)
+        .filter(|caps| LogLevel::from_token(&caps[3]) != LogLevel::Unknown)
+    {
+        if let Some(timestamp) = read_timestamp(&caps[1]) {
+            let level_range = group_range(&caps, 3, lead);
+            let tag_range = group_range(&caps, 2, lead);
+            let level_text = level_range.as_ref().map(|r| &raw_line[r.clone()]);
+            let tag = tag_range.as_ref().map(|r| &raw_line[r.clone()]);
+            return LogEvent::new(index, timestamp, caps[1].to_string(), caps[4].to_string(), raw_line.to_string())
+                .with_metadata(level_text, tag)
+                .with_span("timestamp", group_range(&caps, 1, lead))
+                .with_span("level", level_range)
+                .with_span("module", tag_range)
+                .with_span("message", group_range(&caps, 4, lead));
         }
     }
 
