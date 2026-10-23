@@ -188,6 +188,8 @@ pub struct AppView {
     pub floating_panels: HashMap<PanelKind, FloatingPanelState>,
     pub panel_gesture: Option<PanelGesture>,
     pub density: Density,
+    /// Zoom steps of the log text (`⌘+` / `⌘−`), kept as an app setting.
+    pub text_zoom: i8,
     /// Whether the minimap shows beside the log table.
     pub show_minimap: bool,
     pub column_layout: ColumnLayoutState,
@@ -526,6 +528,7 @@ impl AppView {
             ]),
             panel_gesture: None,
             density: Density::Compact,
+            text_zoom: 0,
             show_minimap: true,
             column_layout,
             live: live::LiveRuntime::new(),
@@ -579,7 +582,8 @@ impl AppView {
         this.live.glob_limit = this.workspace_state.live_glob_limit.clamp(1, 500);
         this.live.glob_interval = this.workspace_state.live_glob_interval.clamp(2, 300);
         this.density = this.workspace_state.density;
-        this.column_layout.update_density(this.density);
+        this.text_zoom = this.workspace_state.text_zoom;
+        this.column_layout.update_density(this.text_scale());
         this.show_minimap = this.workspace_state.show_minimap;
         this.raw.soft_wrap = this.workspace_state.raw_soft_wrap;
         this.restore_active_session(cx);

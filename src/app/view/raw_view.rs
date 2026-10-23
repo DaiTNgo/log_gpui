@@ -222,7 +222,7 @@ impl AppView {
                     .flex_1()
                     .h_full()
                     .min_w(px(0.0))
-                    .text_size(px(13.0))
+                    .text_size(px(13.0 * self.text_scale().ratio()))
                     .children(strip)
                     .child(div().flex_1().min_h(px(0.0)).child(
                         Editor::new(&editor.state)
@@ -235,6 +235,7 @@ impl AppView {
             }
             return div().flex_1().into_any_element();
         }
+        let ratio = self.text_scale().ratio();
         let theme = cx.theme();
         let border = theme.border;
         let mut column = v_flex().w_full();
@@ -253,16 +254,16 @@ impl AppView {
                     block = block.child(
                         div()
                             .w_full()
-                            .h(px(section_editor_height(section.lines.len())))
+                            .h(px(section_editor_height(section.lines.len(), ratio)))
                             .border_b_1()
                             .border_color(border)
-                            .text_size(px(12.0))
+                            .text_size(px(12.0 * ratio))
                             .child(
                                 Editor::new(&editor.state)
                                     .appearance(false)
                                     .bordered(false)
                                     .readonly(!section.editable)
-                                    .h(px(section_editor_height(section.lines.len()) - EDITOR_PADDING / 2.0)),
+                                    .h(px(section_editor_height(section.lines.len(), ratio) - EDITOR_PADDING / 2.0)),
                             ),
                     );
                 }

@@ -29,6 +29,8 @@ pub struct SessionManifest {
     pub live_glob_interval: u64,
     #[serde(default)]
     pub density: crate::density::Density,
+    #[serde(default)]
+    pub text_zoom: i8,
     #[serde(default = "crate::workspace::state::default_true")]
     pub show_minimap: bool,
     #[serde(default = "crate::workspace::state::default_true")]
@@ -100,6 +102,7 @@ impl SessionManifest {
             live_glob_limit: ws.live_glob_limit,
             live_glob_interval: ws.live_glob_interval,
             density: ws.density,
+            text_zoom: ws.text_zoom,
             show_minimap: ws.show_minimap,
             phrase_colors: ws.phrase_colors,
             raw_soft_wrap: ws.raw_soft_wrap,
@@ -132,6 +135,7 @@ impl SessionManifest {
         ws.live_glob_limit = self.live_glob_limit;
         ws.live_glob_interval = self.live_glob_interval;
         ws.density = self.density;
+        ws.text_zoom = self.text_zoom;
         ws.show_minimap = self.show_minimap;
         ws.phrase_colors = self.phrase_colors;
         ws.raw_soft_wrap = self.raw_soft_wrap;

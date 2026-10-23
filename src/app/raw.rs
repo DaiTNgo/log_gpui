@@ -749,7 +749,7 @@ impl AppView {
                 offset += header + EDITOR_PADDING / 2.0 + line as f32 * EDITOR_LINE_HEIGHT;
                 break;
             }
-            offset += section_height(s, self.is_section_collapsed(&s.file_id));
+            offset += section_height(s, self.is_section_collapsed(&s.file_id), self.text_scale().ratio());
         }
         let target = (offset - 80.0).max(0.0);
         self.raw.section_scroll.set_offset(point(px(0.0), px(-target)));
@@ -906,20 +906,21 @@ impl AppView {
 }
 
 /// Height of a File Section in the stacked scratch editors.
-pub fn section_height(section: &RawSection, collapsed: bool) -> f32 {
+pub fn section_height(section: &RawSection, collapsed: bool, ratio: f32) -> f32 {
     if collapsed {
         RAW_ROW_HEIGHT
     } else {
-        RAW_ROW_HEIGHT + section_editor_height(section.lines.len())
+        RAW_ROW_HEIGHT + section_editor_height(section.lines.len(), ratio)
     }
 }
 
 /// Tallest a stacked section's editor gets before it scrolls inside itself.
 pub const MAX_SECTION_EDITOR_HEIGHT: f32 = 480.0;
 
-/// Height of a section's editor among several stacked ones.
-pub fn section_editor_height(lines: usize) -> f32 {
-    editor_height(lines).min(MAX_SECTION_EDITOR_HEIGHT)
+/// Height of a section's editor among several stacked ones, its text
+/// `ratio` times the usual size (see `TextScale::ratio`).
+pub fn section_editor_height(lines: usize, ratio: f32) -> f32 {
+    (lines.max(4) as f32 * EDITOR_LINE_HEIGHT * ratio + EDITOR_PADDING).min(MAX_SECTION_EDITOR_HEIGHT)
 }
 
 /// Height of a scratch editor showing `lines` lines (at least a few).

@@ -5,7 +5,7 @@
 
 use crate::app::AppView;
 use crate::app::raw::RawSection;
-use crate::density::Density;
+use crate::density::TextScale;
 use crate::focus::{FocusFind, FocusPaneNotice, FocusRow};
 use crate::highlight::RowPaint;
 use crate::marker::{TextMarker, level_marker};
@@ -98,7 +98,7 @@ pub struct PaneState<'a> {
     pub show_source: bool,
     /// Text of the empty pane, when there is nothing to list.
     pub notice: Option<FocusPaneNotice>,
-    pub density: Density,
+    pub density: TextScale,
     pub colors: CanvasColors,
     pub scroll_handle: &'a UniformListScrollHandle,
     pub selection: Option<TextSelection>,

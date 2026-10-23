@@ -1,5 +1,5 @@
 use crate::model::{FieldKey, LogEntry};
-use crate::density::Density;
+use crate::density::TextScale;
 use gpui::{px, Pixels};
 use gpui_kit::assets::IconName;
 use serde::{Deserialize, Serialize};
@@ -340,6 +340,11 @@ pub struct PaneColumns {
     pub stream: bool,
 }
 
+/// The text size the default column widths are chosen for (Compact).
+fn default_fitted_font() -> f32 {
+    crate::density::Density::Compact.font_size()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ColumnLayoutState {
     pub pinned_columns: BTreeSet<PinnableColumn>,
@@ -347,6 +352,10 @@ pub struct ColumnLayoutState {
     pub widths: HashMap<PinnableColumn, Pixels>,
     pub min_widths: HashMap<PinnableColumn, Pixels>,
     pub max_chars: FieldMaxChars,
+    /// The text size `widths` were laid out for: a column with nothing
+    /// measured yet keeps its width in proportion when the size changes.
+    #[serde(default = "default_fitted_font")]
+    pub fitted_font: f32,
     pub gutter_width: Pixels,
     /// Whether the Source Column is shown (a pinned Source Column that is
     /// hidden keeps its pin and is simply not laid out).
@@ -402,6 +411,7 @@ impl ColumnLayoutState {
             widths,
             min_widths,
             max_chars: FieldMaxChars::new(),
+            fitted_font: default_fitted_font(),
             gutter_width: DEFAULT_GUTTER_WIDTH,
             source_visible: false,
             stream_visible: false,
@@ -510,8 +520,9 @@ impl ColumnLayoutState {
         &mut self,
         hidden: BTreeSet<PinnableColumn>,
         fields: Vec<FieldKey>,
-        density: Density,
+        density: impl Into<TextScale>,
     ) {
+        let density: TextScale = density.into();
         for key in &fields {
             if !self.widths.contains_key(&PinnableColumn::Field(*key)) {
                 self.auto_fit(PinnableColumn::Field(*key), density);
@@ -524,7 +535,8 @@ impl ColumnLayoutState {
 
     /// Set the columns the Focus Pane lays out. A new Field Column is
     /// fitted to its values, Source and Stream to their names.
-    pub fn set_pane_columns(&mut self, pane: PaneColumns, density: Density) {
+    pub fn set_pane_columns(&mut self, pane: PaneColumns, density: impl Into<TextScale>) {
+        let density: TextScale = density.into();
         for key in &pane.fields {
             if !self.widths.contains_key(&PinnableColumn::Field(*key)) {
                 self.auto_fit(PinnableColumn::Field(*key), density);
@@ -600,11 +612,13 @@ impl ColumnLayoutState {
     /// adjustments and dynamic sizing (used when restoring a saved view).
     pub fn reset_widths_to_defaults(&mut self) {
         self.widths.retain(|c, _| c.is_field());
-        self.widths.insert(PinnableColumn::Timestamp, DEFAULT_TIMESTAMP_WIDTH);
-        self.widths.insert(PinnableColumn::Level, DEFAULT_LEVEL_WIDTH);
-        self.widths.insert(PinnableColumn::Module, DEFAULT_MODULE_WIDTH);
-        self.widths.insert(PinnableColumn::Source, DEFAULT_SOURCE_WIDTH);
-        self.widths.insert(PinnableColumn::Stream, DEFAULT_STREAM_WIDTH);
+        // The defaults are for the Compact size; scaled to the size in use.
+        let ratio = self.fitted_font / default_fitted_font();
+        self.widths.insert(PinnableColumn::Timestamp, DEFAULT_TIMESTAMP_WIDTH * ratio);
+        self.widths.insert(PinnableColumn::Level, DEFAULT_LEVEL_WIDTH * ratio);
+        self.widths.insert(PinnableColumn::Module, DEFAULT_MODULE_WIDTH * ratio);
+        self.widths.insert(PinnableColumn::Source, DEFAULT_SOURCE_WIDTH * ratio);
+        self.widths.insert(PinnableColumn::Stream, DEFAULT_STREAM_WIDTH * ratio);
     }
 
     /// Returns unpinned columns in natural schema order.
@@ -792,27 +806,42 @@ impl ColumnLayoutState {
     }
 
     /// Updates dynamic column widths based on maximum characters observed in ingested entries.
-    pub fn update_from_entries(&mut self, entries: &[LogEntry], density: Density) {
+    pub fn update_from_entries(&mut self, entries: &[LogEntry], density: impl Into<TextScale>) {
+        let density: TextScale = density.into();
         self.max_chars = FieldMaxChars::scan_entries(entries);
         self.recompute_widths(density);
     }
 
-    /// Recomputes dynamic column widths when visual density (and thus monospace font size) changes.
-    #[inline]
-    pub fn update_density(&mut self, density: Density) {
-        self.recompute_widths(density);
+    /// The text size changed (Density or zoom): measured columns are fitted
+    /// again, and a column with nothing measured yet keeps its width in
+    /// proportion to the new size.
+    pub fn update_density(&mut self, density: impl Into<TextScale>) {
+        let density: TextScale = density.into();
+        let ratio = density.font_size() / self.fitted_font;
+        let fields = self.fields.iter().map(|k| PinnableColumn::Field(*k));
+        for col in PinnableColumn::ALL.into_iter().chain(fields.collect::<Vec<_>>()) {
+            if self.max_chars.of(col) > 0 {
+                self.auto_fit(col, density);
+            } else if let Some(width) = self.widths.get(&col).copied() {
+                self.set_width(col, width * ratio);
+            }
+        }
+        self.fitted_font = density.font_size();
     }
 
     /// Recalculates dynamic widths from recorded max_chars for a given density.
-    pub fn recompute_widths(&mut self, density: Density) {
+    pub fn recompute_widths(&mut self, density: impl Into<TextScale>) {
+        let density: TextScale = density.into();
         let fields = self.fields.iter().map(|k| PinnableColumn::Field(*k));
         for col in PinnableColumn::ALL.into_iter().chain(fields.collect::<Vec<_>>()) {
             self.auto_fit(col, density);
         }
+        self.fitted_font = density.font_size();
     }
 
     /// Auto-fits a specific column back to its optimal dynamic width for the given density.
-    pub fn auto_fit(&mut self, col: PinnableColumn, density: Density) {
+    pub fn auto_fit(&mut self, col: PinnableColumn, density: impl Into<TextScale>) {
+        let density: TextScale = density.into();
         let count = self.max_chars.of(col);
         let min = self.min_width(col);
         self.widths.insert(col, compute_column_width(col, count, density.font_size(), min));

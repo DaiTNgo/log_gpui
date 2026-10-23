@@ -1,4 +1,4 @@
-use crate::density::Density;
+use crate::density::TextScale;
 use crate::marker::level_marker;
 use crate::model::{LogEntry, LogLevel};
 use crate::palette::{HighlightColor, Tone, Weight, text_rgb};
@@ -114,7 +114,7 @@ pub struct CanvasViewState<'a> {
     pub selection: Option<TextSelection>,
     /// Receives where the rows are on screen while painting.
     pub bounds_sink: std::rc::Rc<std::cell::Cell<gpui::Bounds<Pixels>>>,
-    pub density: Density,
+    pub density: TextScale,
     /// Whether the minimap shows beside the table.
     pub show_minimap: bool,
     /// Whether Matches are painted per Phrase (else one shared color).

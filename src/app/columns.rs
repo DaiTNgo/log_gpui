@@ -104,7 +104,7 @@ impl AppView {
     pub(crate) fn sync_view_columns(&mut self) {
         self.formats.view_fields = self.format_fields_in_view();
         let fields = self.canvas_field_keys();
-        self.column_layout.set_view_columns(Default::default(), fields, self.density);
+        self.column_layout.set_view_columns(Default::default(), fields, self.text_scale());
         self.sync_pane_columns();
     }
 
@@ -141,7 +141,7 @@ impl AppView {
         pane.source = self.column_shown("source") && self.active_is_log_space();
         pane.stream = self.column_shown("stream") && self.active_space_has_command();
         pane.fields = self.pane_field_keys();
-        self.column_layout.set_pane_columns(pane, self.density);
+        self.column_layout.set_pane_columns(pane, self.text_scale());
     }
 
     /// The Field Columns the Focus Pane lays out: the ones switched on (a

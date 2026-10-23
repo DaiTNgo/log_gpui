@@ -75,6 +75,8 @@ struct Values {
     phrase_colors: bool,
     wrap: bool,
     density: Density,
+    /// Size of the log text, in points, and its zoom steps.
+    text_size: (f32, i8),
     /// The Log Format library: id, name, template.
     formats: Vec<(String, String, String)>,
     keymap: crate::keymap::Keymap,
@@ -99,6 +101,7 @@ pub fn open_settings_dialog(view: Entity<AppView>, window: &mut Window, cx: &mut
                     phrase_colors: v.phrase_colors(),
                     wrap: v.raw.soft_wrap,
                     density: v.density,
+                    text_size: (v.text_scale().font_size(), v.text_zoom),
                     formats: v.log_formats().iter().map(|f| (f.id.clone(), f.name.clone(), f.template.clone())).collect(),
                     keymap: v.keymap.clone(),
                     recording: v.keymap_recording,
@@ -504,6 +507,8 @@ fn rows_of(section: SettingsSection, view: &Entity<AppView>, v: &Values, cx: &Ap
         }
         SettingsSection::Appearance => {
             let (v_density, v_minimap) = (view.clone(), view.clone());
+            let (v_smaller, v_larger, v_reset) = (view.clone(), view.clone(), view.clone());
+            let (text_pt, zoom) = v.text_size;
             let v_phrase_colors = view.clone();
             let v_highlight = view.clone();
             let densities = [
@@ -529,6 +534,46 @@ fn rows_of(section: SettingsSection, view: &Entity<AppView>, v: &Values, cx: &Ap
                                 window.refresh();
                             }
                         })
+                        .into_any_element(),
+                },
+                Row {
+                    title: "Text size",
+                    description: "Make the log text larger or smaller on top of the row density (⌘+, ⌘−, ⌘0). The Parsed View, the Raw View and the Focus Pane follow.",
+                    control: h_flex()
+                        .gap_1()
+                        .items_center()
+                        .child(
+                            Button::new("text-smaller")
+                                .small()
+                                .label("A−")
+                                .disabled(zoom <= crate::density::ZOOM_MIN)
+                                .on_click(move |_, window, app| {
+                                    v_smaller.update(app, |this, cx| this.zoom_text(-1, cx));
+                                    window.refresh();
+                                }),
+                        )
+                        .child(div().w(px(44.0)).text_center().text_sm().child(format!("{text_pt} pt")))
+                        .child(
+                            Button::new("text-larger")
+                                .small()
+                                .label("A+")
+                                .disabled(zoom >= crate::density::ZOOM_MAX)
+                                .on_click(move |_, window, app| {
+                                    v_larger.update(app, |this, cx| this.zoom_text(1, cx));
+                                    window.refresh();
+                                }),
+                        )
+                        .child(
+                            Button::new("text-reset")
+                                .small()
+                                .ghost()
+                                .label("Reset")
+                                .disabled(zoom == 0)
+                                .on_click(move |_, window, app| {
+                                    v_reset.update(app, |this, cx| this.set_text_zoom(0, cx));
+                                    window.refresh();
+                                }),
+                        )
                         .into_any_element(),
                 },
                 Row {

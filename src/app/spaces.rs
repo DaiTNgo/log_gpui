@@ -656,7 +656,7 @@ impl AppView {
             self.column_layout.set_stream_visible(visible);
             if visible {
                 self.column_layout.max_chars.stream = self.column_layout.max_chars.stream.max(6);
-                self.column_layout.auto_fit(crate::column::PinnableColumn::Stream, self.density);
+                self.column_layout.auto_fit(crate::column::PinnableColumn::Stream, self.text_scale());
             }
         }
     }

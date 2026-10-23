@@ -28,6 +28,9 @@ pub enum Command {
     GoNextMarker,
     GoPrevMarker,
     GoToLine,
+    ZoomIn,
+    ZoomOut,
+    ResetZoom,
     SetCompact,
     SetComfortable,
     SetUltraCompact,
@@ -56,7 +59,7 @@ pub enum Command {
 
 impl Command {
     /// In the order the Command Palette and the Keymap settings list them.
-    pub const ALL: [Command; 38] = [
+    pub const ALL: [Command; 41] = [
         Command::ToggleSearch,
         Command::NextMatch,
         Command::PrevMatch,
@@ -71,6 +74,9 @@ impl Command {
         Command::GoNextMarker,
         Command::GoPrevMarker,
         Command::GoToLine,
+        Command::ZoomIn,
+        Command::ZoomOut,
+        Command::ResetZoom,
         Command::SetCompact,
         Command::SetComfortable,
         Command::SetUltraCompact,
@@ -130,6 +136,9 @@ impl Command {
             Command::GoNextMarker => ("navigate.next_marker", "Navigate: Jump to Next Marker", &["cmd-alt-down"]),
             Command::GoPrevMarker => ("navigate.prev_marker", "Navigate: Jump to Previous Marker", &["cmd-alt-up"]),
             Command::GoToLine => ("navigate.go_to_line", "Navigate: Go to Line…", &["cmd-l"]),
+            Command::ZoomIn => ("view.zoom_in", "View: Larger Text", &["cmd-=", "cmd-+", "cmd-shift-="]),
+            Command::ZoomOut => ("view.zoom_out", "View: Smaller Text", &["cmd--"]),
+            Command::ResetZoom => ("view.zoom_reset", "View: Reset Text Size", &["cmd-0"]),
             Command::SetCompact => ("density.compact", "Density: Compact (Default)", &[]),
             Command::SetComfortable => ("density.comfortable", "Density: Comfortable", &[]),
             Command::SetUltraCompact => ("density.ultra_compact", "Density: Ultra Compact", &[]),

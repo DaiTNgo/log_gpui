@@ -41,13 +41,13 @@ impl AppView {
         }
         let bounds = self.canvas_bounds.get();
         let scroll = self.scroll_handle.0.borrow().base_handle.offset();
-        let row_h = self.density.row_height();
+        let row_h = self.text_scale().row_height();
         let y = f32::from(at.y - bounds.origin.y) - f32::from(scroll.y);
         let row = ((y / row_h).floor().max(0.0) as usize).min(total - 1);
         let x = f32::from(at.x - bounds.origin.x);
         let hit = hit_cell(&self.column_layout, x, f32::from(horizontal_scroll_x(&self.scroll_handle)));
         let entry = self.all_entries.get(*self.visible_indices.get(row)?)?;
-        let font_size = self.density.font_size();
+        let font_size = self.text_scale().font_size();
         let byte = byte_for_hit(entry, hit, |text, x| {
             crate::ui::mono::index_for_x(text, x, font_size, window, cx)
         });

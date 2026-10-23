@@ -106,7 +106,7 @@ impl AppView {
             selected: self.pane_selected_index(),
             show_source: self.pane_shows_source(),
             notice,
-            density: self.density,
+            density: self.text_scale(),
             colors,
             scroll_handle: &self.focus_scroll,
             selection: self.pane_selection,

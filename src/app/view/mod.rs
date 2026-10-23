@@ -78,7 +78,7 @@ impl Render for AppView {
                     .row_flash
                     .filter(|(_, _, at)| at.elapsed() < crate::ui::canvas::ROW_FLASH)
                     .map(|(pos, n, _)| (pos, n)),
-                density: self.density,
+                density: self.text_scale(),
                 show_minimap: self.show_minimap,
                 phrase_colors: self.phrase_colors(),
                 column_layout: &self.column_layout,

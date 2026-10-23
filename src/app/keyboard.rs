@@ -217,7 +217,7 @@ impl AppView {
 
     /// The first row in sight in the Parsed View and how many rows fit.
     fn rows_in_sight(&self) -> (usize, usize) {
-        let row_height = self.density.row_height();
+        let row_height = self.text_scale().row_height();
         let height = f32::from(self.canvas_bounds.get().size.height);
         let in_sight = if height > 0.0 { (height / row_height).floor() as usize } else { 20 };
         let top = self.scroll_handle.0.borrow().base_handle.logical_scroll_top().0;

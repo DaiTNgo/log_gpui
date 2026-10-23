@@ -372,6 +372,13 @@ impl AppView {
             }
         }
 
+        // A layout saved at another text size (Density or zoom) follows the
+        // size in use.
+        let scale = self.text_scale();
+        if (self.column_layout.fitted_font - scale.font_size()).abs() > f32::EPSILON {
+            self.column_layout.update_density(scale);
+        }
+
         self.live.follow = true;
         self.live.unseen = 0;
         self.sync_live_sources(cx);
@@ -420,7 +427,7 @@ impl AppView {
         self.sync_stream_column();
         self.sync_pane_columns();
         if fresh {
-            self.column_layout.update_from_entries(&self.all_entries, self.density);
+            self.column_layout.update_from_entries(&self.all_entries, self.text_scale());
         }
         self.file_name = name;
     }

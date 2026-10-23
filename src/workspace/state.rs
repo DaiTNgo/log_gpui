@@ -37,6 +37,8 @@ pub struct WorkspaceState {
     /// Row density of the log table: an app setting.
     #[serde(default)]
     pub density: crate::density::Density,
+    /// Zoom steps of the log text from the Density's size: an app setting.
+    pub text_zoom: i8,
     /// Whether the minimap is shown: an app setting.
     #[serde(default = "default_true")]
     pub show_minimap: bool,
@@ -91,6 +93,7 @@ impl Default for WorkspaceState {
             live_glob_limit: default_glob_limit(),
             live_glob_interval: default_glob_interval(),
             density: Default::default(),
+            text_zoom: 0,
             show_minimap: true,
             phrase_colors: true,
             raw_soft_wrap: true,

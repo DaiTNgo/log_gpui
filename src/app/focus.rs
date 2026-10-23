@@ -633,7 +633,7 @@ impl AppView {
         }
         let bounds = self.pane_bounds.get();
         let offset = self.focus_scroll.0.borrow().base_handle.offset();
-        let row_h = self.density.row_height();
+        let row_h = self.text_scale().row_height();
         let y = f32::from(at.y - bounds.origin.y) - f32::from(offset.y);
         let row = ((y / row_h).floor().max(0.0) as usize).min(total - 1);
         if let Some(layout) = self.pane_columns() {
@@ -643,7 +643,7 @@ impl AppView {
                 _ => return None,
             };
             let hit = crate::ui::cells::hit_cell(&layout, f32::from(at.x - bounds.origin.x), -f32::from(offset.x));
-            let font = self.density.font_size();
+            let font = self.text_scale().font_size();
             let byte = crate::ui::cells::byte_for_hit(entry, hit, |text, x| {
                 crate::ui::mono::index_for_x(text, x, font, window, cx)
             });
@@ -657,7 +657,7 @@ impl AppView {
         let text = Self::focus_row_texts(&self.all_entries, &sections, &self.focus_rows[row..=row])
             .next()
             .unwrap_or("");
-        let byte = crate::ui::mono::index_for_x(text, x, self.density.font_size(), window, cx);
+        let byte = crate::ui::mono::index_for_x(text, x, self.text_scale().font_size(), window, cx);
         Some(TextPos::new(row, byte))
     }
 

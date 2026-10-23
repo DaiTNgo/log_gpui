@@ -38,22 +38,25 @@ impl AppView {
             Command::ToggleFilter => self.toggle_filter_builder(cx),
             Command::GoNextError => self.jump_to_next_error(cx),
             Command::GoPrevError => self.jump_to_prev_error(cx),
+            Command::ZoomIn => self.zoom_text(1, cx),
+            Command::ZoomOut => self.zoom_text(-1, cx),
+            Command::ResetZoom => self.set_text_zoom(0, cx),
             Command::GoNextMarker => self.jump_to_next_marker(cx),
             Command::GoPrevMarker => self.jump_to_prev_marker(cx),
             Command::GoToLine => self.open_go_to_line(window, cx),
             Command::SetComfortable => {
                 self.density = Density::Comfortable;
-                self.column_layout.update_density(self.density);
+                self.column_layout.update_density(self.text_scale());
                 cx.notify();
             }
             Command::SetCompact => {
                 self.density = Density::Compact;
-                self.column_layout.update_density(self.density);
+                self.column_layout.update_density(self.text_scale());
                 cx.notify();
             }
             Command::SetUltraCompact => {
                 self.density = Density::UltraCompact;
-                self.column_layout.update_density(self.density);
+                self.column_layout.update_density(self.text_scale());
                 cx.notify();
             }
             Command::ManageServers => self.open_servers_dialog(cx),

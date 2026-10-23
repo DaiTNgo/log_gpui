@@ -85,9 +85,31 @@ impl AppView {
         cx.notify();
     }
 
+    /// The size the log text is drawn at.
+    pub fn text_scale(&self) -> crate::density::TextScale {
+        crate::density::TextScale::new(self.density, self.text_zoom)
+    }
+
+    /// Make the log text larger (`steps` > 0) or smaller, within bounds.
+    pub fn zoom_text(&mut self, steps: i8, cx: &mut Context<Self>) {
+        self.set_text_zoom(self.text_zoom.saturating_add(steps), cx);
+    }
+
+    pub fn set_text_zoom(&mut self, zoom: i8, cx: &mut Context<Self>) {
+        let zoom = crate::density::TextScale::new(self.density, zoom).zoom;
+        if zoom == self.text_zoom {
+            return;
+        }
+        self.text_zoom = zoom;
+        self.workspace_state.text_zoom = zoom;
+        self.column_layout.update_density(self.text_scale());
+        self.schedule_session_save(cx);
+        cx.notify();
+    }
+
     pub fn set_density(&mut self, density: Density, cx: &mut Context<Self>) {
         self.density = density;
-        self.column_layout.update_density(self.density);
+        self.column_layout.update_density(self.text_scale());
         self.workspace_state.density = density;
         self.schedule_session_save(cx);
         cx.notify();
@@ -177,7 +199,7 @@ impl AppView {
     }
 
     pub fn auto_fit_column(&mut self, col: crate::column::PinnableColumn, cx: &mut Context<Self>) {
-        self.column_layout.auto_fit(col, self.density);
+        self.column_layout.auto_fit(col, self.text_scale());
         cx.notify();
     }
 
