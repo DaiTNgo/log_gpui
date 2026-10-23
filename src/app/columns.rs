@@ -39,7 +39,60 @@ pub struct ColumnGroups {
     pub detected_more: usize,
 }
 
+/// The hint over the Parsed View that Detected Fields are there to turn on.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DetectedHint {
+    /// The names of the fields with the most lines, at most three.
+    pub names: Vec<String>,
+    /// How many Detected Fields there are.
+    pub total: usize,
+}
+
+impl DetectedHint {
+    /// "3 fields detected: status, user, region", with "and 4 more" when
+    /// there are more than it names.
+    pub fn label(&self) -> String {
+        let noun = if self.total == 1 { "field" } else { "fields" };
+        let mut text = format!("{} {noun} detected: {}", crate::app::format_count(self.total), self.names.join(", "));
+        let more = self.total.saturating_sub(self.names.len());
+        if more > 0 {
+            text.push_str(&format!(" and {} more", crate::app::format_count(more)));
+        }
+        text
+    }
+}
+
 impl AppView {
+    /// The hint that Detected Fields are there: in the Parsed View of a Log
+    /// Space whose lines have some, while none is turned on and the user has
+    /// not closed it for that Log Space.
+    pub fn detected_fields_hint(&self) -> Option<DetectedHint> {
+        if self.view_mode != crate::workspace::working_set::ViewMode::Parsed || !self.active_tab_is_log_file() {
+            return None;
+        }
+        if self.active_space()?.detected_hint_dismissed {
+            return None;
+        }
+        let groups = self.column_groups("");
+        if groups.detected.is_empty() || groups.detected.iter().any(|r| r.shown) {
+            return None;
+        }
+        Some(DetectedHint {
+            names: groups.detected.iter().take(3).map(|r| r.name.clone()).collect(),
+            total: groups.detected.len() + groups.detected_more,
+        })
+    }
+
+    /// Close the Detected Fields hint of the open Log Space for good.
+    pub fn dismiss_detected_fields_hint(&mut self, cx: &mut Context<Self>) {
+        let Some(space_id) = self.active_space().map(|s| s.id.clone()) else { return };
+        if let Some(space) = self.active_project_mut().and_then(|p| p.log_spaces.iter_mut().find(|s| s.id == space_id)) {
+            space.detected_hint_dismissed = true;
+        }
+        self.schedule_session_save(cx);
+        cx.notify();
+    }
+
     /// The Columns section of the active Project.
     pub fn column_settings(&self) -> ColumnSettings {
         self.active_project().map(|p| p.columns.clone()).unwrap_or_default()

@@ -5,7 +5,8 @@
 use super::AppView;
 use crate::app::columns::{ColumnRow, DETECTED_SHOWN};
 use gpui::prelude::FluentBuilder as _;
-use gpui::{Context, ElementId, InteractiveElement, IntoElement, ParentElement, Styled, div, px};
+use gpui::{Context, ElementId, InteractiveElement, IntoElement, ParentElement, StatefulInteractiveElement as _, Styled, div, px};
+use gpui_component::button::ButtonVariants as _;
 use gpui_component::input::Input;
 use gpui_component::switch::Switch;
 use gpui_component::{ActiveTheme as _, Sizable as _, h_flex, v_flex};
@@ -104,4 +105,47 @@ fn group_title(title: &'static str, cx: &Context<AppView>) -> gpui::AnyElement {
         .text_color(cx.theme().muted_foreground)
         .child(title)
         .into_any_element()
+}
+
+impl AppView {
+    /// The bar over the Parsed View that says Detected Fields are there to
+    /// turn on: clicking it opens the Columns section, × closes it for the
+    /// Log Space.
+    pub(crate) fn render_detected_hint_bar(&self, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
+        let hint = self.detected_fields_hint()?;
+        let theme = cx.theme();
+        Some(
+            h_flex()
+                .id("detected-fields-hint")
+                .w_full()
+                .px_3()
+                .py_1()
+                .gap_2()
+                .items_center()
+                .border_b_1()
+                .border_color(theme.border)
+                .text_xs()
+                .text_color(theme.muted_foreground)
+                .cursor_pointer()
+                .hover(|s| s.bg(theme.secondary))
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.reveal_context_section(crate::workspace::state::ContextSection::Columns, cx)
+                }))
+                .child(gpui_component::Icon::new(gpui_component::IconName::Info).size_3())
+                .child(div().flex_1().min_w(px(0.0)).truncate().child(hint.label()))
+                .child(div().text_color(theme.foreground).child("Show in Columns…"))
+                .child(
+                    gpui_component::button::Button::new("detected-hint-close")
+                        .ghost()
+                        .xsmall()
+                        .icon(gpui_component::IconName::Close)
+                        .tooltip("Don't show again for this Log Space")
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            cx.stop_propagation();
+                            this.dismiss_detected_fields_hint(cx);
+                        })),
+                )
+                .into_any_element(),
+        )
+    }
 }

@@ -56,6 +56,7 @@ impl Render for AppView {
         let editor_toolbar = self.render_editor_toolbar(cx);
         let tab_bar = self.render_tab_bar(cx);
         let go_to_bar = self.render_go_to_bar(cx);
+        let detected_hint = self.render_detected_hint_bar(cx);
 
         // 5. Center: Raw View, Parsed View (the Log Canvas) or an empty state.
         let has_files = self.active_space().is_some_and(|s| !s.files.is_empty());
@@ -219,6 +220,7 @@ impl Render for AppView {
                             .child(tab_bar)
                             .child(editor_toolbar)
                             .children(go_to_bar)
+                            .children(detected_hint)
                             .child(log_canvas)
                             .child(notice),
                     )

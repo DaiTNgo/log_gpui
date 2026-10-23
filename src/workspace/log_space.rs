@@ -705,6 +705,9 @@ pub struct LogSpace {
     /// The view last used on this space, reopened as it was.
     #[serde(default)]
     pub last_mode: crate::workspace::working_set::ViewMode,
+    /// The user closed the hint that Detected Fields are there to turn on.
+    #[serde(default)]
+    pub detected_hint_dismissed: bool,
     /// Next `added_seq` to hand out.
     #[serde(default)]
     next_seq: u64,
@@ -724,6 +727,7 @@ impl LogSpace {
             focus: Default::default(),
             file_focus: HashMap::new(),
             last_mode: Default::default(),
+            detected_hint_dismissed: false,
             next_seq: 1,
         }
     }
