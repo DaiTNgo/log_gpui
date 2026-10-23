@@ -2,6 +2,7 @@ pub mod app;
 pub mod archive;
 pub mod column;
 pub mod columns;
+pub mod count;
 pub mod filter;
 pub mod filter_index;
 pub mod focus;

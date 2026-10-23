@@ -553,6 +553,14 @@ impl AppView {
         filtering || self.focus.tabs.iter().any(|t| t.search.matcher.is_some())
     }
 
+    /// Whether the Focus Pane is in sight listing lines: docked and open, or
+    /// in the Focus Window.
+    pub fn focus_pane_shows_lines(&self) -> bool {
+        self.focus_pane_has_content()
+            && (self.focus_window.is_some()
+                || (self.workspace_state.focus_pane.visible && self.active_tab_is_log_file()))
+    }
+
     pub fn sync_focus_pane_visibility(&mut self, cx: &mut Context<Self>) {
         let active = self.focus_pane_has_content();
         if active && !self.pane_has_content && !self.workspace_state.focus_pane.visible {

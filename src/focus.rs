@@ -243,7 +243,11 @@ impl FocusFind {
     /// before the Find Filter).
     pub fn label(&self) -> String {
         if self.find_filter_narrows() {
-            return format!("{} of {} lines", self.hits.len(), self.rows_before_find_filter);
+            return format!(
+                "{} of {} lines",
+                crate::count::format_count(self.hits.len()),
+                crate::count::format_count(self.rows_before_find_filter)
+            );
         }
         match (self.is_active(), self.display()) {
             (false, _) => "–".into(),

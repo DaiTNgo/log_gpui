@@ -34,7 +34,7 @@ impl StopReason {
     pub fn label(self, limit: usize) -> String {
         match self {
             StopReason::Cancelled => "read cancelled".to_string(),
-            StopReason::FullReadLimit => format!("stopped at Full Read Limit ({} lines)", group(limit)),
+            StopReason::FullReadLimit => format!("stopped at Full Read Limit ({} lines)", crate::count::format_count(limit)),
             StopReason::RotatedWhileReading => "file rotated while reading".to_string(),
             StopReason::OlderNotRead => "older lines were not read".to_string(),
         }
@@ -118,18 +118,6 @@ impl CopyMeta {
             (None, None) => "whole file".to_string(),
         }
     }
-}
-
-fn group(n: usize) -> String {
-    let digits = n.to_string();
-    let mut out = String::new();
-    for (i, c) in digits.chars().enumerate() {
-        if i > 0 && (digits.len() - i).is_multiple_of(3) {
-            out.push(',');
-        }
-        out.push(c);
-    }
-    out
 }
 
 /// The folder of Remote Copies in the data folder `base`.

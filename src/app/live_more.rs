@@ -82,18 +82,7 @@ pub struct CustomLoad {
     pub input: gpui::Entity<gpui_component::input::InputState>,
 }
 
-/// `1234567` as "1,234,567".
-pub fn group_digits(n: usize) -> String {
-    let digits = n.to_string();
-    let mut out = String::new();
-    for (i, c) in digits.chars().enumerate() {
-        if i > 0 && (digits.len() - i) % 3 == 0 {
-            out.push(',');
-        }
-        out.push(c);
-    }
-    out
-}
+pub use crate::count::format_count as group_digits;
 
 impl AppView {
     /// Whether a file of the open Log Space is a Remote File with a source.

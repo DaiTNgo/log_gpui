@@ -73,7 +73,7 @@ impl AppView {
                     .ml_auto()
                     .text_color(muted)
                     .font_weight(gpui::FontWeight::NORMAL)
-                    .child(format!("{} lines", section.lines.len())),
+                    .child(format!("{} lines", crate::app::format_count(section.lines.len()))),
             )
             .into_any_element()
     }

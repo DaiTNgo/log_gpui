@@ -564,7 +564,7 @@ impl LiveBuffer {
     /// lines says how many lines there are since it.
     pub fn set_start_overflow(&mut self, parsed: &mut ParsedFile, lines: Option<usize>, since: &str) {
         let Some(top) = parsed.entries.first_mut() else { return };
-        let count = lines.map(|n| format!("{} lines", group(n))).unwrap_or_else(|| "Lines".to_string());
+        let count = lines.map(|n| format!("{} lines", crate::count::format_count(n))).unwrap_or_else(|| "Lines".to_string());
         let mark = Arc::new(BreakMark {
             kind: BreakKind::StartTimeOverflow,
             label: format!("{count} since {since} do not fit the Live Window"),
@@ -1053,7 +1053,7 @@ impl LiveBuffer {
                         label: format!(
                             "{} {} lines before the Starting Time loaded",
                             self.name,
-                            group(lines.len())
+                            crate::count::format_count(lines.len())
                         ),
                     });
                     joined.break_before = Some(mark.clone());
@@ -1118,18 +1118,6 @@ impl LiveBuffer {
     pub fn at_generation_start(&self, parsed: &ParsedFile) -> bool {
         self.numbers_known && self.held_start(parsed).line_no <= 1
     }
-}
-
-fn group(n: usize) -> String {
-    let digits = n.to_string();
-    let mut out = String::new();
-    for (i, c) in digits.chars().enumerate() {
-        if i > 0 && (digits.len() - i).is_multiple_of(3) {
-            out.push(',');
-        }
-        out.push(c);
-    }
-    out
 }
 
 /// `38 MB`, `1.4 GB`, `812 B`.

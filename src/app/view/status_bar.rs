@@ -114,17 +114,30 @@ impl AppView {
         bar
     }
 
-    /// The plain labels on the left of the status bar, in order.
+    /// The plain labels on the left of the status bar, in order: the
+    /// current line (named by its file in a Log Space of several files) when
+    /// there is one, the line count, and how many lines the open Focus Tab
+    /// lists while the Focus Pane shows them.
     pub fn status_bar_labels(&self) -> Vec<String> {
-        let total_count = self.all_entries.len();
-        let current_line_num = self.current_line().map(|l| l.line).unwrap_or(0);
-        vec![
-            format!("Ln {current_line_num}"),
-            format!("{} lines", format_count(total_count)),
-            // How many lines the open Focus Tab lists, out of every line.
-            format!("Focus {} of {}", self.focus_rows.len(), total_count),
-            "UTF-8".to_string(),
-        ]
+        let mut labels = Vec::new();
+        if let Some(line) = self.current_line() {
+            let number = format!("Ln {}", format_count(line.line));
+            let file = self
+                .active_space()
+                .filter(|s| s.files.len() > 1)
+                .and_then(|s| s.files.iter().find(|f| *f.file_id == *line.file_id))
+                .map(|f| f.display_name.clone());
+            labels.push(match file {
+                Some(name) => format!("{name} · {number}"),
+                None => number,
+            });
+        }
+        labels.push(format!("{} lines", format_count(self.all_entries.len())));
+        if self.focus_pane_shows_lines() {
+            let n = self.focus_rows.len();
+            labels.push(format!("{} {} in Focus", format_count(n), if n == 1 { "line" } else { "lines" }));
+        }
+        labels
     }
 
     /// Status bar: line number, event counts, filter ratio, focus tag, and the

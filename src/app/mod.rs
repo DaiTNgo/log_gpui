@@ -68,18 +68,7 @@ use std::collections::{HashMap, HashSet};
 use gpui_component::input::{EditorState, InputEvent, InputState};
 use std::sync::Arc;
 
-/// `n` with a comma between each group of three digits: 12345 -> "12,345".
-pub fn format_count(n: usize) -> String {
-    let digits = n.to_string();
-    let mut out = String::with_capacity(digits.len() + digits.len() / 3);
-    for (i, c) in digits.chars().enumerate() {
-        if i > 0 && (digits.len() - i) % 3 == 0 {
-            out.push(',');
-        }
-        out.push(c);
-    }
-    out
-}
+pub use crate::count::format_count;
 
 /// A destructive action waiting for the user's confirmation.
 #[derive(Debug, Clone, PartialEq, Eq)]
