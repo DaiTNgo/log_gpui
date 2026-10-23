@@ -54,7 +54,7 @@ fn load_more_is_offered_only_while_older_lines_are_left() {
 #[gpui::test]
 fn a_local_file_read_whole_offers_no_load_more(cx: &mut gpui::TestAppContext) {
     let mut h = common::open_app_with_lines(cx, &common::sample_lines(50));
-    let id = h.view.read_with(&h.cx, |app, _| app.active_space().unwrap().files[0].file_id.clone());
+    let id = h.view.read_with(&h.cx, |app, _| app.workspace_state.active_project().unwrap().log_spaces[0].files[0].file_id.clone());
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
     let info = loop {
         h.view.update(&mut h.cx, |app, cx| {
