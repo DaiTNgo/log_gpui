@@ -136,7 +136,7 @@ impl Command {
             Command::ManageServers => ("servers.manage", "Servers: Manage…", &[]),
             Command::ToggleFollow => ("live.follow", "Live: Toggle Follow", &["cmd-alt-f"]),
             Command::TogglePause => ("live.pause", "Live: Toggle Pause", &["cmd-alt-p"]),
-            Command::ClearFile => ("live.clear_file", "Live: Clear File", &["cmd-shift-k"]),
+            Command::ClearFile => ("live.clear_file", "Live: Clear File", &[]),
             Command::LoadMore => ("live.load_more", "Live: Load More Older Lines", &["cmd-shift-up"]),
             Command::OpenInFull => ("live.open_in_full", "Live: Open in Full…", &[]),
             Command::BackToLiveWindow => ("live.back_to_window", "Live: Back to Live Window", &[]),
