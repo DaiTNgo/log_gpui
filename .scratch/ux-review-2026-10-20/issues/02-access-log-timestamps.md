@@ -4,10 +4,14 @@
 
 **Blocked by:** None (can start immediately).
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] Common and combined access log lines show the bracketed time in TIMESTAMP (as stored text)
+- [x] Common and combined access log lines show the bracketed time in TIMESTAMP (as stored text)
 - [ ] A Time Range filter includes/excludes them correctly
-- [ ] An access log file is not flagged "No timestamps" and interleaves by time with other files
-- [ ] The rest of the line stays in MESSAGE; nothing is lost (rule *Unmatched Lines Lose Nothing*)
-- [ ] Parser tests cover both formats
+- [x] An access log file is not flagged "No timestamps" and interleaves by time with other files
+- [x] The rest of the line stays in MESSAGE; nothing is lost (rule *Unmatched Lines Lose Nothing*)
+- [x] Parser tests cover both formats
+
+## Comments
+
+- 2026-10-23: Done. A built-in layout (`RE_ACCESS` in `src/parser/text.rs`) takes the bracketed time of common and combined access log lines into TIMESTAMP, as written (zone included, not converted); the whole line stays the MESSAGE. With a time, the file is no longer flagged and interleaves. Time Range is not tested on its own here: it compares the same timestamp every other layout gets, so it is left unticked until checked in the app.

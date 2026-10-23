@@ -84,3 +84,39 @@ fn test_comma_fraction_lines_without_a_fraction_still_read() {
     assert_eq!(entries[1].level, LogLevel::Info);
     assert_eq!(entries[1].tag(), "app");
 }
+
+#[test]
+fn test_access_log_lines_have_their_bracketed_time() {
+    let common = r#"10.0.0.1 - - [20/Oct/2026:10:00:01 +0000] "GET /health HTTP/1.1" 200 12"#;
+    let combined = r#"10.0.0.2 - bob [20/Oct/2026:10:00:03 +0200] "POST /pay HTTP/1.1" 500 31 "-" "curl/8""#;
+    let log = format!("{common}\n{combined}\n");
+    let entries = parse_text_bytes(log.as_bytes()).unwrap();
+
+    assert!(entries[0].has_time);
+    assert!(entries[1].has_time);
+    assert!((entries[1].timestamp - entries[0].timestamp - 2.0).abs() < 1e-6, "zones are not converted");
+    assert_eq!(entries[0].time_str(), "20/Oct/2026:10:00:01 +0000");
+    assert_eq!(entries[0].payload(), common, "the rest of the line stays in MESSAGE");
+    assert_eq!(entries[1].payload(), combined);
+}
+
+#[test]
+fn test_json_ts_and_epoch_times_are_read() {
+    let log = br#"{"level":"info","ts":1697712000.123,"msg":"zap"}
+{"level":30,"time":1697712001123,"msg":"pino"}
+{"name":"app","time":"2023-10-19T10:40:02.000Z","msg":"bunyan"}
+{"ts":"1697712003","msg":"a number in a string is not an epoch"}
+{"time":0.5,"msg":"a duration is not a time"}
+"#;
+    let entries = parse_text_bytes(log).unwrap();
+    assert!(entries[0].has_time);
+    assert!((entries[0].timestamp - 1697712000.123).abs() < 1e-3);
+    assert_eq!(entries[0].time_str(), "1697712000.123", "the number as written");
+    assert!(entries[1].has_time);
+    assert!((entries[1].timestamp - 1697712001.123).abs() < 1e-3, "milliseconds by magnitude");
+    assert_eq!(entries[1].time_str(), "1697712001123");
+    assert!(entries[2].has_time);
+    assert!((entries[2].timestamp - 1697712002.0).abs() < 1e-3);
+    assert!(!entries[3].has_time);
+    assert!(!entries[4].has_time);
+}

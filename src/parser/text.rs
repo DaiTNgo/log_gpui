@@ -32,6 +32,12 @@ static RE_PYTHON: LazyLock<Regex> = LazyLock::new(|| {
         .unwrap()
 });
 
+static RE_ACCESS: LazyLock<Regex> = LazyLock::new(|| {
+    // nginx / Apache common and combined:
+    // 10.0.0.1 - bob [20/Oct/2026:10:00:01 +0000] "GET /health HTTP/1.1" 200 12 "-" "curl/8"
+    Regex::new(r#"^\S+ \S+ \S+ \[(\d{2}/[A-Za-z]{3}/\d{4}:\d{2}:\d{2}:\d{2}(?: [+-]\d{4})?)\] ""#).unwrap()
+});
+
 static RE_LOGCAT: LazyLock<Regex> = LazyLock::new(|| {
     // 09-05 12:34:56.789  1234  5678 E AndroidRuntime: Message
     Regex::new(r#"^(\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\.\d+)\s+\d+\s+\d+\s+([VDIWEF])\s+([^:]+):\s+(.*)$"#)
@@ -297,6 +303,16 @@ fn parse_line(index: usize, raw_line: &str, format: Option<&CompiledFormat>) -> 
         }
     }
 
+    // Try an access log line: its time is in brackets after the client; the
+    // whole line stays the message, as written.
+    if let Some(caps) = RE_ACCESS.captures(line_trimmed) {
+        if let Some(timestamp) = read_timestamp(&caps[1]) {
+            return LogEvent::new(index, timestamp, caps[1].to_string(), raw_line.to_string(), raw_line.to_string())
+                .with_span("timestamp", group_range(&caps, 1, lead))
+                .with_span("message", Some(whole));
+        }
+    }
+
     // Try Logcat format
     if let Some(caps) = RE_LOGCAT.captures(line_trimmed) {
         let time_str = caps.get(1).map_or("", |m| m.as_str()).to_string();
@@ -436,6 +452,20 @@ pub fn read_timestamp(text: &str) -> Option<f64> {
     None
 }
 
+/// A time written as a number since 1970 (zap, pino, bunyan): seconds,
+/// milliseconds, microseconds or nanoseconds, told apart by size.
+fn epoch_seconds(n: f64) -> Option<f64> {
+    let seconds = match n {
+        n if !n.is_finite() || n <= 0.0 => return None,
+        n if n >= 1e17 => n / 1e9,
+        n if n >= 1e14 => n / 1e6,
+        n if n >= 1e11 => n / 1e3,
+        n => n,
+    };
+    // A small number is a duration or a count, not a time (before 1973).
+    (seconds >= 1e8).then_some(seconds)
+}
+
 /// Deterministic pseudo-timestamp for formats without a parseable timestamp.
 fn infer_incrementing_timestamp(index: usize) -> f64 {
     index as f64 * 0.001
@@ -550,16 +580,19 @@ fn parse_json_log_event(
     let mut has_time = false;
     let mut time_str = String::new();
     let mut time_key: Option<&str> = None;
-    for key in &["timestamp", "time", "@timestamp", "datetime", "date"] {
-        if let Some(val) = json.get(*key).and_then(|v| v.as_str()) {
-            time_str = text_of(key).unwrap_or_else(|| val.to_string());
-            time_key = Some(key);
-            if let Some(t) = read_timestamp(val) {
-                timestamp = t;
-                has_time = true;
-            }
-            break;
+    for key in &["timestamp", "time", "@timestamp", "datetime", "date", "ts"] {
+        let read = match json.get(*key) {
+            Some(Value::String(val)) => read_timestamp(val),
+            Some(Value::Number(n)) => n.as_f64().and_then(epoch_seconds),
+            _ => continue,
+        };
+        time_str = text_of(key).unwrap_or_default();
+        time_key = Some(key);
+        if let Some(t) = read {
+            timestamp = t;
+            has_time = true;
         }
+        break;
     }
 
     let mut level_key: Option<&str> = None;
