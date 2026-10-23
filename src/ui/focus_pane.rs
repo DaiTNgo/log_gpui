@@ -656,6 +656,7 @@ impl PaneRows {
             search_paints: &search_paints,
             selected: selected_in_line.as_ref(),
             tone,
+            source_tint: None,
         };
         let level_symbol = level_marker(entry.level).map_or(" ", |m| m.symbol());
         // The current Match outranks the selected row, as on the Log Canvas.

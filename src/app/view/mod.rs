@@ -94,6 +94,7 @@ impl Render for AppView {
                     .map(|k| (*k, self.filter_index.coverage(k.as_str())))
                     .collect(),
                 reading_fields: self.line_cache.reading,
+                source_tints: Arc::new(self.source_tints(colors.dark)),
             })
         };
 
@@ -246,6 +247,22 @@ impl Render for AppView {
 
 impl AppView {
     /// The colors the Log Canvas and the Focus Pane paint with.
+    /// The tint of each file of the open Log Space, by `file_id`; empty for a
+    /// Log Space of one file or a File View.
+    pub(crate) fn source_tints(&self, dark: bool) -> std::collections::HashMap<Arc<str>, gpui::Hsla> {
+        let Some(space) = self.active_space().filter(|_| matches!(self.active_target(), Some(crate::workspace::TabTarget::LogSpace { .. }))) else {
+            return Default::default();
+        };
+        space
+            .files
+            .iter()
+            .filter_map(|f| {
+                let ix = space.source_tint_index(&f.file_id)?;
+                Some((Arc::from(f.file_id.as_str()), crate::ui::canvas::source_tint(ix, dark)))
+            })
+            .collect()
+    }
+
     pub(crate) fn canvas_colors(&self, cx: &gpui::App) -> CanvasColors {
         CanvasColors {
             background: crate::ui::main_view::background(cx),

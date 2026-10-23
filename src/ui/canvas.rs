@@ -66,6 +66,18 @@ pub fn search_match_color(_dark: bool) -> gpui::Hsla {
     gpui::hsla(0.55, 0.85, 0.55, 1.0)
 }
 
+/// Hues of the Source File tints, in the order files take them: none is the
+/// red or yellow of a Level Marker.
+const SOURCE_TINT_HUES: [f32; 8] = [0.58, 0.47, 0.75, 0.90, 0.33, 0.07, 0.52, 0.22];
+
+/// The tint of the Source File with tint index `ix` (see
+/// `LogSpace::source_tint_index`), soft enough to keep text beside it
+/// readable.
+pub fn source_tint(ix: usize, dark: bool) -> gpui::Hsla {
+    let hue = SOURCE_TINT_HUES[ix % SOURCE_TINT_HUES.len()];
+    if dark { gpui::hsla(hue, 0.55, 0.62, 1.0) } else { gpui::hsla(hue, 0.6, 0.40, 1.0) }
+}
+
 /// The color the line number of a stderr line is drawn in: a soft red that is
 /// not the red of the Level Marker.
 pub fn stderr_color(dark: bool) -> gpui::Hsla {
@@ -117,6 +129,8 @@ pub struct CanvasViewState<'a> {
     /// Whether the Field Columns are being read again (a Detected Field turned on or off): their
     /// headers show a thin bar meanwhile.
     pub reading_fields: bool,
+    /// The tint of each Source File by `file_id`; empty for one file.
+    pub source_tints: Arc<std::collections::HashMap<Arc<str>, gpui::Hsla>>,
 }
 
 pub struct LogCanvas;
@@ -254,6 +268,7 @@ impl LogCanvas {
             selection: state.selection,
             row_height,
             font_size,
+            source_tints: state.source_tints.clone(),
         };
 
         let list = uniform_list(
@@ -745,6 +760,7 @@ struct RowEnv {
     selection: Option<TextSelection>,
     row_height: f32,
     font_size: f32,
+    source_tints: Arc<std::collections::HashMap<Arc<str>, gpui::Hsla>>,
 }
 
 impl RowEnv {
@@ -816,6 +832,7 @@ impl RowEnv {
 
         let anchored_width = self.layout.sticky_partition_width();
         let scroll_x = horizontal_scroll_x(&self.scroll_handle);
+        let source_tint = entry.file_id.as_ref().and_then(|id| self.source_tints.get(id)).copied();
         let cell_ctx = CellCtx {
             colors: &colors,
             entry,
@@ -825,6 +842,7 @@ impl RowEnv {
             search_paints: &search_paints,
             selected: selected_in_line.as_ref(),
             tone: colors.tone(),
+            source_tint,
         };
 
         let view_for_row = self.view.clone();
@@ -910,6 +928,10 @@ impl RowEnv {
                                         })
                                     })
                                     .relative()
+                                    // Which Source File the line is of, beside its number.
+                                    .when_some(source_tint, |d, tint| {
+                                        d.child(div().absolute().left_0().top_1().bottom_1().w(px(3.0)).rounded_sm().bg(tint))
+                                    })
                                     .when_some(hidden_match.clone(), |d, tip| {
                                         d.child(hidden_match_mark(ElementId::from(("hidden-match", vis_pos)), tip, &colors))
                                     })
@@ -1327,6 +1349,8 @@ pub(crate) struct CellCtx<'a> {
     /// The selected part of the line, in bytes of the stored line.
     pub selected: Option<&'a std::ops::Range<usize>>,
     pub tone: Tone,
+    /// The tint of the line's Source File, in a Log Space of several files.
+    pub source_tint: Option<gpui::Hsla>,
 }
 
 fn hsla_of(rgb: u32) -> gpui::Hsla {
@@ -1456,7 +1480,7 @@ fn render_source_cell(ctx: &CellCtx, width: Pixels) -> impl IntoElement {
         .flex_shrink_0()
         .w(width)
         .px_2()
-        .text_color(ctx.colors.muted)
+        .text_color(ctx.source_tint.unwrap_or(ctx.colors.muted))
         .truncate();
     cell.child(source.to_string())
 }

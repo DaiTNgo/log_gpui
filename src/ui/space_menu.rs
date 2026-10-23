@@ -82,6 +82,8 @@ pub struct FileRef {
     pub copy_tip: Option<String>,
     /// Shown under a Live Glob row.
     pub in_glob: bool,
+    /// The file's Source File tint, in a Log Space of several files.
+    pub tint: Option<gpui::Hsla>,
     pub rename_input: Option<Entity<InputState>>,
 }
 
@@ -634,7 +636,10 @@ pub fn push_file(list: MenuList, file: FileRef, active: bool) -> MenuList {
     let remote = file.kind == LogSpaceKind::Remote;
     let copy_tip = file.copy_tip.clone();
     let item = SidebarMenuItem::new(file.display_name.clone())
-        .icon(if file.is_copy { IconName::Copy } else { IconName::File })
+        .icon(
+            Icon::new(if file.is_copy { IconName::Copy } else { IconName::File })
+                .when_some(file.tint, |icon, tint| icon.text_color(tint)),
+        )
         .when_some(copy_tip, |item, tip| {
             item.suffix(move |_, cx| {
                 let tip = tip.clone();

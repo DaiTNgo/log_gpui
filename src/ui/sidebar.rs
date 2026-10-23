@@ -98,6 +98,7 @@ fn file_ref(
     renaming: Option<&RenameState>,
     no_timestamp_files: &std::collections::HashSet<String>,
     globs: &SidebarGlobs,
+    dark: bool,
 ) -> FileRef {
     FileRef {
         command: match file.remote.as_ref().map(|r| &r.target) {
@@ -122,6 +123,7 @@ fn file_ref(
             Some(format!("Read {} · {}", meta.read_at, meta.span_text()))
         }),
         in_glob,
+        tint: space.source_tint_index(&file.file_id).map(|ix| crate::ui::canvas::source_tint(ix, dark)),
         rename_input: file_rename_input(renaming, &project.id, &space.id, &file.file_id),
     }
 }
@@ -142,6 +144,7 @@ impl SidebarView {
             return div().into_any_element();
         }
         let view = cx.entity();
+        let dark = gpui_component::ActiveTheme::theme(&**cx).is_dark();
         let active_project_id = workspace.active_project_id.as_deref();
 
         let mut nodes: Vec<ProjectNode> = Vec::new();
@@ -164,7 +167,7 @@ impl SidebarView {
                 let grouped = space.shows_group();
                 let expanded = expanded_spaces.contains(&space.id);
                 let single_file = space.single_file().map(|file| {
-                    Box::new(file_ref(&view, project, space, file, false, renaming, no_timestamp_files, globs))
+                    Box::new(file_ref(&view, project, space, file, false, renaming, no_timestamp_files, globs, dark))
                 });
                 files = push_space(
                     files,
@@ -210,7 +213,7 @@ impl SidebarView {
                     for file in ordered.iter().filter(|f| f.from_glob.as_deref() == Some(glob.glob_id.as_str())) {
                         files = push_file(
                             files,
-                            file_ref(&view, project, space, file, true, renaming, no_timestamp_files, globs),
+                            file_ref(&view, project, space, file, true, renaming, no_timestamp_files, globs, dark),
                             is_file_active(&active_target, &space.id, &file.file_id),
                         );
                     }
@@ -218,7 +221,7 @@ impl SidebarView {
                 for file in ordered.iter().filter(|f| f.from_glob.is_none()) {
                     files = push_file(
                         files,
-                        file_ref(&view, project, space, file, false, renaming, no_timestamp_files, globs),
+                        file_ref(&view, project, space, file, false, renaming, no_timestamp_files, globs, dark),
                         is_file_active(&active_target, &space.id, &file.file_id),
                     );
                 }

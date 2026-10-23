@@ -762,6 +762,16 @@ impl LogSpace {
     }
 
     /// The files in the Log Space's single file order.
+    /// The tint `file_id` is told apart by in the Gutter, the Source Column
+    /// and the sidebar: its place in the file order. None in a Log Space of
+    /// one file, where there is nothing to tell apart.
+    pub fn source_tint_index(&self, file_id: &str) -> Option<usize> {
+        if self.files.len() < 2 {
+            return None;
+        }
+        self.ordered_files().iter().position(|f| f.file_id == file_id)
+    }
+
     pub fn ordered_files(&self) -> Vec<&LogFile> {
         let mut files: Vec<&LogFile> = self.files.iter().collect();
         match self.file_order {

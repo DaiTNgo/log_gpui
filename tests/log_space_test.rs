@@ -633,3 +633,35 @@ fn a_space_goes_back_to_a_plain_row_when_a_file_is_removed() {
     space.remove_file(&id).unwrap();
     assert!(!space.shows_group());
 }
+
+// ─── Source File tints ───────────────────────────────────────────────────────
+
+#[test]
+fn a_space_of_one_file_has_no_tint() {
+    let space = imported(&["/l/a.log"]);
+    assert_eq!(space.source_tint_index(&space.files[0].file_id), None);
+}
+
+#[test]
+fn files_take_tints_in_the_space_order() {
+    let mut space = imported(&["/l/b.log", "/l/a.log", "/l/c.log"]);
+    let id = |space: &LogSpace, name: &str| space.files.iter().find(|f| f.display_name == name).unwrap().file_id.clone();
+    let tints = |space: &LogSpace| -> Vec<Option<usize>> {
+        ["a.log", "b.log", "c.log"].iter().map(|n| space.source_tint_index(&id(space, n))).collect()
+    };
+    assert_eq!(tints(&space), vec![Some(1), Some(0), Some(2)]);
+    space.file_order = FileOrder::Name;
+    assert_eq!(tints(&space), vec![Some(0), Some(1), Some(2)]);
+}
+
+#[test]
+fn the_first_tints_are_all_different() {
+    for dark in [true, false] {
+        let tints: Vec<_> = (0..8).map(|i| log_gpui::ui::canvas::source_tint(i, dark)).collect();
+        for (i, a) in tints.iter().enumerate() {
+            for b in &tints[i + 1..] {
+                assert!((a.h - b.h).abs() > 0.03, "{tints:?}");
+            }
+        }
+    }
+}
