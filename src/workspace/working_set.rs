@@ -328,7 +328,12 @@ impl WorkingSet {
 
     /// Select a tab by its 1-based keyboard shortcut number (Cmd+1 through Cmd+9).
     /// No-op if the number exceeds the tab count.
+    /// ⌘1–⌘8 open that tab when it exists; ⌘9 opens the last tab.
     pub fn select_tab_by_number(&mut self, number: usize) {
+        if number == 9 && !self.tabs.is_empty() {
+            self.active_index = Some(self.tabs.len() - 1);
+            return;
+        }
         if number == 0 || number > self.tabs.len() {
             return;
         }

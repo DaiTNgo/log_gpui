@@ -680,3 +680,23 @@ fn test_project_named_checks_display_name() {
     assert!(!state.project_named("Log A"));
     assert!(state.project_named("Renamed A"));
 }
+
+#[test]
+fn cmd_9_goes_to_the_last_tab_and_numbers_past_the_tabs_do_nothing() {
+    let mut ws = WorkingSet::new();
+    for i in 0..12 {
+        ws.open_tab(TabTarget::LogSpace { space_id: format!("file{i}.log") }, make_session("", "", 0.0));
+    }
+    ws.select_tab_by_number(9);
+    assert_eq!(ws.active_tab_index(), Some(11), "⌘9 is the last tab, however many there are");
+
+    let mut ws = WorkingSet::new();
+    for i in 0..3 {
+        ws.open_tab(TabTarget::LogSpace { space_id: format!("file{i}.log") }, make_session("", "", 0.0));
+    }
+    ws.select_tab_by_number(9);
+    assert_eq!(ws.active_tab_index(), Some(2));
+    ws.select_tab_by_number(1);
+    ws.select_tab_by_number(5);
+    assert_eq!(ws.active_tab_index(), Some(0), "⌘5 with three tabs does nothing");
+}

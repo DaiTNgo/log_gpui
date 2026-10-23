@@ -304,7 +304,7 @@ fn keymap_rows(view: &Entity<AppView>, v: &Values, cx: &App) -> Vec<Row> {
     let reset_view = view.clone();
     let mut rows = vec![Row {
         title: "Keyboard shortcuts",
-        description: "Press + and then the keys to add a shortcut; a shortcut another command had moves here. Shortcuts without ⌘ or ⌥ work while no text field has the cursor. Esc, the arrow keys, ⌘C, ⌘1–⌘9 and ⌘Tab cannot be changed.",
+        description: "Press + and then the keys to add a shortcut; a shortcut another command had moves here. Shortcuts without ⌘ or ⌥ work while no text field has the cursor. Esc, the arrow keys, ⌘C, ⌘1–⌘9 (⌘9 is the last tab) and ⌃Tab / ⌃⇧Tab (next and previous tab) cannot be changed.",
         control: Button::new("keymap-reset-all")
             .small()
             .label("Reset all")
