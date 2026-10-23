@@ -2,10 +2,11 @@
 
 use super::AppView;
 use gpui::prelude::FluentBuilder as _;
-use gpui::{div, px, Context, IntoElement, ParentElement, SharedString, Styled};
+use gpui::{div, px, Context, InteractiveElement as _, IntoElement, KeyDownEvent, ParentElement, SharedString, StatefulInteractiveElement as _, Styled};
 use crate::workspace::working_set::ViewMode;
 use gpui_component::button::{Button, ButtonGroup, ButtonVariants as _};
 use gpui_component::input::Input;
+use gpui_component::popover::Popover;
 use gpui_component::tag::Tag;
 use gpui_component::{h_flex, ActiveTheme as _, Icon, Selectable as _, Sizable as _};
 use gpui_kit::assets::IconName;
@@ -51,6 +52,23 @@ impl AppView {
                             .border_1()
                             .border_color(cx.theme().border)
                             .bg(cx.theme().background)
+                            // ↑/↓ in an empty field step through the Recent Search
+                            // Expressions; Escape goes back to what was typed.
+                            .capture_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
+                                let m = event.keystroke.modifiers;
+                                if m.platform || m.control || m.alt || m.shift {
+                                    return;
+                                }
+                                let taken = match event.keystroke.key.as_str() {
+                                    "up" => this.step_search_history(true, window, cx),
+                                    "down" => this.step_search_history(false, window, cx),
+                                    "escape" => this.leave_search_history(window, cx),
+                                    _ => false,
+                                };
+                                if taken {
+                                    cx.stop_propagation();
+                                }
+                            }))
                             .child(
                                 Icon::new(IconName::Search)
                                     .size_4()
@@ -69,6 +87,9 @@ impl AppView {
                                     ),
                             )
                             .children(self.search_phrase_chips(cx))
+                            .when(!self.search_history().is_empty(), |this| {
+                                this.child(self.render_search_history_button(cx))
+                            })
                             .when(
                                 self.focus.search().is_open && !self.focus.search().query.is_empty(),
                                 |this| {
@@ -151,6 +172,54 @@ impl AppView {
                             }
                         })),
                 )
+            })
+            .into_any_element()
+    }
+}
+
+impl AppView {
+    /// The clock button beside the Search field listing the Recent Search
+    /// Expressions: click one to search for it, × to forget it.
+    fn render_search_history_button(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let view = cx.entity();
+        let items = self.search_history();
+        Popover::new("search-history")
+            .trigger(Button::new("search-history-button").ghost().xsmall().icon(IconName::Clock).tooltip("Recent searches (↑ in an empty field)"))
+            .content(move |_, _window, cx| {
+                let muted = cx.theme().muted_foreground;
+                let mut list = gpui_component::v_flex().w(px(320.0)).gap_0p5().p_1().text_sm();
+                for (ix, item) in items.iter().enumerate() {
+                    let (pick, remove) = (view.clone(), view.clone());
+                    let (picked, removed) = (item.clone(), item.clone());
+                    list = list.child(
+                        h_flex()
+                            .id(("search-history-item", ix))
+                            .px_2()
+                            .py_1()
+                            .gap_2()
+                            .items_center()
+                            .rounded_md()
+                            .cursor_pointer()
+                            .hover(|s| s.bg(cx.theme().secondary))
+                            .on_click(move |_, window, cx| {
+                                pick.update(cx, |this, cx| this.pick_search_history(&picked, window, cx))
+                            })
+                            .child(div().flex_1().min_w(px(0.0)).truncate().font_family(cx.theme().mono_font_family.clone()).child(item.clone()))
+                            .child(
+                                Button::new(("search-history-remove", ix))
+                                    .ghost()
+                                    .xsmall()
+                                    .icon(IconName::X)
+                                    .text_color(muted)
+                                    .tooltip("Forget this search")
+                                    .on_click(move |_, _, cx| {
+                                        cx.stop_propagation();
+                                        remove.update(cx, |this, cx| this.remove_search_history(&removed, cx))
+                                    }),
+                            ),
+                    );
+                }
+                list
             })
             .into_any_element()
     }

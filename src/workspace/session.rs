@@ -58,6 +58,8 @@ pub struct ProjectSnapshot {
     pub columns: crate::columns::ColumnSettings,
     #[serde(default)]
     pub format_choices: crate::log_format::FormatChoices,
+    #[serde(default)]
+    pub search_history: crate::search_history::SearchHistory,
 }
 
 impl SessionManifest {
@@ -88,6 +90,7 @@ impl SessionManifest {
                 recent_colors: p.recent_colors.clone(),
                 columns: p.columns.clone(),
                 format_choices: p.format_choices.clone(),
+                search_history: p.search_history.clone(),
             })
             .collect();
 
@@ -125,6 +128,7 @@ impl SessionManifest {
                 recent_colors: p.recent_colors,
                 columns: p.columns,
                 format_choices: p.format_choices,
+                search_history: p.search_history,
             });
         }
         ws.active_project_id = self.active_project_id;

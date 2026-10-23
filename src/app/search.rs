@@ -140,7 +140,14 @@ impl AppView {
         let generation = self.search_generation;
         cx.spawn(async move |this, cx| {
             cx.background_executor().timer(SEARCH_DEBOUNCE).await;
-            this.update(cx, |this, cx| this.start_search_scan(generation, cx)).ok();
+            this.update(cx, |this, cx| {
+                // A pause in the typing: what was typed counts as searched.
+                if generation == this.search_generation {
+                    this.record_search_history(cx);
+                }
+                this.start_search_scan(generation, cx)
+            })
+            .ok();
         })
         .detach();
         cx.notify();
@@ -207,3 +214,83 @@ impl AppView {
 
 /// How long the Search field stays still before the Matches are looked for.
 pub const SEARCH_DEBOUNCE: std::time::Duration = std::time::Duration::from_millis(100);
+
+// ── Recent Search Expressions ───────────────────────────────────────────────
+
+impl AppView {
+    /// The Recent Search Expressions of the active Project, newest first.
+    pub fn search_history(&self) -> Vec<String> {
+        self.active_project().map(|p| p.search_history.items.clone()).unwrap_or_default()
+    }
+
+    /// Remember the expression in the Search field when it parses; while the
+    /// user goes on typing it, it replaces the one recorded at the last pause.
+    pub fn record_search_history(&mut self, cx: &mut Context<Self>) {
+        let search = self.focus.search();
+        if search.matcher.is_none() || search.parse_error.is_some() {
+            return;
+        }
+        let query = search.query.clone();
+        let streak = self.search_history_streak;
+        if let Some(project) = self.active_project_mut() {
+            project.search_history.record(&query, streak);
+        }
+        self.search_history_streak = true;
+        self.schedule_session_save(cx);
+    }
+
+    /// ↑ (`older`) or ↓ in the Search field: step through the Recent Search
+    /// Expressions while the field is empty or already showing one. Returns
+    /// whether the key was taken.
+    pub fn step_search_history(&mut self, older: bool, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        let stepping = self.search_history_at.is_some();
+        if !stepping && !self.focus.search().query.is_empty() {
+            return false;
+        }
+        let history = self.active_project().map(|p| p.search_history.clone()).unwrap_or_default();
+        let at = self.search_history_at.as_ref().map(|(i, _)| *i);
+        let typed = self.search_history_at.as_ref().map_or_else(|| self.focus.search().query.clone(), |(_, t)| t.clone());
+        let next = history.step(at, older);
+        let text = match next {
+            Some(i) => history.items[i].clone(),
+            None if stepping => typed.clone(),
+            None => return false,
+        };
+        self.search_history_at = next.map(|i| (i, typed));
+        self.show_search_text(&text, window, cx);
+        true
+    }
+
+    /// Escape while stepping through Recent Search Expressions: back to what
+    /// was typed. Returns whether it was stepping.
+    pub fn leave_search_history(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        let Some((_, typed)) = self.search_history_at.take() else { return false };
+        self.show_search_text(&typed, window, cx);
+        true
+    }
+
+    /// Search for a Recent Search Expression picked from the list.
+    pub fn pick_search_history(&mut self, expression: &str, window: &mut Window, cx: &mut Context<Self>) {
+        self.search_history_at = None;
+        self.show_search_text(expression, window, cx);
+        self.search_input.update(cx, |input, cx| input.focus(window, cx));
+    }
+
+    pub fn remove_search_history(&mut self, expression: &str, cx: &mut Context<Self>) {
+        if let Some(project) = self.active_project_mut() {
+            project.search_history.remove(expression);
+        }
+        self.schedule_session_save(cx);
+        cx.notify();
+    }
+
+    /// Put `text` in the Search field and search for it, as typing would.
+    fn show_search_text(&mut self, text: &str, window: &mut Window, cx: &mut Context<Self>) {
+        self.search_input.update(cx, |input, cx| input.set_value(gpui::SharedString::from(text.to_string()), window, cx));
+        // set_value emits no Change: the query follows here.
+        let search = self.active_search_mut();
+        search.query = text.to_string();
+        search.is_open = !text.trim().is_empty();
+        self.search_text_changed(cx);
+    }
+}

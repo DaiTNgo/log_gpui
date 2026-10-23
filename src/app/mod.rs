@@ -145,6 +145,11 @@ pub struct AppView {
     /// The search field must be rewritten from the tab's query (set when a
     /// tab's session is restored); done at render time, where a window exists.
     pub search_input_dirty: bool,
+    /// The Recent Search Expression ↑/↓ shows in the Search field, and the
+    /// text typed before stepping into them.
+    pub search_history_at: Option<(usize, String)>,
+    /// The expression being typed was already recorded once (a pause).
+    pub search_history_streak: bool,
     pub scroll_handle: UniformListScrollHandle,
 
     pub selected_row_pos: Option<usize>,
@@ -384,6 +389,8 @@ impl AppView {
                     }
                 }
                 InputEvent::PressEnter { shift, .. } => {
+                    this.record_search_history(cx);
+                    this.search_history_streak = false;
                     if *shift {
                         this.focus_find_prev(cx);
                     } else {
@@ -403,6 +410,10 @@ impl AppView {
                     let text = input.read(cx).value().to_string();
                     if this.focus.search().query == text {
                         return;
+                    }
+                    this.search_history_at = None;
+                    if text.trim().is_empty() {
+                        this.search_history_streak = false;
                     }
                     let search = this.active_search_mut();
                     search.query = text;
@@ -500,6 +511,8 @@ impl AppView {
             keymap_message: None,
             keymap_record_focus: cx.focus_handle(),
             search_input_dirty: true,
+            search_history_at: None,
+            search_history_streak: false,
             scroll_handle,
             selected_row_pos: None,
             row_flash: None,

@@ -137,6 +137,7 @@ impl WorkspaceState {
             recent_colors: Default::default(),
             columns: Default::default(),
             format_choices: Default::default(),
+            search_history: Default::default(),
         };
         self.projects.push(project);
         let idx = self.projects.len() - 1;

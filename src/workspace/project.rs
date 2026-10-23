@@ -84,6 +84,9 @@ pub struct Project {
     /// Log Formats chosen by hand for Log Spaces and Source Files.
     #[serde(default)]
     pub format_choices: crate::log_format::FormatChoices,
+    /// Recent Search Expressions, newest first.
+    #[serde(default)]
+    pub search_history: crate::search_history::SearchHistory,
 }
 
 impl Project {
@@ -99,6 +102,7 @@ impl Project {
             recent_colors: RecentColors::new(),
             columns: Default::default(),
             format_choices: Default::default(),
+            search_history: Default::default(),
         }
     }
 
