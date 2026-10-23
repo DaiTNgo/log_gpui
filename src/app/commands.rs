@@ -38,6 +38,7 @@ impl AppView {
             Command::ToggleFilter => self.toggle_filter_builder(cx),
             Command::GoNextError => self.jump_to_next_error(cx),
             Command::GoPrevError => self.jump_to_prev_error(cx),
+            Command::GoToLine => self.open_go_to_line(window, cx),
             Command::SetComfortable => {
                 self.density = Density::Comfortable;
                 self.column_layout.update_density(self.density);

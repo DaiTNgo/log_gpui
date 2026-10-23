@@ -274,6 +274,10 @@ _Avoid_: Pane filter, find-only mode.
 The right sidebar section that shows the stored text of the selected line, with its Continuation Lines, in both the Raw and the Parsed View.
 _Avoid_: Details, fields panel.
 
+**Go to Line**:
+Moving the view to a line number of one file, typed into the Go to bar above the view (Keymap command `navigate.go_to_line`). The line becomes the current line of the open Focus Tab, as a Search jump does. The number is read in the current line's file, else the first file of the view; a number past the last line lands on the last line with a note.
+_Avoid_: Jump to line, goto.
+
 **Filterable Column**:
 A detected column the user may filter on: it has at most 500 distinct values, and it is not `timestamp` or `message`/payload. A column with more than 500 distinct values is shown as unavailable with its distinct count and the reason.
 _Avoid_: Facet, filter field.
@@ -402,3 +406,4 @@ L26. **Full Read Never Cuts Silently**: Open in full reads no more than the Full
 38. **One Value Per Field Per Line**: When several sources give a value for the same field name on a line, the value is taken in this order: fixed column or JSON, then Log Format, then Detected Fields.
 39. **Unmatched Lines Lose Nothing**: A line that a Log Format does not match is still one row, keeps its text in MESSAGE, and only leaves empty the cells that could not be read.
 40. **Invalid Patterns Keep Last Preview**: While the template of a Log Format is invalid, the Preview keeps the result of the last valid one. The error shows only once the user stops typing or leaves the field.
+41. **A Jump Never Narrows**: Go to Line, next/previous Match and next/previous error only move the current line. They never change Search, Filter, the Time Range or which lines the view and the Focus Pane show, and what is typed in the Go to bar is not remembered.

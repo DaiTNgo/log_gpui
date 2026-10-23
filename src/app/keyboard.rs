@@ -49,6 +49,11 @@ impl AppView {
         if key == "Escape" && self.close_top_dialog(cx) {
             return;
         }
+        // Then the Go to bar, handing the keyboard back to the view.
+        if key == "Escape" && self.go_to.is_some() {
+            self.close_go_to(window, cx);
+            return;
+        }
         // The New Log Space dialog and the delete confirmation capture keys while open.
         if self.new_space.is_some() {
             return;

@@ -25,6 +25,7 @@ pub enum Command {
     ShowHighlights,
     GoNextError,
     GoPrevError,
+    GoToLine,
     SetCompact,
     SetComfortable,
     SetUltraCompact,
@@ -53,7 +54,7 @@ pub enum Command {
 
 impl Command {
     /// In the order the Command Palette and the Keymap settings list them.
-    pub const ALL: [Command; 35] = [
+    pub const ALL: [Command; 36] = [
         Command::ToggleSearch,
         Command::NextMatch,
         Command::PrevMatch,
@@ -65,6 +66,7 @@ impl Command {
         Command::ShowHighlights,
         Command::GoNextError,
         Command::GoPrevError,
+        Command::GoToLine,
         Command::SetCompact,
         Command::SetComfortable,
         Command::SetUltraCompact,
@@ -121,6 +123,7 @@ impl Command {
             Command::ShowHighlights => ("highlights.open", "Highlights: Open Highlight Rules", &["cmd-shift-m"]),
             Command::GoNextError => ("navigate.next_error", "Navigate: Jump to Next Error", &["cmd-e"]),
             Command::GoPrevError => ("navigate.prev_error", "Navigate: Jump to Previous Error", &["cmd-shift-e"]),
+            Command::GoToLine => ("navigate.go_to_line", "Navigate: Go to Line…", &["cmd-l"]),
             Command::SetCompact => ("density.compact", "Density: Compact (Default)", &[]),
             Command::SetComfortable => ("density.comfortable", "Density: Comfortable", &[]),
             Command::SetUltraCompact => ("density.ultra_compact", "Density: Ultra Compact", &[]),

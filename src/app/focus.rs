@@ -297,6 +297,7 @@ impl AppView {
     /// pane selects it when it lists it, and whichever side did not originate
     /// the change scrolls to it.
     pub fn set_current_line(&mut self, line: LineRef, origin: Origin, cx: &mut Context<Self>) {
+        self.drop_go_to_notice();
         self.focus.active_tab_mut().current = Some(line.clone());
         match self.view_mode {
             ViewMode::Parsed => {

@@ -13,6 +13,7 @@ pub mod format_editor;
 mod filter;
 mod focus;
 mod focus_window;
+pub mod go_to;
 pub mod full_read;
 pub mod globs;
 mod highlights;
@@ -248,6 +249,10 @@ pub struct AppView {
 
     /// Inline rename of a sidebar row (project, Log Space or file), if any.
     pub renaming: Option<rename::RenameState>,
+    /// The Go to bar above the view, when open.
+    pub go_to: Option<go_to::GoToState>,
+    /// The note the last Go to left in `notice`, dropped when the line moves on.
+    pub go_to_notice: Option<String>,
     /// The Log Format editor, when open.
     pub format_editor: Option<format_editor::FormatEditor>,
     /// The Log Format library (app config) and its compiled templates.
@@ -557,6 +562,8 @@ impl AppView {
             expanded_projects,
             expanded_spaces,
             renaming: None,
+            go_to: None,
+            go_to_notice: None,
             line_cache: Default::default(),
             format_editor: None,
             formats: formats::FormatLibrary::load(formats_path),

@@ -367,6 +367,13 @@ impl AppView {
                 let search_focused = gpui::Focusable::focus_handle(self.search_input.read(cx), cx).is_focused(window);
                 editor.state.update(cx, |state, cx| {
                     state.set_cursor_position(Position::new(line as u32, 0), window, cx);
+                    // The cursor only scrolls the line into sight; centre it,
+                    // as the Parsed View does.
+                    if let (Some(rows), Some(line_height)) = (state.visible_row_range(), state.line_height()) {
+                        let top = (line as f32 - rows.len() as f32 / 2.0 + 0.5).max(0.0);
+                        let x = state.scroll_offset().x;
+                        state.set_scroll_offset(point(x, -(line_height * top)), cx);
+                    }
                 });
                 if search_focused {
                     self.search_input.update(cx, |state, cx| state.focus(window, cx));
@@ -764,11 +771,14 @@ impl AppView {
         let range = start..start + text.len().max(1);
         let colors = self.canvas_colors(cx);
         let is_match = self.raw.matches.get(self.raw.current).is_some_and(|m| m.section == si && m.line == line);
-        let color = if is_match { colors.search } else { colors.header_fg };
+        // A fill over the text alone is easy to miss in grey, unlike the
+        // Parsed View's whole-row flash, so a line that is not a Match
+        // flashes in the accent color.
+        let color = if is_match { colors.search } else { colors.info };
         let decoration = move |t: f32| {
             RangeDecoration::new(range.clone())
                 .with_style(RangeDecorationStyle::Fill)
-                .with_color(color.opacity(0.35 * (1.0 - gpui::ease_in_out(t))))
+                .with_color(color.opacity(0.45 * (1.0 - gpui::ease_in_out(t))))
         };
         let collection = editor
             .state

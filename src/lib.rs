@@ -5,6 +5,7 @@ pub mod columns;
 pub mod filter;
 pub mod filter_index;
 pub mod focus;
+pub mod go_to;
 pub mod highlight;
 pub mod keymap;
 pub mod log_format;
