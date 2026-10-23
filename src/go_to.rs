@@ -95,3 +95,48 @@ mod tests {
         assert_eq!(resolve_line(0, 1), Err(GoToError::NoLines));
     }
 }
+
+/// A key that moves between the rows of the view.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RowKey {
+    Down,
+    Up,
+    PageDown,
+    PageUp,
+    Home,
+    End,
+}
+
+impl RowKey {
+    /// The key as gpui names it (`"down"`, `"pagedown"`…).
+    pub fn from_key(key: &str) -> Option<RowKey> {
+        Some(match key {
+            "down" => RowKey::Down,
+            "up" => RowKey::Up,
+            "pagedown" => RowKey::PageDown,
+            "pageup" => RowKey::PageUp,
+            "home" => RowKey::Home,
+            "end" => RowKey::End,
+            _ => return None,
+        })
+    }
+}
+
+/// The row `key` lands on in a view of `len` rows with `in_sight` rows in
+/// sight from `top`. With no selected row, ↓ starts at the first row in
+/// sight and ↑ at the last one; a page is the rows in sight.
+pub fn row_for_key(key: RowKey, selected: Option<usize>, top: usize, in_sight: usize, len: usize) -> Option<usize> {
+    let last = len.checked_sub(1)?;
+    let page = in_sight.max(1);
+    let base = selected.unwrap_or(top).min(last);
+    Some(match (key, selected) {
+        (RowKey::Down, None) => top.min(last),
+        (RowKey::Up, None) => (top + page - 1).min(last),
+        (RowKey::Down, Some(_)) => (base + 1).min(last),
+        (RowKey::Up, Some(_)) => base.saturating_sub(1),
+        (RowKey::PageDown, _) => (base + page).min(last),
+        (RowKey::PageUp, _) => base.saturating_sub(page),
+        (RowKey::Home, _) => 0,
+        (RowKey::End, _) => last,
+    })
+}

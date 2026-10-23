@@ -179,6 +179,17 @@ impl AppView {
             return;
         }
 
+        // Moving between rows, while no text field has the keyboard.
+        if !cmd && !shift && !alt {
+            if let Some(row_key) = crate::go_to::RowKey::from_key(key) {
+                let in_child = window.focused(cx).is_some_and(|handle| handle != self.focus_handle);
+                if !in_child {
+                    self.move_row_by_key(row_key, cx);
+                }
+                return;
+            }
+        }
+
         match (cmd, shift, alt, key) {
             (false, false, false, "Escape") => {
                 self.clear_text_selection(cx);
@@ -187,21 +198,29 @@ impl AppView {
                 self.is_palette_open = false;
                 cx.notify();
             }
-            (false, false, false, "ArrowDown") => {
-                if let Some(pos) = self.selected_row_pos {
-                    if pos + 1 < self.visible_indices.len() {
-                        self.jump_to_row(pos + 1, cx);
-                    }
-                }
-            }
-            (false, false, false, "ArrowUp") => {
-                if let Some(pos) = self.selected_row_pos {
-                    if pos > 0 {
-                        self.jump_to_row(pos - 1, cx);
-                    }
-                }
-            }
             _ => {}
         }
+    }
+
+    /// Select the row `key` lands on and scroll to it. End turns Follow back
+    /// on in a live Log Space.
+    fn move_row_by_key(&mut self, key: crate::go_to::RowKey, cx: &mut Context<Self>) {
+        let (top, in_sight) = self.rows_in_sight();
+        let len = self.visible_indices.len();
+        if let Some(row) = crate::go_to::row_for_key(key, self.selected_row_pos, top, in_sight, len) {
+            self.jump_to_row(row, cx);
+        }
+        if key == crate::go_to::RowKey::End && self.active_space_is_live() {
+            self.set_follow(true, cx);
+        }
+    }
+
+    /// The first row in sight in the Parsed View and how many rows fit.
+    fn rows_in_sight(&self) -> (usize, usize) {
+        let row_height = self.density.row_height();
+        let height = f32::from(self.canvas_bounds.get().size.height);
+        let in_sight = if height > 0.0 { (height / row_height).floor() as usize } else { 20 };
+        let top = self.scroll_handle.0.borrow().base_handle.logical_scroll_top().0;
+        (top, in_sight.max(1))
     }
 }
