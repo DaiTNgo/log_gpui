@@ -38,6 +38,8 @@ impl AppView {
             Command::ToggleFilter => self.toggle_filter_builder(cx),
             Command::GoNextError => self.jump_to_next_error(cx),
             Command::GoPrevError => self.jump_to_prev_error(cx),
+            Command::GoNextMarker => self.jump_to_next_marker(cx),
+            Command::GoPrevMarker => self.jump_to_prev_marker(cx),
             Command::GoToLine => self.open_go_to_line(window, cx),
             Command::SetComfortable => {
                 self.density = Density::Comfortable;

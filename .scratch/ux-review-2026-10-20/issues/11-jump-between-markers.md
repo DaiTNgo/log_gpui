@@ -4,9 +4,13 @@
 
 **Blocked by:** None (can start immediately).
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] Shortcut and palette entries for next and previous Marker (shortcut chosen not to clash with existing ones)
-- [ ] Jumps select the line and scroll it into view; wraps at the ends
-- [ ] With no Markers, a brief notice says so
-- [ ] Harness test
+- [x] Shortcut and palette entries for next and previous Marker (shortcut chosen not to clash with existing ones)
+- [x] Jumps select the line and scroll it into view; wraps at the ends
+- [x] With no Markers, a brief notice says so
+- [x] Harness test
+
+## Comments
+
+- 2026-10-23: Done. Navigate: Jump to Next Marker (`⌥⌘↓`) and Jump to Previous Marker (`⌥⌘↑`) select the next/previous row carrying a Marker, wrapping around the view; with no row selected they start at the first/last row (counting it). With no Marker the notice says "No Markers in this view". Tests in `tests/marker_jump_test.rs`.

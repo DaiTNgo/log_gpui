@@ -69,6 +69,45 @@ impl AppView {
         }
     }
 
+    /// Select the next row that carries a Marker, wrapping around the view;
+    /// with no row selected, the first one. Says so when there is none.
+    pub fn jump_to_next_marker(&mut self, cx: &mut Context<Self>) {
+        self.jump_to_marker(true, cx);
+    }
+
+    /// Select the previous row that carries a Marker, wrapping around.
+    pub fn jump_to_prev_marker(&mut self, cx: &mut Context<Self>) {
+        self.jump_to_marker(false, cx);
+    }
+
+    fn jump_to_marker(&mut self, forward: bool, cx: &mut Context<Self>) {
+        let total = self.visible_indices.len();
+        let marked = |pos: usize| {
+            self.visible_indices
+                .get(pos)
+                .and_then(|&ix| self.all_entries.get(ix))
+                .is_some_and(|e| !e.markers.is_empty())
+        };
+        // With nothing selected the search starts just before the first row
+        // (or after the last), so that row counts too.
+        let found = (1..=total).find_map(|offset| {
+            let pos = match (self.selected_row_pos, forward) {
+                (Some(p), true) => (p + offset) % total,
+                (Some(p), false) => (p + total - offset % total) % total,
+                (None, true) => offset - 1,
+                (None, false) => total - offset,
+            };
+            marked(pos).then_some(pos)
+        });
+        match found {
+            Some(pos) => self.jump_to_row(pos, cx),
+            None => {
+                self.notice = Some("No Markers in this view".into());
+                cx.notify();
+            }
+        }
+    }
+
     pub fn jump_to_next_error(&mut self, cx: &mut Context<Self>) {
         let current_pos = self.selected_row_pos.unwrap_or(0);
         let total = self.visible_indices.len();
