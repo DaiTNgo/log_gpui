@@ -4,7 +4,7 @@
 
 **Blocked by:** None (can start immediately).
 
-**Status:** ready-for-agent
+**Status:** wontfix
 
 Seen 2026-10-23 in the release build: a session seeded with `examples/seed_session` (two local files, no Server) shows "Connecting (2 of 2)" on launch and still does after several seconds, while every line is already shown. `LocalFileSource::run` sends `SourceStatus::Live` with `try_send` once the file is open (`src/live/local.rs:118`), but the status never reaches the label; the cause (dropped event, consumer not yet attached, or the label reading another state) is not yet known — diagnose before fixing.
 
@@ -12,3 +12,7 @@ Seen 2026-10-23 in the release build: a session seeded with `examples/seed_sessi
 - [ ] A local file that does not exist yet still shows "Waiting for file"
 - [ ] The status reaches the label even when it is sent before the view starts listening
 - [ ] Test (GPUI harness or source test) that a freshly opened local file ends in the live state
+
+## Comments
+
+- 2026-10-23: Not a bug. With `LOG_GPUI_LIVE_TRACE=1` both local files report `Live` within the first pump, and a harness test (`status_bar_test::local_files_are_live_once_open`) shows `worst_live_status()` turning `Live`. The status bar was rendered only twice, both before the first pump: the app had been launched behind other windows and captured with `screencapture -l`, and GPUI does not redraw an occluded window, so the capture kept the first frame. The test stays as a guard.
