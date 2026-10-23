@@ -131,3 +131,58 @@ fn a_jump_keeps_a_notice_it_did_not_leave(cx: &mut TestAppContext) {
     go_to_line(&mut h, "5");
     h.view.read_with(&h.cx, |app, _| assert_eq!(app.notice.as_deref(), Some("Open in full: stopped")));
 }
+
+fn timed_lines() -> Vec<String> {
+    (0..30).map(|i| format!("2026-10-20 10:{:02}:00 INFO line {}", i * 2, i + 1)).collect()
+}
+
+#[gpui::test]
+fn a_time_lands_on_the_first_row_at_or_after_it(cx: &mut TestAppContext) {
+    let mut h = common::open_app_with_lines(cx, &timed_lines());
+    go_to_line(&mut h, "10:05");
+    assert!(!bar_open(&h));
+    // 10:06 is line 4.
+    assert_eq!(current(&h).map(|l| l.line), Some(4));
+}
+
+#[gpui::test]
+fn a_full_date_and_time_lands_too(cx: &mut TestAppContext) {
+    let mut h = common::open_app_with_lines(cx, &timed_lines());
+    go_to_line(&mut h, "2026-10-20 10:20:00");
+    assert_eq!(current(&h).map(|l| l.line), Some(11));
+}
+
+#[gpui::test]
+fn a_time_outside_the_view_says_what_it_spans(cx: &mut TestAppContext) {
+    let mut h = common::open_app_with_lines(cx, &timed_lines());
+    go_to_line(&mut h, "11:30");
+    assert!(bar_open(&h), "the bar stays open");
+    let hint = h.view.read_with(&h.cx, |app, _| app.go_to_hint());
+    assert_eq!(hint, "Outside the view: 2026-10-20 10:00:00 – 2026-10-20 10:58:00");
+}
+
+#[gpui::test]
+fn file_and_line_picks_the_file(cx: &mut TestAppContext) {
+    let mut h = common::open_app(cx);
+    let mut sources = Vec::new();
+    for name in ["a.log", "b.log"] {
+        let path = h.dir.path().join(name);
+        std::fs::write(&path, common::sample_lines(9).join("\n")).unwrap();
+        sources.push(log_gpui::workspace::log_space::ImportSource::Disk(path.to_string_lossy().into_owned()));
+    }
+    h.view.update(&mut h.cx, |app, cx| {
+        app.create_log_space("Two", log_gpui::workspace::log_space::LogSpaceKind::Imported, &sources, cx);
+    });
+    h.cx.run_until_parked();
+    go_to_line(&mut h, "b.log:5");
+    let line = current(&h).expect("a current line");
+    assert_eq!(line.line, 5);
+    let name = h.view.read_with(&h.cx, |app, _| {
+        app.workspace_state.active_project().unwrap().log_spaces[0]
+            .files
+            .iter()
+            .find(|f| *f.file_id == *line.file_id)
+            .map(|f| f.display_name.clone())
+    });
+    assert_eq!(name.as_deref(), Some("b.log"));
+}

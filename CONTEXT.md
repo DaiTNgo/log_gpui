@@ -275,7 +275,7 @@ The right sidebar section that shows the stored text of the selected line, with 
 _Avoid_: Details, fields panel.
 
 **Go to Line**:
-Moving the view to a line number of one file, typed into the Go to bar above the view (Keymap command `navigate.go_to_line`). The line becomes the current line of the open Focus Tab, as a Search jump does. The number is read in the current line's file, else the first file of the view; a number past the last line lands on the last line with a note.
+Moving the view to a line number of one file, typed into the Go to bar above the view (Keymap command `navigate.go_to_line`). The line becomes the current line of the open Focus Tab, as a Search jump does. The number is read in the current line's file, else the first file of the view, or in the file named before it as `file:line`; a number past the last line lands on the last line with a note. A time typed instead (any form a log line has, or a time of day such as `10:05` on the day of the current line) lands on the first row at or after it; a time outside the view is refused with the view's time span.
 _Avoid_: Jump to line, goto.
 
 **Filterable Column**:

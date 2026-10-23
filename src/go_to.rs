@@ -10,13 +10,16 @@ pub enum GoToError {
     NotALineNumber,
     /// The file has no lines to go to.
     NoLines,
+    /// A time before the first or after the last line of the view.
+    TimeOutside,
 }
 
 impl GoToError {
     pub fn message(self) -> &'static str {
         match self {
-            GoToError::NotALineNumber => "Type a line number of 1 or more",
+            GoToError::NotALineNumber => "Type a line number, a time, or file:line",
             GoToError::NoLines => "This file has no lines",
+            GoToError::TimeOutside => "That time is outside the view",
         }
     }
 }
@@ -139,4 +142,56 @@ pub fn row_for_key(key: RowKey, selected: Option<usize>, top: usize, in_sight: u
         (RowKey::Home, _) => 0,
         (RowKey::End, _) => last,
     })
+}
+
+/// Read a typed time on the files' clock: any form a log line has
+/// (`2026-10-20 10:05:00`, `20/Oct/2026:10:05:00`), or a time of day alone
+/// (`10:05`, `10:05:30`) on the day of `day_of`.
+pub fn parse_time(text: &str, day_of: Option<f64>) -> Option<f64> {
+    let text = text.trim();
+    if let Some(t) = crate::parser::text::read_timestamp(text) {
+        return Some(t);
+    }
+    let mut parts = text.split(':');
+    let (h, m) = (parts.next()?, parts.next()?);
+    let s = parts.next().unwrap_or("0");
+    if parts.next().is_some() || h.is_empty() || h.len() > 2 || m.len() != 2 {
+        return None;
+    }
+    let (h, m, s): (u32, u32, f64) = (h.parse().ok()?, m.parse().ok()?, s.replace(',', ".").parse().ok()?);
+    if h > 23 || m > 59 || !(0.0..60.0).contains(&s) {
+        return None;
+    }
+    let day = (day_of? / 86_400.0).floor() * 86_400.0;
+    Some(day + f64::from(h * 3600 + m * 60) + s)
+}
+
+/// Split `name:line` typed into Go to Line, when `name` is one of `names`
+/// (case aside): the name and the line text.
+pub fn split_file_line<'a>(text: &'a str, names: &[&str]) -> Option<(usize, &'a str)> {
+    let (name, line) = text.trim().rsplit_once(':')?;
+    let ix = names.iter().position(|n| n.eq_ignore_ascii_case(name.trim()))?;
+    Some((ix, line))
+}
+
+#[cfg(test)]
+mod time_tests {
+    use super::*;
+
+    #[test]
+    fn reads_times_of_day_on_the_day_given() {
+        let day = parse_time("2026-10-20 00:00:00", None).unwrap();
+        assert_eq!(parse_time("10:05", Some(day + 50.0)), Some(day + 36_300.0));
+        assert_eq!(parse_time("10:05:30", Some(day)), Some(day + 36_330.0));
+        assert_eq!(parse_time("10:05", None), None, "a time of day needs a day");
+        for text in ["25:00", "10:5", "1:2:3:4", "abc", "12"] {
+            assert_eq!(parse_time(text, Some(day)), None, "{text}");
+        }
+    }
+
+    #[test]
+    fn splits_a_file_name_off() {
+        assert_eq!(split_file_line("B.log:5", &["a.log", "b.log"]), Some((1, "5")));
+        assert_eq!(split_file_line("10:05", &["a.log"]), None);
+    }
 }

@@ -29,6 +29,14 @@ pub struct GoToState {
     _subscription: Subscription,
 }
 
+/// Where a Go to lands.
+enum GoToTarget {
+    /// A line of a file, possibly past its end.
+    Line(LineFile, go_to::LineTarget),
+    /// The row a time lands on.
+    Row(LineRef),
+}
+
 /// The file Go to Line counts lines in.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LineFile {
@@ -54,7 +62,7 @@ impl AppView {
             cx.notify();
             return;
         }
-        let input = cx.new(|cx| InputState::new(window, cx).placeholder("Line number"));
+        let input = cx.new(|cx| InputState::new(window, cx).placeholder("Line, file:line or time"));
         input.update(cx, |input, cx| input.focus(window, cx));
         let subscription = cx.subscribe_in(
             &input,
@@ -90,43 +98,108 @@ impl AppView {
         }
     }
 
-    /// Jump to the typed line. The bar stays open with an error when the
-    /// text is not a line number.
+    /// Jump to the typed line, `file:line`, or the first row at or after a
+    /// typed time. The bar stays open with an error when the text is none of
+    /// them, or the time is outside the view.
     pub fn commit_go_to(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(state) = self.go_to.as_ref() else { return };
         let text = state.input.read(cx).value().to_string();
-        // Read again: a live file may have grown since the bar opened.
-        let file = self.go_to_line_file();
-        let landed = file.ok_or(GoToError::NoLines).and_then(|f| {
-            let target = go_to::resolve_line(f.line_count, go_to::parse_line(&text)?)?;
-            Ok((f, target))
-        });
-        let (file, target) = match landed {
-            Ok(landed) => landed,
+        match self.go_to_target(&text) {
+            Ok(GoToTarget::Line(file, target)) => {
+                self.close_go_to(window, cx);
+                let line = LineRef {
+                    file_id: Arc::from(file.file_id.as_str()),
+                    line: target.line,
+                    generation: file.generation,
+                };
+                // Moving the current line drops the note of an earlier Go to.
+                self.set_current_line(line, Origin::Jump, cx);
+                if target.past_end {
+                    let note = format!(
+                        "{} has {} lines; went to the last one.",
+                        file.name,
+                        super::format_count(file.line_count)
+                    );
+                    self.notice = Some(note.clone());
+                    self.go_to_notice = Some(note);
+                }
+            }
+            Ok(GoToTarget::Row(line)) => {
+                self.close_go_to(window, cx);
+                self.set_current_line(line, Origin::Jump, cx);
+            }
             Err(error) => {
                 if let Some(state) = self.go_to.as_mut() {
                     state.error = Some((error, text));
                 }
                 cx.notify();
-                return;
             }
-        };
-        self.close_go_to(window, cx);
-        let line = LineRef {
-            file_id: Arc::from(file.file_id.as_str()),
-            line: target.line,
-            generation: file.generation,
-        };
-        // Moving the current line drops the note of an earlier Go to.
-        self.set_current_line(line, Origin::Jump, cx);
-        if target.past_end {
-            let note = format!(
-                "{} has {} lines; went to the last one.",
-                file.name,
-                super::format_count(file.line_count)
-            );
-            self.notice = Some(note.clone());
-            self.go_to_notice = Some(note);
+        }
+    }
+
+    /// Where the typed text lands: `file:line` in that file, a line number
+    /// in the file of `go_to_line_file`, else a time.
+    fn go_to_target(&self, text: &str) -> Result<GoToTarget, GoToError> {
+        let sections = self.raw_sections();
+        let names: Vec<&str> = sections.iter().map(|s| s.display_name.as_str()).collect();
+        if let Some((ix, line)) = go_to::split_file_line(text, &names) {
+            let file = self.line_file(Some(&sections[ix].file_id)).ok_or(GoToError::NoLines)?;
+            let target = go_to::resolve_line(file.line_count, go_to::parse_line(line)?)?;
+            return Ok(GoToTarget::Line(file, target));
+        }
+        // Read again: a live file may have grown since the bar opened.
+        let file = self.go_to_line_file().ok_or(GoToError::NoLines)?;
+        match go_to::parse_line(text) {
+            Ok(n) => return Ok(GoToTarget::Line(file.clone(), go_to::resolve_line(file.line_count, n)?)),
+            Err(GoToError::NotALineNumber) => {}
+            Err(e) => return Err(e),
+        }
+        let (first, last) = self.timed_span().ok_or(GoToError::NotALineNumber)?;
+        let day_of = self
+            .selected_entry()
+            .filter(|e| e.has_time)
+            .map(|e| e.timestamp)
+            .unwrap_or(self.all_entries[first].timestamp);
+        let at = go_to::parse_time(text, Some(day_of)).ok_or(GoToError::NotALineNumber)?;
+        if at < self.all_entries[first].timestamp || at > self.all_entries[last].timestamp {
+            return Err(GoToError::TimeOutside);
+        }
+        let ix = self
+            .all_entries
+            .iter()
+            .position(|e| e.has_time && e.timestamp >= at)
+            .ok_or(GoToError::TimeOutside)?;
+        self.line_ref_of_entry(ix).map(GoToTarget::Row).ok_or(GoToError::NoLines)
+    }
+
+    /// The rows of the first and the last time in the view.
+    fn timed_span(&self) -> Option<(usize, usize)> {
+        let first = self.all_entries.iter().position(|e| e.has_time)?;
+        let last = self.all_entries.iter().rposition(|e| e.has_time)?;
+        Some((first, last))
+    }
+
+    /// The text beside the Go to field: the file and its lines, or why the
+    /// last Enter did not jump (with the view's time span for a time outside it).
+    pub fn go_to_hint(&self) -> String {
+        let Some(state) = self.go_to.as_ref() else { return String::new() };
+        match &state.error {
+            Some((GoToError::TimeOutside, _)) => match self.timed_span() {
+                Some((first, last)) => format!(
+                    "Outside the view: {} – {}",
+                    self.all_entries[first].time_str(),
+                    self.all_entries[last].time_str()
+                ),
+                None => GoToError::TimeOutside.message().to_string(),
+            },
+            Some((error, _)) => error.message().to_string(),
+            None => match &state.file {
+                Some(f) if f.line_count > 0 => {
+                    format!("{} · lines 1–{} · or a time", f.name, super::format_count(f.line_count))
+                }
+                Some(f) => format!("{} · no lines", f.name),
+                None => "No file".into(),
+            },
         }
     }
 
@@ -144,12 +217,21 @@ impl AppView {
     /// else the first file of the view. Its Generation is the current
     /// line's when it is in that file, else the newest one read.
     pub fn go_to_line_file(&self) -> Option<LineFile> {
+        self.line_file(None)
+    }
+
+    /// The file `file_id` (else the current line's, else the first of the
+    /// view) for a Go to Line.
+    fn line_file(&self, file_id: Option<&str>) -> Option<LineFile> {
         let sections = self.raw_sections();
         let current = self.current_line();
-        let section = current
-            .as_ref()
-            .and_then(|c| sections.iter().find(|s| *s.file_id == *c.file_id))
-            .or(sections.first())?;
+        let section = match file_id {
+            Some(id) => sections.iter().find(|s| s.file_id == id)?,
+            None => current
+                .as_ref()
+                .and_then(|c| sections.iter().find(|s| *s.file_id == *c.file_id))
+                .or(sections.first())?,
+        };
         let of_file = |e: &&crate::model::LogEntry| e.file_id.as_deref() == Some(section.file_id.as_str());
         let generation = current
             .as_ref()
@@ -179,18 +261,8 @@ impl AppView {
     pub(super) fn render_go_to_bar(&self, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
         let state = self.go_to.as_ref()?;
         let theme = cx.theme();
-        let hint: SharedString = match &state.file {
-            Some(f) if f.line_count > 0 => {
-                format!("{} · lines 1–{}", f.name, super::format_count(f.line_count)).into()
-            }
-            Some(f) => format!("{} · no lines", f.name).into(),
-            None => "No file".into(),
-        };
-        // An error takes the hint's place, right beside the field it is about.
-        let (hint, hint_color) = match &state.error {
-            Some((error, _)) => (SharedString::from(error.message()), theme.danger),
-            None => (hint, theme.muted_foreground),
-        };
+        let hint = SharedString::from(self.go_to_hint());
+        let hint_color = if state.error.is_some() { theme.danger } else { theme.muted_foreground };
         Some(
             h_flex()
                 .w_full()
