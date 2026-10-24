@@ -340,7 +340,7 @@ impl AppView {
                     .primary()
                     .small()
                     .label("Add files")
-                    .on_click(cx.listener(move |this, _, _, cx| this.add_files_dialog(&space_id, cx)))
+                    .on_click(cx.listener(move |this, _, _, cx| this.add_files_dialog(&space_id, false, cx)))
             }),
             _ => None,
         };

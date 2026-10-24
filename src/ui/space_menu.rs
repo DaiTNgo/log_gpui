@@ -148,6 +148,7 @@ pub fn space_menu(
 ) -> PopupMenu {
     let rename = space.clone();
     let add = space.clone();
+    let add_folder = space.clone();
     let delete = space.clone();
     let order = space.order;
     let sort_added = space.clone();
@@ -167,12 +168,15 @@ pub fn space_menu(
         defer_rename(rename.view.clone(), target, rename.name.clone(), window, app);
     }));
     let menu = match space.kind {
-        LogSpaceKind::Imported => menu.item(PopupMenuItem::new("Add files…").on_click(
-            move |_, _, app| {
+        LogSpaceKind::Imported => menu
+            .item(PopupMenuItem::new("Add files…").on_click(move |_, _, app| {
                 let id = add.space_id.clone();
-                add.view.update(app, |this, cx| this.add_files_dialog(&id, cx));
-            },
-        )),
+                add.view.update(app, |this, cx| this.add_files_dialog(&id, false, cx));
+            }))
+            .item(PopupMenuItem::new("Add folder…").on_click(move |_, _, app| {
+                let id = add_folder.space_id.clone();
+                add_folder.view.update(app, |this, cx| this.add_files_dialog(&id, true, cx));
+            })),
         LogSpaceKind::Scratch => menu.item(PopupMenuItem::new("New scratch file").on_click(
             move |_, _, app| {
                 let id = add.space_id.clone();

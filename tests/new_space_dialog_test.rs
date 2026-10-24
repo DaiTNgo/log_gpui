@@ -355,3 +355,22 @@ fn a_drop_is_ignored_while_another_dialog_is_open(cx: &mut TestAppContext) {
     drop_files(&mut h, vec![a], 500.0, 300.0);
     h.view.read_with(&h.cx, |app, _| assert!(app.new_space.is_none()));
 }
+
+#[gpui::test]
+fn a_folder_added_to_a_log_space_brings_its_files(cx: &mut TestAppContext) {
+    let mut h = common::open_app_with_lines(cx, &common::sample_lines(3));
+    let folder = h.dir.path().join("more");
+    std::fs::create_dir(&folder).unwrap();
+    std::fs::write(folder.join("b.log"), "two\n").unwrap();
+    std::fs::write(folder.join(".DS_Store"), b"\0\0").unwrap();
+    // What Add folder… hands back.
+    h.view.update(&mut h.cx, |app, cx| {
+        let space_id = app.workspace_state.active_project().unwrap().log_spaces[0].id.clone();
+        app.add_files_to_space(&space_id, vec![folder.to_string_lossy().into_owned()], cx);
+    });
+    h.cx.run_until_parked();
+    let names: Vec<String> = h.view.read_with(&h.cx, |app, _| {
+        app.workspace_state.active_project().unwrap().log_spaces[0].files.iter().map(|f| f.display_name.clone()).collect()
+    });
+    assert_eq!(names, ["app.log", "b.log"]);
+}

@@ -376,11 +376,14 @@ impl AppView {
         self.refresh_after_space_change(cx);
     }
 
-    /// "Add files…": pick files for an Imported Log Space.
-    pub fn add_files_dialog(&mut self, space_id: &str, cx: &mut Context<Self>) {
+    /// "Add files…" or "Add folder…" (`folders`): pick files or folders for
+    /// an Imported Log Space.
+    pub fn add_files_dialog(&mut self, space_id: &str, folders: bool, cx: &mut Context<Self>) {
         let space_id = space_id.to_string();
         cx.spawn(async move |this, cx| {
-            let Some(files) = rfd::AsyncFileDialog::new().pick_files().await else {
+            let dialog = rfd::AsyncFileDialog::new();
+            let picked = if folders { dialog.pick_folders().await } else { dialog.pick_files().await };
+            let Some(files) = picked else {
                 return;
             };
             let paths: Vec<String> = files
