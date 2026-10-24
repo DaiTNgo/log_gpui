@@ -196,55 +196,64 @@ impl AppView {
                         v_flex()
                             .gap_1()
                             .child(div().text_sm().child("Remote files and commands"))
-                            .children(remote_commands.iter().enumerate().map(|(ix, (_, server, command, _))| {
-                                h_flex()
-                                    .gap_2()
-                                    .items_center()
-                                    .px_2()
-                                    .py_1()
-                                    .rounded_md()
-                                    .border_1()
-                                    .border_color(border)
-                                    .text_sm()
-                                    .child(Icon::new(IconName::Globe).size_4())
-                                    .child(div().flex_1().truncate().child(format!("{server}$ {command}")))
-                                    .child(
-                                        Button::new(("new-space-remove-command", ix))
-                                            .ghost()
-                                            .xsmall()
-                                            .icon(IconName::Close)
-                                            .on_click(cx.listener(move |this, _, _, cx| {
-                                                this.new_space_remove_command(ix, cx)
-                                            })),
-                                    )
-                            }))
-                            .children(remote_files.iter().enumerate().map(|(ix, (server, path, start))| {
-                                h_flex()
-                                    .gap_2()
-                                    .items_center()
-                                    .px_2()
-                                    .py_1()
-                                    .rounded_md()
-                                    .border_1()
-                                    .border_color(border)
-                                    .text_sm()
-                                    .child(Icon::new(IconName::Globe).size_4())
-                                    .child(div().flex_1().truncate().child(format!("{server}:{path}")))
-                                    .when_some(start.clone(), |this, start| {
-                                        this.child(
-                                            div().text_xs().text_color(muted).child(format!("Starting Time {start}")),
-                                        )
-                                    })
-                                    .child(
-                                        Button::new(("new-space-remove-remote", ix))
-                                            .ghost()
-                                            .xsmall()
-                                            .icon(IconName::Close)
-                                            .on_click(cx.listener(move |this, _, _, cx| {
-                                                this.new_space_remove_remote(ix, cx)
-                                            })),
-                                    )
-                            }))
+                            .child(
+                                // Scrolls like the local list, so Create stays on screen.
+                                v_flex()
+                                    .id("new-space-remote")
+                                    .debug_selector(|| "new-space-remote".into())
+                                    .gap_1()
+                                    .max_h(px(180.0))
+                                    .overflow_y_scroll()
+                                    .children(remote_commands.iter().enumerate().map(|(ix, (_, server, command, _))| {
+                                        h_flex()
+                                            .gap_2()
+                                            .items_center()
+                                            .px_2()
+                                            .py_1()
+                                            .rounded_md()
+                                            .border_1()
+                                            .border_color(border)
+                                            .text_sm()
+                                            .child(Icon::new(IconName::Globe).size_4())
+                                            .child(div().flex_1().truncate().child(format!("{server}$ {command}")))
+                                            .child(
+                                                Button::new(("new-space-remove-command", ix))
+                                                    .ghost()
+                                                    .xsmall()
+                                                    .icon(IconName::Close)
+                                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                                        this.new_space_remove_command(ix, cx)
+                                                    })),
+                                            )
+                                    }))
+                                    .children(remote_files.iter().enumerate().map(|(ix, (server, path, start))| {
+                                        h_flex()
+                                            .gap_2()
+                                            .items_center()
+                                            .px_2()
+                                            .py_1()
+                                            .rounded_md()
+                                            .border_1()
+                                            .border_color(border)
+                                            .text_sm()
+                                            .child(Icon::new(IconName::Globe).size_4())
+                                            .child(div().flex_1().truncate().child(format!("{server}:{path}")))
+                                            .when_some(start.clone(), |this, start| {
+                                                this.child(
+                                                    div().text_xs().text_color(muted).child(format!("Starting Time {start}")),
+                                                )
+                                            })
+                                            .child(
+                                                Button::new(("new-space-remove-remote", ix))
+                                                    .ghost()
+                                                    .xsmall()
+                                                    .icon(IconName::Close)
+                                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                                        this.new_space_remove_remote(ix, cx)
+                                                    })),
+                                            )
+                                    })),
+                            )
                             .child(
                                 // Local and remote files are never mixed in one Log Space.
                                 Button::new("new-space-add-remote")
@@ -270,6 +279,7 @@ impl AppView {
                     )
                     .child(
                         h_flex()
+                            .debug_selector(|| "new-space-footer".into())
                             .justify_end()
                             .gap_2()
                             .child(

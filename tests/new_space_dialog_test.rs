@@ -77,3 +77,21 @@ fn removing_a_chosen_file_forgets_its_starting_time(cx: &mut TestAppContext) {
     h.view.read_with(&h.cx, |app, _| assert!(app.remote.new_space_starts.is_empty()));
 }
 
+#[gpui::test]
+fn many_remote_files_scroll_and_create_stays_on_screen(cx: &mut TestAppContext) {
+    let mut h = common::open_app(cx);
+    let server = add_server(&mut h);
+    h.view.update(&mut h.cx, |app, cx| app.open_new_space_dialog(cx));
+    let paths: Vec<String> = (1..=40).map(|i| format!("/var/log/app-{i}.log")).collect();
+    let paths: Vec<&str> = paths.iter().map(String::as_str).collect();
+    add_in_picker(&mut h, &server, &paths, "");
+    h.cx.update(|window, _| window.refresh());
+    h.cx.run_until_parked();
+
+    let list = h.cx.debug_bounds("new-space-remote").expect("the remote list is drawn");
+    assert!(list.size.height <= gpui::px(180.0), "the list scrolls: {:?}", list.size.height);
+    let footer = h.cx.debug_bounds("new-space-footer").expect("the buttons are drawn");
+    let window = h.cx.update(|window, _| window.viewport_size());
+    assert!(footer.bottom() <= window.height, "Create is on screen: {footer:?} in {window:?}");
+}
+
