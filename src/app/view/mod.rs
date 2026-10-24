@@ -238,8 +238,9 @@ impl Render for AppView {
             .child(new_space_dialog)
             .child(format_editor)
             .child(custom_load)
-            .child(servers_dialog)
             .child(remote_picker)
+            // Above the picker: its Manage… opens the Servers dialog.
+            .child(servers_dialog)
             .child(download_panel)
             .child(full_dialog)
             .child(download_options)

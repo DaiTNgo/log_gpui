@@ -8,9 +8,9 @@ use gpui::{
 
 impl AppView {
     /// Close the topmost open dialog as its Cancel would, innermost first
-    /// (the Confirm above everything, the remote picker before the New Log
-    /// Space dialog, the Server form before the Servers list). Returns
-    /// whether one was open.
+    /// (the Confirm above everything, the Servers dialog before the remote
+    /// picker, the picker before the New Log Space dialog, the Server form
+    /// before the Servers list). Returns whether one was open.
     pub fn close_top_dialog(&mut self, cx: &mut Context<Self>) -> bool {
         if self.confirm.is_some() {
             self.cancel_confirm(cx);
@@ -20,11 +20,8 @@ impl AppView {
             self.answer_host_key(false, cx);
         } else if self.remote.secret_prompt.is_some() {
             self.cancel_secret_prompt(cx);
-        } else if self.remote.picker.is_some() {
-            // Drawn above the Servers list and the New Log Space dialog it
-            // was opened from, which stays open with what it had.
-            self.close_remote_picker(cx);
         } else if let Some(dialog) = self.server_dialog.as_ref() {
+            // Drawn above the remote picker, whose Manage… opens it.
             if dialog.import.is_some() {
                 self.close_ssh_import(cx);
             } else if dialog.form.is_some() {
@@ -32,6 +29,10 @@ impl AppView {
             } else {
                 self.close_servers_dialog(cx);
             }
+        } else if self.remote.picker.is_some() {
+            // Drawn above the New Log Space dialog it was opened from, which
+            // stays open with what it had.
+            self.close_remote_picker(cx);
         } else if self.new_space.is_some() {
             self.new_space_cancel(cx);
         } else {

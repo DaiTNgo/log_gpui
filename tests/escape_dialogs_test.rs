@@ -146,3 +146,23 @@ fn escape_closes_the_remote_picker_and_keeps_the_new_log_space_dialog(cx: &mut T
     press(&mut h, "escape");
     h.view.read_with(&h.cx, |app, _| assert!(app.new_space.is_none()));
 }
+
+#[gpui::test]
+fn the_servers_dialog_opened_from_the_picker_closes_before_it(cx: &mut TestAppContext) {
+    let mut h = common::open_app(cx);
+    h.cx.executor().allow_parking();
+    h.view.update(&mut h.cx, |app, cx| {
+        let mut server = log_gpui::remote::Server::new("web", "127.0.0.1", "u", log_gpui::remote::AuthMethod::Password);
+        server.port = 1;
+        app.remote.servers.save(server).unwrap();
+        app.open_new_space_dialog(cx);
+        app.open_remote_picker(log_gpui::app::remote_picker::PickerTarget::NewSpace, cx);
+        // Manage… in the picker.
+        app.open_servers_dialog(cx);
+    });
+    press(&mut h, "escape");
+    h.view.read_with(&h.cx, |app, _| {
+        assert!(app.server_dialog.is_none(), "the Servers dialog, drawn on top, closed");
+        assert!(app.remote.picker.is_some(), "the picker under it stays");
+    });
+}
