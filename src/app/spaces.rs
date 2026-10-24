@@ -18,6 +18,8 @@ pub struct NewSpaceDialog {
     /// A name to put in the field at the next render: suggested from the
     /// first file added while the field was empty.
     pending_name: Option<String>,
+    /// Another dialog was drawn over this one at the last render.
+    covered: bool,
     _subscription: Option<Subscription>,
 }
 
@@ -33,6 +35,7 @@ impl AppView {
             form: NewLogSpaceForm::new(),
             name_input: None,
             pending_name: None,
+            covered: false,
             _subscription: None,
         });
         self.is_palette_open = false;
@@ -46,6 +49,15 @@ impl AppView {
         if let Some(input) = dialog.name_input.clone() {
             if let Some(name) = dialog.pending_name.take() {
                 input.update(cx, |state, cx| state.set_value(name, window, cx));
+            }
+            // Back from the remote picker or the Servers dialog, whose fields
+            // took the cursor with them: it returns to the name, where Enter
+            // creates the Log Space.
+            let covered = self.remote.picker.is_some() || self.server_dialog.is_some() || self.confirm.is_some();
+            if covered {
+                dialog.covered = true;
+            } else if std::mem::take(&mut dialog.covered) {
+                input.update(cx, |state, cx| state.focus(window, cx));
             }
             return;
         }

@@ -374,3 +374,33 @@ fn a_folder_added_to_a_log_space_brings_its_files(cx: &mut TestAppContext) {
     });
     assert_eq!(names, ["app.log", "b.log"]);
 }
+
+#[gpui::test]
+fn the_cursor_returns_to_the_name_after_the_picker_closes(cx: &mut TestAppContext) {
+    let mut h = common::open_app(cx);
+    add_server(&mut h);
+    let name_focused = |h: &mut Harness| {
+        h.view.update_in(&mut h.cx, |app, window, cx| {
+            let input = app.new_space.as_ref().unwrap().name_input.clone().unwrap();
+            gpui::Focusable::focus_handle(input.read(cx), cx).is_focused(window)
+        })
+    };
+    h.view.update(&mut h.cx, |app, cx| app.open_new_space_dialog(cx));
+    h.cx.run_until_parked();
+    assert!(name_focused(&mut h), "the name has the cursor when the dialog opens");
+
+    h.view.update(&mut h.cx, |app, cx| app.open_remote_picker(PickerTarget::NewSpace, cx));
+    type_path(&mut h, "/var/log/api.log");
+    // The user clicks into the path field.
+    h.cx.update(|window, cx| {
+        let view = h.view.clone();
+        let input = view.read(cx).remote.picker.as_ref().unwrap().input.clone().unwrap();
+        input.update(cx, |state, cx| state.focus(window, cx));
+    });
+    h.cx.run_until_parked();
+    assert!(!name_focused(&mut h), "the picker's path field has it");
+
+    h.view.update(&mut h.cx, |app, cx| app.close_remote_picker(cx));
+    h.cx.run_until_parked();
+    assert!(name_focused(&mut h), "back on the name: Enter creates the Log Space");
+}
