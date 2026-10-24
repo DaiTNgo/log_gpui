@@ -80,14 +80,12 @@ impl AppView {
         let remote_count = remote_files.len() + remote_commands.len();
         let create_label = if remote_count == 0 {
             dialog.form.create_label()
-        } else if remote_commands.is_empty() && remote_files.len() == 1 {
-            "Create remote with 1 file".to_string()
-        } else if remote_commands.is_empty() {
-            format!("Create remote with {} files", remote_files.len())
-        } else if remote_count == 1 {
-            "Create remote with 1 command".to_string()
         } else {
-            format!("Create remote with {remote_count} members")
+            crate::workspace::new_space::remote_create_label(
+                self.remote.new_space_files.len(),
+                self.remote.new_space_globs.len(),
+                remote_commands.len(),
+            )
         };
         let files = dialog.form.files.clone();
         // Create is off for want of a name only once there is something to

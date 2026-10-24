@@ -182,6 +182,29 @@ pub fn suggest_name(path: &str, style: crate::local_path::PathStyle) -> Option<S
     (!name.is_empty()).then(|| name.to_string())
 }
 
+/// The Create label of a Remote Log Space: "Create with 2 files, 1 Live
+/// Glob and 1 command", worded like the local one.
+pub fn remote_create_label(files: usize, globs: usize, commands: usize) -> String {
+    let count = |n: usize, one: &str, many: &str| match n {
+        0 => None,
+        1 => Some(format!("1 {one}")),
+        n => Some(format!("{n} {many}")),
+    };
+    let parts: Vec<String> = [
+        count(files, "file", "files"),
+        count(globs, "Live Glob", "Live Globs"),
+        count(commands, "command", "commands"),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    match parts.as_slice() {
+        [] => "Create empty".to_string(),
+        [one] => format!("Create with {one}"),
+        [rest @ .., last] => format!("Create with {} and {last}", rest.join(", ")),
+    }
+}
+
 /// `name`, or `name 2`, `name 3`… when the Project already has it.
 pub fn unique_name(name: &str, project: &Project) -> String {
     let mut candidate = name.to_string();

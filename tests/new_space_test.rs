@@ -219,3 +219,13 @@ fn create_says_it_waits_for_an_archive() {
     form.finish_archive("/logs.zip", Vec::new());
     assert_eq!(form.create_label(), "Create with 1 file");
 }
+
+#[test]
+fn the_remote_create_label_names_what_it_holds() {
+    use log_gpui::workspace::new_space::remote_create_label;
+    assert_eq!(remote_create_label(1, 0, 0), "Create with 1 file");
+    assert_eq!(remote_create_label(3, 0, 0), "Create with 3 files");
+    assert_eq!(remote_create_label(0, 0, 1), "Create with 1 command");
+    assert_eq!(remote_create_label(2, 0, 1), "Create with 2 files and 1 command");
+    assert_eq!(remote_create_label(2, 1, 2), "Create with 2 files, 1 Live Glob and 2 commands");
+}
