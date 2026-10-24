@@ -241,3 +241,19 @@ fn a_hidden_file_dropped_on_its_own_is_kept() {
     assert_eq!(out.len(), 1);
     std::fs::remove_dir_all(&dir).ok();
 }
+
+#[test]
+fn a_file_listed_again_gets_no_row_of_its_own() {
+    let dir = temp_dir("listed_again");
+    let log = dir.join("api.log");
+    std::fs::write(&log, "one\n").unwrap();
+    let path = log.to_string_lossy().to_string();
+    let mut form = NewLogSpaceForm::new();
+    form.add_paths(std::slice::from_ref(&path));
+    form.add_paths(&[path]);
+    // Counted for the message under the list, never shown as a row.
+    assert_eq!(form.files.len(), 1);
+    assert_eq!(form.files[0].warning(), None);
+    assert_eq!(form.already_listed, 1);
+    std::fs::remove_dir_all(&dir).ok();
+}

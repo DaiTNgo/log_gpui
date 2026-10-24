@@ -15,8 +15,6 @@ pub enum PendingStatus {
     Ok,
     /// "Not a text file": shown with a warning and never added.
     Binary,
-    /// Already in the list.
-    Duplicate,
     /// An Archive Entry above 200 MB: warned about, but still added.
     LargeFile,
     /// An Archive that cannot be read: never added.
@@ -48,7 +46,6 @@ impl PendingFile {
         let text = match self.status {
             PendingStatus::Ok | PendingStatus::Reading => return None,
             PendingStatus::Binary => "Not a text file",
-            PendingStatus::Duplicate => "Already in the list",
             PendingStatus::LargeFile => match &self.source {
                 PendingSource::Entry { size, .. } => {
                     return Some(format!("Large file: {} unpacked", crate::live::buffer::size_text(*size)));
