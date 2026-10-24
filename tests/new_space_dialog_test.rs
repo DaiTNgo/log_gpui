@@ -184,3 +184,17 @@ fn the_first_file_names_the_log_space_until_a_name_is_typed(cx: &mut TestAppCont
     add_in_picker(&mut h, &server, &["/var/log/nginx/access.log"], "");
     assert_eq!(name(&mut h), "access");
 }
+
+#[gpui::test]
+fn create_empty_says_what_it_makes(cx: &mut TestAppContext) {
+    let mut h = common::open_app(cx);
+    h.view.update(&mut h.cx, |app, cx| app.open_new_space_dialog(cx));
+    h.cx.run_until_parked();
+    assert!(h.cx.debug_bounds("new-space-scratch-hint").is_some());
+
+    let log = h.dir.path().join("a.log");
+    std::fs::write(&log, "one\n").unwrap();
+    h.view.update(&mut h.cx, |app, cx| app.new_space_add_paths(vec![log.to_string_lossy().into_owned()], cx));
+    h.cx.run_until_parked();
+    assert!(h.cx.debug_bounds("new-space-scratch-hint").is_none(), "gone once a file is listed");
+}

@@ -323,6 +323,16 @@ impl AppView {
                                 )
                             }),
                     )
+                    .when(files.is_empty() && remote_count == 0, |this| {
+                        // What "Create empty" makes: a Scratch Log Space.
+                        this.child(
+                            div()
+                                .debug_selector(|| "new-space-scratch-hint".into())
+                                .text_xs()
+                                .text_color(muted)
+                                .child("With no files, the Log Space starts with an empty file to paste or type log text into."),
+                        )
+                    })
                     .child(
                         h_flex()
                             .debug_selector(|| "new-space-footer".into())
