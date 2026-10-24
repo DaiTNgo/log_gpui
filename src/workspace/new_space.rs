@@ -319,6 +319,12 @@ impl NewLogSpaceForm {
         true
     }
 
+    /// Empty the list (Archives still being read are dropped too).
+    pub fn clear_files(&mut self) {
+        self.files.clear();
+        self.already_listed = 0;
+    }
+
     pub fn remove_file(&mut self, index: usize) {
         self.already_listed = 0;
         if index < self.files.len() {

@@ -216,7 +216,22 @@ impl AppView {
                     .child(
                         v_flex()
                             .gap_1()
-                            .child(div().text_sm().child("Files"))
+                            .child(
+                                h_flex()
+                                    .items_center()
+                                    .child(div().flex_1().text_sm().child("Files"))
+                                    .when(files.len() > 1, |this| {
+                                        this.child(
+                                            div().debug_selector(|| "new-space-clear".into()).child(
+                                                Button::new("new-space-clear")
+                                                    .ghost()
+                                                    .xsmall()
+                                                    .label("Remove all")
+                                                    .on_click(cx.listener(|this, _, _, cx| this.new_space_clear_files(cx))),
+                                            ),
+                                        )
+                                    }),
+                            )
                             .when(remote_count == 0, |this| this.child(drop_zone))
                             .when(remote_count > 0, |this| {
                                 this.child(

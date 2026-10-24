@@ -460,3 +460,28 @@ fn removing_an_archive_being_read_drops_its_entries(cx: &mut TestAppContext) {
         assert_eq!(form.create_label(), "Create empty");
     });
 }
+
+#[gpui::test]
+fn remove_all_empties_a_long_list(cx: &mut TestAppContext) {
+    let mut h = common::open_app(cx);
+    let folder = h.dir.path().join("many");
+    std::fs::create_dir(&folder).unwrap();
+    for i in 1..=30 {
+        std::fs::write(folder.join(format!("app-{i}.log")), "x\n").unwrap();
+    }
+    h.view.update(&mut h.cx, |app, cx| app.open_new_space_dialog(cx));
+    h.cx.run_until_parked();
+    assert!(h.cx.debug_bounds("new-space-clear").is_none(), "nothing to remove");
+
+    h.view.update(&mut h.cx, |app, cx| app.new_space_add_paths(vec![folder.to_string_lossy().into_owned()], cx));
+    h.cx.run_until_parked();
+    assert!(h.cx.debug_bounds("new-space-clear").is_some(), "Remove all is offered");
+    h.view.update(&mut h.cx, |app, cx| app.new_space_clear_files(cx));
+    h.cx.run_until_parked();
+    h.view.read_with(&h.cx, |app, _| {
+        let form = &app.new_space.as_ref().unwrap().form;
+        assert!(form.files.is_empty());
+        assert_eq!(form.name, "many", "the name it suggested stays");
+    });
+    assert!(h.cx.debug_bounds("new-space-clear").is_none());
+}

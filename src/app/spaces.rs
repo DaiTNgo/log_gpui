@@ -162,6 +162,14 @@ impl AppView {
         self.new_space_add_paths(paths, cx);
     }
 
+    /// "Remove all": empty the list of local files.
+    pub fn new_space_clear_files(&mut self, cx: &mut Context<Self>) {
+        if let Some(dialog) = self.new_space.as_mut() {
+            dialog.form.clear_files();
+            cx.notify();
+        }
+    }
+
     pub fn new_space_remove_file(&mut self, index: usize, cx: &mut Context<Self>) {
         if let Some(dialog) = self.new_space.as_mut() {
             dialog.form.remove_file(index);
