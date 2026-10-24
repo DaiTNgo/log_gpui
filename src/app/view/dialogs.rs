@@ -152,10 +152,22 @@ impl AppView {
                     .child("Drop log files or a folder here"),
             )
             .child(
-                Button::new("new-space-browse")
-                    .small()
-                    .label("Browse…")
-                    .on_click(cx.listener(|this, _, _, cx| this.new_space_browse(cx))),
+                h_flex()
+                    .gap_2()
+                    .child(
+                        Button::new("new-space-browse")
+                            .small()
+                            .label("Choose files…")
+                            .on_click(cx.listener(|this, _, _, cx| this.new_space_browse(false, cx))),
+                    )
+                    .child(
+                        div().debug_selector(|| "new-space-browse-folder".into()).child(
+                            Button::new("new-space-browse-folder")
+                                .small()
+                                .label("Choose folder…")
+                                .on_click(cx.listener(|this, _, _, cx| this.new_space_browse(true, cx))),
+                        ),
+                    ),
             );
 
         Self::modal_backdrop()

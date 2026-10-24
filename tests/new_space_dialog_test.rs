@@ -95,3 +95,27 @@ fn many_remote_files_scroll_and_create_stays_on_screen(cx: &mut TestAppContext) 
     assert!(footer.bottom() <= window.height, "Create is on screen: {footer:?} in {window:?}");
 }
 
+#[gpui::test]
+fn a_folder_can_be_chosen_as_well_as_files(cx: &mut TestAppContext) {
+    let mut h = common::open_app(cx);
+    h.view.update(&mut h.cx, |app, cx| app.open_new_space_dialog(cx));
+    h.cx.run_until_parked();
+    // The native picker takes files or folders, never both: a second button
+    // opens it on folders.
+    assert!(h.cx.debug_bounds("new-space-browse-folder").is_some(), "Choose folder… is drawn");
+
+    // What the folder picker hands back is listed like a dropped folder.
+    let folder = h.dir.path().join("logs");
+    std::fs::create_dir(&folder).unwrap();
+    std::fs::write(folder.join("a.log"), "one\n").unwrap();
+    std::fs::write(folder.join("b.log"), "two\n").unwrap();
+    h.view.update(&mut h.cx, |app, cx| {
+        app.new_space_add_paths(vec![folder.to_string_lossy().into_owned()], cx);
+    });
+    let (names, label) = h.view.read_with(&h.cx, |app, _| {
+        let form = &app.new_space.as_ref().unwrap().form;
+        (form.files.iter().map(|f| f.display_name()).collect::<Vec<_>>(), form.create_label())
+    });
+    assert_eq!(names, ["a.log", "b.log"]);
+    assert_eq!(label, "Create with 2 files");
+}

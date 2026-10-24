@@ -103,10 +103,13 @@ impl AppView {
         }
     }
 
-    /// Pick files with the native dialog (awaited off the event handler).
-    pub fn new_space_browse(&mut self, cx: &mut Context<Self>) {
+    /// Pick files, or folders when `folders`, with the native dialog
+    /// (awaited off the event handler). The dialog cannot offer both at once.
+    pub fn new_space_browse(&mut self, folders: bool, cx: &mut Context<Self>) {
         cx.spawn(async move |this, cx| {
-            let Some(files) = rfd::AsyncFileDialog::new().pick_files().await else {
+            let dialog = rfd::AsyncFileDialog::new();
+            let picked = if folders { dialog.pick_folders().await } else { dialog.pick_files().await };
+            let Some(files) = picked else {
                 return;
             };
             let paths: Vec<String> = files
