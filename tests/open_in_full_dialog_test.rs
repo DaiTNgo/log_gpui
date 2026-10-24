@@ -57,3 +57,23 @@ fn a_name_that_cannot_be_used_is_said_in_the_dialog_and_keeps_it_open(cx: &mut T
         assert_eq!(app.full_name_error(), None);
     });
 }
+
+#[gpui::test]
+fn many_log_spaces_scroll_and_open_stays_on_screen(cx: &mut TestAppContext) {
+    let mut h = common::open_app(cx);
+    h.view.update(&mut h.cx, |app, _| {
+        let project = app.workspace_state.active_project_mut().unwrap();
+        for i in 1..=40 {
+            project.create_log_space(&format!("Imported {i}"), log_gpui::workspace::log_space::LogSpaceKind::Imported).unwrap();
+        }
+    });
+    open_dialog(&mut h);
+    h.cx.update(|window, _| window.refresh());
+    h.cx.run_until_parked();
+
+    let footer = h.cx.debug_bounds("full-footer").expect("the buttons are drawn");
+    let window = h.cx.update(|window, _| window.viewport_size());
+    assert!(footer.bottom() <= window.height, "Open is on screen: {footer:?} in {window:?}");
+    let body = h.cx.debug_bounds("full-body").expect("the body is drawn");
+    assert!(body.bottom() <= footer.top(), "the body ends above the buttons");
+}

@@ -5,9 +5,10 @@ use crate::app::open_in_full::EstimateState;
 use crate::live::buffer::size_text;
 use crate::workspace::log_space::LogSpaceKind;
 use gpui::prelude::FluentBuilder as _;
-use gpui::{InteractiveElement as _, IntoElement, ParentElement, SharedString, Styled, div, px};
+use gpui::{InteractiveElement as _, IntoElement, ParentElement, SharedString, StatefulInteractiveElement as _, Styled, div, px};
 use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::checkbox::Checkbox;
+use gpui_component::radio::Radio;
 use gpui_component::Disableable as _;
 use gpui_component::input::Input;
 use gpui_component::{ActiveTheme as _, h_flex, v_flex};
@@ -94,8 +95,9 @@ impl AppView {
             .unwrap_or_default();
         let existing = dialog.existing.clone();
         let name_error = self.full_name_error();
+        // One choice of several: radio buttons.
         let mut destination = v_flex().gap_1().child(
-            Checkbox::new("full-dest-new")
+            Radio::new("full-dest-new")
                 .label("A new Log Space")
                 .checked(existing.is_none())
                 .on_click(cx.listener(|this, _, _, cx| this.choose_full_destination(None, cx))),
@@ -113,7 +115,7 @@ impl AppView {
             let checked = existing.as_deref() == Some(id.as_str());
             let target = id.clone();
             destination = destination.child(
-                Checkbox::new(SharedString::from(format!("full-dest-{id}")))
+                Radio::new(SharedString::from(format!("full-dest-{id}")))
                     .label(format!("Add to {name}"))
                     .checked(checked)
                     .on_click(cx.listener(move |this, _, _, cx| this.choose_full_destination(Some(target.clone()), cx))),
@@ -147,25 +149,37 @@ impl AppView {
                     .child(div().text_xs().text_color(muted).child(
                         "Reads the whole file, and the Rotated Files you tick, into a copy kept in this app. The Server's files are not changed.",
                     ))
-                    .child(files)
                     .child(
+                        // Everything between the title and the buttons scrolls,
+                        // so many files or Log Spaces never push the buttons out.
                         v_flex()
-                            .gap_1()
-                            .child(div().text_sm().child("Time range (on the clock of the file)"))
+                            .id("full-body")
+                            .debug_selector(|| "full-body".into())
+                            .flex_1()
+                            .min_h(px(0.0))
+                            .overflow_y_scroll()
+                            .gap_3()
+                            .child(files)
                             .child(
-                                h_flex()
-                                    .gap_2()
-                                    .child(div().flex_1().when_some(start_input, |d, i| d.child(Input::new(&i))))
-                                    .child(div().flex_1().when_some(to_input, |d, i| d.child(Input::new(&i)))),
+                                v_flex()
+                                    .gap_1()
+                                    .child(div().text_sm().child("Time range (on the clock of the file)"))
+                                    .child(
+                                        h_flex()
+                                            .gap_2()
+                                            .child(div().flex_1().when_some(start_input, |d, i| d.child(Input::new(&i))))
+                                            .child(div().flex_1().when_some(to_input, |d, i| d.child(Input::new(&i)))),
+                                    )
+                                    .when_some(start_error, |d, e| d.child(div().text_xs().text_color(danger).child(format!("From: {e}"))))
+                                    .when_some(to_error, |d, e| d.child(div().text_xs().text_color(danger).child(format!("To: {e}")))),
                             )
-                            .when_some(start_error, |d, e| d.child(div().text_xs().text_color(danger).child(format!("From: {e}"))))
-                            .when_some(to_error, |d, e| d.child(div().text_xs().text_color(danger).child(format!("To: {e}")))),
+                            .child(destination)
+                            .child(estimate_line)
+                            .when_some(disk_error, |d, e| d.child(div().text_xs().text_color(danger).child(e))),
                     )
-                    .child(destination)
-                    .child(estimate_line)
-                    .when_some(disk_error, |d, e| d.child(div().text_xs().text_color(danger).child(e)))
                     .child(
                         h_flex()
+                            .debug_selector(|| "full-footer".into())
                             .justify_end()
                             .gap_2()
                             .when(over, |row| {
