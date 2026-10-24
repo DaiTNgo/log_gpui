@@ -136,8 +136,9 @@ pub fn list_archive(path: &str, kind: ArchiveKind) -> Vec<PendingFile> {
 }
 
 /// Expand dropped or picked paths: a folder gives its direct child files
-/// (sorted by name, no subfolders); a file is taken as is. Archives are
-/// opened later, by `NewLogSpaceForm`.
+/// (sorted by name, no subfolders, no hidden files such as `.DS_Store`); a
+/// file is taken as is, hidden or not. Archives are opened later, by
+/// `NewLogSpaceForm`.
 pub fn expand_paths(paths: &[String]) -> Vec<String> {
     let mut out = Vec::new();
     for path in paths {
@@ -148,6 +149,7 @@ pub fn expand_paths(paths: &[String]) -> Vec<String> {
                 .flatten()
                 .flatten()
                 .filter(|e| e.file_type().is_ok_and(|t| t.is_file()))
+                .filter(|e| !e.file_name().to_string_lossy().starts_with('.'))
                 .map(|e| e.path().to_string_lossy().to_string())
                 .collect();
             children.sort();

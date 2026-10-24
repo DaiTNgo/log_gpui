@@ -112,6 +112,8 @@ fn a_dropped_folder_gives_its_files_one_level_deep() {
     std::fs::write(dir.join("b.log"), "two\n").unwrap();
     std::fs::create_dir_all(dir.join("old")).unwrap();
     std::fs::write(dir.join("old").join("c.log"), "three\n").unwrap();
+    // Hidden files of a folder are noise, not logs.
+    std::fs::write(dir.join(".DS_Store"), b"\0\0\0\x01Bud1").unwrap();
 
     let mut form = NewLogSpaceForm::new();
     form.add_paths(&[dir.to_string_lossy().to_string()]);
@@ -228,4 +230,14 @@ fn the_remote_create_label_names_what_it_holds() {
     assert_eq!(remote_create_label(0, 0, 1), "Create with 1 command");
     assert_eq!(remote_create_label(2, 0, 1), "Create with 2 files and 1 command");
     assert_eq!(remote_create_label(2, 1, 2), "Create with 2 files, 1 Live Glob and 2 commands");
+}
+
+#[test]
+fn a_hidden_file_dropped_on_its_own_is_kept() {
+    let dir = temp_dir("hidden_file");
+    let hidden = dir.join(".env.log");
+    std::fs::write(&hidden, "one\n").unwrap();
+    let out = expand_paths(&[hidden.to_string_lossy().to_string()]);
+    assert_eq!(out.len(), 1);
+    std::fs::remove_dir_all(&dir).ok();
 }
