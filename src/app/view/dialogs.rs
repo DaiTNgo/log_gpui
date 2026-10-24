@@ -177,6 +177,12 @@ impl AppView {
             );
 
         Self::modal_backdrop()
+            // The backdrop takes the window's drops while the dialog is open.
+            .id("new-space-backdrop")
+            .on_drop(cx.listener(|this, paths: &ExternalPaths, _, cx| {
+                let paths = paths.paths().iter().map(|p| p.to_string_lossy().to_string()).collect();
+                this.drop_paths_on_window(paths, cx);
+            }))
             .child(
                 v_flex()
                     .w(px(520.0))

@@ -193,6 +193,11 @@ impl Render for AppView {
             .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
                 this.handle_key_down(event, window, cx);
             }))
+            // Log files dropped anywhere start a New Log Space with them.
+            .on_drop(cx.listener(|this, paths: &gpui::ExternalPaths, _, cx| {
+                let paths = paths.paths().iter().map(|p| p.to_string_lossy().to_string()).collect();
+                this.drop_paths_on_window(paths, cx);
+            }))
             .size_full()
             .flex()
             .flex_col()

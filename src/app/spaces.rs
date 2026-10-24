@@ -122,6 +122,34 @@ impl AppView {
         }
     }
 
+    /// Files or folders dropped anywhere on the window: they go to the New
+    /// Log Space dialog, opened for them when it is not. Ignored while
+    /// another dialog is open, or while the New Log Space has remote files.
+    pub fn drop_paths_on_window(&mut self, paths: Vec<String>, cx: &mut Context<Self>) {
+        let remote = self.remote.new_space_files.len()
+            + self.remote.new_space_globs.len()
+            + self.remote.new_space_commands.len();
+        let other_dialog = self.confirm.is_some()
+            || self.server_dialog.is_some()
+            || self.format_editor.is_some()
+            || self.custom_load.is_some()
+            || self.project_switcher_open
+            || self.remote.picker.is_some()
+            || self.remote.download.is_some()
+            || self.remote.download_options.is_some()
+            || self.remote.full_dialog.is_some()
+            || self.remote.secret_prompt.is_some()
+            || self.remote.sign_in_dialog.is_some()
+            || !self.remote.host_prompts.is_empty();
+        if paths.is_empty() || other_dialog || (self.new_space.is_some() && remote > 0) {
+            return;
+        }
+        if self.new_space.is_none() {
+            self.open_new_space_dialog(cx);
+        }
+        self.new_space_add_paths(paths, cx);
+    }
+
     pub fn new_space_remove_file(&mut self, index: usize, cx: &mut Context<Self>) {
         if let Some(dialog) = self.new_space.as_mut() {
             dialog.form.remove_file(index);

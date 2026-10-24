@@ -314,3 +314,44 @@ fn the_starting_time_field_has_a_label(cx: &mut TestAppContext) {
     h.cx.run_until_parked();
     assert!(h.cx.debug_bounds("picker-start-label").is_some());
 }
+
+/// Drop `paths` from the Finder on the window at `(x, y)`.
+fn drop_files(h: &mut Harness, paths: Vec<std::path::PathBuf>, x: f32, y: f32) {
+    let position = gpui::point(gpui::px(x), gpui::px(y));
+    h.cx.simulate_event(gpui::FileDropEvent::Entered { position, paths: gpui::ExternalPaths(paths.into()) });
+    h.cx.simulate_event(gpui::FileDropEvent::Submit { position });
+    h.cx.run_until_parked();
+}
+
+#[gpui::test]
+fn files_dropped_anywhere_open_a_new_log_space_with_them(cx: &mut TestAppContext) {
+    let mut h = common::open_app(cx);
+    let a = h.dir.path().join("api.log");
+    let b = h.dir.path().join("db.log");
+    std::fs::write(&a, "one\n").unwrap();
+    std::fs::write(&b, "two\n").unwrap();
+    h.cx.run_until_parked();
+
+    drop_files(&mut h, vec![a.clone()], 500.0, 300.0);
+    let names = |h: &mut Harness| {
+        h.view.read_with(&h.cx, |app, _| {
+            app.new_space.as_ref().map(|d| d.form.files.iter().map(|f| f.display_name()).collect::<Vec<_>>())
+        })
+    };
+    assert_eq!(names(&mut h), Some(vec!["api.log".to_string()]), "the dialog opened with the file");
+
+    // A second drop, on the open dialog's backdrop, adds to it.
+    drop_files(&mut h, vec![a, b], 40.0, 40.0);
+    assert_eq!(names(&mut h), Some(vec!["api.log".to_string(), "db.log".to_string()]));
+}
+
+#[gpui::test]
+fn a_drop_is_ignored_while_another_dialog_is_open(cx: &mut TestAppContext) {
+    let mut h = common::open_app(cx);
+    let a = h.dir.path().join("api.log");
+    std::fs::write(&a, "one\n").unwrap();
+    h.view.update(&mut h.cx, |app, cx| app.open_servers_dialog(cx));
+    h.cx.run_until_parked();
+    drop_files(&mut h, vec![a], 500.0, 300.0);
+    h.view.read_with(&h.cx, |app, _| assert!(app.new_space.is_none()));
+}
