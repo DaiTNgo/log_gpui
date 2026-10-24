@@ -5,7 +5,7 @@ use crate::app::open_in_full::EstimateState;
 use crate::live::buffer::size_text;
 use crate::workspace::log_space::LogSpaceKind;
 use gpui::prelude::FluentBuilder as _;
-use gpui::{IntoElement, ParentElement, SharedString, Styled, div, px};
+use gpui::{InteractiveElement as _, IntoElement, ParentElement, SharedString, Styled, div, px};
 use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::checkbox::Checkbox;
 use gpui_component::Disableable as _;
@@ -93,6 +93,7 @@ impl AppView {
             })
             .unwrap_or_default();
         let existing = dialog.existing.clone();
+        let name_error = self.full_name_error();
         let mut destination = v_flex().gap_1().child(
             Checkbox::new("full-dest-new")
                 .label("A new Log Space")
@@ -101,7 +102,11 @@ impl AppView {
         );
         if existing.is_none() {
             if let Some(input) = dialog.name_input.clone() {
-                destination = destination.child(Input::new(&input));
+                destination = destination
+                    .child(Input::new(&input).when(name_error.is_some(), |i| i.border_color(danger)))
+                    .when_some(name_error, |this, message| {
+                        this.child(Self::field_error_row(message, danger).debug_selector(|| "full-name-error".into()))
+                    });
             }
         }
         for (id, name) in imported {
@@ -122,7 +127,8 @@ impl AppView {
         } else {
             format!("Open {} files in full", dialog.files.len())
         };
-        let can_open = ready && !over && start_error.is_none() && to_error.is_none() && disk_error.is_none();
+        let can_open =
+            ready && !over && start_error.is_none() && to_error.is_none() && disk_error.is_none() && name_error.is_none();
 
         Self::modal_backdrop()
             .child(
@@ -175,6 +181,7 @@ impl AppView {
                                             "Read newest {} lines",
                                             crate::remote::estimate::short_count(limit as u64)
                                         ))
+                                        .disabled(name_error.is_some())
                                         .on_click(cx.listener(|this, _, _, cx| this.full_read_newest(cx))),
                                 )
                             })

@@ -235,6 +235,20 @@ impl AppView {
         cx.notify();
     }
 
+    /// Why the name of the new Log Space is refused, if a new one is chosen
+    /// and it is: shown under the field while Open is off, so the dialog
+    /// never closes on a name that cannot be used.
+    pub fn full_name_error(&self) -> Option<&'static str> {
+        let dialog = self.remote.full_dialog.as_ref()?;
+        if dialog.existing.is_some() {
+            return None;
+        }
+        let project = self.active_project()?;
+        crate::workspace::log_space::validate_space_name(&dialog.new_name, project.log_spaces.iter().map(|s| s.name.as_str()))
+            .err()
+            .map(|e| e.message())
+    }
+
     pub fn close_open_in_full(&mut self, cx: &mut Context<Self>) {
         self.remote.full_dialog = None;
         cx.notify();
@@ -496,6 +510,9 @@ impl AppView {
     /// Open: read every file into a Remote Copy.
     pub fn confirm_open_in_full(&mut self, cx: &mut Context<Self>) {
         let limit = self.live.full_read_limit;
+        if self.full_name_error().is_some() {
+            return;
+        }
         let Some(dialog) = self.remote.full_dialog.as_ref() else { return };
         if dialog.start_error().is_some() || dialog.to_error().is_some() || dialog.disk_error.is_some() {
             return;
@@ -539,11 +556,6 @@ impl AppView {
             Some(id) => Destination::Existing(id.clone()),
             None => Destination::NewSpace(dialog.new_name.trim().to_string()),
         };
-        if matches!(&destination, Destination::NewSpace(name) if name.is_empty()) {
-            self.notice = Some("Name the new Log Space".into());
-            cx.notify();
-            return;
-        }
         self.remote.full_dialog = None;
         let mut space_id: Option<String> = None;
         for mut request in requests {
