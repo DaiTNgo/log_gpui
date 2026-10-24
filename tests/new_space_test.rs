@@ -159,3 +159,33 @@ fn expand_paths_keeps_plain_files_as_they_are() {
     let out = expand_paths(&["/does/not/exist.log".to_string()]);
     assert_eq!(out, vec!["/does/not/exist.log".to_string()]);
 }
+
+#[test]
+fn only_files_that_cannot_be_added_never_make_an_empty_log_space() {
+    let p = project_with(&[]);
+    let mut form = NewLogSpaceForm::new();
+    form.set_name("Dumps");
+    form.push("/core.dump".into(), PendingStatus::Binary);
+    form.push("/a.zip".into(), PendingStatus::Damaged);
+
+    assert!(!form.can_create(&p), "Create is off: nothing would be added");
+    assert_eq!(form.create_label(), "Create");
+    assert_eq!(
+        form.files_message().as_deref(),
+        Some("None of these files can be added. Remove them to create an empty Log Space")
+    );
+
+    // Removing them leaves an empty form, which makes a Scratch Log Space.
+    form.remove_file(1);
+    form.remove_file(0);
+    assert!(form.can_create(&p));
+    assert_eq!(form.files_message(), None);
+    assert_eq!(form.create_label(), "Create empty");
+}
+
+#[test]
+fn an_archive_being_read_is_not_called_unaddable_yet() {
+    let mut form = NewLogSpaceForm::new();
+    form.push("/logs.zip".into(), PendingStatus::Reading);
+    assert_eq!(form.files_message(), None);
+}

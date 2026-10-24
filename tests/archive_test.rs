@@ -251,8 +251,10 @@ fn dropping_an_archive_lists_its_entries() {
     assert_eq!(form.files[2].warning(), Some("Not a text file"));
     assert_eq!(form.create_label(), "Create with 1 file");
 
+    // Only entries that cannot be added are left: nothing to create from.
     form.remove_file(0);
-    assert_eq!(form.create_label(), "Create empty");
+    assert_eq!(form.create_label(), "Create");
+    assert!(form.files_message().is_some());
 }
 
 #[test]
@@ -287,7 +289,8 @@ fn broken_archives_are_listed_with_the_reason_and_not_counted() {
     form.add_paths(&[path_str(&secret), path_str(&cut)]);
     assert_eq!(form.files[0].warning(), Some("Password-protected archive"));
     assert_eq!(form.files[1].warning(), Some("Damaged archive"));
-    assert_eq!(form.create_label(), "Create empty");
+    assert_eq!(form.create_label(), "Create");
+    assert!(form.files_message().is_some(), "Create is off, not an empty Log Space");
 }
 
 #[test]

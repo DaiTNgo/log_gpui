@@ -82,7 +82,7 @@ impl AppView {
             format!("Create remote with {remote_count} members")
         };
         let files = dialog.form.files.clone();
-        let size_message = dialog.form.size_limit_message();
+        let files_message = dialog.form.files_message();
         let name_input = dialog.name_input.clone();
 
         let mut file_list = v_flex().id("new-space-files").gap_1().max_h(px(180.0)).overflow_y_scroll();
@@ -185,7 +185,7 @@ impl AppView {
                             .child(div().text_sm().child("Files"))
                             .when(remote_count == 0, |this| this.child(drop_zone))
                             .when(!files.is_empty() && remote_count == 0, |this| this.child(file_list))
-                            .when_some(size_message, |this, message| {
+                            .when_some(files_message, |this, message| {
                                 this.child(div().text_xs().text_color(danger).child(message))
                             }),
                     )

@@ -278,6 +278,19 @@ impl NewLogSpaceForm {
             .then(|| "Too large: the files add up to more than 2 GB once unpacked".to_string())
     }
 
+    /// Why Create is off because of the files, if it is: they add up to too
+    /// much, or none of the listed files can be added. Listing only files
+    /// that cannot be added must not quietly make an empty Log Space.
+    pub fn files_message(&self) -> Option<String> {
+        if let Some(message) = self.size_limit_message() {
+            return Some(message);
+        }
+        let nothing_to_add = !self.files.is_empty() && !self.is_reading() && self.importable_sources().is_empty();
+        nothing_to_add.then(|| {
+            "None of these files can be added. Remove them to create an empty Log Space".to_string()
+        })
+    }
+
     pub fn kind(&self) -> LogSpaceKind {
         if self.importable_sources().is_empty() {
             LogSpaceKind::Scratch
@@ -301,13 +314,15 @@ impl NewLogSpaceForm {
     }
 
     pub fn can_create(&self, project: &Project) -> bool {
-        self.name_error(project).is_none() && !self.is_reading() && self.size_limit_message().is_none()
+        self.name_error(project).is_none() && !self.is_reading() && self.files_message().is_none()
     }
 
-    /// "Create empty" or "Create with N file(s)".
+    /// "Create empty" or "Create with N file(s)"; just "Create" while the
+    /// listed files give nothing to add.
     pub fn create_label(&self) -> String {
         match self.importable_sources().len() {
-            0 => "Create empty".to_string(),
+            0 if self.files.is_empty() => "Create empty".to_string(),
+            0 => "Create".to_string(),
             1 => "Create with 1 file".to_string(),
             n => format!("Create with {n} files"),
         }
