@@ -227,7 +227,11 @@ impl AppView {
                             })
                             .when(!files.is_empty() && remote_count == 0, |this| this.child(file_list))
                             .when_some(files_message, |this, message| {
-                                this.child(div().text_xs().text_color(danger).child(message))
+                                // Like the name's error: an icon, not only the color.
+                                this.child(
+                                    Self::field_error_row(message, danger)
+                                        .debug_selector(|| "new-space-files-error".into()),
+                                )
                             }),
                     )
                     .child(

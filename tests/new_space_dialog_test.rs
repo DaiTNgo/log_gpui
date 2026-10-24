@@ -198,3 +198,16 @@ fn create_empty_says_what_it_makes(cx: &mut TestAppContext) {
     h.cx.run_until_parked();
     assert!(h.cx.debug_bounds("new-space-scratch-hint").is_none(), "gone once a file is listed");
 }
+
+#[gpui::test]
+fn a_files_error_is_shown_like_a_field_error(cx: &mut TestAppContext) {
+    let mut h = common::open_app(cx);
+    h.view.update(&mut h.cx, |app, cx| app.open_new_space_dialog(cx));
+    let dump = h.dir.path().join("core.dump");
+    std::fs::write(&dump, b"ELF\0\0binary").unwrap();
+    h.view.update(&mut h.cx, |app, cx| app.new_space_add_paths(vec![dump.to_string_lossy().into_owned()], cx));
+    h.cx.run_until_parked();
+    let row = h.cx.debug_bounds("new-space-files-error").expect("the error row is drawn");
+    // The row holds the icon before the text, so it is wider than the icon.
+    assert!(row.size.width > gpui::px(12.0));
+}
