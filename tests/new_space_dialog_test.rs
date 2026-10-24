@@ -404,3 +404,34 @@ fn the_cursor_returns_to_the_name_after_the_picker_closes(cx: &mut TestAppContex
     h.cx.run_until_parked();
     assert!(name_focused(&mut h), "back on the name: Enter creates the Log Space");
 }
+
+#[gpui::test]
+fn dropping_files_already_listed_says_so(cx: &mut TestAppContext) {
+    let mut h = common::open_app(cx);
+    let a = h.dir.path().join("api.log");
+    let b = h.dir.path().join("db.log");
+    std::fs::write(&a, "one\n").unwrap();
+    std::fs::write(&b, "two\n").unwrap();
+    h.view.update(&mut h.cx, |app, cx| app.open_new_space_dialog(cx));
+    h.cx.run_until_parked();
+
+    // Dropped on the drop zone: listed once, nothing said.
+    let zone = h.cx.debug_bounds("new-space-drop").expect("the drop zone is drawn").center();
+    drop_files(&mut h, vec![a.clone()], f32::from(zone.x), f32::from(zone.y));
+    let listed = |h: &mut Harness| h.view.read_with(&h.cx, |app, _| app.new_space.as_ref().unwrap().form.files.len());
+    assert_eq!(listed(&mut h), 1);
+    assert!(h.cx.debug_bounds("new-space-already-listed").is_none());
+
+    // The same file again, with a new one.
+    let zone = h.cx.debug_bounds("new-space-drop").unwrap().center();
+    drop_files(&mut h, vec![a, b], f32::from(zone.x), f32::from(zone.y));
+    assert_eq!(listed(&mut h), 2);
+    let message = h.view.read_with(&h.cx, |app, _| app.new_space.as_ref().unwrap().form.already_listed_message());
+    assert_eq!(message.as_deref(), Some("1 file was already in the list"));
+    assert!(h.cx.debug_bounds("new-space-already-listed").is_some());
+
+    // Removing a file clears it.
+    h.view.update(&mut h.cx, |app, cx| app.new_space_remove_file(1, cx));
+    h.cx.run_until_parked();
+    assert!(h.cx.debug_bounds("new-space-already-listed").is_none());
+}

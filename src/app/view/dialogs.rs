@@ -92,6 +92,7 @@ impl AppView {
         // create from: say so then.
         let name_hint = dialog.form.name.trim().is_empty() && (!files.is_empty() || remote_count > 0);
         let files_message = dialog.form.files_message();
+        let already_listed = dialog.form.already_listed_message();
         let name_input = dialog.name_input.clone();
 
         let mut file_list = v_flex().id("new-space-files").gap_1().max_h(px(180.0)).overflow_y_scroll();
@@ -142,15 +143,9 @@ impl AppView {
             .border_1()
             .border_dashed()
             .border_color(border)
+            // The drop itself is taken by the backdrop, once for the dialog.
             .drag_over::<ExternalPaths>(move |style, _, _, _| style.bg(warning.opacity(0.12)))
-            .on_drop(cx.listener(|this, paths: &ExternalPaths, _, cx| {
-                let paths = paths
-                    .paths()
-                    .iter()
-                    .map(|p| p.to_string_lossy().to_string())
-                    .collect();
-                this.new_space_add_paths(paths, cx);
-            }))
+            .debug_selector(|| "new-space-drop".into())
             .child(
                 div()
                     .text_sm()
@@ -230,6 +225,15 @@ impl AppView {
                                 )
                             })
                             .when(!files.is_empty() && remote_count == 0, |this| this.child(file_list))
+                            .when_some(already_listed, |this, message| {
+                                this.child(
+                                    div()
+                                        .debug_selector(|| "new-space-already-listed".into())
+                                        .text_xs()
+                                        .text_color(muted)
+                                        .child(message),
+                                )
+                            })
                             .when_some(files_message, |this, message| {
                                 // Like the name's error: an icon, not only the color.
                                 this.child(

@@ -84,6 +84,8 @@ impl PendingFile {
 pub struct NewLogSpaceForm {
     pub name: String,
     pub files: Vec<PendingFile>,
+    /// How many of the last dropped or picked paths were listed already.
+    pub already_listed: usize,
 }
 
 /// A file is binary when its first 8 KB hold a NUL byte or are not valid UTF-8.
@@ -241,7 +243,12 @@ impl NewLogSpaceForm {
     /// and then given to `finish_archive`.
     pub fn begin_paths(&mut self, paths: &[String]) -> Vec<(String, ArchiveKind)> {
         let mut archives = Vec::new();
+        self.already_listed = 0;
         for path in expand_paths(paths) {
+            if self.files.iter().any(|f| f.source == PendingSource::Disk(path.clone())) {
+                self.already_listed += 1;
+                continue;
+            }
             if let Some(kind) = archive::detect(Path::new(&path)) {
                 let source = PendingSource::Disk(path.clone());
                 if self.push_source(source, PendingStatus::Reading) {
@@ -257,6 +264,15 @@ impl NewLogSpaceForm {
             self.push(path, status);
         }
         archives
+    }
+
+    /// "2 files were already in the list", after a drop that added some again.
+    pub fn already_listed_message(&self) -> Option<String> {
+        match self.already_listed {
+            0 => None,
+            1 => Some("1 file was already in the list".to_string()),
+            n => Some(format!("{n} files were already in the list")),
+        }
     }
 
     /// Replace the "Reading…" row of `archive` by its entries.
@@ -299,6 +315,7 @@ impl NewLogSpaceForm {
     }
 
     pub fn remove_file(&mut self, index: usize) {
+        self.already_listed = 0;
         if index < self.files.len() {
             self.files.remove(index);
         }
