@@ -167,6 +167,32 @@ pub fn resolve_paths(paths: &[String]) -> Vec<PendingFile> {
     form.files
 }
 
+/// A Log Space name taken from a dropped or chosen path: the folder's name,
+/// or the file's name without its compression and log extensions
+/// (`api.log.gz` gives `api`). `style` reads the path as local or remote.
+pub fn suggest_name(path: &str, style: crate::local_path::PathStyle) -> Option<String> {
+    let trimmed = path.trim_end_matches(['/', '\\']);
+    let mut name = crate::local_path::file_name(trimmed, style)?.to_string();
+    for ext in [".gz", ".tgz", ".zip", ".tar", ".bz2", ".xz", ".zst", ".log", ".txt"] {
+        if name.len() > ext.len() && name.to_ascii_lowercase().ends_with(ext) {
+            name.truncate(name.len() - ext.len());
+        }
+    }
+    let name = name.trim();
+    (!name.is_empty()).then(|| name.to_string())
+}
+
+/// `name`, or `name 2`, `name 3`… when the Project already has it.
+pub fn unique_name(name: &str, project: &Project) -> String {
+    let mut candidate = name.to_string();
+    let mut n = 2;
+    while project.has_space_named(&candidate) {
+        candidate = format!("{name} {n}");
+        n += 1;
+    }
+    candidate
+}
+
 impl NewLogSpaceForm {
     pub fn new() -> Self {
         Self::default()

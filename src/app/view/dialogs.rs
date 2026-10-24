@@ -90,6 +90,9 @@ impl AppView {
             format!("Create remote with {remote_count} members")
         };
         let files = dialog.form.files.clone();
+        // Create is off for want of a name only once there is something to
+        // create from: say so then.
+        let name_hint = dialog.form.name.trim().is_empty() && (!files.is_empty() || remote_count > 0);
         let files_message = dialog.form.files_message();
         let name_input = dialog.name_input.clone();
 
@@ -197,6 +200,15 @@ impl AppView {
                             })
                             .when_some(name_message, |this, message| {
                                 this.child(Self::field_error_row(message, danger))
+                            })
+                            .when(name_hint, |this| {
+                                this.child(
+                                    div()
+                                        .debug_selector(|| "new-space-name-hint".into())
+                                        .text_xs()
+                                        .text_color(muted)
+                                        .child("Name the Log Space to create it"),
+                                )
                             }),
                     )
                     .child(

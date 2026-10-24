@@ -15,6 +15,9 @@ pub struct NewSpaceDialog {
     pub form: NewLogSpaceForm,
     /// Created while rendering, where a window is available.
     pub name_input: Option<Entity<InputState>>,
+    /// A name to put in the field at the next render: suggested from the
+    /// first file added while the field was empty.
+    pending_name: Option<String>,
     _subscription: Option<Subscription>,
 }
 
@@ -29,16 +32,21 @@ impl AppView {
         self.new_space = Some(NewSpaceDialog {
             form: NewLogSpaceForm::new(),
             name_input: None,
+            pending_name: None,
             _subscription: None,
         });
         self.is_palette_open = false;
         cx.notify();
     }
 
-    /// Create the name field of a freshly opened dialog and focus it.
+    /// Create the name field of a freshly opened dialog and focus it, and
+    /// put a suggested name in it.
     pub fn sync_new_space_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(dialog) = self.new_space.as_mut() else { return };
-        if dialog.name_input.is_some() {
+        if let Some(input) = dialog.name_input.clone() {
+            if let Some(name) = dialog.pending_name.take() {
+                input.update(cx, |state, cx| state.set_value(name, window, cx));
+            }
             return;
         }
         let input = cx.new(|cx| InputState::new(window, cx).placeholder("Log Space name"));
@@ -71,8 +79,26 @@ impl AppView {
         cx.notify();
     }
 
+    /// Name the New Log Space after `path` while its name field is empty.
+    pub(crate) fn suggest_new_space_name(&mut self, path: &str, style: crate::local_path::PathStyle) {
+        let Some(project) = self.workspace_state.active_project() else { return };
+        let Some(dialog) = self.new_space.as_ref() else { return };
+        if !dialog.form.name.trim().is_empty() {
+            return;
+        }
+        let Some(name) = new_space::suggest_name(path, style) else { return };
+        let name = new_space::unique_name(&name, project);
+        if let Some(dialog) = self.new_space.as_mut() {
+            dialog.form.set_name(&name);
+            dialog.pending_name = Some(name);
+        }
+    }
+
     /// Add dropped or picked paths to the dialog's list.
     pub fn new_space_add_paths(&mut self, paths: Vec<String>, cx: &mut Context<Self>) {
+        if let Some(first) = paths.first() {
+            self.suggest_new_space_name(first, crate::local_path::PathStyle::native());
+        }
         let Some(dialog) = self.new_space.as_mut() else { return };
         let archives = dialog.form.begin_paths(&paths);
         cx.notify();

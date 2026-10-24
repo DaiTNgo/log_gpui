@@ -189,3 +189,20 @@ fn an_archive_being_read_is_not_called_unaddable_yet() {
     form.push("/logs.zip".into(), PendingStatus::Reading);
     assert_eq!(form.files_message(), None);
 }
+
+#[test]
+fn a_name_is_suggested_from_a_file_or_folder() {
+    use log_gpui::local_path::PathStyle;
+    use log_gpui::workspace::new_space::{suggest_name, unique_name};
+    assert_eq!(suggest_name("/var/log/api.log", PathStyle::Unix).as_deref(), Some("api"));
+    assert_eq!(suggest_name("/tmp/api.log.gz", PathStyle::Unix).as_deref(), Some("api"));
+    assert_eq!(suggest_name("/tmp/bundle.tar.gz", PathStyle::Unix).as_deref(), Some("bundle"));
+    assert_eq!(suggest_name("/srv/checkout/", PathStyle::Unix).as_deref(), Some("checkout"));
+    assert_eq!(suggest_name("C:\\logs\\db.txt", PathStyle::Windows).as_deref(), Some("db"));
+    // A name that is only an extension is kept as it is.
+    assert_eq!(suggest_name("/x/.log", PathStyle::Unix).as_deref(), Some(".log"));
+
+    let p = project_with(&["api", "api 2"]);
+    assert_eq!(unique_name("api", &p), "api 3");
+    assert_eq!(unique_name("db", &p), "db");
+}

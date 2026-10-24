@@ -143,3 +143,44 @@ fn the_dialog_says_why_local_and_remote_files_do_not_mix(cx: &mut TestAppContext
     assert!(h.cx.debug_bounds("new-space-local-hint").is_some());
     assert!(h.cx.debug_bounds("new-space-remote-hint").is_none());
 }
+
+#[gpui::test]
+fn the_first_file_names_the_log_space_until_a_name_is_typed(cx: &mut TestAppContext) {
+    let mut h = common::open_app(cx);
+    let server = add_server(&mut h);
+    let name = |h: &mut Harness| h.view.read_with(&h.cx, |app, _| app.new_space.as_ref().unwrap().form.name.clone());
+    let field = |h: &mut Harness| {
+        h.view.update(&mut h.cx, |app, cx| {
+            app.new_space.as_ref().unwrap().name_input.as_ref().unwrap().read(cx).value().to_string()
+        })
+    };
+
+    h.view.update(&mut h.cx, |app, cx| app.open_new_space_dialog(cx));
+    h.cx.run_until_parked();
+    let folder = h.dir.path().join("checkout");
+    std::fs::create_dir(&folder).unwrap();
+    std::fs::write(folder.join("a.log"), "one\n").unwrap();
+    h.view.update(&mut h.cx, |app, cx| app.new_space_add_paths(vec![folder.to_string_lossy().into_owned()], cx));
+    h.cx.run_until_parked();
+    assert_eq!(name(&mut h), "checkout");
+    assert_eq!(field(&mut h), "checkout", "the field shows it");
+
+    // A name already there is kept.
+    let other = h.dir.path().join("b.log");
+    std::fs::write(&other, "two\n").unwrap();
+    h.view.update(&mut h.cx, |app, cx| app.new_space_add_paths(vec![other.to_string_lossy().into_owned()], cx));
+    assert_eq!(name(&mut h), "checkout");
+
+    // Emptied by hand, the dialog says why Create is off.
+    h.view.update(&mut h.cx, |app, cx| {
+        app.new_space.as_mut().unwrap().form.set_name("");
+        cx.notify();
+    });
+    h.cx.run_until_parked();
+    assert!(h.cx.debug_bounds("new-space-name-hint").is_some());
+
+    // A remote file names a fresh dialog too.
+    h.view.update(&mut h.cx, |app, cx| app.open_new_space_dialog(cx));
+    add_in_picker(&mut h, &server, &["/var/log/nginx/access.log"], "");
+    assert_eq!(name(&mut h), "access");
+}
