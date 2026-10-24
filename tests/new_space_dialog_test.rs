@@ -211,3 +211,35 @@ fn a_files_error_is_shown_like_a_field_error(cx: &mut TestAppContext) {
     // The row holds the icon before the text, so it is wider than the icon.
     assert!(row.size.width > gpui::px(12.0));
 }
+
+/// Open the Add remote command dialog and type `command` in it.
+fn type_command(h: &mut Harness, command: &str) {
+    h.view.update(&mut h.cx, |app, cx| app.open_remote_command_picker(PickerTarget::NewSpace, cx));
+    h.cx.run_until_parked();
+    h.cx.update(|window, cx| {
+        let view = h.view.clone();
+        let input = view.read(cx).remote.picker.as_ref().unwrap().command.inputs.as_ref().unwrap().command.clone();
+        input.update(cx, |state, cx| state.set_value(command.to_string(), window, cx));
+    });
+}
+
+#[gpui::test]
+fn a_command_already_chosen_is_refused_with_a_reason(cx: &mut TestAppContext) {
+    let mut h = common::open_app(cx);
+    add_server(&mut h);
+    h.view.update(&mut h.cx, |app, cx| app.open_new_space_dialog(cx));
+    type_command(&mut h, "journalctl -f -u nginx");
+    h.view.update(&mut h.cx, |app, cx| {
+        assert_eq!(app.command_form_error(cx), None);
+        app.command_add(cx);
+    });
+
+    type_command(&mut h, "journalctl -f -u nginx");
+    h.view.update(&mut h.cx, |app, cx| {
+        assert_eq!(app.command_form_error(cx).as_deref(), Some("Already chosen for this Log Space"));
+        // Add is off: nothing changes and the dialog stays open.
+        app.command_add(cx);
+        assert_eq!(app.remote.new_space_commands.len(), 1);
+        assert!(app.remote.picker.is_some());
+    });
+}

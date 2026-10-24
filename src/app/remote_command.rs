@@ -359,16 +359,20 @@ impl AppView {
         Some((id, server.name.clone(), server.user.clone()))
     }
 
-    /// Why the command in the form cannot be added, if it cannot.
+    /// Why the command in the form cannot be added, if it cannot: it asks
+    /// for elevation, or the New Log Space already has it on that Server.
     pub fn command_form_error(&self, cx: &gpui::App) -> Option<String> {
-        let (_, _, user) = self.command_server()?;
+        let (server_id, _, user) = self.command_server()?;
         let command = self.command_text(cx);
         if command.is_empty() {
             return None;
         }
-        check_elevation(&command)
-            .err()
-            .map(|_| format!("Commands run as {user}; elevation is not allowed"))
+        if check_elevation(&command).is_err() {
+            return Some(format!("Commands run as {user}; elevation is not allowed"));
+        }
+        let for_new_space = self.remote.picker.as_ref().is_some_and(|p| p.target == PickerTarget::NewSpace);
+        let chosen = self.remote.new_space_commands.iter().any(|c| c.0 == server_id && c.2 == command);
+        (for_new_space && chosen).then(|| "Already chosen for this Log Space".to_string())
     }
 
     /// Whether the preset's command was edited by hand.
