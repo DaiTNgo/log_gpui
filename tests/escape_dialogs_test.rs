@@ -124,3 +124,25 @@ fn find_in_log_focuses_the_search_field_and_leaves_panels(cx: &mut TestAppContex
     h.cx.run_until_parked();
     assert_eq!(search_query(&mut h), "line 3");
 }
+
+#[gpui::test]
+fn escape_closes_the_remote_picker_and_keeps_the_new_log_space_dialog(cx: &mut TestAppContext) {
+    let mut h = common::open_app(cx);
+    // The picker connects on the app's own threads.
+    h.cx.executor().allow_parking();
+    h.view.update(&mut h.cx, |app, cx| {
+        // Nothing listens on port 1: the picker's folder load fails at once.
+        let mut server = log_gpui::remote::Server::new("web", "127.0.0.1", "u", log_gpui::remote::AuthMethod::Password);
+        server.port = 1;
+        app.remote.servers.save(server).unwrap();
+        app.open_new_space_dialog(cx);
+        app.open_remote_picker(log_gpui::app::remote_picker::PickerTarget::NewSpace, cx);
+    });
+    press(&mut h, "escape");
+    h.view.read_with(&h.cx, |app, _| {
+        assert!(app.remote.picker.is_none(), "the picker closed");
+        assert!(app.new_space.is_some(), "the New Log Space dialog under it stays");
+    });
+    press(&mut h, "escape");
+    h.view.read_with(&h.cx, |app, _| assert!(app.new_space.is_none()));
+}
