@@ -25,7 +25,7 @@ impl AppView {
         self.remote.new_space_files.clear();
         self.remote.new_space_globs.clear();
         self.remote.new_space_commands.clear();
-        self.remote.new_space_start = None;
+        self.remote.new_space_starts.clear();
         self.new_space = Some(NewSpaceDialog {
             form: NewLogSpaceForm::new(),
             name_input: None,
@@ -67,7 +67,7 @@ impl AppView {
         self.remote.new_space_files.clear();
         self.remote.new_space_globs.clear();
         self.remote.new_space_commands.clear();
-        self.remote.new_space_start = None;
+        self.remote.new_space_starts.clear();
         cx.notify();
     }
 
@@ -134,11 +134,16 @@ impl AppView {
             let files = std::mem::take(&mut self.remote.new_space_files);
             let globs = std::mem::take(&mut self.remote.new_space_globs);
             let commands = std::mem::take(&mut self.remote.new_space_commands);
-            let start = self.remote.new_space_start.take();
+            let starts = std::mem::take(&mut self.remote.new_space_starts);
             self.new_space = None;
-            self.create_remote_log_space(&name, files, globs, commands, cx);
-            if let Some(start) = start {
-                self.set_start_time_in_active_space(&start, cx);
+            let space_id = self.create_remote_log_space(&name, files, globs, commands, cx);
+            let space = space_id.and_then(|id| self.active_project_mut()?.log_space_mut(&id));
+            if let Some(space) = space {
+                for ((server_id, path), start) in starts {
+                    if let Some(id) = space.remote_file_id(&server_id, &path) {
+                        space.set_start_time(&id, Some(start));
+                    }
+                }
             }
             return;
         }

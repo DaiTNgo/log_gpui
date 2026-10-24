@@ -55,18 +55,21 @@ impl AppView {
             (theme.popover, theme.border, theme.muted_foreground, theme.danger, theme.warning);
         let can_create = dialog.form.can_create(project);
         let name_message = dialog.form.name_message(project);
-        // Files first, then Live Globs, as `(server, path or glob)`.
-        let mut remote_files: Vec<(String, String)> = self
+        // Files first, then Live Globs, as `(server, path or glob, Starting Time)`.
+        let mut remote_files: Vec<(String, String, Option<String>)> = self
             .remote
             .new_space_files
             .iter()
-            .map(|(_, server, path)| (server.clone(), path.clone()))
+            .map(|(server_id, server, path)| {
+                let start = self.remote.new_space_starts.get(&(server_id.clone(), path.clone())).cloned();
+                (server.clone(), path.clone(), start)
+            })
             .collect();
         remote_files.extend(
             self.remote
                 .new_space_globs
                 .iter()
-                .map(|(_, server, dir, pattern)| (server.clone(), crate::remote::browse::join(dir, pattern))),
+                .map(|(_, server, dir, pattern)| (server.clone(), crate::remote::browse::join(dir, pattern), None)),
         );
         let remote_commands = self.remote.new_space_commands.clone();
         let remote_count = remote_files.len() + remote_commands.len();
@@ -215,7 +218,7 @@ impl AppView {
                                             })),
                                     )
                             }))
-                            .children(remote_files.iter().enumerate().map(|(ix, (server, path))| {
+                            .children(remote_files.iter().enumerate().map(|(ix, (server, path, start))| {
                                 h_flex()
                                     .gap_2()
                                     .items_center()
@@ -227,6 +230,11 @@ impl AppView {
                                     .text_sm()
                                     .child(Icon::new(IconName::Globe).size_4())
                                     .child(div().flex_1().truncate().child(format!("{server}:{path}")))
+                                    .when_some(start.clone(), |this, start| {
+                                        this.child(
+                                            div().text_xs().text_color(muted).child(format!("Starting Time {start}")),
+                                        )
+                                    })
                                     .child(
                                         Button::new(("new-space-remove-remote", ix))
                                             .ghost()

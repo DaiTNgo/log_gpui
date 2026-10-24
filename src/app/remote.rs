@@ -10,7 +10,7 @@ use crate::workspace::log_space::{LogSpaceKind, RemoteTarget};
 use crate::workspace::session::app_data_dir;
 use gpui::{Context, Entity};
 use gpui_component::input::InputState;
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
@@ -65,9 +65,9 @@ pub struct RemoteUi {
     /// Live Globs chosen for the New Log Space, as `(server id, server name,
     /// folder, pattern)`.
     pub new_space_globs: Vec<(String, String, String, String)>,
-    /// Starting Time typed in the picker for the Remote Files of the New Log
-    /// Space.
-    pub new_space_start: Option<String>,
+    /// Starting Time of each Remote File chosen for the New Log Space, by
+    /// `(server id, path)`: the one typed in the picker that added it.
+    pub new_space_starts: HashMap<(String, String), String>,
     /// What the file picker remembers, and where it is written.
     pub picker_state: crate::remote::picker_state::PickerState,
     pub picker_state_path: PathBuf,
@@ -101,7 +101,7 @@ impl RemoteUi {
             download_options: None,
             new_space_files: Vec::new(),
             new_space_globs: Vec::new(),
-            new_space_start: None,
+            new_space_starts: HashMap::new(),
             picker_state: crate::remote::picker_state::PickerState::load(&picker_state_path),
             picker_state_path,
             new_space_commands: Vec::new(),
@@ -607,7 +607,8 @@ impl AppView {
     pub fn new_space_remove_remote(&mut self, index: usize, cx: &mut Context<Self>) {
         let files = self.remote.new_space_files.len();
         if index < files {
-            self.remote.new_space_files.remove(index);
+            let (server_id, _, path) = self.remote.new_space_files.remove(index);
+            self.remote.new_space_starts.remove(&(server_id, path));
         } else if index - files < self.remote.new_space_globs.len() {
             self.remote.new_space_globs.remove(index - files);
         }

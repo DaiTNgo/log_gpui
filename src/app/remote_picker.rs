@@ -440,17 +440,6 @@ impl AppView {
         Some(crate::remote::starting_time::StartError::Invalid.to_string())
     }
 
-    /// Give every Remote File of the open Log Space the Starting Time.
-    pub(crate) fn set_start_time_in_active_space(&mut self, start: &str, cx: &mut Context<Self>) {
-        let Some(space_id) = self.active_space().map(|s| s.id.clone()) else { return };
-        if let Some(space) = self.active_project_mut().and_then(|p| p.log_space_mut(&space_id)) {
-            for file in space.files.iter_mut().filter(|f| f.remote.as_ref().is_some_and(|r| r.path().is_some())) {
-                file.set_start_time(Some(start.to_string()));
-            }
-        }
-        cx.notify();
-    }
-
     pub fn picker_select_server(&mut self, server_id: &str, cx: &mut Context<Self>) {
         let remembered = self.remote.picker_state.last_dir(server_id).map(str::to_string);
         let on_files = if let Some(picker) = self.remote.picker.as_mut() {
@@ -902,10 +891,12 @@ impl AppView {
         let mut remembered: Vec<(String, String, bool)> = Vec::new();
         match picker.target {
             PickerTarget::NewSpace => {
-                if !start.is_empty() {
-                    self.remote.new_space_start = Some(start.clone());
-                }
                 for file in files {
+                    // The Starting Time goes with the files of this Add only;
+                    // one chosen again takes the new Starting Time.
+                    if !start.is_empty() {
+                        self.remote.new_space_starts.insert((file.0.clone(), file.2.clone()), start.clone());
+                    }
                     if !self.remote.new_space_files.contains(&file) {
                         remembered.push((file.0.clone(), file.2.clone(), false));
                         self.remote.new_space_files.push(file);
