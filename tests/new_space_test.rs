@@ -78,7 +78,7 @@ fn binary_files_are_listed_but_not_counted() {
     form.push("/core.dump".into(), PendingStatus::Binary);
 
     assert_eq!(form.files.len(), 2);
-    assert_eq!(form.files[1].warning(), Some("Not a text file"));
+    assert_eq!(form.files[1].warning().as_deref(), Some("Not a text file"));
     assert_eq!(form.importable_sources(), vec![ImportSource::Disk("/a.log".to_string())]);
     assert_eq!(form.create_label(), "Create with 1 file");
 }

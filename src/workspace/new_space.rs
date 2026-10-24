@@ -42,15 +42,23 @@ pub struct PendingFile {
 }
 
 impl PendingFile {
-    pub fn warning(&self) -> Option<&'static str> {
-        match self.status {
-            PendingStatus::Ok | PendingStatus::Reading => None,
-            PendingStatus::Binary => Some("Not a text file"),
-            PendingStatus::Duplicate => Some("Already in the list"),
-            PendingStatus::LargeFile => Some("Large file"),
-            PendingStatus::Damaged => Some("Damaged archive"),
-            PendingStatus::Encrypted => Some("Password-protected archive"),
-        }
+    /// What the list says next to the file, if anything. A large Archive
+    /// Entry says how large it is once unpacked.
+    pub fn warning(&self) -> Option<String> {
+        let text = match self.status {
+            PendingStatus::Ok | PendingStatus::Reading => return None,
+            PendingStatus::Binary => "Not a text file",
+            PendingStatus::Duplicate => "Already in the list",
+            PendingStatus::LargeFile => match &self.source {
+                PendingSource::Entry { size, .. } => {
+                    return Some(format!("Large file: {} unpacked", crate::live::buffer::size_text(*size)));
+                }
+                PendingSource::Disk(_) => "Large file",
+            },
+            PendingStatus::Damaged => "Damaged archive",
+            PendingStatus::Encrypted => "Password-protected archive",
+        };
+        Some(text.to_string())
     }
 
     /// Whether the file is added when the space is created.

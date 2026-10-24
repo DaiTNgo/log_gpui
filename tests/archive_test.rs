@@ -247,8 +247,8 @@ fn dropping_an_archive_lists_its_entries() {
     let names: Vec<String> = form.files.iter().map(|f| f.display_name()).collect();
     assert_eq!(names, ["bundle.zip › app.log", "bundle.zip › heap.hprof", "bundle.zip › old.zip"]);
     assert_eq!(form.files[0].status, PendingStatus::Ok);
-    assert_eq!(form.files[1].warning(), Some("Not a text file"));
-    assert_eq!(form.files[2].warning(), Some("Not a text file"));
+    assert_eq!(form.files[1].warning().as_deref(), Some("Not a text file"));
+    assert_eq!(form.files[2].warning().as_deref(), Some("Not a text file"));
     assert_eq!(form.create_label(), "Create with 1 file");
 
     // Only entries that cannot be added are left: nothing to create from.
@@ -287,8 +287,8 @@ fn broken_archives_are_listed_with_the_reason_and_not_counted() {
 
     let mut form = NewLogSpaceForm::new();
     form.add_paths(&[path_str(&secret), path_str(&cut)]);
-    assert_eq!(form.files[0].warning(), Some("Password-protected archive"));
-    assert_eq!(form.files[1].warning(), Some("Damaged archive"));
+    assert_eq!(form.files[0].warning().as_deref(), Some("Password-protected archive"));
+    assert_eq!(form.files[1].warning().as_deref(), Some("Damaged archive"));
     assert_eq!(form.create_label(), "Create");
     assert!(form.files_message().is_some(), "Create is off, not an empty Log Space");
 }
@@ -308,7 +308,7 @@ fn large_entries_warn_but_stay_and_the_total_is_capped() {
     );
     let (source, status) = entry("big.log", 500 * 1024 * 1024, PendingStatus::LargeFile);
     form.push_source(source, status);
-    assert_eq!(form.files[0].warning(), Some("Large file"));
+    assert_eq!(form.files[0].warning().as_deref(), Some("Large file: 500 MB unpacked"));
     assert_eq!(form.create_label(), "Create with 1 file");
     assert!(form.can_create(&project));
 
