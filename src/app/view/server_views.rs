@@ -787,6 +787,8 @@ impl AppView {
         let edit_can_save = self.picker_edit_can_save();
         let edit_warning = self.picker_edit_warning();
         let command_can_save = is_edit && self.command_edit_changed(cx);
+        // Done takes a typed path that was not added yet as well.
+        let typed_pending = self.picker_typed_pending(cx).is_some();
         // The picker is borrowed again below; take what it needs now.
         let Some(picker) = self.remote.picker.as_ref() else { return div().into_any_element() };
         let theme = cx.theme();
@@ -1104,7 +1106,7 @@ impl AppView {
                             .child(
                                 Button::new("picker-add")
                                     .small()
-                                    .label(if is_edit { "Use path" } else { "Add path" })
+                                    .label(if is_edit { "Use path" } else { "Add to list" })
                                     .on_click(cx.listener(|this, _, _, cx| this.picker_add_typed(cx))),
                             ),
                     ))
@@ -1161,11 +1163,12 @@ impl AppView {
                                 Button::new("picker-done")
                                     .primary()
                                     .label(match (count, globs) {
+                                        (0, _) => "Add path".to_string(),
                                         (1, 0) => "Add 1 file".to_string(),
                                         (n, 0) => format!("Add {n} files"),
                                         (n, g) => format!("Add {n} items ({g} Live Glob{})", if g == 1 { "" } else { "s" }),
                                     })
-                                    .disabled(count == 0 || start_error.is_some())
+                                    .disabled((count == 0 && !typed_pending) || start_error.is_some())
                                     .on_click(cx.listener(|this, _, _, cx| this.picker_confirm(cx))),
                             ))
                             .when(!on_files && !is_edit, |this| this.child(

@@ -168,6 +168,9 @@ pub struct RemotePicker {
     pub original: Option<EditOriginal>,
     /// Edit of a Live Glob: what the glob typed now would do.
     pub glob_preview: Option<GlobPreview>,
+    /// Done was pressed with a path typed and not added yet: it is checked
+    /// first, and Done goes on once it is added.
+    confirm_after_resolve: bool,
     /// Only the answers to the latest check and the latest preview count: a
     /// dialog closed or changed meanwhile drops them.
     resolve_request: u64,
@@ -333,6 +336,7 @@ impl AppView {
             set_start: None,
             original: None,
             glob_preview: None,
+            confirm_after_resolve: false,
             resolve_request: 0,
             preview_request: 0,
             request: 0,
@@ -847,6 +851,16 @@ impl AppView {
         }
         picker.error = (!errors.is_empty()).then(|| errors.join("\n"));
         picker.info = added_message(added_files, skipped_files, added_globs, skipped_globs);
+        // Done waited for the typed path: go on unless it failed or named a
+        // folder, which opens instead.
+        let confirm = std::mem::take(&mut picker.confirm_after_resolve)
+            && errors.is_empty()
+            && open_dir.is_none()
+            && !picker.staged.is_empty();
+        if confirm {
+            self.picker_confirm_now(cx);
+            return;
+        }
         // The typed text stays after an add, to be tweaked; opening a folder
         // empties it.
         if open_dir.is_some() {
@@ -864,9 +878,34 @@ impl AppView {
         cx.notify();
     }
 
-    /// Done: the chosen files and Live Globs go to the New Log Space or the
-    /// Remote Log Space, and each Server remembers what was really added.
+    /// The path typed in the picker when it is not in the waiting list yet:
+    /// Done adds it too.
+    pub fn picker_typed_pending(&self, cx: &gpui::App) -> Option<String> {
+        let picker = self.remote.picker.as_ref()?;
+        let text = picker.input.as_ref()?.read(cx).value().trim().to_string();
+        let listed = picker.staged.iter().any(|s| s.path() == text);
+        (!text.is_empty() && !listed).then_some(text)
+    }
+
+    /// Done: a path still typed in the field is checked and added first,
+    /// then everything chosen goes on (`picker_confirm_now`).
     pub fn picker_confirm(&mut self, cx: &mut Context<Self>) {
+        if self.picker_start_error().is_some() {
+            return;
+        }
+        if let Some(text) = self.picker_typed_pending(cx) {
+            if let Some(picker) = self.remote.picker.as_mut() {
+                picker.confirm_after_resolve = true;
+            }
+            self.picker_add_text(text, cx);
+            return;
+        }
+        self.picker_confirm_now(cx);
+    }
+
+    /// The chosen files and Live Globs go to the New Log Space or the
+    /// Remote Log Space, and each Server remembers what was really added.
+    pub fn picker_confirm_now(&mut self, cx: &mut Context<Self>) {
         if self.picker_start_error().is_some() {
             return;
         }

@@ -243,3 +243,62 @@ fn a_command_already_chosen_is_refused_with_a_reason(cx: &mut TestAppContext) {
         assert!(app.remote.picker.is_some());
     });
 }
+
+/// Type `text` in the picker's path field.
+fn type_path(h: &mut Harness, text: &str) {
+    h.cx.run_until_parked();
+    h.cx.update(|window, cx| {
+        let view = h.view.clone();
+        let input = view.read(cx).remote.picker.as_ref().unwrap().input.clone().unwrap();
+        input.update(cx, |state, cx| state.set_value(text.to_string(), window, cx));
+    });
+}
+
+#[gpui::test]
+fn done_adds_a_typed_path_without_add_to_list_first(cx: &mut TestAppContext) {
+    use log_gpui::remote::browse::Resolved;
+    let mut h = common::open_app(cx);
+    let server = add_server(&mut h);
+    h.view.update(&mut h.cx, |app, cx| {
+        app.open_new_space_dialog(cx);
+        app.open_remote_picker(PickerTarget::NewSpace, cx);
+    });
+    type_path(&mut h, "/var/log/api.log");
+    h.view.update(&mut h.cx, |app, cx| {
+        assert_eq!(app.picker_typed_pending(cx).as_deref(), Some("/var/log/api.log"), "Done is on");
+        app.picker_confirm(cx);
+        assert!(app.remote.picker.is_some(), "Done waits for the path to be checked");
+        // The Server answers: the path is a file.
+        let found = Ok(Ok(Resolved::Files(vec!["/var/log/api.log".to_string()])));
+        app.picker_resolved(&server, vec![(server.clone(), found)], cx);
+        assert!(app.remote.picker.is_none(), "then Done goes on");
+        assert_eq!(app.remote.new_space_files.len(), 1);
+        assert_eq!(app.remote.new_space_files[0].2, "/var/log/api.log");
+    });
+}
+
+#[gpui::test]
+fn done_stays_open_when_the_typed_path_fails_or_is_a_folder(cx: &mut TestAppContext) {
+    use log_gpui::remote::browse::Resolved;
+    let mut h = common::open_app(cx);
+    let server = add_server(&mut h);
+    h.view.update(&mut h.cx, |app, cx| {
+        app.open_new_space_dialog(cx);
+        app.open_remote_picker(PickerTarget::NewSpace, cx);
+    });
+    type_path(&mut h, "/var/log/missing.log");
+    h.view.update(&mut h.cx, |app, cx| {
+        app.picker_confirm(cx);
+        let failed = Ok(Err("No such file".to_string()));
+        app.picker_resolved(&server, vec![(server.clone(), failed)], cx);
+        assert!(app.remote.picker.is_some(), "the error is shown in the open picker");
+        assert!(app.remote.new_space_files.is_empty());
+    });
+    type_path(&mut h, "/var/log");
+    h.view.update(&mut h.cx, |app, cx| {
+        app.picker_confirm(cx);
+        let folder = Ok(Ok(Resolved::Dir("/var/log".to_string())));
+        app.picker_resolved(&server, vec![(server.clone(), folder)], cx);
+        assert!(app.remote.picker.is_some(), "a folder opens instead");
+    });
+}
