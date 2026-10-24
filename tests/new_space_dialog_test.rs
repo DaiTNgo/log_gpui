@@ -435,3 +435,28 @@ fn dropping_files_already_listed_says_so(cx: &mut TestAppContext) {
     h.cx.run_until_parked();
     assert!(h.cx.debug_bounds("new-space-already-listed").is_none());
 }
+
+#[gpui::test]
+fn removing_an_archive_being_read_drops_its_entries(cx: &mut TestAppContext) {
+    let mut h = common::open_app(cx);
+    // A `.gz` of one log file: an Archive, read in the background.
+    let gz = h.dir.path().join("api.log.gz");
+    let mut encoder = flate2::write::GzEncoder::new(std::fs::File::create(&gz).unwrap(), flate2::Compression::default());
+    std::io::Write::write_all(&mut encoder, b"one\ntwo\n").unwrap();
+    encoder.finish().unwrap();
+
+    h.view.update(&mut h.cx, |app, cx| {
+        app.open_new_space_dialog(cx);
+        app.new_space_add_paths(vec![gz.to_string_lossy().into_owned()], cx);
+        let form = &app.new_space.as_ref().unwrap().form;
+        assert!(form.is_reading(), "listed as Reading…");
+        // Removed before the listing ends.
+        app.new_space_remove_file(0, cx);
+    });
+    h.cx.run_until_parked();
+    h.view.read_with(&h.cx, |app, _| {
+        let form = &app.new_space.as_ref().unwrap().form;
+        assert!(form.files.is_empty(), "the entries that came later were dropped");
+        assert_eq!(form.create_label(), "Create empty");
+    });
+}

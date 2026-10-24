@@ -98,6 +98,8 @@ impl AppView {
         let mut file_list = v_flex().id("new-space-files").gap_1().max_h(px(180.0)).overflow_y_scroll();
         for (ix, file) in files.iter().enumerate() {
             let name = file.display_name();
+            // Removing an Archive still being read drops what it would list.
+            let remove_tip = if file.status == PendingStatus::Reading { "Stop reading" } else { "Remove" };
             file_list = file_list.child(
                 h_flex()
                     .gap_2()
@@ -126,6 +128,7 @@ impl AppView {
                             .ghost()
                             .xsmall()
                             .icon(IconName::Close)
+                            .tooltip(remove_tip)
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.new_space_remove_file(ix, cx)
                             })),
