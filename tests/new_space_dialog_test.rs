@@ -302,3 +302,15 @@ fn done_stays_open_when_the_typed_path_fails_or_is_a_folder(cx: &mut TestAppCont
         assert!(app.remote.picker.is_some(), "a folder opens instead");
     });
 }
+
+#[gpui::test]
+fn the_starting_time_field_has_a_label(cx: &mut TestAppContext) {
+    let mut h = common::open_app(cx);
+    add_server(&mut h);
+    h.view.update(&mut h.cx, |app, cx| {
+        app.open_new_space_dialog(cx);
+        app.open_remote_picker(PickerTarget::NewSpace, cx);
+    });
+    h.cx.run_until_parked();
+    assert!(h.cx.debug_bounds("picker-start-label").is_some());
+}

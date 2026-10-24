@@ -410,7 +410,7 @@ impl AppView {
         }
         if picker.start_input.is_none() {
             let input = cx.new(|cx| {
-                InputState::new(window, cx).placeholder("Start from (optional): 1h, 30m, 2d, 10:42, 2026-10-19 10:00")
+                InputState::new(window, cx).placeholder("Optional: 1h, 30m, 2d, 10:42, 2026-10-19 10:00")
             });
             cx.subscribe_in(&input, window, |this: &mut Self, input, event: &InputEvent, _window, cx| {
                 if let InputEvent::Change = event {

@@ -1111,9 +1111,24 @@ impl AppView {
                             ),
                     ))
                     .when(on_files && !editing_glob, |this| {
-                        this.child(div().child(
-                            start_input.map(|i| Input::new(&i).into_any_element()).unwrap_or_else(|| div().into_any_element()),
-                        ))
+                        // Labelled: a placeholder alone is gone once typed in.
+                        this.child(
+                            h_flex()
+                                .gap_2()
+                                .items_center()
+                                .child(
+                                    div()
+                                        .debug_selector(|| "picker-start-label".into())
+                                        .text_sm()
+                                        .flex_none()
+                                        .child("Starting Time"),
+                                )
+                                .child(div().flex_1().child(
+                                    start_input
+                                        .map(|i| Input::new(&i).into_any_element())
+                                        .unwrap_or_else(|| div().into_any_element()),
+                                )),
+                        )
                         .when_some(start_error.clone(), |this, e| this.child(div().text_xs().text_color(danger).child(e)))
                     })
                     .when(on_files, |this| {
