@@ -18,8 +18,8 @@ pub struct NewSpaceDialog {
     /// A name to put in the field at the next render: suggested from the
     /// first file added while the field was empty.
     pending_name: Option<String>,
-    /// Another dialog was drawn over this one at the last render.
-    covered: bool,
+    /// Tracks the dialog's box: the cursor is kept inside it.
+    pub focus: Option<gpui::FocusHandle>,
     /// The Starting Time of one chosen Remote File, being changed.
     pub start_edit: Option<StartEdit>,
     _subscription: Option<Subscription>,
@@ -58,7 +58,7 @@ impl AppView {
             form: NewLogSpaceForm::new(),
             name_input: None,
             pending_name: None,
-            covered: false,
+            focus: None,
             start_edit: None,
             _subscription: None,
         });
@@ -96,16 +96,16 @@ impl AppView {
             if let Some(name) = dialog.pending_name.take() {
                 input.update(cx, |state, cx| state.set_value(name, window, cx));
             }
-            // Back from the remote picker or the Servers dialog, whose fields
-            // took the cursor with them: it returns to the name, where Enter
-            // creates the Log Space.
+            // The cursor stays in the dialog: back from the remote picker or
+            // the Servers dialog, whose fields took it with them, or tabbed
+            // past the last button towards the view behind, it returns to the
+            // name, where Enter creates the Log Space.
             let covered = self.remote.picker.is_some()
                 || self.server_dialog.is_some()
                 || self.confirm.is_some()
                 || dialog.start_edit.is_some();
-            if covered {
-                dialog.covered = true;
-            } else if std::mem::take(&mut dialog.covered) {
+            let inside = dialog.focus.as_ref().is_some_and(|f| f.contains_focused(window, cx));
+            if !covered && !inside {
                 input.update(cx, |state, cx| state.focus(window, cx));
             }
             return;
@@ -128,6 +128,7 @@ impl AppView {
         );
         input.update(cx, |state, cx| state.focus(window, cx));
         dialog.name_input = Some(input);
+        dialog.focus = Some(cx.focus_handle());
         dialog._subscription = Some(subscription);
     }
 

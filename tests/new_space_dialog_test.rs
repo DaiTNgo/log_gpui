@@ -558,3 +558,25 @@ fn a_chosen_files_starting_time_is_changed_in_the_dialog(cx: &mut TestAppContext
         assert!(app.new_space.as_ref().is_some_and(|d| d.start_edit.is_none()));
     });
 }
+
+#[gpui::test]
+fn tab_goes_round_the_dialog_and_never_behind_it(cx: &mut TestAppContext) {
+    let mut h = common::open_app_with_lines(cx, &common::sample_lines(3));
+    h.view.update(&mut h.cx, |app, cx| app.open_new_space_dialog(cx));
+    h.cx.run_until_parked();
+    let mut back_on_name = 0;
+    for _ in 0..40 {
+        h.cx.simulate_keystrokes("tab");
+        h.cx.run_until_parked();
+        let (name, search) = h.view.update_in(&mut h.cx, |app, window, cx| {
+            let input = app.new_space.as_ref().unwrap().name_input.clone().unwrap();
+            (
+                gpui::Focusable::focus_handle(input.read(cx), cx).is_focused(window),
+                gpui::Focusable::focus_handle(app.search_input.read(cx), cx).is_focused(window),
+            )
+        });
+        assert!(!search, "the Search field behind the dialog never gets the cursor");
+        back_on_name += usize::from(name);
+    }
+    assert!(back_on_name >= 2, "Tab comes round to the name again");
+}

@@ -96,6 +96,7 @@ impl AppView {
         let files_message = dialog.form.files_message();
         let already_listed = dialog.form.already_listed_message();
         let name_input = dialog.name_input.clone();
+        let dialog_focus = dialog.focus.clone();
 
         let mut file_list = v_flex().id("new-space-files").gap_1().max_h(px(180.0)).overflow_y_scroll();
         for (ix, file) in files.iter().enumerate() {
@@ -185,6 +186,7 @@ impl AppView {
             }))
             .child(
                 v_flex()
+                    .when_some(dialog_focus, |this, focus| this.track_focus(&focus))
                     .w(px(520.0))
                     .gap_3()
                     .p_4()
