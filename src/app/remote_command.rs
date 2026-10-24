@@ -29,6 +29,21 @@ impl PresetKind {
         }
     }
 
+    /// The preset `fields` were written from.
+    pub fn of(fields: &PresetFields) -> Self {
+        match fields {
+            PresetFields::Journal { .. } => PresetKind::Journal,
+            PresetFields::Docker { .. } => PresetKind::Docker,
+            PresetFields::Kube { .. } => PresetKind::Kube,
+        }
+    }
+
+    /// The tag a chosen command shows: its preset, unless the command was
+    /// changed by hand after the preset wrote it.
+    pub fn tag(command: &str, preset: Option<&PresetFields>) -> Option<&'static str> {
+        crate::remote::command::unedited_preset(command, preset).map(|p| Self::of(&p).label())
+    }
+
     /// The name of what the preset reads the log of.
     pub fn subject(self) -> &'static str {
         match self {

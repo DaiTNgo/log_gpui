@@ -485,3 +485,26 @@ fn remove_all_empties_a_long_list(cx: &mut TestAppContext) {
     });
     assert!(h.cx.debug_bounds("new-space-clear").is_none());
 }
+
+#[gpui::test]
+fn a_chosen_command_shows_the_preset_that_wrote_it(cx: &mut TestAppContext) {
+    use log_gpui::app::remote_command::PresetKind;
+    use log_gpui::remote::PresetFields;
+    let mut h = common::open_app(cx);
+    let server = add_server(&mut h);
+    let docker = PresetFields::docker("api");
+    let written = docker.command();
+    let edited = format!("{written} | grep ERROR");
+    assert_eq!(PresetKind::tag(&written, Some(&docker)), Some("Docker"));
+    assert_eq!(PresetKind::tag(&edited, Some(&docker)), None, "changed by hand: no longer the preset's");
+
+    h.view.update(&mut h.cx, |app, cx| {
+        app.open_new_space_dialog(cx);
+        app.remote.new_space_commands.push((server.clone(), "web".into(), written, Some(docker.clone())));
+        app.remote.new_space_commands.push((server.clone(), "web".into(), edited, Some(docker)));
+        cx.notify();
+    });
+    h.cx.run_until_parked();
+    assert!(h.cx.debug_bounds("new-space-command-tag-0").is_some());
+    assert!(h.cx.debug_bounds("new-space-command-tag-1").is_none());
+}

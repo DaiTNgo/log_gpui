@@ -272,7 +272,8 @@ impl AppView {
                                     .gap_1()
                                     .max_h(px(180.0))
                                     .overflow_y_scroll()
-                                    .children(remote_commands.iter().enumerate().map(|(ix, (_, server, command, _))| {
+                                    .children(remote_commands.iter().enumerate().map(|(ix, (_, server, command, preset))| {
+                                        let tag = crate::app::remote_command::PresetKind::tag(command, preset.as_ref());
                                         h_flex()
                                             .gap_2()
                                             .items_center()
@@ -284,6 +285,15 @@ impl AppView {
                                             .text_sm()
                                             .child(Icon::new(IconName::Globe).size_4())
                                             .child(div().flex_1().truncate().child(format!("{server}$ {command}")))
+                                            .when_some(tag, |this, tag| {
+                                                this.child(
+                                                    div()
+                                                        .debug_selector(move || format!("new-space-command-tag-{ix}"))
+                                                        .text_xs()
+                                                        .text_color(muted)
+                                                        .child(tag),
+                                                )
+                                            })
                                             .child(
                                                 Button::new(("new-space-remove-command", ix))
                                                     .ghost()
