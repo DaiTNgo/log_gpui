@@ -119,3 +119,27 @@ fn a_folder_can_be_chosen_as_well_as_files(cx: &mut TestAppContext) {
     assert_eq!(names, ["a.log", "b.log"]);
     assert_eq!(label, "Create with 2 files");
 }
+
+#[gpui::test]
+fn the_dialog_says_why_local_and_remote_files_do_not_mix(cx: &mut TestAppContext) {
+    let mut h = common::open_app(cx);
+    let server = add_server(&mut h);
+    h.view.update(&mut h.cx, |app, cx| app.open_new_space_dialog(cx));
+    h.cx.run_until_parked();
+    assert!(h.cx.debug_bounds("new-space-local-hint").is_none());
+    assert!(h.cx.debug_bounds("new-space-remote-hint").is_none());
+
+    // A local file turns the remote buttons off, and the dialog says why.
+    let log = h.dir.path().join("a.log");
+    std::fs::write(&log, "one\n").unwrap();
+    h.view.update(&mut h.cx, |app, cx| app.new_space_add_paths(vec![log.to_string_lossy().into_owned()], cx));
+    h.cx.run_until_parked();
+    assert!(h.cx.debug_bounds("new-space-remote-hint").is_some());
+
+    // A remote file hides the drop zone, and the dialog says why.
+    h.view.update(&mut h.cx, |app, cx| app.new_space_remove_file(0, cx));
+    add_in_picker(&mut h, &server, &["/var/log/api.log"], "");
+    h.cx.run_until_parked();
+    assert!(h.cx.debug_bounds("new-space-local-hint").is_some());
+    assert!(h.cx.debug_bounds("new-space-remote-hint").is_none());
+}

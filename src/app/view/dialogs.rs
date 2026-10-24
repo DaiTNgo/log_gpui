@@ -16,6 +16,11 @@ use gpui_component::{
 };
 use gpui_kit::assets::IconName;
 
+/// Why local files cannot be added: the New Log Space has remote members.
+const MIX_HINT_LOCAL: &str = "A Log Space holds local or remote files, not both: remove the remote ones to add local files.";
+/// Why remote files cannot be added: the New Log Space has local files.
+const MIX_HINT_REMOTE: &str = "A Log Space holds local or remote files, not both: remove the local ones to add remote files.";
+
 impl AppView {
     /// The error shown under a form field: an error icon and the message,
     /// in the danger color, so it does not rest on color alone.
@@ -199,6 +204,15 @@ impl AppView {
                             .gap_1()
                             .child(div().text_sm().child("Files"))
                             .when(remote_count == 0, |this| this.child(drop_zone))
+                            .when(remote_count > 0, |this| {
+                                this.child(
+                                    div()
+                                        .debug_selector(|| "new-space-local-hint".into())
+                                        .text_xs()
+                                        .text_color(muted)
+                                        .child(MIX_HINT_LOCAL),
+                                )
+                            })
                             .when(!files.is_empty() && remote_count == 0, |this| this.child(file_list))
                             .when_some(files_message, |this, message| {
                                 this.child(div().text_xs().text_color(danger).child(message))
@@ -267,7 +281,6 @@ impl AppView {
                                     })),
                             )
                             .child(
-                                // Local and remote files are never mixed in one Log Space.
                                 Button::new("new-space-add-remote")
                                     .small()
                                     .label("Add remote files…")
@@ -287,7 +300,16 @@ impl AppView {
                                             cx,
                                         )
                                     })),
-                            ),
+                            )
+                            .when(!files.is_empty(), |this| {
+                                this.child(
+                                    div()
+                                        .debug_selector(|| "new-space-remote-hint".into())
+                                        .text_xs()
+                                        .text_color(muted)
+                                        .child(MIX_HINT_REMOTE),
+                                )
+                            }),
                     )
                     .child(
                         h_flex()
