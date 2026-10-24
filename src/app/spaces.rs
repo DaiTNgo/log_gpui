@@ -20,7 +20,30 @@ pub struct NewSpaceDialog {
     pending_name: Option<String>,
     /// Another dialog was drawn over this one at the last render.
     covered: bool,
+    /// The Starting Time of one chosen Remote File, being changed.
+    pub start_edit: Option<StartEdit>,
     _subscription: Option<Subscription>,
+}
+
+/// Changing the Starting Time of a Remote File chosen for the New Log Space.
+pub struct StartEdit {
+    /// `(server id, path)` of the file.
+    pub key: (String, String),
+    /// `server:path`, for the title.
+    pub label: String,
+    /// What the field holds.
+    pub text: String,
+    /// Created while rendering, where a window is available.
+    pub input: Option<Entity<InputState>>,
+}
+
+impl StartEdit {
+    /// Why Save is off, if it is.
+    pub fn error(&self) -> Option<String> {
+        let text = self.text.trim();
+        (!text.is_empty() && !crate::remote::starting_time::is_readable(text))
+            .then(|| crate::remote::starting_time::StartError::Invalid.to_string())
+    }
 }
 
 impl AppView {
@@ -36,6 +59,7 @@ impl AppView {
             name_input: None,
             pending_name: None,
             covered: false,
+            start_edit: None,
             _subscription: None,
         });
         self.is_palette_open = false;
@@ -46,6 +70,28 @@ impl AppView {
     /// put a suggested name in it.
     pub fn sync_new_space_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(dialog) = self.new_space.as_mut() else { return };
+        if let Some(edit) = dialog.start_edit.as_mut().filter(|e| e.input.is_none()) {
+            let text = edit.text.clone();
+            let input = cx.new(|cx| {
+                let mut state = InputState::new(window, cx).placeholder("1h, 30m, 2d, 10:42, 2026-10-19 10:00");
+                state.set_value(text, window, cx);
+                state
+            });
+            cx.subscribe_in(&input, window, |this: &mut Self, input, event: &InputEvent, _window, cx| match event {
+                InputEvent::Change => {
+                    let text = input.read(cx).value().to_string();
+                    if let Some(edit) = this.new_space.as_mut().and_then(|d| d.start_edit.as_mut()) {
+                        edit.text = text;
+                    }
+                    cx.notify();
+                }
+                InputEvent::PressEnter { .. } => this.new_space_save_start(cx),
+                _ => {}
+            })
+            .detach();
+            input.update(cx, |state, cx| state.focus(window, cx));
+            edit.input = Some(input);
+        }
         if let Some(input) = dialog.name_input.clone() {
             if let Some(name) = dialog.pending_name.take() {
                 input.update(cx, |state, cx| state.set_value(name, window, cx));
@@ -53,7 +99,10 @@ impl AppView {
             // Back from the remote picker or the Servers dialog, whose fields
             // took the cursor with them: it returns to the name, where Enter
             // creates the Log Space.
-            let covered = self.remote.picker.is_some() || self.server_dialog.is_some() || self.confirm.is_some();
+            let covered = self.remote.picker.is_some()
+                || self.server_dialog.is_some()
+                || self.confirm.is_some()
+                || dialog.start_edit.is_some();
             if covered {
                 dialog.covered = true;
             } else if std::mem::take(&mut dialog.covered) {
@@ -160,6 +209,43 @@ impl AppView {
             self.open_new_space_dialog(cx);
         }
         self.new_space_add_paths(paths, cx);
+    }
+
+    /// Change the Starting Time of the chosen Remote File at `index`.
+    pub fn new_space_edit_start(&mut self, index: usize, cx: &mut Context<Self>) {
+        let Some((server_id, server, path)) = self.remote.new_space_files.get(index).cloned() else { return };
+        let key = (server_id, path.clone());
+        let text = self.remote.new_space_starts.get(&key).cloned().unwrap_or_default();
+        if let Some(dialog) = self.new_space.as_mut() {
+            dialog.start_edit = Some(StartEdit { key, label: format!("{server}:{path}"), text, input: None });
+            cx.notify();
+        }
+    }
+
+    /// Save: the file keeps the Starting Time typed; an empty field reads
+    /// its last lines again.
+    pub fn new_space_save_start(&mut self, cx: &mut Context<Self>) {
+        let Some(dialog) = self.new_space.as_mut() else { return };
+        let Some(edit) = dialog.start_edit.as_ref() else { return };
+        if edit.error().is_some() {
+            return;
+        }
+        let text = edit.text.trim().to_string();
+        let key = edit.key.clone();
+        dialog.start_edit = None;
+        if text.is_empty() {
+            self.remote.new_space_starts.remove(&key);
+        } else {
+            self.remote.new_space_starts.insert(key, text);
+        }
+        cx.notify();
+    }
+
+    pub fn new_space_cancel_start(&mut self, cx: &mut Context<Self>) {
+        if let Some(dialog) = self.new_space.as_mut() {
+            dialog.start_edit = None;
+            cx.notify();
+        }
     }
 
     /// "Remove all": empty the list of local files.

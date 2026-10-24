@@ -76,6 +76,8 @@ impl AppView {
                 .iter()
                 .map(|(_, server, dir, pattern)| (server.clone(), crate::remote::browse::join(dir, pattern), None)),
         );
+        let remote_file_count = self.remote.new_space_files.len();
+        let start_edit = dialog.start_edit.as_ref().map(|e| (e.label.clone(), e.input.clone(), e.error()));
         let remote_commands = self.remote.new_space_commands.clone();
         let remote_count = remote_files.len() + remote_commands.len();
         let create_label = if remote_count == 0 {
@@ -316,9 +318,21 @@ impl AppView {
                                             .text_sm()
                                             .child(Icon::new(IconName::Globe).size_4())
                                             .child(div().flex_1().truncate().child(format!("{server}:{path}")))
-                                            .when_some(start.clone(), |this, start| {
+                                            // A file's Starting Time, changed here; a Live
+                                            // Glob's files start at their last lines.
+                                            .when(ix < remote_file_count, |this| {
+                                                let label = match start {
+                                                    Some(start) => format!("Starting Time {start}"),
+                                                    None => "Starting Time…".to_string(),
+                                                };
                                                 this.child(
-                                                    div().text_xs().text_color(muted).child(format!("Starting Time {start}")),
+                                                    Button::new(("new-space-edit-start", ix))
+                                                        .ghost()
+                                                        .xsmall()
+                                                        .label(label)
+                                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                                            this.new_space_edit_start(ix, cx)
+                                                        })),
                                                 )
                                             })
                                             .child(
@@ -392,7 +406,63 @@ impl AppView {
                             ),
                     ),
             )
+            .when_some(start_edit, |this, (label, input, error)| {
+                this.child(Self::render_start_edit(label, input, error, bg, border, muted, danger, cx))
+            })
             .into_any_element()
+    }
+
+    /// Changing the Starting Time of one chosen Remote File, above the
+    /// New Log Space dialog.
+    #[allow(clippy::too_many_arguments)]
+    fn render_start_edit(
+        label: String,
+        input: Option<gpui::Entity<gpui_component::input::InputState>>,
+        error: Option<String>,
+        bg: gpui::Hsla,
+        border: gpui::Hsla,
+        muted: gpui::Hsla,
+        danger: gpui::Hsla,
+        cx: &mut gpui::Context<Self>,
+    ) -> gpui::Div {
+        Self::modal_backdrop().child(
+            v_flex()
+                .debug_selector(|| "new-space-start-edit".into())
+                .w(px(420.0))
+                .gap_3()
+                .p_4()
+                .bg(bg)
+                .border_1()
+                .border_color(border)
+                .rounded_lg()
+                .shadow_2xl()
+                .child(div().text_base().font_weight(gpui::FontWeight::SEMIBOLD).child("Starting Time"))
+                .child(div().text_sm().text_color(muted).truncate().child(label))
+                .child(div().text_xs().text_color(muted).child(
+                    "Where reading the file begins: a span back from its newest line, or a time on its clock. Empty reads its last lines.",
+                ))
+                .when_some(input, |this, input| {
+                    this.child(Input::new(&input).when(error.is_some(), |i| i.border_color(danger)))
+                })
+                .when_some(error.clone(), |this, message| this.child(Self::field_error_row(message, danger)))
+                .child(
+                    h_flex()
+                        .justify_end()
+                        .gap_2()
+                        .child(
+                            Button::new("start-edit-cancel")
+                                .label("Cancel")
+                                .on_click(cx.listener(|this, _, _, cx| this.new_space_cancel_start(cx))),
+                        )
+                        .child(
+                            Button::new("start-edit-save")
+                                .primary()
+                                .label("Save")
+                                .disabled(error.is_some())
+                                .on_click(cx.listener(|this, _, _, cx| this.new_space_save_start(cx))),
+                        ),
+                ),
+        )
     }
 
     /// Confirmation before deleting a Log Space or a scratch file.

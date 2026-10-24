@@ -508,3 +508,53 @@ fn a_chosen_command_shows_the_preset_that_wrote_it(cx: &mut TestAppContext) {
     assert!(h.cx.debug_bounds("new-space-command-tag-0").is_some());
     assert!(h.cx.debug_bounds("new-space-command-tag-1").is_none());
 }
+
+#[gpui::test]
+fn a_chosen_files_starting_time_is_changed_in_the_dialog(cx: &mut TestAppContext) {
+    let mut h = common::open_app(cx);
+    let server = add_server(&mut h);
+    h.view.update(&mut h.cx, |app, cx| app.open_new_space_dialog(cx));
+    add_in_picker(&mut h, &server, &["/var/log/api.log"], "1h");
+    let key = (server.clone(), "/var/log/api.log".to_string());
+    let typed = |h: &mut Harness, text: &str| {
+        h.view.update(&mut h.cx, |app, cx| {
+            app.new_space.as_mut().unwrap().start_edit.as_mut().unwrap().text = text.to_string();
+            cx.notify();
+        });
+    };
+
+    h.view.update(&mut h.cx, |app, cx| app.new_space_edit_start(0, cx));
+    h.cx.run_until_parked();
+    assert!(h.cx.debug_bounds("new-space-start-edit").is_some(), "the box opens");
+    h.view.read_with(&h.cx, |app, _| {
+        assert_eq!(app.new_space.as_ref().unwrap().start_edit.as_ref().unwrap().text, "1h", "with what the file has");
+    });
+
+    // Text that is not a Starting Time cannot be saved.
+    typed(&mut h, "yesterday-ish");
+    h.view.update(&mut h.cx, |app, cx| {
+        app.new_space_save_start(cx);
+        assert!(app.new_space.as_ref().unwrap().start_edit.is_some(), "still open");
+        assert_eq!(app.remote.new_space_starts.get(&key).map(String::as_str), Some("1h"));
+    });
+
+    typed(&mut h, "30m");
+    h.view.update(&mut h.cx, |app, cx| app.new_space_save_start(cx));
+    h.view.read_with(&h.cx, |app, _| {
+        assert!(app.new_space.as_ref().unwrap().start_edit.is_none());
+        assert_eq!(app.remote.new_space_starts.get(&key).map(String::as_str), Some("30m"));
+    });
+
+    // Emptied, the file reads its last lines again.
+    h.view.update(&mut h.cx, |app, cx| app.new_space_edit_start(0, cx));
+    typed(&mut h, "");
+    h.view.update(&mut h.cx, |app, cx| app.new_space_save_start(cx));
+    h.view.read_with(&h.cx, |app, _| assert!(app.remote.new_space_starts.is_empty()));
+
+    // Escape closes the box, not the dialog.
+    h.view.update(&mut h.cx, |app, cx| {
+        app.new_space_edit_start(0, cx);
+        assert!(app.close_top_dialog(cx));
+        assert!(app.new_space.as_ref().is_some_and(|d| d.start_edit.is_none()));
+    });
+}

@@ -33,6 +33,8 @@ impl AppView {
             // Drawn above the New Log Space dialog it was opened from, which
             // stays open with what it had.
             self.close_remote_picker(cx);
+        } else if self.new_space.as_ref().is_some_and(|d| d.start_edit.is_some()) {
+            self.new_space_cancel_start(cx);
         } else if self.new_space.is_some() {
             self.new_space_cancel(cx);
         } else {
