@@ -206,3 +206,16 @@ fn a_name_is_suggested_from_a_file_or_folder() {
     assert_eq!(unique_name("api", &p), "api 3");
     assert_eq!(unique_name("db", &p), "db");
 }
+
+#[test]
+fn create_says_it_waits_for_an_archive() {
+    let p = project_with(&[]);
+    let mut form = NewLogSpaceForm::new();
+    form.set_name("Bundle");
+    form.push("/a.log".into(), PendingStatus::Ok);
+    form.push("/logs.zip".into(), PendingStatus::Reading);
+    assert!(!form.can_create(&p));
+    assert_eq!(form.create_label(), "Reading archive…");
+    form.finish_archive("/logs.zip", Vec::new());
+    assert_eq!(form.create_label(), "Create with 1 file");
+}

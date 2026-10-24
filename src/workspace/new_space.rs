@@ -344,8 +344,12 @@ impl NewLogSpaceForm {
     }
 
     /// "Create empty" or "Create with N file(s)"; just "Create" while the
-    /// listed files give nothing to add.
+    /// listed files give nothing to add, and "Reading archive…" while an
+    /// Archive is listed (Create is off meanwhile).
     pub fn create_label(&self) -> String {
+        if self.is_reading() {
+            return "Reading archive…".to_string();
+        }
         match self.importable_sources().len() {
             0 if self.files.is_empty() => "Create empty".to_string(),
             0 => "Create".to_string(),
