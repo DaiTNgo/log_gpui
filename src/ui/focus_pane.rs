@@ -606,7 +606,7 @@ impl PaneRows {
         app: &AppView,
         mono_font: &gpui::SharedString,
     ) -> Option<gpui::Stateful<gpui::Div>> {
-        let entries = &app.all_entries;
+        let entries = app.rows();
         let find = app.focus.find();
         let row = *self.rows.get(index)?;
         let colors = self.colors;
@@ -614,12 +614,16 @@ impl PaneRows {
         // line gets a plain one that carries its Markers.
         let raw_entry;
         let break_label: Option<String>;
+        let row_markers: &[crate::marker::TextMarker];
+        let row_source: Option<&str>;
         let (entry, paint, number, source_name): (&LogEntry, Option<&RowPaint>, usize, Option<String>) =
             match (&self.source, row) {
                 (PaneSource::Parsed { paints }, FocusRow::Entry(ix)) => {
                     let e = entries.get(ix)?;
                     break_label = e.break_before.as_ref().map(|m| m.label.clone());
-                    (e, paints.get(ix).and_then(|p| p.as_deref()), e.index, e.source.as_deref().map(str::to_string))
+                    row_markers = entries.markers(ix);
+                    row_source = entries.source(ix);
+                    (e, paints.get(ix).and_then(|p| p.as_deref()), e.index, row_source.map(str::to_string))
                 }
                 (PaneSource::Raw { sections, markers }, FocusRow::Raw { section, line }) => {
                     let s = sections.get(section)?;
@@ -639,6 +643,8 @@ impl PaneRows {
                         .cloned()
                         .unwrap_or_default();
                     raw_entry = e;
+                    row_markers = &raw_entry.markers;
+                    row_source = None;
                     break_label = s.breaks.get(&line).map(|m| m.label.clone());
                     (&raw_entry, None, line + 1, Some(s.display_name.clone()))
                 }
@@ -672,6 +678,8 @@ impl PaneRows {
         let ctx = CellCtx {
             colors: &colors,
             entry,
+            markers: row_markers,
+            source: row_source,
             search_ranges: &[],
             find_ranges: &[],
             line_search: &[],

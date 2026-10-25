@@ -3,7 +3,6 @@
 //! Everything here is plain data and pure functions, so it is tested without
 //! a window. The app (`app/focus.rs`) feeds it the lines of the open view.
 
-use crate::model::LogEntry;
 use crate::search::SearchState;
 use crate::search_expr::{Matcher, SearchError};
 use serde::{Deserialize, Serialize};
@@ -499,8 +498,8 @@ impl From<FocusTabs> for FocusTabsRepr {
 /// No Filter means every line passes, no matcher means every line matches;
 /// with neither the tab is empty. A Continuation Line is listed only when it
 /// matches on its own.
-pub fn compute_focus_rows(
-    entries: &[LogEntry],
+pub fn compute_focus_rows<R: crate::rows::Rows + ?Sized>(
+    entries: &R,
     filter_pass: &[usize],
     filter_active: bool,
     matcher: Option<&Matcher>,

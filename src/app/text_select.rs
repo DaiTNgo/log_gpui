@@ -197,7 +197,8 @@ impl AppView {
     /// What a right-click at `at` landed on.
     pub fn cell_target_at(&self, at: Point<Pixels>, window: &Window, cx: &gpui::App) -> Option<CellTarget> {
         let (pos, hit) = self.text_pos_at(at, window, cx)?;
-        let entry = self.all_entries.get(*self.visible_indices.get(pos.row)?)?;
+        let entry_ix = *self.visible_indices.get(pos.row)?;
+        let entry = self.rows().get(entry_ix)?;
         let mut cell = None;
         let mut column_value = None;
         match hit {
@@ -219,9 +220,9 @@ impl AppView {
                 }
             }
             Hit::Source => {
-                column_value = entry
-                    .source
-                    .as_deref()
+                column_value = self
+                    .rows()
+                    .source(entry_ix)
                     .filter(|s| !s.is_empty())
                     .map(|s| ("source".to_string(), s.to_string()));
             }

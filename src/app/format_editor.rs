@@ -126,8 +126,7 @@ impl AppView {
     /// The Log Space and Source File of the line at `row` of the open view,
     /// when it is a Log Space's.
     pub fn log_format_target_of_row(&self, row: usize) -> Option<(String, String)> {
-        let entry = self.all_entries.get(*self.visible_indices.get(row)?)?;
-        let file = entry.file_id.as_deref()?;
+        let file = self.rows().file_id(*self.visible_indices.get(row)?)?;
         let space = self.active_space()?;
         space.file(file)?;
         Some((space.id.clone(), file.to_string()))
@@ -219,9 +218,9 @@ impl AppView {
     fn format_preview_rows(&self) -> Vec<usize> {
         let start = self.selected_row_pos.and_then(|p| self.visible_indices.get(p).copied()).unwrap_or(0);
         let parents = |range: std::ops::Range<usize>| {
-            range.filter(|&i| !self.all_entries[i].is_continuation()).collect::<Vec<_>>()
+            range.filter(|&i| self.rows().get(i).is_some_and(|e| !e.is_continuation())).collect::<Vec<_>>()
         };
-        let mut rows: Vec<usize> = parents(start..self.all_entries.len()).into_iter().take(PREVIEW_LINES).collect();
+        let mut rows: Vec<usize> = parents(start..self.rows().len()).into_iter().take(PREVIEW_LINES).collect();
         if rows.len() < PREVIEW_LINES {
             let before = parents(0..start);
             let need = PREVIEW_LINES - rows.len();
@@ -236,10 +235,10 @@ impl AppView {
         let compiled = compile_template(&text);
         let preview = compiled.as_ref().ok().map(|format| {
             let rows = self.format_preview_rows();
-            let shown: Vec<(usize, &str)> = rows.iter().map(|&i| (i, self.all_entries[i].raw_line.as_str())).collect();
-            let all = self
-                .all_entries
-                .iter()
+            let entries = self.rows();
+            let shown: Vec<(usize, &str)> =
+                rows.iter().filter_map(|&i| Some((i, entries.get(i)?.raw_line.as_str()))).collect();
+            let all = crate::rows::entries(entries)
                 .enumerate()
                 .filter(|(_, e)| !e.is_continuation())
                 .map(|(i, e)| (i, e.raw_line.as_str()));

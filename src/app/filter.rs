@@ -104,7 +104,7 @@ impl AppView {
                 visible.truncate(rows);
             }
         }
-        self.longest_row = longest(self.all_entries.iter().map(|e| e.payload().len()));
+        self.longest_row = longest(crate::rows::entries(self.rows()).map(|e| e.payload().len()));
         // A Field Column shows once a row has a value in it.
         self.sync_view_columns();
         // Rows may be new: a selection of them no longer means the same.
@@ -138,7 +138,7 @@ impl AppView {
         std::sync::Arc::make_mut(&mut self.visible_indices).extend(from..rows);
 
         let mut longest_len = self.all_entries.get(self.longest_row).map_or(0, |e| e.payload().len());
-        for (i, entry) in self.all_entries[from..].iter().enumerate() {
+        for (i, entry) in crate::rows::entries_from(&self.all_entries, from).enumerate() {
             if entry.payload().len() > longest_len {
                 longest_len = entry.payload().len();
                 self.longest_row = from + i;

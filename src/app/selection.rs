@@ -11,15 +11,6 @@ impl AppView {
             .and_then(|&ix| self.all_entries.get(ix))
     }
 
-    pub fn selected_entry_mut(&mut self) -> Option<&mut LogEntry> {
-        if let Some(pos) = self.selected_row_pos {
-            if let Some(&entry_ix) = self.visible_indices.get(pos) {
-                return self.all_entries.get_mut(entry_ix);
-            }
-        }
-        None
-    }
-
     /// The text the Inspector shows: the current line as stored, followed by
     /// its Continuation Lines when it is a Parent Line. Works in both views.
     pub fn inspector_lines(&self) -> Option<Vec<String>> {
@@ -28,13 +19,16 @@ impl AppView {
         match self.view_mode {
             ViewMode::Parsed => {
                 let ix = self.entry_of_line_ref(&current)?;
-                let first = self.all_entries.get(ix)?;
+                let rows = self.rows();
+                let first = rows.get(ix)?;
                 let mut lines = vec![first.raw_line.to_string()];
                 if !first.is_continuation() {
                     lines.extend(
-                        self.all_entries[ix + 1..]
-                            .iter()
-                            .take_while(|e| e.is_continuation() && e.file_id == first.file_id)
+                        (ix + 1..rows.len())
+                            .map_while(|r| {
+                                let e = rows.get(r)?;
+                                (e.is_continuation() && rows.file_id(r) == rows.file_id(ix)).then_some(e)
+                            })
                             .map(|e| e.raw_line.to_string()),
                     );
                 }
@@ -85,8 +79,7 @@ impl AppView {
         let marked = |pos: usize| {
             self.visible_indices
                 .get(pos)
-                .and_then(|&ix| self.all_entries.get(ix))
-                .is_some_and(|e| !e.markers.is_empty())
+                .is_some_and(|&ix| !self.rows().markers(ix).is_empty())
         };
         // With nothing selected the search starts just before the first row
         // (or after the last), so that row counts too.

@@ -6,6 +6,7 @@
 //! `message`/payload are never filterable columns.
 
 use crate::model::{FieldKey, LogEntry};
+use crate::rows::Rows;
 use crate::unicode_text;
 use std::collections::{HashMap, HashSet};
 
@@ -63,9 +64,10 @@ impl Source {
         !matches!(self, Source::Stream)
     }
 
-    fn value<'a>(&self, entry: &'a LogEntry) -> Option<&'a str> {
+    /// The value of `entry`, whose Source File is named `source`.
+    fn value<'a>(&self, entry: &'a LogEntry, source: Option<&'a str>) -> Option<&'a str> {
         let v = match self {
-            Source::SourceFile => entry.source.as_deref().unwrap_or(""),
+            Source::SourceFile => source.unwrap_or(""),
             Source::Stream => entry.stream.map_or("", |s| s.as_str()),
             Source::Level => entry.level_text(),
             Source::Module => entry.tag(),
@@ -81,15 +83,21 @@ impl Source {
 /// no value of its own: it reads its Parent Line's, found by walking up to the
 /// nearest row that is not a continuation. Its Stream is the exception: that
 /// is always the line's own.
-pub fn value_of<'a>(entries: &'a [LogEntry], row: usize, key: &str) -> Option<&'a str> {
+pub fn value_of<'a, R: Rows + ?Sized>(rows: &'a R, row: usize, key: &str) -> Option<&'a str> {
+    let value = |r: usize| {
+        if key == "source" {
+            return rows.source(r).filter(|s| !s.is_empty());
+        }
+        rows.get(r).and_then(|e| column_value(e, key))
+    };
     if key == "stream" {
-        return entries.get(row).and_then(|e| column_value(e, key));
+        return value(row);
     }
     let mut r = row;
-    while r > 0 && entries.get(r).is_some_and(|e| e.parent.is_some()) {
+    while r > 0 && rows.get(r).is_some_and(|e| e.parent.is_some()) {
         r -= 1;
     }
-    entries.get(r).and_then(|e| column_value(e, key))
+    value(r)
 }
 
 /// The value a row holds in the column `key`, or `None` when it has none.
@@ -194,15 +202,18 @@ impl ColumnIndex {
         !self.overflow && self.row_ids.len() == self.rows
     }
 
-    /// Forget the rows from `keep` on; `removed` are those rows' entries.
-    fn truncate(&mut self, keep: usize, removed: &[LogEntry]) {
+    /// Forget the rows from `keep` on; `removed` are those rows.
+    fn truncate<R: Rows + ?Sized>(&mut self, keep: usize, removed: &R) {
         self.rows = keep;
-        let lost = removed.iter().filter(|e| e.parent.is_none() && self.source.value(e).is_some()).count();
+        let lost = (0..removed.len())
+            .filter(|&i| removed.get(i).is_some_and(|e| e.parent.is_none() && self.source.value(e, removed.source(i)).is_some()))
+            .count();
         self.covered = self.covered.saturating_sub(lost);
         if self.overflow {
             return;
         }
-        for (i, entry) in removed.iter().enumerate() {
+        for i in 0..removed.len() {
+            let Some(entry) = removed.get(i) else { continue };
             if entry.parent.is_some() && self.source.inherits() {
                 continue;
             }
@@ -211,7 +222,7 @@ impl ColumnIndex {
                 continue;
             }
             self.values[id as usize].count -= 1;
-            if let Some((_, n)) = self.source.value(entry).and_then(|raw| self.spellings.get_mut(raw)) {
+            if let Some((_, n)) = self.source.value(entry, removed.source(i)).and_then(|raw| self.spellings.get_mut(raw)) {
                 *n = n.saturating_sub(1);
             }
         }
@@ -219,16 +230,18 @@ impl ColumnIndex {
     }
 
     /// Forget the rows at `dropped` (ascending positions; `removed` are
-    /// those rows' entries, in the same order). The other rows keep their
-    /// order.
-    fn drop_rows(&mut self, dropped: &[usize], removed: &[LogEntry]) {
-        let lost = removed.iter().filter(|e| e.parent.is_none() && self.source.value(e).is_some()).count();
+    /// those rows, in the same order). The other rows keep their order.
+    fn drop_rows<R: Rows + ?Sized>(&mut self, dropped: &[usize], removed: &R) {
+        let lost = (0..removed.len())
+            .filter(|&i| removed.get(i).is_some_and(|e| e.parent.is_none() && self.source.value(e, removed.source(i)).is_some()))
+            .count();
         self.covered = self.covered.saturating_sub(lost);
         self.rows -= dropped.len();
         if self.overflow {
             return;
         }
-        for (i, entry) in removed.iter().enumerate() {
+        for i in 0..removed.len() {
+            let Some(entry) = removed.get(i) else { continue };
             if entry.parent.is_some() && self.source.inherits() {
                 continue;
             }
@@ -237,16 +250,16 @@ impl ColumnIndex {
                 continue;
             }
             self.values[id as usize].count -= 1;
-            if let Some((_, n)) = self.source.value(entry).and_then(|raw| self.spellings.get_mut(raw)) {
+            if let Some((_, n)) = self.source.value(entry, removed.source(i)).and_then(|raw| self.spellings.get_mut(raw)) {
                 *n = n.saturating_sub(1);
             }
         }
         remove_positions(&mut self.row_ids, dropped);
     }
 
-    fn push_row(&mut self, entry: &LogEntry, parent_row: usize) {
+    fn push_row(&mut self, entry: &LogEntry, source: Option<&str>, parent_row: usize) {
         self.rows += 1;
-        if entry.parent.is_none() && self.source.value(entry).is_some() {
+        if entry.parent.is_none() && self.source.value(entry, source).is_some() {
             self.covered += 1;
         }
         if self.overflow {
@@ -258,7 +271,7 @@ impl ColumnIndex {
             self.row_ids.push(id);
             return;
         }
-        let Some(raw) = self.source.value(entry) else {
+        let Some(raw) = self.source.value(entry, source) else {
             self.row_ids.push(MISSING);
             return;
         };
@@ -352,9 +365,9 @@ pub fn has_timestamp(entry: &LogEntry) -> bool {
 
 impl FilterIndex {
     /// Detect the columns and values of a whole file.
-    pub fn build(entries: &[LogEntry]) -> Self {
+    pub fn build<R: Rows + ?Sized>(rows: &R) -> Self {
         let mut index = Self::default();
-        index.append(entries);
+        index.append(rows);
         index
     }
 
@@ -362,7 +375,7 @@ impl FilterIndex {
     /// `field_order` is the union of the files' field names in column order,
     /// and `effective_ts` the timestamp each merged row sorts by (`NAN` for a
     /// row with none), which replaces the one inherited from the row above.
-    pub fn build_merged(entries: &[LogEntry], field_order: &[String], effective_ts: &[f64]) -> Self {
+    pub fn build_merged<R: Rows + ?Sized>(entries: &R, field_order: &[String], effective_ts: &[f64]) -> Self {
         let mut index = Self::default();
         if !entries.is_empty() {
             index.init_fixed_columns();
@@ -441,13 +454,14 @@ impl FilterIndex {
 
     /// Detect the Field Columns again, the others kept: after the fields
     /// read from the rows changed (a Detected Field was turned on or off).
-    pub fn rebuild_fields(&mut self, entries: &[LogEntry]) {
-        debug_assert_eq!(entries.len(), self.rows);
+    pub fn rebuild_fields<R: Rows + ?Sized>(&mut self, rows: &R) {
+        debug_assert_eq!(rows.len(), self.rows);
         self.columns.retain(|c| c.field().is_none());
         let mut fields: Vec<ColumnIndex> = Vec::new();
         self.field_cols.clear();
         let mut parent_row = 0;
-        for (row, entry) in entries.iter().enumerate() {
+        for row in 0..rows.len() {
+            let Some(entry) = rows.get(row) else { continue };
             if entry.parent.is_none() {
                 parent_row = row;
             }
@@ -457,7 +471,7 @@ impl FilterIndex {
                 }
             }
             for col in &mut fields {
-                col.push_row(entry, parent_row);
+                col.push_row(entry, rows.source(row), parent_row);
             }
         }
         for col in &mut fields {
@@ -474,9 +488,11 @@ impl FilterIndex {
     /// Account for rows added at the end of the file (tail): new values are
     /// appended after the existing ones and counts grow with the new rows.
     /// `new_entries` are the rows after the first `self.rows()` rows.
-    pub fn append(&mut self, new_entries: &[LogEntry]) {
-        for entry in new_entries {
-            self.push_row(entry);
+    pub fn append<R: Rows + ?Sized>(&mut self, new_rows: &R) {
+        for row in 0..new_rows.len() {
+            if let Some(entry) = new_rows.get(row) {
+                self.push_row(entry, new_rows.source(row));
+            }
         }
         for col in &mut self.columns {
             col.finalize_display();
@@ -485,9 +501,10 @@ impl FilterIndex {
 
     /// `append` for rows of which some belong to a file with no time at all
     /// (`untimed`): they have none, instead of the time of the row above.
-    pub fn append_marking_untimed(&mut self, new_entries: &[LogEntry], untimed: impl Fn(&LogEntry) -> bool) {
-        for entry in new_entries {
-            self.push_row(entry);
+    pub fn append_marking_untimed<R: Rows + ?Sized>(&mut self, new_rows: &R, untimed: impl Fn(&LogEntry) -> bool) {
+        for row in 0..new_rows.len() {
+            let Some(entry) = new_rows.get(row) else { continue };
+            self.push_row(entry, new_rows.source(row));
             if untimed(entry) {
                 if let Some(last) = self.effective_ts.last_mut() {
                     *last = f64::NAN;
@@ -503,7 +520,7 @@ impl FilterIndex {
     /// entries of those rows. They are meant to be added again with
     /// [`append`](Self::append), in a new order and with new rows among them,
     /// so the earliest and latest time are left as they were.
-    pub fn truncate(&mut self, kept: &[LogEntry], removed: &[LogEntry]) {
+    pub fn truncate<R: Rows + ?Sized>(&mut self, kept: &[LogEntry], removed: &R) {
         debug_assert_eq!(self.rows, kept.len() + removed.len());
         for col in &mut self.columns {
             col.truncate(kept.len(), removed);
@@ -512,9 +529,18 @@ impl FilterIndex {
         self.effective_ts.truncate(kept.len());
         self.first_ts = self.effective_ts.iter().copied().find(|t| !t.is_nan());
         self.parent_row = kept.iter().rposition(|e| e.parent.is_none()).unwrap_or(0);
-        self.parent_lines -= removed.iter().filter(|e| e.parent.is_none()).count();
-        self.timed_lines -= removed.iter().filter(|e| e.parent.is_none() && has_timestamp(e)).count();
-        for entry in removed {
+        self.forget_counts(removed);
+    }
+
+    /// Take the rows `removed` out of the line counts and `kv_counts`.
+    fn forget_counts<R: Rows + ?Sized>(&mut self, removed: &R) {
+        for entry in crate::rows::entries(removed) {
+            if entry.parent.is_none() {
+                self.parent_lines -= 1;
+                if has_timestamp(entry) {
+                    self.timed_lines -= 1;
+                }
+            }
             self.count_kv(entry, false);
         }
     }
@@ -523,7 +549,7 @@ impl FilterIndex {
     /// those rows' entries, in the same order, and `kept` the rows left.
     /// Rows from the front of the view leave when the Live Window trims a
     /// file.
-    pub fn drop_rows(&mut self, dropped: &[usize], removed: &[LogEntry], kept: &[LogEntry]) {
+    pub fn drop_rows<R: Rows + ?Sized>(&mut self, dropped: &[usize], removed: &R, kept: &[LogEntry]) {
         debug_assert_eq!(self.rows, kept.len() + removed.len());
         for col in &mut self.columns {
             col.drop_rows(dropped, removed);
@@ -535,11 +561,7 @@ impl FilterIndex {
         self.rows = kept.len();
         remove_positions(&mut self.effective_ts, dropped);
         self.first_ts = self.effective_ts.iter().copied().find(|t| !t.is_nan());
-        self.parent_lines -= removed.iter().filter(|e| e.parent.is_none()).count();
-        self.timed_lines -= removed.iter().filter(|e| e.parent.is_none() && has_timestamp(e)).count();
-        for entry in removed {
-            self.count_kv(entry, false);
-        }
+        self.forget_counts(removed);
         // The earliest and latest time are those of the rows left (rows are
         // in time order).
         let timed = |e: &&LogEntry| has_timestamp(e);
@@ -555,7 +577,7 @@ impl FilterIndex {
         }
     }
 
-    fn push_row(&mut self, entry: &LogEntry) {
+    fn push_row(&mut self, entry: &LogEntry, source: Option<&str>) {
         let row = self.rows;
         if self.columns.is_empty() && row == 0 {
             self.init_fixed_columns();
@@ -572,7 +594,7 @@ impl FilterIndex {
             }
         }
         for col in &mut self.columns {
-            col.push_row(entry, parent_row);
+            col.push_row(entry, source, parent_row);
         }
 
         let prev = self.effective_ts.last().copied().unwrap_or(f64::NAN);

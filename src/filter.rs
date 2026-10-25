@@ -6,7 +6,7 @@
 //! "hide these". A row with no value in a column never matches it.
 
 use crate::filter_index::{ColumnIndex, FilterIndex, MISSING, value_of};
-use crate::model::LogEntry;
+use crate::rows::Rows;
 use crate::unicode_text::{self, Needle};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
@@ -200,15 +200,15 @@ impl FilterState {
     }
 
     /// The indices of the rows that pass the Filter.
-    pub fn evaluate<R: RowValues + ?Sized>(&self, index: &FilterIndex, rows: &R) -> Vec<usize> {
+    pub fn evaluate<R: Rows + ?Sized>(&self, index: &FilterIndex, rows: &R) -> Vec<usize> {
         self.evaluate_from(index, rows, 0)
     }
 
     /// The indices of the rows from `start` on that pass the Filter. Values
     /// come from `index`; `rows` reads the text of a value the index does
     /// not keep (a column with too many values, rows it does not cover).
-    pub fn evaluate_from<R: RowValues + ?Sized>(&self, index: &FilterIndex, rows: &R, start: usize) -> Vec<usize> {
-        let len = rows.rows();
+    pub fn evaluate_from<R: Rows + ?Sized>(&self, index: &FilterIndex, rows: &R, start: usize) -> Vec<usize> {
+        let len = rows.len();
         let mut visible = Vec::with_capacity(len.saturating_sub(start));
         let stale = index.rows() != len;
         let active: Vec<(&ColumnFilter, CompiledColumn)> = self
@@ -235,34 +235,6 @@ impl FilterState {
             }
         }
         visible
-    }
-}
-
-/// The rows a Filter reads values from when its index has none for them.
-pub trait RowValues {
-    fn rows(&self) -> usize;
-    /// The value of `row` in the column `key` (a Continuation Line's is its
-    /// Parent Line's, as `value_of` reads it).
-    fn value(&self, row: usize, key: &str) -> Option<&str>;
-}
-
-impl RowValues for [LogEntry] {
-    fn rows(&self) -> usize {
-        self.len()
-    }
-
-    fn value(&self, row: usize, key: &str) -> Option<&str> {
-        value_of(self, row, key)
-    }
-}
-
-impl RowValues for Vec<LogEntry> {
-    fn rows(&self) -> usize {
-        self.len()
-    }
-
-    fn value(&self, row: usize, key: &str) -> Option<&str> {
-        value_of(self, row, key)
     }
 }
 
@@ -299,7 +271,7 @@ impl<'a> CompiledColumn<'a> {
         Self { ids, table, values, custom }
     }
 
-    fn matches<R: RowValues + ?Sized>(&self, row: usize, rows: &R, key: &str) -> bool {
+    fn matches<R: Rows + ?Sized>(&self, row: usize, rows: &R, key: &str) -> bool {
         if let Some(col) = self.ids {
             return match col.id_of_row(row) {
                 Some(MISSING) => false,
@@ -310,8 +282,8 @@ impl<'a> CompiledColumn<'a> {
         self.matches_text(rows, row, key)
     }
 
-    fn matches_text<R: RowValues + ?Sized>(&self, rows: &R, row: usize, key: &str) -> bool {
-        match rows.value(row, key) {
+    fn matches_text<R: Rows + ?Sized>(&self, rows: &R, row: usize, key: &str) -> bool {
+        match value_of(rows, row, key) {
             None => false,
             Some(v) => self.values.iter().any(|n| n.equals(v)) || self.custom.iter().any(|n| n.is_in(v)),
         }

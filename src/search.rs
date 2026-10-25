@@ -1,4 +1,4 @@
-use crate::model::LogEntry;
+use crate::rows::Rows;
 use crate::search_expr::{Matcher, SearchError};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -105,7 +105,7 @@ impl SearchState {
     /// the view (the view shows every entry). While the typed text is invalid
     /// the Matches of the last valid expression are kept (and the selected
     /// match with them).
-    pub fn update_matches(&mut self, entries: &[LogEntry], rows: &[usize]) {
+    pub fn update_matches<R: Rows + ?Sized>(&mut self, entries: &R, rows: &[usize]) {
         let replaced = self.reparse();
         self.pending = false;
         if replaced {
@@ -128,7 +128,7 @@ impl SearchState {
     /// The Matches among the first rows were found elsewhere (`found`, the
     /// rows of a scan on a worker thread): they are the Matches now, and the
     /// rows from `scanned` on, which arrived meanwhile, are searched here.
-    pub fn set_scanned_matches(&mut self, found: Vec<usize>, entries: &[LogEntry], scanned: usize) {
+    pub fn set_scanned_matches<R: Rows + ?Sized>(&mut self, found: Vec<usize>, entries: &R, scanned: usize) {
         self.pending = false;
         self.current_match_idx = 0;
         self.matched_visible_indices = Arc::new(found);
@@ -138,10 +138,10 @@ impl SearchState {
     /// Rows from `from` on were appended after the rows the Matches were
     /// found among: add the Matches among them, by the matcher the Matches
     /// were found with.
-    pub fn extend_matches(&mut self, entries: &[LogEntry], from: usize) {
+    pub fn extend_matches<R: Rows + ?Sized>(&mut self, entries: &R, from: usize) {
         let Some(matcher) = &self.matcher else { return };
         let rows: Vec<usize> = (from..entries.len()).collect();
-        let found = crate::par::filter(&rows, |ix| matcher.is_match(&entries[ix].raw_line));
+        let found = crate::par::filter(&rows, |ix| entries.get(ix).is_some_and(|e| matcher.is_match(&e.raw_line)));
         if !found.is_empty() {
             Arc::make_mut(&mut self.matched_visible_indices).extend(found);
         }

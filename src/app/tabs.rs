@@ -293,6 +293,11 @@ impl AppView {
         self.sync_pane_columns();
     }
 
+    /// The rows of the open view.
+    pub fn rows(&self) -> &dyn crate::rows::Rows {
+        &self.all_entries
+    }
+
     /// Load every file of the Log Space into the cache and re-parse the
     /// scratch files edited since they were parsed.
     pub(crate) fn ensure_space_loaded(&mut self, space: &LogSpace) {

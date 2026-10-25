@@ -1082,19 +1082,17 @@ impl AppView {
             return false;
         }
         let first_key = (rows[0].class, rows[0].ts, rows[0].file);
-        let view_file = |entry: &LogEntry| -> usize {
-            entry
-                .file_id
-                .as_deref()
-                .and_then(|id| order.get(id).copied())
-                .unwrap_or(0)
-        };
         let ts_index = &self.filter_index;
-        let key_of = |r: usize, entry: &LogEntry| match ts_index.effective_timestamp(r) {
-            Some(ts) => (0u8, ts, view_file(entry)),
-            None => (1u8, 0.0, view_file(entry)),
+        let view_rows = self.rows();
+        let key_of = |r: usize| {
+            let file = view_rows.file_id(r).and_then(|id| order.get(id).copied()).unwrap_or(0);
+            match ts_index.effective_timestamp(r) {
+                Some(ts) => (0u8, ts, file),
+                None => (1u8, 0.0, file),
+            }
         };
-        let from = partition_rows(self.all_entries.len(), |r| key_of(r, &self.all_entries[r]) <= first_key);
+        let from = partition_rows(view_rows.len(), |r| key_of(r) <= first_key);
+        let tail_keys: Vec<(u8, f64, usize)> = (from..view_rows.len()).map(key_of).collect();
         let selected = self.selected_row_pos.filter(|pos| *pos >= from).and_then(|pos| self.line_ref_of_entry(pos));
         let anchor = self.top_row_anchor().filter(|a| a.row >= from);
 
@@ -1104,8 +1102,6 @@ impl AppView {
         // Rows that all sort after the last one only add to the view.
         let at_end = from == self.all_entries.len();
         let tail: Vec<LogEntry> = self.all_entries.split_off(from);
-        let tail_keys: Vec<(u8, f64, usize)> =
-            tail.iter().enumerate().map(|(i, e)| key_of(from + i, e)).collect();
         self.filter_index.truncate(&self.all_entries, &tail);
         let mut merged: Vec<LogEntry> = Vec::with_capacity(tail.len() + rows.len());
         let mut old = tail.into_iter().zip(tail_keys).peekable();
@@ -1157,8 +1153,8 @@ impl AppView {
     /// the last one before it when none follows.
     fn next_surviving_line(&self, row: usize, gone: &HashSet<String>) -> Option<LineRef> {
         let found = super::live_more::next_surviving_row(
-            self.all_entries.len(),
-            |ix| self.all_entries[ix].file_id.as_deref(),
+            self.rows().len(),
+            |ix| self.rows().file_id(ix),
             row,
             gone,
         );
@@ -1290,10 +1286,7 @@ impl AppView {
     /// The current line of a Focus Tab that left the Live Window becomes the
     /// oldest line still kept.
     pub(crate) fn move_current_lines_off_dropped(&mut self, file_id: &str, trimmed: &Trimmed) {
-        let oldest = self
-            .all_entries
-            .first()
-            .and_then(|_| self.line_ref_of_entry(0));
+        let oldest = self.line_ref_of_entry(0);
         let Some(oldest) = oldest else { return };
         for tab in self.focus.tabs.iter_mut() {
             if let Some(line) = tab.current.as_ref() {

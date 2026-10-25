@@ -116,8 +116,7 @@ impl AppView {
         let selected = match self.view_mode {
             crate::workspace::working_set::ViewMode::Parsed => self
                 .selected_row_pos
-                .and_then(|ix| self.all_entries.get(ix))
-                .and_then(|e| e.file_id.as_deref().map(str::to_string)),
+                .and_then(|ix| self.rows().file_id(ix).map(str::to_string)),
             crate::workspace::working_set::ViewMode::Raw => self.raw.selected.as_ref().map(|(f, _)| f.clone()),
         };
         if let Some(file_id) = selected.filter(|f| self.is_live_remote_file(f)) {

@@ -46,9 +46,10 @@ impl AppView {
 
     /// The line an entry of the Parsed View is.
     pub fn line_ref_of_entry(&self, entry_ix: usize) -> Option<LineRef> {
-        let entry = self.all_entries.get(entry_ix)?;
+        let rows = self.rows();
+        let entry = rows.get(entry_ix)?;
         Some(LineRef {
-            file_id: entry.file_id.clone().unwrap_or_else(|| Arc::from("")),
+            file_id: Arc::from(rows.file_id(entry_ix).unwrap_or("")),
             line: entry.index,
             generation: entry.generation,
         })
@@ -56,11 +57,12 @@ impl AppView {
 
     /// The entry of the Parsed View a line is, if the view has it.
     pub fn entry_of_line_ref(&self, line: &LineRef) -> Option<usize> {
+        let rows = self.rows();
         let is_line = |ix: usize| {
-            self.all_entries.get(ix).is_some_and(|e| {
+            rows.get(ix).is_some_and(|e| {
                 e.index == line.line
                     && e.generation == line.generation
-                    && e.file_id.as_deref().unwrap_or("") == &*line.file_id
+                    && rows.file_id(ix).unwrap_or("") == &*line.file_id
             })
         };
         // Called on every render (Inspector) and click: the selected row, or
@@ -72,7 +74,7 @@ impl AppView {
             return Some(ix);
         }
         self.entry_scans.set(self.entry_scans.get() + 1);
-        let found = (0..self.all_entries.len()).find(|&ix| is_line(ix));
+        let found = (0..rows.len()).find(|&ix| is_line(ix));
         self.entry_found.set(found);
         found
     }
@@ -108,7 +110,7 @@ impl AppView {
 
     /// The stored text of every row of the open tab, in order.
     fn focus_row_texts<'a>(
-        entries: &'a [crate::model::LogEntry],
+        entries: &'a dyn crate::rows::Rows,
         sections: &'a [RawSection],
         rows: &'a [FocusRow],
     ) -> impl Iterator<Item = &'a str> {
@@ -140,7 +142,7 @@ impl AppView {
                         .map(|&ix| FocusRow::Entry(ix))
                         .collect()
                 } else {
-                    compute_focus_rows(&self.all_entries, &self.filter_pass, self.filter_limits_focus(), None)
+                    compute_focus_rows(self.rows(), &self.filter_pass, self.filter_limits_focus(), None)
                 }
             }
             ViewMode::Raw => self
@@ -639,7 +641,7 @@ impl AppView {
         if let Some(layout) = self.pane_columns() {
             // The same columns as the view, none pinned, scrolled with the pane.
             let entry = match self.focus_rows.get(row) {
-                Some(crate::focus::FocusRow::Entry(ix)) => self.all_entries.get(*ix)?,
+                Some(crate::focus::FocusRow::Entry(ix)) => self.rows().get(*ix)?,
                 _ => return None,
             };
             let hit = crate::ui::cells::hit_cell(&layout, f32::from(at.x - bounds.origin.x), -f32::from(offset.x));
@@ -771,15 +773,16 @@ impl AppView {
         for row in self.focus_rows.iter() {
             match *row {
                 FocusRow::Entry(ix) if ix >= taken_until => {
-                    let Some(entry) = self.all_entries.get(ix) else { continue };
-                    push(entry.source.as_deref(), &entry.raw_line);
+                    let rows = self.rows();
+                    let Some(entry) = rows.get(ix) else { continue };
+                    push(rows.source(ix), &entry.raw_line);
                     // Its Continuation Lines follow it.
                     let mut next = ix + 1;
-                    while let Some(more) = self.all_entries.get(next) {
-                        if more.has_time || more.parent.is_none() || more.file_id != entry.file_id {
+                    while let Some(more) = rows.get(next) {
+                        if more.has_time || more.parent.is_none() || rows.file_id(next) != rows.file_id(ix) {
                             break;
                         }
-                        push(more.source.as_deref(), &more.raw_line);
+                        push(rows.source(next), &more.raw_line);
                         next += 1;
                     }
                     taken_until = next;

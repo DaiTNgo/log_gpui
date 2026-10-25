@@ -21,8 +21,9 @@ pub struct LinePiece {
 impl AppView {
     /// The file a row of the open view belongs to.
     pub(crate) fn file_id_of_entry(&self, entry_ix: usize) -> Option<String> {
-        let entry = self.all_entries.get(entry_ix)?;
-        match entry.file_id.as_deref() {
+        let rows = self.rows();
+        rows.get(entry_ix)?;
+        match rows.file_id(entry_ix) {
             Some(id) => Some(id.to_string()),
             None => match self.active_target()? {
                 TabTarget::FileView { file_id, .. } => Some(file_id),
@@ -102,8 +103,7 @@ impl AppView {
     /// The Marker under a byte of a row, if any.
     pub fn marker_under(&self, vis_pos: usize, byte: usize) -> Option<TextMarker> {
         let &entry_ix = self.visible_indices.get(vis_pos)?;
-        let entry = self.all_entries.get(entry_ix)?;
-        marker_at(&entry.markers, byte).cloned()
+        marker_at(self.rows().markers(entry_ix), byte).cloned()
     }
 
     /// Remove the whole Marker under a byte of a row.

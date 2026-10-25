@@ -44,8 +44,9 @@ impl AppView {
         // the first rows of the file in the view, wherever the other files'
         // rows are among them.
         let mut dropped: Vec<usize> = Vec::with_capacity(trimmed.removed);
-        for (pos, entry) in self.all_entries.iter().enumerate() {
-            let older = entry.file_id.as_deref() == Some(file_id)
+        let rows = self.rows();
+        for (pos, entry) in crate::rows::entries(rows).enumerate() {
+            let older = rows.file_id(pos) == Some(file_id)
                 && (entry.generation < generation || (entry.generation == generation && entry.index < first_kept));
             if older {
                 dropped.push(pos);
@@ -97,7 +98,7 @@ impl AppView {
         }
         self.longest_row = match longest_row {
             Some(row) if !longest_dropped => row,
-            _ => super::filter::longest(self.all_entries.iter().map(|e| e.payload().len())),
+            _ => super::filter::longest(crate::rows::entries(self.rows()).map(|e| e.payload().len())),
         };
 
         // The Matches and the rows of the Focus Pane, which hold positions.

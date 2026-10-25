@@ -76,17 +76,20 @@ fn the_running_total_grows_until_the_end() {
 #[test]
 fn the_match_on_screen_comes_before_the_rest() {
     let (_, source, index) = setup(300_000);
-    // A matcher that only sees one block at a time: the first block it gets
-    // holds the line shown.
-    let first = Arc::new(std::sync::Mutex::new(None::<usize>));
-    let seen = first.clone();
+    // Each worker takes the next block in order: the block of the line
+    // shown is among the first ones read, whichever worker runs first.
+    let starts = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let seen = starts.clone();
     let matcher: Arc<Matcher> = Arc::new(move |start: usize, _: &[&str]| {
-        seen.lock().unwrap().get_or_insert(start);
+        seen.lock().unwrap().push(start);
         Vec::new()
     });
     Scan::start(source, index.clone(), 0..index.len(), 200_010, matcher).wait();
-    let first = first.lock().unwrap().unwrap();
-    assert!((190_000..=210_000).contains(&first), "started at {first}");
+    let starts = starts.lock().unwrap();
+    let workers = std::thread::available_parallelism().map_or(1, |n| n.get());
+    let at = starts.iter().position(|&s| s == 200_000).unwrap();
+    assert!(at < workers, "the block of line 200,010 was read {at}th: {:?}", &starts[..workers.min(starts.len())]);
+    assert_eq!(starts.len(), 30, "every block once");
 }
 
 #[test]

@@ -2,8 +2,8 @@
 //! condition. A rule is written like a Filter condition (ticked values,
 //! Custom Values containing text, joined by OR) but never hides a row.
 
+use crate::rows::Rows;
 use crate::filter_index::value_of;
-use crate::model::LogEntry;
 use crate::palette::HighlightColor;
 use crate::unicode_text::{self, Needle};
 use serde::{Deserialize, Serialize};
@@ -146,7 +146,7 @@ fn compile(rules: &[HighlightRule]) -> Vec<CompiledRule<'_>> {
         .collect()
 }
 
-fn paint_compiled(rules: &[CompiledRule], entries: &[LogEntry], row: usize) -> Option<Arc<RowPaint>> {
+fn paint_compiled<R: Rows + ?Sized>(rules: &[CompiledRule], entries: &R, row: usize) -> Option<Arc<RowPaint>> {
     rules
         .iter()
         .find(|rule| rule.matches_value(value_of(entries, row, rule.column)))
@@ -155,18 +155,18 @@ fn paint_compiled(rules: &[CompiledRule], entries: &[LogEntry], row: usize) -> O
 
 /// The rule that paints `row`: the first enabled rule in the list that it
 /// meets. A Continuation Line is judged by its Parent Line's values.
-pub fn paint_for_row(rules: &[HighlightRule], entries: &[LogEntry], row: usize) -> Option<RowPaint> {
+pub fn paint_for_row<R: Rows + ?Sized>(rules: &[HighlightRule], entries: &R, row: usize) -> Option<RowPaint> {
     paint_compiled(&compile(rules), entries, row).map(|p| (*p).clone())
 }
 
 /// The paint of every row of `entries`, for the rows' own order.
-pub fn paint_rows(rules: &[HighlightRule], entries: &[LogEntry]) -> RowPaints {
+pub fn paint_rows<R: Rows + ?Sized>(rules: &[HighlightRule], entries: &R) -> RowPaints {
     paint_rows_from(rules, entries, 0)
 }
 
 /// The paint of the rows from `from` on, to go after the paints of the rows
 /// before it.
-pub fn paint_rows_from(rules: &[HighlightRule], entries: &[LogEntry], from: usize) -> RowPaints {
+pub fn paint_rows_from<R: Rows + ?Sized>(rules: &[HighlightRule], entries: &R, from: usize) -> RowPaints {
     let compiled = compile(rules);
     let count = entries.len().saturating_sub(from);
     if compiled.is_empty() {
@@ -178,7 +178,7 @@ pub fn paint_rows_from(rules: &[HighlightRule], entries: &[LogEntry], from: usiz
 /// How many of `rows` (positions in `entries`) `rule` matches by its own
 /// condition, for the count in the Highlights list. Continuation Lines are
 /// not counted, like Filter counts.
-pub fn count_matches(rule: &HighlightRule, entries: &[LogEntry], rows: &[usize]) -> usize {
+pub fn count_matches<R: Rows + ?Sized>(rule: &HighlightRule, entries: &R, rows: &[usize]) -> usize {
     let compiled = CompiledRule::new(0, rule);
     crate::par::count(rows, |row| {
         entries.get(row).is_some_and(|e| e.parent.is_none())

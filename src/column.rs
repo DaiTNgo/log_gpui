@@ -255,10 +255,15 @@ impl FieldMaxChars {
     /// Updates running maximums with a single log entry in O(1).
     #[inline]
     pub fn record_entry(&mut self, entry: &LogEntry) {
+        self.record_row(entry, entry.source.as_deref());
+    }
+
+    /// `record_entry` for a row whose Source File is named `source`.
+    pub fn record_row(&mut self, entry: &LogEntry, source: Option<&str>) {
         self.timestamp = self.timestamp.max(entry.time_str().chars().count());
         self.level = self.level.max(entry.level_text().chars().count());
         self.module = self.module.max(entry.tag().chars().count());
-        if let Some(source) = &entry.source {
+        if let Some(source) = source {
             self.source = self.source.max(source.chars().count());
         }
         if let Some(stream) = entry.stream {
@@ -278,10 +283,12 @@ impl FieldMaxChars {
     }
 
     /// Scans a slice of log entries in a single O(N) pass, O(1) per entry.
-    pub fn scan_entries(entries: &[LogEntry]) -> Self {
+    pub fn scan_entries<R: crate::rows::Rows + ?Sized>(rows: &R) -> Self {
         let mut max_chars = Self::new();
-        for entry in entries {
-            max_chars.record_entry(entry);
+        for row in 0..rows.len() {
+            if let Some(entry) = rows.get(row) {
+                max_chars.record_row(entry, rows.source(row));
+            }
         }
         max_chars
     }
@@ -806,7 +813,7 @@ impl ColumnLayoutState {
     }
 
     /// Updates dynamic column widths based on maximum characters observed in ingested entries.
-    pub fn update_from_entries(&mut self, entries: &[LogEntry], density: impl Into<TextScale>) {
+    pub fn update_from_entries<R: crate::rows::Rows + ?Sized>(&mut self, entries: &R, density: impl Into<TextScale>) {
         let density: TextScale = density.into();
         self.max_chars = FieldMaxChars::scan_entries(entries);
         self.recompute_widths(density);

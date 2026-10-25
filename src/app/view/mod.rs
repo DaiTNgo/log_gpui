@@ -69,7 +69,7 @@ impl Render for AppView {
         } else {
             LogCanvas::render(CanvasViewState {
                 view: cx.entity().clone(),
-                entries: if parsed { &self.all_entries } else { &[] },
+                entries: if parsed { self.rows() } else { crate::rows::NO_ROWS },
                 visible_indices: self.visible_indices.clone(),
                 longest_row: self.longest_row,
                 selected_row_pos: self.selected_row_pos,

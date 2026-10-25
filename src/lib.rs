@@ -22,6 +22,7 @@ pub mod parser;
 pub mod pattern_field;
 pub mod raw_view;
 pub mod remote;
+pub mod rows;
 pub mod sample;
 pub mod search;
 pub mod search_color;

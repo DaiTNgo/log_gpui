@@ -107,9 +107,8 @@ pub struct LineSnapshot {
     continuation: bool,
 }
 
-pub fn snapshot(entries: &[LogEntry]) -> Vec<LineSnapshot> {
-    entries
-        .iter()
+pub fn snapshot<R: crate::rows::Rows + ?Sized>(rows: &R) -> Vec<LineSnapshot> {
+    crate::rows::entries(rows)
         .map(|e| LineSnapshot { raw: e.raw_line.clone(), spans: e.spans.clone(), continuation: e.is_continuation() })
         .collect()
 }

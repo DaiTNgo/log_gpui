@@ -102,7 +102,7 @@ impl CanvasColors {
 pub struct CanvasViewState<'a> {
     pub view: gpui::Entity<crate::app::AppView>,
     /// The rows, borrowed from the view for this frame only (never cloned).
-    pub entries: &'a [LogEntry],
+    pub entries: &'a dyn crate::rows::Rows,
     pub visible_indices: Arc<Vec<usize>>,
     /// Position of the row with the longest message (sets the list's width).
     pub longest_row: usize,
@@ -280,7 +280,7 @@ impl LogCanvas {
                 let mono_font = cx.theme().mono_font_family.clone();
                 let this = env.view.read(cx);
                 range
-                    .filter_map(|vis_pos| env.row(vis_pos, &this.all_entries, &mono_font))
+                    .filter_map(|vis_pos| env.row(vis_pos, this.rows(), &mono_font))
                     .collect::<Vec<_>>()
             },
         )
@@ -312,11 +312,12 @@ impl LogCanvas {
                     bounds.size.height,
                     row_height,
                 );
-                let entries = &minimap_view.read(cx).all_entries;
+                let entries = minimap_view.read(cx).rows();
                 let bar_max = MINIMAP_WIDTH - 10.0;
                 for r in 0..rows_fit {
                     let pos = start + r;
-                    let Some(entry) = minimap_visible.get(pos).and_then(|&ix| entries.get(ix))
+                    let Some((entry_ix, entry)) =
+                        minimap_visible.get(pos).and_then(|&ix| Some((ix, entries.get(ix)?)))
                     else {
                         break;
                     };
@@ -353,7 +354,7 @@ impl LogCanvas {
                             tint,
                         ));
                     }
-                    let stripes = if let Some(marker) = entry.markers.first() {
+                    let stripes = if let Some(marker) = entries.markers(entry_ix).first() {
                         vec![TickStripe {
                             offset: 0.0,
                             width,
@@ -773,12 +774,13 @@ impl RowEnv {
     fn row(
         &self,
         vis_pos: usize,
-        entries: &[LogEntry],
+        entries: &dyn crate::rows::Rows,
         mono_font: &gpui::SharedString,
     ) -> Option<gpui::Stateful<gpui::Div>> {
         let colors = self.colors;
         let &entry_ix = self.visible.get(vis_pos)?;
         let entry = entries.get(entry_ix)?;
+        let file_id = entries.file_id(entry_ix);
         let paint = self.paints.get(entry_ix).and_then(|p| p.as_deref());
 
         let level_symbol = if entry.is_continuation() {
@@ -832,10 +834,12 @@ impl RowEnv {
 
         let anchored_width = self.layout.sticky_partition_width();
         let scroll_x = horizontal_scroll_x(&self.scroll_handle);
-        let source_tint = entry.file_id.as_ref().and_then(|id| self.source_tints.get(id)).copied();
+        let source_tint = file_id.and_then(|id| self.source_tints.get(id)).copied();
         let cell_ctx = CellCtx {
             colors: &colors,
             entry,
+            markers: entries.markers(entry_ix),
+            source: entries.source(entry_ix),
             search_ranges: &[],
             find_ranges: &[],
             line_search: &[],
@@ -959,7 +963,7 @@ impl RowEnv {
             });
         let break_label = entry.break_before.as_ref().map(|mark| mark.label.clone());
         let break_actions = entry.break_before.as_ref().and_then(|mark| {
-            let file_id = entry.file_id.as_deref()?.to_string();
+            let file_id = file_id?.to_string();
             // A Remote Command's lines carry their stream: its output cannot be
             // read again, so its Breaks have no buttons.
             (break_has_actions(mark.kind) && entry.stream.is_none()).then(|| BreakActions {
@@ -1335,6 +1339,10 @@ pub fn line_match_paints(
 pub(crate) struct CellCtx<'a> {
     pub colors: &'a CanvasColors,
     pub entry: &'a LogEntry,
+    /// The Markers painted on the line.
+    pub markers: &'a [crate::marker::TextMarker],
+    /// The name of the line's Source File, in a Log Space.
+    pub source: Option<&'a str>,
     /// Matches of Search in the message text.
     pub search_ranges: &'a [(usize, usize)],
     /// Matches of Focus Find (painted in the Focus Pane only), in bytes of
@@ -1402,7 +1410,7 @@ pub(crate) fn render_text_cell(ctx: &CellCtx, cell: TextCell) -> gpui::AnyElemen
                 });
             }
         }
-        for marker in &ctx.entry.markers {
+        for marker in ctx.markers {
             if let Some(part) = clip_to_span(&marker.range, span) {
                 let rgb = marker.color.rgb(ctx.tone);
                 layers.push(Layer {
@@ -1475,7 +1483,7 @@ fn render_field_cell(ctx: &CellCtx, key: crate::model::FieldKey, width: Pixels) 
 }
 
 fn render_source_cell(ctx: &CellCtx, width: Pixels) -> impl IntoElement {
-    let source = ctx.entry.source.as_deref().unwrap_or("");
+    let source = ctx.source.unwrap_or("");
     let cell = div()
         .flex_shrink_0()
         .w(width)

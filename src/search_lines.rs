@@ -7,7 +7,7 @@
 //! scan under way can go on reading the snapshot it was given while the next
 //! one grows; only the last, partly filled block is copied when rows join it.
 
-use crate::model::LogEntry;
+use crate::rows::Rows;
 use gpui::SharedString;
 use std::sync::Arc;
 
@@ -39,7 +39,7 @@ impl SearchLines {
     /// Bring the snapshot up to `rows`, which only grew at the end unless
     /// `epoch` differs from the one of the last sync. Returns how many texts
     /// were copied.
-    pub fn sync(&mut self, rows: &[LogEntry], epoch: u64) -> usize {
+    pub fn sync<R: Rows + ?Sized>(&mut self, rows: &R, epoch: u64) -> usize {
         if epoch != self.epoch || rows.len() < self.len {
             *self = Self { epoch, ..Self::default() };
         }
@@ -53,7 +53,7 @@ impl SearchLines {
             let end = (next + room).min(rows.len());
             let reopened = next % BLOCK != 0;
             let mut texts = if reopened { (**self.blocks.last().expect("a partly filled block")).clone() } else { Vec::new() };
-            texts.extend(rows[next..end].iter().map(|e| e.raw_line.clone()));
+            texts.extend((next..end).filter_map(|r| rows.get(r)).map(|e| e.raw_line.clone()));
             if reopened {
                 *self.blocks.last_mut().expect("a partly filled block") = Arc::new(texts);
             } else {
@@ -63,7 +63,7 @@ impl SearchLines {
         }
         self.len = rows.len();
         debug_assert!(
-            rows.iter().enumerate().all(|(i, e)| self.get(i) == e.raw_line.as_str()),
+            crate::rows::entries(rows).enumerate().all(|(i, e)| self.get(i) == e.raw_line.as_str()),
             "the Search snapshot does not match the rows: a place changing rows did not bump rows_epoch"
         );
         rows.len() - from

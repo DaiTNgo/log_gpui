@@ -155,18 +155,14 @@ impl AppView {
             Err(e) => return Err(e),
         }
         let (first, last) = self.timed_span().ok_or(GoToError::NotALineNumber)?;
-        let day_of = self
-            .selected_entry()
-            .filter(|e| e.has_time)
-            .map(|e| e.timestamp)
-            .unwrap_or(self.all_entries[first].timestamp);
+        let rows = self.rows();
+        let time_of = |row: usize| rows.get(row).map_or(0.0, |e| e.timestamp);
+        let day_of = self.selected_entry().filter(|e| e.has_time).map(|e| e.timestamp).unwrap_or(time_of(first));
         let at = go_to::parse_time(text, Some(day_of)).ok_or(GoToError::NotALineNumber)?;
-        if at < self.all_entries[first].timestamp || at > self.all_entries[last].timestamp {
+        if at < time_of(first) || at > time_of(last) {
             return Err(GoToError::TimeOutside);
         }
-        let ix = self
-            .all_entries
-            .iter()
+        let ix = crate::rows::entries(rows)
             .position(|e| e.has_time && e.timestamp >= at)
             .ok_or(GoToError::TimeOutside)?;
         self.line_ref_of_entry(ix).map(GoToTarget::Row).ok_or(GoToError::NoLines)
@@ -174,8 +170,10 @@ impl AppView {
 
     /// The rows of the first and the last time in the view.
     fn timed_span(&self) -> Option<(usize, usize)> {
-        let first = self.all_entries.iter().position(|e| e.has_time)?;
-        let last = self.all_entries.iter().rposition(|e| e.has_time)?;
+        let rows = self.rows();
+        let timed = |r: &usize| rows.get(*r).is_some_and(|e| e.has_time);
+        let first = (0..rows.len()).find(timed)?;
+        let last = (0..rows.len()).rev().find(timed)?;
         Some((first, last))
     }
 
@@ -187,8 +185,8 @@ impl AppView {
             Some((GoToError::TimeOutside, _)) => match self.timed_span() {
                 Some((first, last)) => format!(
                     "Outside the view: {} – {}",
-                    self.all_entries[first].time_str(),
-                    self.all_entries[last].time_str()
+                    self.rows().get(first).map_or("", |e| e.time_str()),
+                    self.rows().get(last).map_or("", |e| e.time_str())
                 ),
                 None => GoToError::TimeOutside.message().to_string(),
             },
@@ -232,18 +230,20 @@ impl AppView {
                 .and_then(|c| sections.iter().find(|s| *s.file_id == *c.file_id))
                 .or(sections.first())?,
         };
-        let of_file = |e: &&crate::model::LogEntry| e.file_id.as_deref() == Some(section.file_id.as_str());
+        let rows = self.rows();
+        let of_file = || {
+            (0..rows.len())
+                .filter(|&r| rows.file_id(r) == Some(section.file_id.as_str()))
+                .filter_map(|r| rows.get(r))
+        };
         let generation = current
             .as_ref()
             .filter(|c| *c.file_id == *section.file_id)
             .map(|c| c.generation)
-            .unwrap_or_else(|| self.all_entries.iter().filter(of_file).map(|e| e.generation).max().unwrap_or(0));
+            .unwrap_or_else(|| of_file().map(|e| e.generation).max().unwrap_or(0));
         let line_count = match self.view_mode {
             ViewMode::Raw => section.lines.len(),
-            ViewMode::Parsed => self
-                .all_entries
-                .iter()
-                .filter(of_file)
+            ViewMode::Parsed => of_file()
                 .filter(|e| e.generation == generation)
                 .map(|e| e.index)
                 .max()
