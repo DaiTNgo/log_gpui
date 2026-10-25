@@ -205,9 +205,9 @@ impl AppView {
     /// Read the Archive Entries of a space that are not cached yet, once per
     /// Archive, so a `.tar.gz` is unpacked a single time however many of its
     /// entries the space holds.
-    fn ensure_archive_entries_loaded(&mut self, space: &LogSpace) {
+    fn ensure_archive_entries_loaded(&mut self, space: &LogSpace, only: Option<&str>) {
         let mut by_archive: Vec<(&str, Vec<&LogFile>)> = Vec::new();
-        for file in &space.files {
+        for file in space.files.iter().filter(|f| only.is_none_or(|id| id == f.file_id)) {
             let (Some(archive), Some(_)) = (file.path.as_deref(), file.entry.as_deref()) else { continue };
             if self.parsed_files.contains_key(&file.file_id) {
                 continue;
@@ -287,8 +287,14 @@ impl AppView {
     /// Load every file of the Log Space into the cache and re-parse the
     /// scratch files edited since they were parsed.
     pub(crate) fn ensure_space_loaded(&mut self, space: &LogSpace) {
-        self.ensure_archive_entries_loaded(space);
-        for file in &space.files {
+        self.ensure_files_loaded(space, None);
+    }
+
+    /// `ensure_space_loaded` for the file `only` of the space (a File View
+    /// reads its own file), or for every file.
+    pub(crate) fn ensure_files_loaded(&mut self, space: &LogSpace, only: Option<&str>) {
+        self.ensure_archive_entries_loaded(space, only);
+        for file in space.files.iter().filter(|f| only.is_none_or(|id| id == f.file_id)) {
             if file.is_remote_copy() {
                 self.ensure_copy_loaded(file);
                 continue;
@@ -307,7 +313,12 @@ impl AppView {
     /// Build the rows of a tab's view, with the Filter and Focus Tabs it keeps.
     pub(crate) fn build_view_for(&mut self, target: &TabTarget) -> Option<OpenView> {
         let space = self.active_project()?.log_space(target.space_id()?)?.clone();
-        self.ensure_space_loaded(&space);
+        // A File View reads its own file only.
+        let only = match target {
+            TabTarget::FileView { file_id, .. } => Some(file_id.as_str()),
+            _ => None,
+        };
+        self.ensure_files_loaded(&space, only);
         self.apply_log_formats(&space);
         match target {
             TabTarget::LogSpace { .. } => {

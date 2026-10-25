@@ -71,6 +71,7 @@ impl AppView {
                 .active_project()
                 .and_then(|p| p.working_set.tabs().get(index))
                 .is_some_and(|t| t.target.space_id().is_some());
+            let dormant = self.is_dormant_tab(index);
             let menu_view = view.clone();
             let group = SharedString::from(format!("working-tab-{index}"));
             let (click_view, close_view) = (view.clone(), view.clone());
@@ -92,6 +93,12 @@ impl AppView {
                     this.bg(bar_bg).text_color(muted).hover(|s| s.text_color(fg))
                 })
                 .when(board, |this| this.child(Icon::new(IconName::Flag).size_3()))
+                // A Dormant Tab reads its files only when chosen.
+                .when(dormant, |this| {
+                    this.italic().tooltip(|window, cx| {
+                        gpui_component::tooltip::Tooltip::new("Not read yet: choose the tab to read its files").build(window, cx)
+                    })
+                })
                 .child(label)
                 .child(
                     div()

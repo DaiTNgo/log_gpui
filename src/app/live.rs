@@ -194,8 +194,14 @@ pub(crate) fn now_label() -> String {
 impl AppView {
     // ── Which Log Space is live ─────────────────────────────────────────────
 
-    /// Log Spaces of the active project that have a tab open.
+    /// The Log Space of the active tab: the only one read (the other tabs
+    /// are Dormant Tabs).
     pub(crate) fn open_space_ids(&self) -> Vec<String> {
+        self.active_tab_files().map(|(space, _)| vec![space]).unwrap_or_default()
+    }
+
+    /// Log Spaces of the active project that have a tab, active or not.
+    pub(crate) fn tab_space_ids(&self) -> Vec<String> {
         let Some(project) = self.active_project() else { return Vec::new() };
         let mut ids: Vec<String> = Vec::new();
         for tab in project.working_set.tabs() {
@@ -206,6 +212,49 @@ impl AppView {
             }
         }
         ids
+    }
+
+    /// What the active tab reads: its Log Space, and the one file of a File
+    /// View (`None`: every file of the space).
+    pub(crate) fn active_tab_files(&self) -> Option<(String, Option<String>)> {
+        let tab = self.active_project()?.working_set.active_tab()?;
+        match &tab.target {
+            TabTarget::LogSpace { space_id } => Some((space_id.clone(), None)),
+            TabTarget::FileView { space_id, file_id } => Some((space_id.clone(), Some(file_id.clone()))),
+            TabTarget::InvestigationBoard { .. } => None,
+        }
+    }
+
+    /// Whether the tab at `index` is a Dormant Tab: it shows log lines but is
+    /// not the active tab, so none of its files is read.
+    pub fn is_dormant_tab(&self, index: usize) -> bool {
+        let Some(working_set) = self.active_project().map(|p| &p.working_set) else { return false };
+        working_set.active_tab_index() != Some(index)
+            && working_set.tabs().get(index).is_some_and(|t| t.target.is_log_view())
+    }
+
+    /// The `file_id`s the active tab reads.
+    pub(crate) fn active_file_ids(&self) -> HashSet<String> {
+        let Some((space_id, only)) = self.active_tab_files() else { return HashSet::new() };
+        let Some(space) = self.active_project().and_then(|p| p.log_space(&space_id)) else { return HashSet::new() };
+        space
+            .files
+            .iter()
+            .filter(|f| only.as_deref().is_none_or(|id| id == f.file_id))
+            .map(|f| f.file_id.clone())
+            .collect()
+    }
+
+    /// Let go of the lines of the files the active tab does not read: their
+    /// tabs are Dormant and read their files again when chosen. Scratch
+    /// edits are saved first.
+    pub(crate) fn drop_dormant_files(&mut self) {
+        let keep = self.active_file_ids();
+        if self.parsed_files.keys().all(|id| keep.contains(id)) {
+            return;
+        }
+        self.flush_scratch_saves();
+        self.parsed_files.retain(|id, _| keep.contains(id));
     }
 
     /// Whether the open tab reads a Log Space that is read live (Scratch is
@@ -223,6 +272,7 @@ impl AppView {
     /// the Log Spaces holding it.
     fn needed_files(&self) -> HashMap<String, NeededFile> {
         let open = self.open_space_ids();
+        let reads = self.active_file_ids();
         let mut needed: HashMap<String, NeededFile> = HashMap::new();
         if let Some(project) = self.active_project() {
             for space_id in &open {
@@ -231,7 +281,8 @@ impl AppView {
                     continue;
                 }
                 // Archive Entries are static: they are read once, never live.
-                for file in space.files.iter().filter(|f| f.entry.is_none()) {
+                // A File View reads its own file only.
+                for file in space.files.iter().filter(|f| f.entry.is_none() && reads.contains(&f.file_id)) {
                     let entry = needed.entry(file.file_id.clone()).or_insert_with(|| NeededFile {
                         path: file.path.clone(),
                         name: file.display_name.clone(),
@@ -267,7 +318,10 @@ impl AppView {
             // What was received is not kept after the Log Space closes.
             self.parsed_files.remove(&file_id);
         }
-        self.live.paused_spaces.retain(|id| open.contains(id));
+        // A Dormant Tab's space stays paused for when it is chosen again.
+        let tabs = self.tab_space_ids();
+        self.live.paused_spaces.retain(|id| open.contains(id) || tabs.contains(id));
+        self.drop_dormant_files();
         self.start_missing_sources(cx);
         self.sync_glob_watchers(cx);
     }
