@@ -8,6 +8,7 @@ pub mod filter_index;
 pub mod focus;
 pub mod go_to;
 pub mod highlight;
+pub mod index;
 pub mod keymap;
 pub mod log_format;
 pub mod live;

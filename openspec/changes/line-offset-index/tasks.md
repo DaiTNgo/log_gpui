@@ -1,0 +1,156 @@
+## 1. Spike: đo Line Index (cổng go/no-go)
+
+- [x] 1.1 Tạo dữ liệu đo (`index_probe --gen`):
+  - Thêm vào `examples/perf_probe.rs`, hoặc tách thành một hàm dùng chung, cách sinh file 3.000.000 dòng (~376MB), cùng định dạng với số đo nền trong design.md.
+  - Ghi số nền của `mem_probe` (thời gian parse, byte/dòng, RSS tối đa) vào design.md để so.
+- [x] 1.2 `examples/index_probe.rs`, phần Indexing:
+  - Pipeline đọc khối 4 MiB, `memchr` tìm dòng, parse timestamp, level và Parent Line song song theo khối, rồi nối tuần tự.
+  - Dựng `LineIndex` theo hai cách để so: khối 128 dòng mã hoá varint, và `Vec<u64>`.
+  - Dựng `LineMeta` và `row_ids` cho các cột phát hiện được.
+  - Chạy hai lần: có khoá format và timestamp theo file, và không khoá (quyết định 7).
+  - Chạy với `row_ids` cho mọi cột (a), và chỉ cho các cột có sẵn trong mọi dòng (b). Với (b), đo thêm thời gian Scan dựng một Detected Field khi cần (quyết định 4).
+  - In ra: thời gian lô đầu (1.000 dòng), thời gian Indexing toàn bộ, byte/dòng của từng phần, RSS tăng thêm.
+- [x] 1.3 `index_probe`, phần đọc theo nhu cầu: thời gian `read_at` cộng parse một màn hình 60 dòng, ở đầu, giữa và cuối file, và khi nhảy ngẫu nhiên.
+- [x] 1.4 `index_probe`, phần Scan: Search Expression `timeout` và `user=42` trên mọi dòng, song song theo khối 10.000 dòng.
+  - Đo khi page cache nóng, và khi lạnh (sau `purge` trên macOS).
+  - So `Vec<u32>` với Roaring bitmap cho kết quả.
+- [x] 1.5 `index_probe`, phần gộp: k-way merge của 3 file × 1.000.000 dòng theo `effective timestamp`.
+  - So kết quả với `timeline::materialize` trên cùng dữ liệu (cùng thứ tự).
+  - Đo thời gian gộp toàn bộ và thời gian gộp thêm 1.000 dòng.
+- [ ] 1.6 Chạy `index_probe` trên một file log thật của người dùng (do người dùng chọn), ghi số.
+- [x] 1.7 Ghi mọi số đo vào bảng "Spike" trong design.md, rồi chốt:
+  - cách mã hoá Line Index;
+  - kiểu tập kết quả;
+  - có dùng khoá format không;
+  - chọn (a) hay (b) cho `row_ids`.
+
+  Sau đó kết luận **go** hoặc **no-go** theo mục tiêu của quyết định 14.
+  - Nếu no-go: dừng ở đây và cập nhật design trước khi làm tiếp.
+
+## 2. LineSource và LineIndex
+
+- [x] 2.1 `src/index/source.rs`: trait `LineSource` (`read_at`, `len`) với các hiện thực:
+  - file trên đĩa (`FileExt::read_at` / `seek_read`, mở có chia sẻ đọc, ghi và xoá)
+  - bytes trong memory
+  - API (`read_at`, `len`, thêm vào cuối) không giả định nguồn nằm trong memory, để change "Remote ghi ra cache local" sau này chỉ phải thay hiện thực (quyết định 2).
+  - Test: đọc giữa file, đọc vượt cuối, file đổi kích thước.
+- [x] 2.1b Quản lý file handle:
+  - Mở theo nhu cầu cho file không live, đóng sau khi đọc xong một lượt.
+  - Giữ handle mở chỉ cho file live và cho Generation cũ còn dòng trong view.
+  - Đếm số handle đang mở, và báo người dùng trước khi chạm `RLIMIT_NOFILE`.
+    (`HandleBudget::near_limit` và lỗi "too many files open" đã có; hiện thông báo trên UI khi app dùng `DiskSource`, ở nhóm 4.)
+  - Test: mở 300 file nhỏ trong một Log Space với giới hạn 256 handle.
+- [x] 2.2 `src/index/line_index.rs`: `LineIndex` theo cách đã chọn ở spike (thêm dòng, tra vị trí và độ dài của dòng `n`, số dòng).
+  - Test: dòng rỗng, CRLF, dòng cuối không có `\n`, dòng 1MB, file rỗng.
+- [x] 2.3 `LineMeta` (effective timestamp, `has_time`, level, Parent Line, cờ) cùng danh sách khoảng Generation và Stream.
+  - Test: so với `LogEntry` do `parse_entries` sinh ra trên các file trong `tests/` (cùng timestamp, level, Parent Line).
+- [x] 2.4 Parse lại một dải dòng từ `LineSource` thành `LogEntry` bằng `LineParser` hiện có, cho đúng kết quả như `ParsedFile::from_bytes` trên cùng dòng (test so sánh trên mọi file mẫu).
+
+## 3. Indexing ở nền
+
+- [ ] 3.1 Pipeline Indexing (luồng IO, worker theo khối, bước nối tuần tự) chạy trên background executor. Nó gửi lô kèm tiến độ (byte đã đọc / tổng), có token huỷ.
+  - Test: Continuation Line vắt qua ranh giới khối; timestamp kế thừa qua ranh giới; huỷ giữa chừng.
+- [ ] 3.1b Khoá format và timestamp theo file (spike chọn dùng), kèm bộ đọc nhanh không cấp phát cho các dạng phổ biến như trong `index_probe`:
+  - Khoá sau khi đủ số dòng liên tiếp khớp; không khớp thì dò lại toàn bộ.
+  - Test: `LineMeta` có khoá khớp từng dòng với không khoá, kể cả file trộn hai định dạng thời gian và file có dòng rác xen giữa.
+- [ ] 3.2 Dựng `ColumnIndex::row_ids`, danh sách giá trị, số đếm và Coverage dần theo lô, giữ `MAX_DISTINCT`. Dựng cho mọi cột (a), hay chỉ cho các cột có sẵn trong mọi dòng (b), theo kết quả spike. Với (b), Detected Field được dựng bằng Scan khi người dùng mở picker hoặc Highlight Rule của cột lần đầu, hoặc khi Filter đã lưu có điều kiện trên cột đó.
+  - Test: so `FilterIndex` dựng theo lô với `FilterIndex::build` trên cùng file.
+- [ ] 3.3 File live: hiện các dòng cuối trước trong lúc Indexing chạy từ đầu; số dòng đúng khi Indexing xong (L3).
+  - Nếu spike cho thấy Indexing đủ nhanh, ghi lại trong design và bỏ bước đọc ngược.
+
+## 4. Lớp ViewRows thay cho all_entries
+
+- [ ] 4.1 `ViewRows`: dòng của view là chỉ số.
+  - File View: `0..line_count`.
+  - Log Space: `Vec<u64>` đóng gói `(file, line)` từ k-way merge tăng dần.
+  - API: số dòng, `meta(row)`, `entry(row)` qua LRU, dải dòng đang hiện.
+  - Test thứ tự gộp theo các scenario của `merged-timeline` (trùng timestamp, stack trace, file không có timestamp).
+- [ ] 4.2 LRU các dòng đã parse (khoảng 4.096 dòng, khoá `(file, generation, line)`); đọc gom theo khối; canvas vẽ placeholder khi dòng chưa có rồi `cx.notify()` khi có.
+- [ ] 4.3 Chuyển lần lượt các chỗ đọc `all_entries` sang `ViewRows`, mỗi nhóm một commit, giữ test xanh:
+  1. canvas và Gutter
+  2. Focus Pane
+  3. Go to
+  4. chọn dòng và copy
+  5. Minimap
+  6. độ rộng cột (`max_chars` tính trong lúc Indexing)
+- [ ] 4.4 Chuyển tab trỏ view vào Line Index và `ViewRows` đã có trong cache, không clone và không dựng lại `FilterIndex`.
+  - Đo bằng `perf_probe`: chuyển tab giữa hai file 3.000.000 dòng dưới 50ms.
+
+## 5. Filter
+
+- [ ] 5.1 `FilterState::evaluate` chạy trên `row_ids` và `LineMeta` (Filter Value, Time Range, dòng thiếu giá trị, Hide Mode, Continuation Line theo Parent Line).
+  - Test: chạy lại toàn bộ test hiện có của `log-filter`.
+- [ ] 5.2 Picker hiện giá trị và số đếm tăng dần trong lúc Indexing, kèm dấu "chưa đọc hết" (spec `log-filter`, scenario "Giá trị trong lúc Indexing").
+- [ ] 5.3 Custom Value:
+  - Cột còn danh sách giá trị: so trên danh sách đó, không cần text.
+  - Cột tràn `MAX_DISTINCT` hoặc cột `message`: chạy Scan (nhóm 6). Focus Pane nhận dòng dần.
+
+## 6. Scan
+
+- [ ] 6.1 Bộ chạy Scan chung:
+  - Chia khối 10.000 dòng, quét khối quanh vị trí đang xem trước.
+  - Kết quả là tập dòng đã sắp xếp; có tổng tạm thời và tiến độ.
+  - Scan mới huỷ Scan cũ; dòng live chỉ quét phần mới.
+  - Test cho từng hành vi trong spec `progressive-scan`.
+- [ ] 6.2 Search chạy qua Scan, dùng lại `search_expr` và so khớp Unicode hiện có.
+  - Parsed View chỉ đếm dòng Filter đang hiện; Raw View đếm mọi dòng.
+  - Ô Search hiện tổng tạm thời và tiến độ; Next/Previous dùng được trên Match đã tìm thấy.
+  - Test: chạy lại toàn bộ test của `log-search`.
+- [ ] 6.3 Bật Detected Field mới và đổi Log Format chạy qua Scan: dựng `row_ids` của cột mới; đổi Log Format thì index lại `LineMeta`. Cột hiện ngay cho dòng đang xem.
+
+## 7. Highlight Rule và Marker
+
+- [ ] 7.1 Paint của Highlight Rule lưu 1 byte mỗi dòng của view (`u8` số thứ tự rule), tính từ `row_ids` cho rule theo Filter Value; Minimap đọc mảng này.
+  - Test: chạy lại test của `highlight-rule`.
+- [ ] 7.2 Rule có Custom Value: tính cho dòng đang hiện lúc parse vào LRU, phần còn lại lấp bằng Scan.
+- [ ] 7.3 Marker: bảng tra đã sắp xếp `(generation, line) → markers` cho mỗi file; vẽ từ bảng cho dòng đang hiện; kiểm `line_hash` khi dòng được đọc ra; Next/Previous Marker trên bảng.
+  - Test: chạy lại test của `text-marker`.
+
+## 8. Raw View và Scratch
+
+- [ ] 8.1 Raw View đọc dòng qua `ViewRows` và LRU, bỏ `ParsedFile::lines`.
+  - Test: chạy lại test của `raw-view` (File Section, Search, Marker).
+- [ ] 8.2 Scratch: Line Index dựng trên bytes của `raw.texts` (`LineSource` trong memory); sửa thì index lại file đó.
+  - Test: gõ, dán, xoá dòng giữ đúng Marker và số dòng.
+
+## 9. Live
+
+- [ ] 9.1 File local live: bytes mới từ `LocalFileSource` được index thành lô nhỏ, rồi thêm vào Line Index, `row_ids`, `ViewRows`, kết quả Scan đang dùng, và paint của Highlight Rule.
+  - Bỏ Live Window cho file local.
+- [ ] 9.2 Phát hiện rotate và truncate bằng kích thước cộng hash 4 KiB đầu và 4 KiB cuối đã index; Generation mới kèm Break.
+  - Giữ file handle của Generation cũ; dòng không còn trên đĩa hiện "no longer on disk".
+  - Test: đổi tên, xoá, `copytruncate`.
+- [ ] 9.3 Phát hiện file Imported bị ghi đè (không phải append): index lại và báo người dùng.
+- [ ] 9.4 Remote File và Remote Command: Line Index trên bytes của Live Window; Backfill, Load More, Open in full và cắt Live Window cập nhật Line Index.
+  - Test: chạy lại test của `live-log` và `remote-log-space`.
+
+## 10. Archive Entry
+
+- [ ] 10.1 Giải nén Archive Entry theo luồng vào `<app data>/archive-cache/<hash>/`, mỗi Archive một lượt, giữ `MAX_UNCOMPRESSED_BYTES`; index như file local.
+- [ ] 10.2 Xoá thư mục khi Log Space bị xoá; quét dọn khi khởi động như `remote::copy::sweep`.
+  - Test: tắt ngang giữa chừng.
+
+## 11. Dormant Tab
+
+- [ ] 11.1 `needed_files`, `open_space_ids` và `sync_glob_watchers` chỉ tính tab đang chọn.
+  - Test: mở app với nhiều tab Remote có Live Glob thì không kết nối Server của tab không được chọn.
+- [ ] 11.2 File View chỉ đọc file của nó (`build_view_for` không gọi `ensure_space_loaded` cho cả Log Space).
+- [ ] 11.3 Rời tab bỏ Line Index, LRU và source live của các file không còn tab đang chọn nào dùng, và đóng mọi file handle của chúng; lưu Scratch trước; giữ session SSH trong `RemoteHub`.
+  - Test: memory trả lại sau khi rời tab; quay lại tab Remote không đăng nhập lại.
+- [ ] 11.4 Quay lại Dormant Tab thì index lại với tiến độ, rồi khôi phục Filter, Focus Tab, Search Expression, vị trí đang xem và Marker.
+- [ ] 11.5 Tab strip hiện trạng thái Dormant và Indexing (tiến độ).
+
+## 12. Dọn đường cũ và đo lại
+
+- [ ] 12.1 Xoá `ParsedFile::entries`, `ParsedFile::lines`, `AppView::all_entries` và các đường dựng view cũ (`build_space_view`, `build_file_view`, `timeline::materialize` nếu không còn dùng).
+- [ ] 12.2 Cập nhật `examples/mem_probe.rs` và `examples/perf_probe.rs` sang đường mới. Ghi số trước và sau vào design.md:
+  - thời gian mở
+  - byte/dòng
+  - RSS
+  - chuyển tab
+  - Search
+- [ ] 12.3 Chạy toàn bộ `cargo test`, rồi kiểm tra bằng tay trên app thật: mở file 376MB, Search, Filter, Marker, Highlight, rotate, chuyển tab, mở lại app với nhiều tab.
+- [ ] 12.4 Viết proposal cho change tiếp theo: "Remote ghi ra cache local".
+  - Nội dung: Remote File và Remote Command ghi vào `<app data>/remote-cache/`, rồi được index như file local; Dormant Tab Remote mở lại từ cache.
+  - Hai câu hỏi mở cần trả lời: quy tắc dọn cache, và cách đồng bộ theo hash khối qua SFTP.
+- [ ] 12.5 Cập nhật CONTEXT.md theo mục "Domain changes" của proposal: thêm Line Index, Indexing, Scan và Dormant Tab; sửa Remote Log Space và Live Window; thêm các quy tắc mới.

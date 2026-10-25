@@ -27,11 +27,15 @@ flate2 = "1.1.10"
 ruzstd = "=0.9.1"
 lzma-rs = "=0.3.0"
 bzip2 = "=0.6.1"
+# Finding line breaks while indexing a file.
+memchr = "2.8.3"
 
 [dev-dependencies]
 tempfile = "3"
 # GPUI test harness (VisualTestContext); never in release builds.
 gpui = { package = "gpui-pre", version = "*", features = ["test-support"] }
+# The Line Index spike (`examples/index_probe.rs`).
+roaring = "0.11.5"
 
 # GPUI is far too slow to scroll or type in when built without
 # optimization; dependencies are optimized even in dev builds (built once).
@@ -40,6 +44,10 @@ opt-level = 3
 
 [profile.dev]
 opt-level = 1
+
+[target.'cfg(unix)'.dependencies]
+# `getrlimit`: how many files the process may hold open.
+libc = "0.2"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Storage_FileSystem"] }
