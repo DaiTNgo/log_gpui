@@ -49,6 +49,11 @@ pub trait Rows: Sync {
     /// The Markers painted on `row`.
     fn markers(&self, row: usize) -> &[TextMarker];
 
+    /// Whether `row` is a Continuation Line.
+    fn continues(&self, row: usize) -> bool {
+        self.get(row).is_some_and(|e| e.parent.is_some())
+    }
+
     fn is_empty(&self) -> bool {
         self.len() == 0
     }

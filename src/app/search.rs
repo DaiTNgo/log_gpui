@@ -21,6 +21,21 @@ impl Drop for SearchScan {
 }
 
 impl AppView {
+    /// Find the Matches of the open tab's Search Expression among every row
+    /// now, reading the rows' texts as a Scan does (from the files that are
+    /// read through their Line Index), on every core.
+    pub(crate) fn find_matches_now(&mut self) {
+        let texts = self.view.texts(&self.parsed_files);
+        let rows = texts.len();
+        self.focus.search_mut().update_matches_with(|matcher| {
+            let matcher = matcher.clone();
+            let find = move |first: usize, lines: &[&str]| -> Vec<u32> {
+                lines.iter().enumerate().filter(|(_, l)| matcher.is_match(l)).map(|(i, _)| (first + i) as u32).collect()
+            };
+            crate::index::scan::scan_all(&texts, 0..rows, &find).lines.into_iter().map(|r| r as usize).collect()
+        });
+    }
+
     /// Focus the search field and make sure the active query is surfaced
     /// (match navigator, ruler marks, highlight).
     pub fn activate_search(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -60,9 +75,7 @@ impl AppView {
             self.run_raw_search(cx);
             return;
         }
-        self.focus
-            .search_mut()
-            .update_matches(&self.view.bind(&self.parsed_files), &self.visible_indices);
+        self.find_matches_now();
         self.refresh_focus();
         if let Some(entry_ix) = self.focus.search().current_match_pos() {
             self.goto_entry(entry_ix, Origin::Jump, cx);

@@ -111,9 +111,7 @@ impl AppView {
         self.text_selection = None;
         self.selecting = false;
         self.recompute_highlight_paints();
-        self.focus
-            .search_mut()
-            .update_matches(&self.view.bind(&self.parsed_files), &self.visible_indices);
+        self.find_matches_now();
         self.refresh_focus();
         self.clamp_selected_row();
         self.schedule_session_save(cx);

@@ -110,6 +110,13 @@ impl SearchState {
     /// the Matches of the last valid expression are kept (and the selected
     /// match with them).
     pub fn update_matches<R: Rows + ?Sized>(&mut self, entries: &R, rows: &[usize]) {
+        self.update_matches_with(|matcher| {
+            crate::par::filter(rows, |entry_ix| entries.get(entry_ix).is_some_and(|entry| matcher.is_match(&entry.raw_line)))
+        });
+    }
+
+    /// `update_matches` with the Matches `find` finds for the matcher.
+    pub fn update_matches_with(&mut self, find: impl FnOnce(&Matcher) -> Vec<usize>) {
         let replaced = self.reparse();
         self.pending = false;
         if replaced {
@@ -120,10 +127,7 @@ impl SearchState {
             self.matched_visible_indices = Arc::new(Vec::new());
             return;
         };
-
-        self.matched_visible_indices = Arc::new(crate::par::filter(rows, |entry_ix| {
-            entries.get(entry_ix).is_some_and(|entry| matcher.is_match(&entry.raw_line))
-        }));
+        self.matched_visible_indices = Arc::new(find(matcher));
         if self.current_match_idx >= self.matched_visible_indices.len() {
             self.current_match_idx = 0;
         }

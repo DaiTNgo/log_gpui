@@ -414,7 +414,7 @@ impl AppView {
             ViewMode::Parsed => {
                 self.supersede_search_scan();
                 self.active_search_mut().reparse();
-                self.focus.search_mut().update_matches(&self.view.bind(&self.parsed_files), &self.visible_indices);
+                self.find_matches_now();
             }
             ViewMode::Raw => {
                 self.run_raw_search_keep_position(cx);

@@ -4,7 +4,7 @@
 
 use super::AppView;
 use crate::highlight::{
-    HighlightRule, MESSAGE_COLUMN, RuleError, move_rule, next_rule_id, paint_rows,
+    HighlightRule, MESSAGE_COLUMN, RuleError, count_matches_with, move_rule, next_rule_id, paint_rows_with,
 };
 use crate::palette::{HighlightColor, next_rule_color};
 use gpui::Context;
@@ -19,13 +19,12 @@ impl AppView {
     /// shows it.
     pub fn recompute_highlight_paints(&mut self) {
         let rules = self.highlight_rules().to_vec();
-        self.highlight_paints = Arc::new(paint_rows(&rules, &self.view.bind(&self.parsed_files)));
+        let rows = self.view.bind(&self.parsed_files);
+        let columns = Some(&self.filter_index);
+        self.highlight_paints = Arc::new(paint_rows_with(&rules, &rows, columns, 0));
         self.rule_counts = rules
             .iter()
-            .map(|r| {
-                let n = crate::highlight::count_matches(r, &self.view.bind(&self.parsed_files), &self.visible_indices);
-                (r.id, n)
-            })
+            .map(|r| (r.id, count_matches_with(r, &rows, columns, &self.visible_indices)))
             .collect();
     }
 
@@ -37,11 +36,15 @@ impl AppView {
             return false;
         }
         let rules = self.highlight_rules().to_vec();
-        let new = crate::highlight::paint_rows_from(&rules, &self.view.bind(&self.parsed_files), from);
+        let rows = self.view.bind(&self.parsed_files);
+        let columns = Some(&self.filter_index);
+        let new = paint_rows_with(&rules, &rows, columns, from);
+        let counts: Vec<(u64, usize)> =
+            rules.iter().map(|r| (r.id, count_matches_with(r, &rows, columns, &self.visible_indices[from..]))).collect();
+        drop(rows);
         Arc::make_mut(&mut self.highlight_paints).extend(new);
-        for rule in &rules {
-            let n = crate::highlight::count_matches(rule, &self.view.bind(&self.parsed_files), &self.visible_indices[from..]);
-            *self.rule_counts.entry(rule.id).or_insert(0) += n;
+        for (id, n) in counts {
+            *self.rule_counts.entry(id).or_insert(0) += n;
         }
         true
     }

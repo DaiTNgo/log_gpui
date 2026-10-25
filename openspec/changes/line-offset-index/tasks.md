@@ -107,7 +107,9 @@ Hiện tại (c8bf40d):
   - File View dùng thẳng `FilterIndex` của file;
   - Log Space gộp `FilterIndex` của các file theo thứ tự dòng đã gộp.
   Go to và `LineRef` đọc `effective_timestamp` cùng `LineMeta` thay vì entry.
-- [ ] 4b.5 Highlight Rule theo Filter Value tô bằng `row_ids` (7.1); rule có Custom Value tô bằng Scan (7.2). `run_search` cũng chạy qua Scan, đọc từ Line Index.
+- [x] 4b.5 Highlight Rule theo Filter Value tô bằng `row_ids` (7.1); rule có Custom Value tô bằng Scan (7.2). `run_search` cũng chạy qua Scan, đọc từ Line Index.
+  - Đã làm: Highlight Rule (kể cả Custom Value) trên cột có `row_ids` được tô bằng bảng tra theo giá trị. `run_search` chạy `scan_all` trên text của view, đọc từ Line Index cho file đã index.
+  - Còn lại: rule trên MESSAGE hoặc trên cột tràn vẫn đọc text từng dòng. Với file đã index, nghĩa là đọc từ đĩa qua cache, cần chuyển sang Scan ở nền (7.2).
 - [ ] 4b.6 Raw View và xem trước Log Format đọc dòng qua Line Index (8.1).
 - [ ] 4b.7 Mở file local bằng `IndexedFile` khi đọc ở nền (`app::loading`). Live tail của file đó index phần byte mới (9.1); rotate và truncate mở Generation mới (9.2).
 - [ ] 4b.8 Detected Field hoặc Log Format đổi thì index lại file (6.3).

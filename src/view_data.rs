@@ -173,6 +173,14 @@ impl<'a> FileEntries<'a> {
         }
     }
 
+    /// Whether the line is a Continuation Line.
+    pub fn continues(&self, pos: usize) -> bool {
+        match self {
+            FileEntries::Held(entries) => entries.get(pos).is_some_and(|e| e.parent.is_some()),
+            FileEntries::Indexed(file) => file.meta(pos).is_some_and(|m| m.parent_dist > 0),
+        }
+    }
+
     /// The line's level.
     pub fn level(&self, pos: usize) -> Option<crate::model::LogLevel> {
         match self {
@@ -362,6 +370,10 @@ impl Rows for BoundRows<'_> {
 
     fn markers(&self, row: usize) -> &[TextMarker] {
         BoundRows::markers(self, row)
+    }
+
+    fn continues(&self, row: usize) -> bool {
+        self.at(row).is_some_and(|(f, pos)| f.continues(pos))
     }
 }
 

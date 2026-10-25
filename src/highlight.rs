@@ -3,7 +3,7 @@
 //! Custom Values containing text, joined by OR) but never hides a row.
 
 use crate::rows::Rows;
-use crate::filter_index::with_value_of;
+use crate::filter_index::{ColumnIndex, FilterIndex, MISSING, with_value_of};
 use crate::palette::HighlightColor;
 use crate::unicode_text::{self, Needle};
 use serde::{Deserialize, Serialize};
@@ -119,44 +119,66 @@ struct CompiledRule<'a> {
     values: Vec<Needle>,
     custom: Vec<Needle>,
     paint: Arc<RowPaint>,
+    /// With the column's value ids: whether each value meets the rule, so a
+    /// row is tested by its id instead of its text.
+    ids: Option<(&'a ColumnIndex, Vec<bool>)>,
 }
 
 impl<'a> CompiledRule<'a> {
-    fn new(index: usize, rule: &'a HighlightRule) -> Self {
-        Self {
+    fn new(index: usize, rule: &'a HighlightRule, columns: Option<&'a FilterIndex>) -> Self {
+        let mut compiled = Self {
             column: &rule.column,
             values: rule.values.iter().map(|v| Needle::new(v)).collect(),
             custom: rule.custom.iter().map(|c| Needle::new(c)).collect(),
             paint: Arc::new(RowPaint { rule: index, color: rule.color.clone(), column: rule.column.clone() }),
+            ids: None,
+        };
+        if let Some(col) = columns.and_then(|c| c.column(&rule.column)).filter(|c| c.has_row_ids()) {
+            let ticked: Vec<&str> = rule.values.iter().map(String::as_str).collect();
+            let table = col
+                .values
+                .iter()
+                .map(|v| ticked.contains(&v.folded.as_str()) || compiled.custom.iter().any(|n| n.is_in(&v.display)))
+                .collect();
+            compiled.ids = Some((col, table));
         }
+        compiled
     }
 
     fn matches_value(&self, value: Option<&str>) -> bool {
         let Some(v) = value else { return false };
         self.values.iter().any(|n| n.equals(v)) || self.custom.iter().any(|n| n.is_in(v))
     }
+
+    /// Whether `row` meets the rule: by its value id when the column keeps
+    /// them, else by its text.
+    fn matches_row<R: Rows + ?Sized>(&self, entries: &R, row: usize) -> bool {
+        if let Some((col, table)) = &self.ids {
+            if let Some(id) = col.id_of_row(row) {
+                return id != MISSING && table.get(id as usize).copied().unwrap_or(false);
+            }
+        }
+        with_value_of(entries, row, self.column, |v| self.matches_value(v))
+    }
 }
 
-fn compile(rules: &[HighlightRule]) -> Vec<CompiledRule<'_>> {
+fn compile<'a>(rules: &'a [HighlightRule], columns: Option<&'a FilterIndex>) -> Vec<CompiledRule<'a>> {
     rules
         .iter()
         .enumerate()
         .filter(|(_, r)| r.enabled)
-        .map(|(i, r)| CompiledRule::new(i, r))
+        .map(|(i, r)| CompiledRule::new(i, r, columns))
         .collect()
 }
 
 fn paint_compiled<R: Rows + ?Sized>(rules: &[CompiledRule], entries: &R, row: usize) -> Option<Arc<RowPaint>> {
-    rules
-        .iter()
-        .find(|rule| with_value_of(entries, row, rule.column, |v| rule.matches_value(v)))
-        .map(|rule| rule.paint.clone())
+    rules.iter().find(|rule| rule.matches_row(entries, row)).map(|rule| rule.paint.clone())
 }
 
 /// The rule that paints `row`: the first enabled rule in the list that it
 /// meets. A Continuation Line is judged by its Parent Line's values.
 pub fn paint_for_row<R: Rows + ?Sized>(rules: &[HighlightRule], entries: &R, row: usize) -> Option<RowPaint> {
-    paint_compiled(&compile(rules), entries, row).map(|p| (*p).clone())
+    paint_compiled(&compile(rules, None), entries, row).map(|p| (*p).clone())
 }
 
 /// The paint of every row of `entries`, for the rows' own order.
@@ -167,7 +189,20 @@ pub fn paint_rows<R: Rows + ?Sized>(rules: &[HighlightRule], entries: &R) -> Row
 /// The paint of the rows from `from` on, to go after the paints of the rows
 /// before it.
 pub fn paint_rows_from<R: Rows + ?Sized>(rules: &[HighlightRule], entries: &R, from: usize) -> RowPaints {
-    let compiled = compile(rules);
+    paint_rows_with(rules, entries, None, from)
+}
+
+/// `paint_rows_from`, testing rows by the value ids of `columns` (the
+/// rows' Filter columns) where it keeps them, without reading the rows.
+pub fn paint_rows_with<R: Rows + ?Sized>(
+    rules: &[HighlightRule],
+    entries: &R,
+    columns: Option<&FilterIndex>,
+    from: usize,
+) -> RowPaints {
+    // Value ids of rows other than these say nothing of them.
+    let columns = columns.filter(|c| c.rows() == entries.len());
+    let compiled = compile(rules, columns);
     let count = entries.len().saturating_sub(from);
     if compiled.is_empty() {
         return vec![None; count];
@@ -179,11 +214,19 @@ pub fn paint_rows_from<R: Rows + ?Sized>(rules: &[HighlightRule], entries: &R, f
 /// condition, for the count in the Highlights list. Continuation Lines are
 /// not counted, like Filter counts.
 pub fn count_matches<R: Rows + ?Sized>(rule: &HighlightRule, entries: &R, rows: &[usize]) -> usize {
-    let compiled = CompiledRule::new(0, rule);
-    crate::par::count(rows, |row| {
-        entries.get(row).is_some_and(|e| e.parent.is_none())
-            && with_value_of(entries, row, &rule.column, |v| compiled.matches_value(v))
-    })
+    count_matches_with(rule, entries, None, rows)
+}
+
+/// `count_matches` by the value ids of `columns` where it keeps them.
+pub fn count_matches_with<R: Rows + ?Sized>(
+    rule: &HighlightRule,
+    entries: &R,
+    columns: Option<&FilterIndex>,
+    rows: &[usize],
+) -> usize {
+    let columns = columns.filter(|c| c.rows() == entries.len());
+    let compiled = CompiledRule::new(0, rule, columns);
+    crate::par::count(rows, |row| !entries.continues(row) && compiled.matches_row(entries, row))
 }
 
 /// The next unused rule id of a list.
