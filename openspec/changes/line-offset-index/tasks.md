@@ -99,7 +99,7 @@ Hiện tại (c8bf40d):
 
 Để giảm memory, file local phải giữ Line Index, `LineMeta` và `FilterIndex` (khoảng 30 B/dòng), còn entry lấy qua `RowCache`. Làm theo thứ tự sau, mỗi bước một commit, giữ test xanh:
 
-- [ ] 4b.1 `Rows::get` trả về `RowRef` (mượn từ `Vec`, hoặc `Arc<LogEntry>` từ cache) thay cho `&LogEntry`. Chỉ đổi kiểu, chưa đổi hành vi.
+- [x] 4b.1 `Rows::get` trả về `RowRef` (mượn từ `Vec`, hoặc `Arc<LogEntry>` từ cache) thay cho `&LogEntry`. Chỉ đổi kiểu, chưa đổi hành vi.
 - [ ] 4b.2 Dữ liệu theo file có hai dạng: `Vec<LogEntry>` (Scratch, Remote) và bản đã index (file local). Các phần sau đọc qua API theo file (`len`, `meta(n)`, `entry(n)`, `filter_index`, `max_chars`):
   - gộp timeline bằng `Merger` trên `LineMeta`;
   - Go to và `LineRef`;

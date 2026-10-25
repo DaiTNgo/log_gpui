@@ -616,14 +616,15 @@ impl PaneRows {
         let break_label: Option<String>;
         let row_markers: &[crate::marker::TextMarker];
         let row_source: Option<&str>;
-        let (entry, paint, number, source_name): (&LogEntry, Option<&RowPaint>, usize, Option<String>) =
+        let (entry, paint, number, source_name): (crate::rows::RowRef, Option<&RowPaint>, usize, Option<String>) =
             match (&self.source, row) {
                 (PaneSource::Parsed { paints }, FocusRow::Entry(ix)) => {
                     let e = entries.get(ix)?;
                     break_label = e.break_before.as_ref().map(|m| m.label.clone());
                     row_markers = entries.markers(ix);
                     row_source = entries.source(ix);
-                    (e, paints.get(ix).and_then(|p| p.as_deref()), e.index, row_source.map(str::to_string))
+                    let number = e.index;
+                    (e, paints.get(ix).and_then(|p| p.as_deref()), number, row_source.map(str::to_string))
                 }
                 (PaneSource::Raw { sections, markers }, FocusRow::Raw { section, line }) => {
                     let s = sections.get(section)?;
@@ -646,7 +647,7 @@ impl PaneRows {
                     row_markers = &raw_entry.markers;
                     row_source = None;
                     break_label = s.breaks.get(&line).map(|m| m.label.clone());
-                    (&raw_entry, None, line + 1, Some(s.display_name.clone()))
+                    (crate::rows::RowRef::Borrowed(&raw_entry), None, line + 1, Some(s.display_name.clone()))
                 }
                 _ => return None,
             };
@@ -671,13 +672,13 @@ impl PaneRows {
         let selected_in_line = self.selection.and_then(|s| s.range_in_row(index, entry.raw_line.len()));
         let columns = (self.columns && parsed).then_some(&app.column_layout);
         let hidden_match = columns.and_then(|layout| {
-            crate::ui::cells::hidden_matches_in(entry, &search_ranges, &layout.pane_columns())
+            crate::ui::cells::hidden_matches_in(&entry, &search_ranges, &layout.pane_columns())
                 .map(|hidden| crate::ui::cells::hidden_matches_tooltip(&hidden, layout))
         });
         // Matches are painted on whichever cell holds them, in bytes of the line.
         let ctx = CellCtx {
             colors: &colors,
-            entry,
+            entry: &entry,
             markers: row_markers,
             source: row_source,
             search_ranges: &[],

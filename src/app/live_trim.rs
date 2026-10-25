@@ -8,7 +8,7 @@ use crate::focus::FocusRow;
 use crate::live::Trimmed;
 use crate::index::view_rows::{pack, unpack};
 use crate::model::LogEntry;
-use crate::rows::Rows;
+use crate::rows::{RowRef, Rows};
 use crate::view_data::{BoundRows, ViewFile};
 use std::sync::Arc;
 
@@ -52,14 +52,14 @@ impl Rows for BeforeTrim<'_> {
         self.rows.len()
     }
 
-    fn get(&self, row: usize) -> Option<&LogEntry> {
+    fn get(&self, row: usize) -> Option<RowRef<'_>> {
         let (file, pos) = self.rows.data.get(row)?;
         if file != self.file {
             return self.rows.get(row);
         }
         match pos.checked_sub(self.drained.len()) {
-            None => self.drained.get(pos),
-            Some(kept) => self.entries.get(kept),
+            None => self.drained.get(pos).map(RowRef::Borrowed),
+            Some(kept) => self.entries.get(kept).map(RowRef::Borrowed),
         }
     }
 
@@ -73,9 +73,10 @@ impl Rows for BeforeTrim<'_> {
 
     fn markers(&self, row: usize) -> &[crate::marker::TextMarker] {
         let Some((file, _)) = self.rows.data.get(row) else { return &[] };
-        match (self.rows.data.files.get(file), self.get(row)) {
-            (Some(f), Some(entry)) => f.markers_of(entry),
-            _ => &[],
+        let Some(f) = self.rows.data.files.get(file) else { return &[] };
+        match self.get(row) {
+            Some(entry) => f.markers_of_line(entry.index, entry.generation),
+            None => &[],
         }
     }
 }
@@ -91,8 +92,8 @@ impl Rows for FileRows<'_> {
         self.entries.len()
     }
 
-    fn get(&self, row: usize) -> Option<&LogEntry> {
-        self.entries.get(row)
+    fn get(&self, row: usize) -> Option<RowRef<'_>> {
+        self.entries.get(row).map(RowRef::Borrowed)
     }
 
     fn file_id(&self, _row: usize) -> Option<&str> {

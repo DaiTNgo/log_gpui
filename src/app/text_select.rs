@@ -48,7 +48,7 @@ impl AppView {
         let hit = hit_cell(&self.column_layout, x, f32::from(horizontal_scroll_x(&self.scroll_handle)));
         let entry = self.rows().get(*self.visible_indices.get(row)?)?;
         let font_size = self.text_scale().font_size();
-        let byte = byte_for_hit(entry, hit, |text, x| {
+        let byte = byte_for_hit(&entry, hit, |text, x| {
             crate::ui::mono::index_for_x(text, x, font_size, window, cx)
         });
         Some((TextPos::new(row, byte), hit))
@@ -182,10 +182,13 @@ impl AppView {
     pub fn selected_text(&self) -> Option<String> {
         let sel = self.text_selection.filter(|s| !s.is_empty())?;
         let entries = self.rows();
-        let rows = self.visible_indices.iter().enumerate().filter_map(|(pos, &ix)| {
-            entries.get(ix).map(|e| (pos, e.raw_line.as_str()))
-        });
-        Some(sel.copy_text(rows))
+        let rows: Vec<(usize, gpui::SharedString)> = self
+            .visible_indices
+            .iter()
+            .enumerate()
+            .filter_map(|(pos, &ix)| entries.get(ix).map(|e| (pos, e.raw_line.clone())))
+            .collect();
+        Some(sel.copy_text(rows.iter().map(|(pos, t)| (*pos, t.as_str()))))
     }
 
     /// ⌘C in the Parsed View.
@@ -204,7 +207,7 @@ impl AppView {
         let mut column_value = None;
         match hit {
             Hit::Text { cell: c, .. } => {
-                if let Some((text, _)) = cell_text(entry, c) {
+                if let Some((text, _)) = cell_text(&entry, c) {
                     cell = Some(c);
                     column_value = match c {
                         TextCell::Timestamp | TextCell::Raw => None,

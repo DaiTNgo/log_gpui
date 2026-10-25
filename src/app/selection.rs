@@ -2,11 +2,11 @@
 
 use crate::rows::Rows as _;
 use super::AppView;
-use crate::model::{LogEntry, LogLevel};
+use crate::model::LogLevel;
 use gpui::Context;
 
 impl AppView {
-    pub fn selected_entry(&self) -> Option<&LogEntry> {
+    pub fn selected_entry(&self) -> Option<crate::rows::RowRef<'_>> {
         self.selected_row_pos
             .and_then(|pos| self.visible_indices.get(pos))
             .and_then(|&ix| self.rows().get(ix))

@@ -185,8 +185,8 @@ impl AppView {
             Some((GoToError::TimeOutside, _)) => match self.timed_span() {
                 Some((first, last)) => format!(
                     "Outside the view: {} – {}",
-                    self.rows().get(first).map_or("", |e| e.time_str()),
-                    self.rows().get(last).map_or("", |e| e.time_str())
+                    self.rows().get(first).map_or(String::new(), |e| e.time_str().to_string()),
+                    self.rows().get(last).map_or(String::new(), |e| e.time_str().to_string())
                 ),
                 None => GoToError::TimeOutside.message().to_string(),
             },

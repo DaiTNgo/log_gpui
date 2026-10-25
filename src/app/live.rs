@@ -1152,7 +1152,7 @@ impl AppView {
             for r in 0..fresh.len() {
                 if let Some(entry) = new_rows.get(r) {
                     let source = if is_space { new_rows.source(r) } else { None };
-                    self.column_layout.max_chars.record_row(entry, source);
+                    self.column_layout.max_chars.record_row(&entry, source);
                 }
             }
         }

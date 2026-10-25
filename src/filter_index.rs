@@ -82,22 +82,21 @@ impl Source {
 /// The value of the row `row` in the column `key`. A Continuation Line has
 /// no value of its own: it reads its Parent Line's, found by walking up to the
 /// nearest row that is not a continuation. Its Stream is the exception: that
-/// is always the line's own.
-pub fn value_of<'a, R: Rows + ?Sized>(rows: &'a R, row: usize, key: &str) -> Option<&'a str> {
-    let value = |r: usize| {
-        if key == "source" {
-            return rows.source(r).filter(|s| !s.is_empty());
-        }
-        rows.get(r).and_then(|e| column_value(e, key))
-    };
-    if key == "stream" {
-        return value(row);
-    }
+/// is always the line's own. `f` is given the value.
+pub fn with_value_of<R: Rows + ?Sized, T>(rows: &R, row: usize, key: &str, f: impl FnOnce(Option<&str>) -> T) -> T {
     let mut r = row;
-    while r > 0 && rows.get(r).is_some_and(|e| e.parent.is_some()) {
-        r -= 1;
+    if key != "stream" {
+        while r > 0 && rows.get(r).is_some_and(|e| e.parent.is_some()) {
+            r -= 1;
+        }
     }
-    value(r)
+    if key == "source" {
+        return f(rows.source(r).filter(|s| !s.is_empty()));
+    }
+    match rows.get(r) {
+        Some(entry) => f(column_value(&entry, key)),
+        None => f(None),
+    }
 }
 
 /// The value a row holds in the column `key`, or `None` when it has none.
@@ -206,7 +205,7 @@ impl ColumnIndex {
     fn truncate<R: Rows + ?Sized>(&mut self, keep: usize, removed: &R) {
         self.rows = keep;
         let lost = (0..removed.len())
-            .filter(|&i| removed.get(i).is_some_and(|e| e.parent.is_none() && self.source.value(e, removed.source(i)).is_some()))
+            .filter(|&i| removed.get(i).is_some_and(|e| e.parent.is_none() && self.source.value(&e, removed.source(i)).is_some()))
             .count();
         self.covered = self.covered.saturating_sub(lost);
         if self.overflow {
@@ -222,7 +221,7 @@ impl ColumnIndex {
                 continue;
             }
             self.values[id as usize].count -= 1;
-            if let Some((_, n)) = self.source.value(entry, removed.source(i)).and_then(|raw| self.spellings.get_mut(raw)) {
+            if let Some((_, n)) = self.source.value(&entry, removed.source(i)).and_then(|raw| self.spellings.get_mut(raw)) {
                 *n = n.saturating_sub(1);
             }
         }
@@ -233,7 +232,7 @@ impl ColumnIndex {
     /// those rows, in the same order). The other rows keep their order.
     fn drop_rows<R: Rows + ?Sized>(&mut self, dropped: &[usize], removed: &R) {
         let lost = (0..removed.len())
-            .filter(|&i| removed.get(i).is_some_and(|e| e.parent.is_none() && self.source.value(e, removed.source(i)).is_some()))
+            .filter(|&i| removed.get(i).is_some_and(|e| e.parent.is_none() && self.source.value(&e, removed.source(i)).is_some()))
             .count();
         self.covered = self.covered.saturating_sub(lost);
         self.rows -= dropped.len();
@@ -250,7 +249,7 @@ impl ColumnIndex {
                 continue;
             }
             self.values[id as usize].count -= 1;
-            if let Some((_, n)) = self.source.value(entry, removed.source(i)).and_then(|raw| self.spellings.get_mut(raw)) {
+            if let Some((_, n)) = self.source.value(&entry, removed.source(i)).and_then(|raw| self.spellings.get_mut(raw)) {
                 *n = n.saturating_sub(1);
             }
         }
@@ -471,7 +470,7 @@ impl FilterIndex {
                 }
             }
             for col in &mut fields {
-                col.push_row(entry, rows.source(row), parent_row);
+                col.push_row(&entry, rows.source(row), parent_row);
             }
         }
         for col in &mut fields {
@@ -491,7 +490,7 @@ impl FilterIndex {
     pub fn append<R: Rows + ?Sized>(&mut self, new_rows: &R) {
         for row in 0..new_rows.len() {
             if let Some(entry) = new_rows.get(row) {
-                self.push_row(entry, new_rows.source(row));
+                self.push_row(&entry, new_rows.source(row));
             }
         }
         for col in &mut self.columns {
@@ -504,7 +503,7 @@ impl FilterIndex {
     pub fn append_marking_untimed<R: Rows + ?Sized>(&mut self, new_rows: &R, untimed: impl Fn(usize) -> bool) {
         for row in 0..new_rows.len() {
             let Some(entry) = new_rows.get(row) else { continue };
-            self.push_row(entry, new_rows.source(row));
+            self.push_row(&entry, new_rows.source(row));
             if untimed(row) {
                 if let Some(last) = self.effective_ts.last_mut() {
                     *last = f64::NAN;
@@ -537,11 +536,11 @@ impl FilterIndex {
         for entry in crate::rows::entries(removed) {
             if entry.parent.is_none() {
                 self.parent_lines -= 1;
-                if has_timestamp(entry) {
+                if has_timestamp(&entry) {
                     self.timed_lines -= 1;
                 }
             }
-            self.count_kv(entry, false);
+            self.count_kv(&entry, false);
         }
     }
 

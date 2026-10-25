@@ -5,13 +5,39 @@
 
 use crate::marker::TextMarker;
 use crate::model::LogEntry;
+use std::sync::Arc;
+
+/// The entry of a row: borrowed from where its file holds it, or shared
+/// from the cache of lines read again from the file.
+#[derive(Debug, Clone)]
+pub enum RowRef<'a> {
+    Borrowed(&'a LogEntry),
+    Shared(Arc<LogEntry>),
+}
+
+impl std::ops::Deref for RowRef<'_> {
+    type Target = LogEntry;
+
+    fn deref(&self) -> &LogEntry {
+        match self {
+            RowRef::Borrowed(entry) => entry,
+            RowRef::Shared(entry) => entry,
+        }
+    }
+}
+
+impl<'a> From<&'a LogEntry> for RowRef<'a> {
+    fn from(entry: &'a LogEntry) -> Self {
+        RowRef::Borrowed(entry)
+    }
+}
 
 /// The rows of a view, in the order shown.
 pub trait Rows: Sync {
     fn len(&self) -> usize;
 
     /// The entry of `row`.
-    fn get(&self, row: usize) -> Option<&LogEntry>;
+    fn get(&self, row: usize) -> Option<RowRef<'_>>;
 
     /// The `file_id` of the Source File of `row`.
     fn file_id(&self, row: usize) -> Option<&str>;
@@ -33,20 +59,20 @@ impl Rows for [LogEntry] {
         <[LogEntry]>::len(self)
     }
 
-    fn get(&self, row: usize) -> Option<&LogEntry> {
-        <[LogEntry]>::get(self, row)
+    fn get(&self, row: usize) -> Option<RowRef<'_>> {
+        <[LogEntry]>::get(self, row).map(RowRef::Borrowed)
     }
 
     fn file_id(&self, row: usize) -> Option<&str> {
-        self.get(row).and_then(|e| e.file_id.as_deref())
+        <[LogEntry]>::get(self, row).and_then(|e| e.file_id.as_deref())
     }
 
     fn source(&self, row: usize) -> Option<&str> {
-        self.get(row).and_then(|e| e.source.as_deref())
+        <[LogEntry]>::get(self, row).and_then(|e| e.source.as_deref())
     }
 
     fn markers(&self, row: usize) -> &[TextMarker] {
-        self.get(row).map_or(&[], |e| &e.markers)
+        <[LogEntry]>::get(self, row).map_or(&[], |e| &e.markers)
     }
 }
 
@@ -55,8 +81,8 @@ impl Rows for Vec<LogEntry> {
         self.as_slice().len()
     }
 
-    fn get(&self, row: usize) -> Option<&LogEntry> {
-        self.as_slice().get(row)
+    fn get(&self, row: usize) -> Option<RowRef<'_>> {
+        Rows::get(self.as_slice(), row)
     }
 
     fn file_id(&self, row: usize) -> Option<&str> {
@@ -76,11 +102,11 @@ impl Rows for Vec<LogEntry> {
 pub const NO_ROWS: &Vec<LogEntry> = &Vec::new();
 
 /// The entries of `rows` from row `from` on, in order.
-pub fn entries_from<R: Rows + ?Sized>(rows: &R, from: usize) -> impl Iterator<Item = &LogEntry> {
+pub fn entries_from<R: Rows + ?Sized>(rows: &R, from: usize) -> impl Iterator<Item = RowRef<'_>> {
     (from..rows.len()).filter_map(move |r| rows.get(r))
 }
 
 /// The entries of every row of `rows`, in order.
-pub fn entries<R: Rows + ?Sized>(rows: &R) -> impl Iterator<Item = &LogEntry> {
+pub fn entries<R: Rows + ?Sized>(rows: &R) -> impl Iterator<Item = RowRef<'_>> {
     entries_from(rows, 0)
 }

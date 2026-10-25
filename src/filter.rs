@@ -5,7 +5,7 @@
 //! Range combine with AND. Hide Mode flips a column from "show only these" to
 //! "hide these". A row with no value in a column never matches it.
 
-use crate::filter_index::{ColumnIndex, FilterIndex, MISSING, value_of};
+use crate::filter_index::{ColumnIndex, FilterIndex, MISSING, with_value_of};
 use crate::rows::Rows;
 use crate::unicode_text::{self, Needle};
 use serde::{Deserialize, Serialize};
@@ -283,9 +283,9 @@ impl<'a> CompiledColumn<'a> {
     }
 
     fn matches_text<R: Rows + ?Sized>(&self, rows: &R, row: usize, key: &str) -> bool {
-        match value_of(rows, row, key) {
+        with_value_of(rows, row, key, |v| match v {
             None => false,
             Some(v) => self.values.iter().any(|n| n.equals(v)) || self.custom.iter().any(|n| n.is_in(v)),
-        }
+        })
     }
 }

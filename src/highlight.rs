@@ -3,7 +3,7 @@
 //! Custom Values containing text, joined by OR) but never hides a row.
 
 use crate::rows::Rows;
-use crate::filter_index::value_of;
+use crate::filter_index::with_value_of;
 use crate::palette::HighlightColor;
 use crate::unicode_text::{self, Needle};
 use serde::{Deserialize, Serialize};
@@ -149,7 +149,7 @@ fn compile(rules: &[HighlightRule]) -> Vec<CompiledRule<'_>> {
 fn paint_compiled<R: Rows + ?Sized>(rules: &[CompiledRule], entries: &R, row: usize) -> Option<Arc<RowPaint>> {
     rules
         .iter()
-        .find(|rule| rule.matches_value(value_of(entries, row, rule.column)))
+        .find(|rule| with_value_of(entries, row, rule.column, |v| rule.matches_value(v)))
         .map(|rule| rule.paint.clone())
 }
 
@@ -182,7 +182,7 @@ pub fn count_matches<R: Rows + ?Sized>(rule: &HighlightRule, entries: &R, rows: 
     let compiled = CompiledRule::new(0, rule);
     crate::par::count(rows, |row| {
         entries.get(row).is_some_and(|e| e.parent.is_none())
-            && compiled.matches_value(value_of(entries, row, &rule.column))
+            && with_value_of(entries, row, &rule.column, |v| compiled.matches_value(v))
     })
 }
 

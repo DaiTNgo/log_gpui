@@ -287,7 +287,7 @@ impl FieldMaxChars {
         let mut max_chars = Self::new();
         for row in 0..rows.len() {
             if let Some(entry) = rows.get(row) {
-                max_chars.record_row(entry, rows.source(row));
+                max_chars.record_row(&entry, rows.source(row));
             }
         }
         max_chars

@@ -12,7 +12,7 @@
 //!
 //! Nothing here is app code: it answers whether the numbers of design.md
 //! (decision 14) are within reach.
-use log_gpui::filter_index::{MAX_DISTINCT, MISSING, value_of};
+use log_gpui::filter_index::{MAX_DISTINCT, MISSING};
 use log_gpui::model::{LogEntry, LogLevel};
 use log_gpui::parser::text::{LineConfig, LineParser, parse_line_with, parse_text_bytes_with_config};
 use log_gpui::search_expr::{self, Matcher};
@@ -607,7 +607,8 @@ fn verify_head(path: &str, index: &Index, n: usize) -> usize {
             if col.overflow {
                 return true;
             }
-            let want = value_of(&entries, row, key);
+            let want = log_gpui::filter_index::with_value_of(&entries, row, key, |v| v.map(str::to_string));
+            let want = want.as_deref();
             let got = col.row_ids[row];
             want == (got != MISSING).then(|| col.values[got as usize].as_str())
         });

@@ -237,13 +237,15 @@ impl AppView {
         let preview = compiled.as_ref().ok().map(|format| {
             let rows = self.format_preview_rows();
             let entries = self.rows();
-            let shown: Vec<(usize, &str)> =
-                rows.iter().filter_map(|&i| Some((i, entries.get(i)?.raw_line.as_str()))).collect();
-            let all = crate::rows::entries(&entries)
+            let shown: Vec<(usize, gpui::SharedString)> =
+                rows.iter().filter_map(|&i| Some((i, entries.get(i)?.raw_line.clone()))).collect();
+            let shown: Vec<(usize, &str)> = shown.iter().map(|(i, t)| (*i, t.as_str())).collect();
+            let all: Vec<(usize, gpui::SharedString)> = crate::rows::entries(&entries)
                 .enumerate()
                 .filter(|(_, e)| !e.is_continuation())
-                .map(|(i, e)| (i, e.raw_line.as_str()));
-            preview_format(format, &shown, all)
+                .map(|(i, e)| (i, e.raw_line.clone()))
+                .collect();
+            preview_format(format, &shown, all.iter().map(|(i, t)| (*i, t.as_str())))
         });
         let Some(editor) = self.format_editor.as_mut() else { return };
         let edit = editor.template.edit(compiled.map(|_| ()));

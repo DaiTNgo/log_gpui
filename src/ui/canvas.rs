@@ -824,7 +824,7 @@ impl RowEnv {
         } else {
             shared_search_paints(&phrase_ranges, colors.search)
         };
-        let hidden_match = crate::ui::cells::hidden_matches(entry, &search_ranges, &self.layout)
+        let hidden_match = crate::ui::cells::hidden_matches(&entry, &search_ranges, &self.layout)
             .map(|hidden| crate::ui::cells::hidden_matches_tooltip(&hidden, &self.layout));
         let selected_in_line = self
             .selection
@@ -835,7 +835,7 @@ impl RowEnv {
         let source_tint = file_id.and_then(|id| self.source_tints.get(id)).copied();
         let cell_ctx = CellCtx {
             colors: &colors,
-            entry,
+            entry: &entry,
             markers: entries.markers(entry_ix),
             source: entries.source(entry_ix),
             search_ranges: &[],

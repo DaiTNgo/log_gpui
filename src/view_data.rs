@@ -7,7 +7,7 @@
 use crate::index::view_rows::{pack, unpack};
 use crate::marker::TextMarker;
 use crate::model::LogEntry;
-use crate::rows::Rows;
+use crate::rows::{RowRef, Rows};
 use crate::space_view::ParsedFile;
 use crate::workspace::log_space::LogFile;
 use std::collections::HashMap;
@@ -44,11 +44,16 @@ impl ViewFile {
 
     /// The Markers of `entry`, a line of this file.
     pub fn markers_of(&self, entry: &LogEntry) -> &[TextMarker] {
+        self.markers_of_line(entry.index, entry.generation)
+    }
+
+    /// The Markers of line `line` of Generation `generation`.
+    pub fn markers_of_line(&self, line: usize, generation: u32) -> &[TextMarker] {
         if self.markers.is_empty() {
             return &[];
         }
-        let ago = self.generation.saturating_sub(entry.generation);
-        self.markers.get(&(entry.index, ago)).map_or(&[], Vec::as_slice)
+        let ago = self.generation.saturating_sub(generation);
+        self.markers.get(&(line, ago)).map_or(&[], Vec::as_slice)
     }
 }
 
@@ -173,8 +178,8 @@ impl<'a> BoundRows<'a> {
         self.data.rows.is_empty()
     }
 
-    pub fn get(&self, row: usize) -> Option<&'a LogEntry> {
-        self.entry_of(*self.data.rows.get(row)?)
+    pub fn get(&self, row: usize) -> Option<RowRef<'a>> {
+        self.entry_of(*self.data.rows.get(row)?).map(RowRef::Borrowed)
     }
 
     pub fn file_id(&self, row: usize) -> Option<&'a str> {
@@ -192,7 +197,7 @@ impl<'a> BoundRows<'a> {
     pub fn markers(&self, row: usize) -> &'a [TextMarker] {
         let data: &'a ViewData = self.data;
         let Some((file, _)) = data.get(row) else { return &[] };
-        match (data.files.get(file), self.get(row)) {
+        match (data.files.get(file), self.entry_of(data.rows[row])) {
             (Some(f), Some(entry)) => f.markers_of(entry),
             _ => &[],
         }
@@ -209,7 +214,7 @@ impl Rows for BoundRows<'_> {
         BoundRows::len(self)
     }
 
-    fn get(&self, row: usize) -> Option<&LogEntry> {
+    fn get(&self, row: usize) -> Option<RowRef<'_>> {
         BoundRows::get(self, row)
     }
 
@@ -237,8 +242,8 @@ impl Rows for PickedRows<'_, '_> {
         self.rows.len()
     }
 
-    fn get(&self, row: usize) -> Option<&LogEntry> {
-        self.bound.entry_of(*self.rows.get(row)?)
+    fn get(&self, row: usize) -> Option<RowRef<'_>> {
+        self.bound.entry_of(*self.rows.get(row)?).map(RowRef::Borrowed)
     }
 
     fn file_id(&self, row: usize) -> Option<&str> {
@@ -267,7 +272,7 @@ impl Rows for PickedRows<'_, '_> {
 pub fn materialize<R: Rows + ?Sized>(rows: &R) -> Vec<LogEntry> {
     (0..rows.len())
         .filter_map(|r| {
-            let mut entry = rows.get(r)?.clone();
+            let mut entry = (*rows.get(r)?).clone();
             entry.file_id = rows.file_id(r).map(Arc::from);
             entry.source = rows.source(r).map(Arc::from);
             entry.markers = rows.markers(r).to_vec();
