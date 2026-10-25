@@ -127,11 +127,11 @@ fn the_row_cache_keeps_the_rows_last_used() {
     let entries = parse_entries("a\nb\nc\nd\ne\n");
     let mut cache = RowCache::new(4);
     for (i, e) in entries.iter().enumerate() {
-        cache.insert((0, 0, i), e.clone());
+        cache.insert((0, 0, i), std::sync::Arc::new(e.clone()));
     }
     assert_eq!(cache.len(), 5, "a quarter over the capacity before it trims");
     cache.get((0, 0, 0));
-    cache.insert((1, 0, 0), entries[0].clone());
+    cache.insert((1, 0, 0), std::sync::Arc::new(entries[0].clone()));
     assert_eq!(cache.len(), 4);
     assert!(cache.contains((0, 0, 0)), "used last, so kept");
     assert!(!cache.contains((0, 0, 1)), "the oldest went");

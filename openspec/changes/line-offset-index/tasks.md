@@ -100,20 +100,17 @@ Hiện tại (c8bf40d):
 Để giảm memory, file local phải giữ Line Index, `LineMeta` và `FilterIndex` (khoảng 30 B/dòng), còn entry lấy qua `RowCache`. Làm theo thứ tự sau, mỗi bước một commit, giữ test xanh:
 
 - [x] 4b.1 `Rows::get` trả về `RowRef` (mượn từ `Vec`, hoặc `Arc<LogEntry>` từ cache) thay cho `&LogEntry`. Chỉ đổi kiểu, chưa đổi hành vi.
-- [ ] 4b.2 Dữ liệu theo file có hai dạng: `Vec<LogEntry>` (Scratch, Remote) và bản đã index (file local). Các phần sau đọc qua API theo file (`len`, `meta(n)`, `entry(n)`, `filter_index`, `max_chars`):
-  - gộp timeline bằng `Merger` trên `LineMeta`;
-  - Go to và `LineRef`;
-  - độ dài message dài nhất;
-  - kiểm thời gian của dòng live mới.
-- [ ] 4b.3 `FilterIndex` của view:
+- [x] 4b.2 `index::file::IndexedFile`: một file local đọc qua Indexing. Nó giữ Line Index, `LineMeta` và `FilterIndex`; entry được đọc lại từ file theo khối 256 dòng và giữ trong `RowCache`. Có test so với `ParsedFile::from_bytes`.
+  - Số đo trên big.log (3M dòng): mở 0,21 s, index 29 B/dòng, RSS +237 MB; 60 entry từ đĩa mất 0,6 ms, từ cache 1 µs. So với hiện tại (`ParsedFile`): mở 2,6 s, RSS +1,58 GB.
+- [ ] 4b.3 `ParsedFile` có thêm dạng đã index (`indexed: Option<Arc<IndexedFile>>`, khi đó `entries` rỗng). Các phần đọc qua API theo file: `BoundRows::get` (lấy từ cache), gộp timeline bằng `Merger` trên `LineMeta`, `max_chars`, độ dài message dài nhất.
+- [ ] 4b.4 `FilterIndex` của view:
   - File View dùng thẳng `FilterIndex` của file;
-  - Log Space gộp `FilterIndex` của các file theo thứ tự dòng đã gộp (ánh xạ lại id giá trị).
-- [ ] 4b.4 Highlight Rule theo Filter Value tô bằng `row_ids` (7.1). Rule có Custom Value thì tô bằng Scan (7.2).
-- [ ] 4b.5 `run_search` (Enter, đổi Filter) cũng chạy qua Scan; text đọc từ Line Index trên đĩa.
+  - Log Space gộp `FilterIndex` của các file theo thứ tự dòng đã gộp.
+  Go to và `LineRef` đọc `effective_timestamp` cùng `LineMeta` thay vì entry.
+- [ ] 4b.5 Highlight Rule theo Filter Value tô bằng `row_ids` (7.1); rule có Custom Value tô bằng Scan (7.2). `run_search` cũng chạy qua Scan, đọc từ Line Index.
 - [ ] 4b.6 Raw View và xem trước Log Format đọc dòng qua Line Index (8.1).
-- [ ] 4b.7 File local mở bằng Indexing, entry lấy qua `RowCache`. Canvas chuẩn bị trước các dòng sắp hiện (4.2).
-- [ ] 4b.8 Live tail của file local: index phần byte mới thay vì parse vào `Vec` (9.1, 9.2).
-- [ ] 4b.9 Detected Field hoặc Log Format đổi thì index lại file (6.3).
+- [ ] 4b.7 Mở file local bằng `IndexedFile` khi đọc ở nền (`app::loading`). Live tail của file đó index phần byte mới (9.1); rotate và truncate mở Generation mới (9.2).
+- [ ] 4b.8 Detected Field hoặc Log Format đổi thì index lại file (6.3).
 
 ## 5. Filter
 

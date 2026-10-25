@@ -84,6 +84,17 @@ pub struct Indexed {
 }
 
 impl Indexed {
+    /// What an Indexing that ended built.
+    pub fn from_data(data: IndexedData) -> Self {
+        let total = data.file.lines.end();
+        Self {
+            data: RwLock::new(data),
+            total: std::sync::atomic::AtomicU64::new(total),
+            outcome: Mutex::new(Some(Outcome::Done)),
+            ..Self::default()
+        }
+    }
+
     /// `None` while Indexing runs.
     pub fn outcome(&self) -> Option<Outcome> {
         self.outcome.lock().unwrap().clone()

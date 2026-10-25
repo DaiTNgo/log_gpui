@@ -3,6 +3,7 @@
 //! and reads a line's text again from its `LineSource` when it is shown.
 
 pub mod fast;
+pub mod file;
 pub mod handles;
 pub mod indexing;
 pub mod line_index;

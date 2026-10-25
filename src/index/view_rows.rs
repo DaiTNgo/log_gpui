@@ -12,6 +12,7 @@ use super::meta::{LineMeta, NO_TIME};
 use crate::model::LogEntry;
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap};
+use std::sync::Arc;
 
 /// Bits of a packed row that hold the line.
 const LINE_BITS: u32 = 48;
@@ -213,7 +214,7 @@ pub type RowKey = (usize, u32, usize);
 #[derive(Debug, Default)]
 pub struct RowCache {
     capacity: usize,
-    entries: HashMap<RowKey, (LogEntry, u64)>,
+    entries: HashMap<RowKey, (Arc<LogEntry>, u64)>,
     tick: u64,
 }
 
@@ -234,12 +235,12 @@ impl RowCache {
     }
 
     /// The entry of `key`, when it is kept; it counts as used.
-    pub fn get(&mut self, key: RowKey) -> Option<&LogEntry> {
+    pub fn get(&mut self, key: RowKey) -> Option<Arc<LogEntry>> {
         self.tick += 1;
         let tick = self.tick;
         self.entries.get_mut(&key).map(|(entry, used)| {
             *used = tick;
-            &*entry
+            entry.clone()
         })
     }
 
@@ -249,7 +250,7 @@ impl RowCache {
 
     /// Keep `entry` as the entry of `key`. Past the capacity the least
     /// recently used go, a quarter at a time.
-    pub fn insert(&mut self, key: RowKey, entry: LogEntry) {
+    pub fn insert(&mut self, key: RowKey, entry: Arc<LogEntry>) {
         self.tick += 1;
         self.entries.insert(key, (entry, self.tick));
         if self.entries.len() > self.capacity + self.capacity / 4 {

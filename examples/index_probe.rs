@@ -837,6 +837,38 @@ fn report_index(label: &str, index: &Index, stats: &Stats, rss: Option<f64>) {
     );
 }
 
+/// An `IndexedFile` of `path`: opening it, what it holds, and reading a
+/// screen of entries from it.
+fn file_probe(path: &str) {
+    use log_gpui::index::file::IndexedFile;
+    use log_gpui::index::indexing::IndexOptions;
+    use log_gpui::index::{DiskSource, HandleBudget, LineSource};
+    let _ = std::fs::read(path).unwrap();
+    let before = rss_mb();
+    let started = Instant::now();
+    let source: Arc<dyn LineSource> = Arc::new(DiskSource::stay_open(path, HandleBudget::for_process()).unwrap());
+    let file = IndexedFile::index_now(source, IndexOptions::default()).unwrap();
+    let lines = file.len();
+    println!(
+        "IndexedFile: {lines} lines in {:?}, index {:.1} B/line, RSS +{:.0} MB",
+        started.elapsed(),
+        file.heap_bytes() as f64 / lines as f64,
+        rss_mb() - before
+    );
+    for at in [0, lines / 2, lines - 60] {
+        let t = Instant::now();
+        for n in at..at + 60 {
+            file.entry(n).unwrap();
+        }
+        println!("  60 entries from line {at}: {:?} (cold), cached {}", t.elapsed(), file.cached());
+        let t = Instant::now();
+        for n in at..at + 60 {
+            file.entry(n).unwrap();
+        }
+        println!("  again: {:?}", t.elapsed());
+    }
+}
+
 /// The app's own Indexing (`log_gpui::index::indexing`) on `path`: with and
 /// without the lock, with the Detected Fields of the spike's columns.
 fn app_probe(path: &str) {
@@ -908,6 +940,10 @@ fn main() {
     if args.first().map(String::as_str) == Some("--gen") {
         let lines = args.get(2).and_then(|a| a.parse().ok()).unwrap_or(3_000_000);
         gen_file(&args[1], lines);
+        return;
+    }
+    if args.first().map(String::as_str) == Some("--file") {
+        file_probe(&args[1]);
         return;
     }
     if args.first().map(String::as_str) == Some("--app") {
