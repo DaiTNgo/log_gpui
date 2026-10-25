@@ -67,6 +67,11 @@ pub struct RawMeta {
     pub not_utf8: bool,
 }
 
+/// The seconds of a timestamp in µs, as the parser reads a time.
+pub fn seconds(us: i64) -> f64 {
+    us.div_euclid(1_000_000) as f64 + us.rem_euclid(1_000_000) as f64 / 1_000_000.0
+}
+
 /// µs of a timestamp in seconds.
 pub fn micros(seconds: f64) -> i64 {
     (seconds * 1e6).round() as i64

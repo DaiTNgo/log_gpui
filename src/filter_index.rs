@@ -11,7 +11,9 @@ use crate::unicode_text;
 use std::collections::{HashMap, HashSet};
 
 mod chunk;
+mod merge;
 pub use chunk::{ChunkColumns, LineFacts, Overflowed};
+pub use merge::MergeFile;
 
 /// A column with more distinct values than this cannot be filtered on.
 pub const MAX_DISTINCT: usize = 500;

@@ -103,7 +103,7 @@ Hiện tại (c8bf40d):
 - [x] 4b.2 `index::file::IndexedFile`: một file local đọc qua Indexing. Nó giữ Line Index, `LineMeta` và `FilterIndex`; entry được đọc lại từ file theo khối 256 dòng và giữ trong `RowCache`. Có test so với `ParsedFile::from_bytes`.
   - Số đo trên big.log (3M dòng): mở 0,21 s, index 29 B/dòng, RSS +237 MB; 60 entry từ đĩa mất 0,6 ms, từ cache 1 µs. So với hiện tại (`ParsedFile`): mở 2,6 s, RSS +1,58 GB.
 - [x] 4b.3 `ParsedFile` có thêm dạng đã index (`indexed: Option<Arc<IndexedFile>>`, khi đó `entries` rỗng). Các phần đọc qua API theo file: `BoundRows::get` (lấy từ cache), gộp timeline bằng `Merger` trên `LineMeta`, `max_chars`, độ dài message dài nhất.
-- [ ] 4b.4 `FilterIndex` của view:
+- [x] 4b.4 `FilterIndex` của view:
   - File View dùng thẳng `FilterIndex` của file;
   - Log Space gộp `FilterIndex` của các file theo thứ tự dòng đã gộp.
   Go to và `LineRef` đọc `effective_timestamp` cùng `LineMeta` thay vì entry.

@@ -156,22 +156,21 @@ impl AppView {
         }
         let (first, last) = self.timed_span().ok_or(GoToError::NotALineNumber)?;
         let rows = self.rows();
-        let time_of = |row: usize| rows.get(row).map_or(0.0, |e| e.timestamp);
-        let day_of = self.selected_entry().filter(|e| e.has_time).map(|e| e.timestamp).unwrap_or(time_of(first));
+        let time_of = |row: usize| rows.own_time(row).unwrap_or(0.0);
+        let selected = self.selected_row_pos.and_then(|pos| self.visible_indices.get(pos).copied());
+        let day_of = selected.and_then(|ix| rows.own_time(ix)).unwrap_or(time_of(first));
         let at = go_to::parse_time(text, Some(day_of)).ok_or(GoToError::NotALineNumber)?;
         if at < time_of(first) || at > time_of(last) {
             return Err(GoToError::TimeOutside);
         }
-        let ix = crate::rows::entries(&rows)
-            .position(|e| e.has_time && e.timestamp >= at)
-            .ok_or(GoToError::TimeOutside)?;
+        let ix = (0..rows.len()).find(|&r| rows.own_time(r).is_some_and(|t| t >= at)).ok_or(GoToError::TimeOutside)?;
         self.line_ref_of_entry(ix).map(GoToTarget::Row).ok_or(GoToError::NoLines)
     }
 
     /// The rows of the first and the last time in the view.
     fn timed_span(&self) -> Option<(usize, usize)> {
         let rows = self.rows();
-        let timed = |r: &usize| rows.get(*r).is_some_and(|e| e.has_time);
+        let timed = |r: &usize| rows.has_time(*r);
         let first = (0..rows.len()).find(timed)?;
         let last = (0..rows.len()).rev().find(timed)?;
         Some((first, last))
@@ -231,23 +230,20 @@ impl AppView {
                 .or(sections.first())?,
         };
         let rows = self.rows();
-        let of_file = || {
-            (0..rows.len())
-                .filter(|&r| rows.file_id(r) == Some(section.file_id.as_str()))
-                .filter_map(|r| rows.get(r))
+        // The numbers and Generations of the file's lines in the view.
+        let lines = || {
+            let file = self.view.file_index(&section.file_id).and_then(|f| rows.file(f));
+            let len = file.map_or(0, |f| f.len());
+            (0..len).filter_map(move |pos| file?.line_number(pos))
         };
         let generation = current
             .as_ref()
             .filter(|c| *c.file_id == *section.file_id)
             .map(|c| c.generation)
-            .unwrap_or_else(|| of_file().map(|e| e.generation).max().unwrap_or(0));
+            .unwrap_or_else(|| lines().map(|(_, g)| g).max().unwrap_or(0));
         let line_count = match self.view_mode {
             ViewMode::Raw => section.lines.len(),
-            ViewMode::Parsed => of_file()
-                .filter(|e| e.generation == generation)
-                .map(|e| e.index)
-                .max()
-                .unwrap_or(0),
+            ViewMode::Parsed => lines().filter(|(_, g)| *g == generation).map(|(n, _)| n).max().unwrap_or(0),
         };
         Some(LineFile {
             file_id: section.file_id.clone(),

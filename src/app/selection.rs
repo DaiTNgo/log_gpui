@@ -104,8 +104,8 @@ impl AppView {
         let rows = self.rows();
         self.visible_indices
             .get(pos)
-            .and_then(|&ix| rows.get(ix))
-            .is_some_and(|e| matches!(e.level, LogLevel::Fatal | LogLevel::Error))
+            .and_then(|&ix| rows.level(ix))
+            .is_some_and(|level| matches!(level, LogLevel::Fatal | LogLevel::Error))
     }
 
     pub fn jump_to_next_error(&mut self, cx: &mut Context<Self>) {

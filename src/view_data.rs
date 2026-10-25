@@ -142,6 +142,44 @@ impl<'a> FileEntries<'a> {
             FileEntries::Indexed(file) => file.entry(pos).map(RowRef::Shared),
         }
     }
+
+    // What the view asks of a line without reading it: from its entry when
+    // it is held, from its `LineMeta` when it is not.
+
+    /// The line's number in its file and its Generation.
+    pub fn line_number(&self, pos: usize) -> Option<(usize, u32)> {
+        match self {
+            FileEntries::Held(entries) => entries.get(pos).map(|e| (e.index, e.generation)),
+            FileEntries::Indexed(file) => (pos < file.len()).then_some((pos + 1, 0)),
+        }
+    }
+
+    /// Whether the line has a time of its own.
+    pub fn has_time(&self, pos: usize) -> bool {
+        match self {
+            FileEntries::Held(entries) => entries.get(pos).is_some_and(|e| e.has_time),
+            FileEntries::Indexed(file) => file.meta(pos).is_some_and(|m| m.has_time()),
+        }
+    }
+
+    /// The line's timestamp, when it has a time of its own.
+    pub fn own_time(&self, pos: usize) -> Option<f64> {
+        match self {
+            FileEntries::Held(entries) => entries.get(pos).filter(|e| e.has_time).map(|e| e.timestamp),
+            FileEntries::Indexed(file) => file
+                .meta(pos)
+                .filter(|m| m.has_time() && m.flags & crate::index::meta::flags::OWN_TS != 0)
+                .map(|m| crate::index::meta::seconds(m.ts_us)),
+        }
+    }
+
+    /// The line's level.
+    pub fn level(&self, pos: usize) -> Option<crate::model::LogLevel> {
+        match self {
+            FileEntries::Held(entries) => entries.get(pos).map(|e| e.level),
+            FileEntries::Indexed(file) => file.meta(pos).map(|m| m.level()),
+        }
+    }
 }
 
 /// Where a Scan reads a file's lines: held in memory, or from the file.
@@ -234,6 +272,32 @@ impl<'a> BoundRows<'a> {
     /// The lines of the view's file at `file`.
     pub fn file(&self, file: usize) -> Option<FileEntries<'a>> {
         self.entries.get(file).copied()
+    }
+
+    /// The file of `row` and its position there.
+    fn at(&self, row: usize) -> Option<(FileEntries<'a>, usize)> {
+        let (file, pos) = self.data.get(row)?;
+        Some((self.file(file)?, pos))
+    }
+
+    /// The number of `row`'s line in its file, and its Generation.
+    pub fn line_number(&self, row: usize) -> Option<(usize, u32)> {
+        self.at(row).and_then(|(f, pos)| f.line_number(pos))
+    }
+
+    /// Whether `row` has a time of its own.
+    pub fn has_time(&self, row: usize) -> bool {
+        self.at(row).is_some_and(|(f, pos)| f.has_time(pos))
+    }
+
+    /// `row`'s own timestamp, when it has a time.
+    pub fn own_time(&self, row: usize) -> Option<f64> {
+        self.at(row).and_then(|(f, pos)| f.own_time(pos))
+    }
+
+    /// `row`'s level.
+    pub fn level(&self, row: usize) -> Option<crate::model::LogLevel> {
+        self.at(row).and_then(|(f, pos)| f.level(pos))
     }
 
     // The `Rows` methods, for references that outlive this value (it is

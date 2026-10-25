@@ -116,3 +116,51 @@ fn a_scan_reads_indexed_files_from_their_source() {
     assert!(!want.is_empty());
     assert_eq!(find(&mixed), want);
 }
+
+#[test]
+fn merged_filter_columns_are_those_of_a_build_on_the_merged_rows() {
+    use log_gpui::model::LogEntry;
+    let mut files = texts();
+    // The same value spelt two ways in two files, and a column with too many
+    // values in one of them.
+    files.push(("/caps.log", (0..50).map(|i| format!("2026-09-05 10:00:{:02} [info] [API] caps {i}\n", i % 60)).collect()));
+    files.push((
+        "/many.log",
+        (0..700).map(|i| format!("2026-09-05 10:01:{:02} [ERROR] [t{i}] many {i}\n", i % 60)).collect(),
+    ));
+    let space = space(&files);
+    let held: HashMap<String, ParsedFile> = files.iter().map(|(p, t)| (p.to_string(), ParsedFile::from_text(t))).collect();
+    let view = build_space_view(&space, &held);
+    // The old way: every merged row, copied, built from scratch.
+    let ordered = space.ordered_files();
+    let lists: Vec<&[LogEntry]> = ordered.iter().map(|f| held[&f.file_id].entries.as_slice()).collect();
+    let timeline = log_gpui::timeline::merge(&lists);
+    let fields = log_gpui::timeline::union_field_names(&lists);
+    let rows = view.materialize(&held);
+    let want = FilterIndex::build_merged(&rows, &fields, &timeline.effective_ts);
+    assert_eq!(describe(&view.index), describe(&want));
+    assert_eq!(view.index.column("module").map(|c| c.overflow), Some(true));
+    assert!(view.index.column("level").unwrap().values.iter().any(|v| v.folded == "info" && v.count > 300));
+    let mut want_kv: Vec<_> = want.kv_counts().iter().map(|(k, n)| (k.to_string(), *n)).collect();
+    let mut got_kv: Vec<_> = view.index.kv_counts().iter().map(|(k, n)| (k.to_string(), *n)).collect();
+    want_kv.sort();
+    got_kv.sort();
+    assert_eq!(got_kv, want_kv);
+    assert_eq!(view.index.anchor_day(), want.anchor_day());
+}
+
+#[test]
+fn what_a_row_tells_without_its_entry_is_what_its_entry_says() {
+    let files = texts();
+    let space = space(&files);
+    let held: HashMap<String, ParsedFile> = files.iter().map(|(p, t)| (p.to_string(), ParsedFile::from_text(t))).collect();
+    let mixed: HashMap<String, ParsedFile> = files.iter().map(|(p, t)| (p.to_string(), indexed(t))).collect();
+    let (want, got) = (build_space_view(&space, &held), build_space_view(&space, &mixed));
+    let (want_rows, got_rows) = (want.view.bind(&held), got.view.bind(&mixed));
+    for r in 0..want.view.len() {
+        assert_eq!(got_rows.line_number(r), want_rows.line_number(r), "row {r}");
+        assert_eq!(got_rows.has_time(r), want_rows.has_time(r), "row {r}");
+        assert_eq!(got_rows.own_time(r), want_rows.own_time(r), "row {r}");
+        assert_eq!(got_rows.level(r), want_rows.level(r), "row {r}");
+    }
+}

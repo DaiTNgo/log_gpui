@@ -275,10 +275,8 @@ pub fn build_space_view(space: &LogSpace, parsed: &HashMap<String, ParsedFile>) 
     view.set_markers(files.iter().copied());
 
     let field_order = union_field_names(&parsed_of);
-    let rows = view.bind(parsed);
-    let index = FilterIndex::build_merged(&rows, &field_order, &effective_ts);
-    let max_chars = FieldMaxChars::scan_entries(&rows);
-    drop(rows);
+    let index = merge_filter_indexes(&files, &parsed_of, &view.rows, &field_order, effective_ts);
+    let max_chars = merged_max_chars(&files, &parsed_of);
     BuiltView {
         view,
         index,
@@ -310,10 +308,66 @@ fn union_field_names(files: &[&ParsedFile]) -> Vec<String> {
     names
 }
 
-/// The seconds of a timestamp in µs, as the parser reads a time.
-fn seconds(us: i64) -> f64 {
-    us.div_euclid(1_000_000) as f64 + us.rem_euclid(1_000_000) as f64 / 1_000_000.0
+/// The Filter columns of a Log Space's merged rows, from its files' own:
+/// a file read through its Line Index has them from Indexing, a held file's
+/// are detected from its entries.
+fn merge_filter_indexes(
+    files: &[&LogFile],
+    parsed: &[&ParsedFile],
+    rows: &[u64],
+    field_order: &[String],
+    effective_ts: Vec<f64>,
+) -> FilterIndex {
+    use crate::filter_index::MergeFile;
+    let guards: Vec<_> = parsed.iter().map(|p| p.indexed.as_ref().map(|f| f.indexed.data.read().unwrap())).collect();
+    let built: Vec<Option<FilterIndex>> =
+        parsed.iter().map(|p| p.indexed.is_none().then(|| FilterIndex::build(&p.entries))).collect();
+    let merge: Vec<MergeFile> = files
+        .iter()
+        .enumerate()
+        .map(|(i, f)| MergeFile {
+            index: match (&guards[i], &built[i]) {
+                (Some(data), _) => &data.filter,
+                (None, Some(index)) => index,
+                (None, None) => unreachable!("a file is held or indexed"),
+            },
+            source: Some(f.display_name.as_str()),
+        })
+        .collect();
+    let own_ts = |file: usize, pos: usize| match &guards[file] {
+        Some(data) => data
+            .file
+            .meta
+            .get(pos)
+            .filter(|m| m.flags & crate::index::meta::flags::OWN_TS != 0)
+            .map(|m| seconds(m.ts_us)),
+        None => parsed[file].entries.get(pos).filter(|e| crate::filter_index::has_timestamp(e)).map(|e| e.timestamp),
+    };
+    let continues = |file: usize, pos: usize| match &guards[file] {
+        Some(data) => data.file.meta.get(pos).is_some_and(|m| m.parent_dist > 0),
+        None => parsed[file].entries.get(pos).is_some_and(|e| e.parent.is_some()),
+    };
+    FilterIndex::merge_files(&merge, rows, field_order, effective_ts, own_ts, continues)
 }
+
+/// The longest texts of a Log Space's rows: each file's, and its name in
+/// the Source column.
+fn merged_max_chars(files: &[&LogFile], parsed: &[&ParsedFile]) -> FieldMaxChars {
+    let mut max = FieldMaxChars::new();
+    for (file, p) in files.iter().zip(parsed) {
+        if p.is_empty() {
+            continue;
+        }
+        match &p.indexed {
+            Some(indexed) => max.merge(&indexed.indexed.data.read().unwrap().max_chars),
+            None => max.merge(&FieldMaxChars::scan_entries(&p.entries)),
+        }
+        max.source = max.source.max(file.display_name.chars().count());
+    }
+    max
+}
+
+use crate::index::meta::seconds;
 
 /// Merge files of which some are read through their Line Index, with
 /// `Merger` on their `LineMeta`: the merged rows, the timestamp each sorts

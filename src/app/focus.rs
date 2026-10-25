@@ -47,23 +47,15 @@ impl AppView {
     /// The line an entry of the Parsed View is.
     pub fn line_ref_of_entry(&self, entry_ix: usize) -> Option<LineRef> {
         let rows = self.rows();
-        let entry = rows.get(entry_ix)?;
-        Some(LineRef {
-            file_id: Arc::from(rows.file_id(entry_ix).unwrap_or("")),
-            line: entry.index,
-            generation: entry.generation,
-        })
+        let (line, generation) = rows.line_number(entry_ix)?;
+        Some(LineRef { file_id: Arc::from(rows.file_id(entry_ix).unwrap_or("")), line, generation })
     }
 
     /// The entry of the Parsed View a line is, if the view has it.
     pub fn entry_of_line_ref(&self, line: &LineRef) -> Option<usize> {
         let rows = self.rows();
         let is_line = |ix: usize| {
-            rows.get(ix).is_some_and(|e| {
-                e.index == line.line
-                    && e.generation == line.generation
-                    && rows.file_id(ix).unwrap_or("") == &*line.file_id
-            })
+            rows.line_number(ix) == Some((line.line, line.generation)) && rows.file_id(ix).unwrap_or("") == &*line.file_id
         };
         // Called on every render (Inspector) and click: the selected row, or
         // the row a single file puts the line at, is almost always it.
