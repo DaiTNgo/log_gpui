@@ -109,7 +109,7 @@ impl AppView {
         rows.iter().map(move |row| match *row {
             FocusRow::Entry(ix) => entries.get(ix).map(|e| e.raw_line.clone()).unwrap_or_default(),
             FocusRow::Raw { section, line } => {
-                sections.get(section).and_then(|s| s.lines.get(line)).cloned().unwrap_or_default()
+                sections.get(section).and_then(|s| s.lines.get(line)).unwrap_or_default()
             }
         })
     }
@@ -789,7 +789,7 @@ impl AppView {
                 FocusRow::Raw { section, line } => {
                     if let Some(s) = sections.get(section) {
                         if let Some(text) = s.lines.get(line) {
-                            push(Some(s.display_name.as_str()), text);
+                            push(Some(s.display_name.as_str()), &text);
                         }
                     }
                 }

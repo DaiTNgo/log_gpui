@@ -68,3 +68,19 @@ fn the_cache_keeps_a_few_screens_only() {
     }
     assert!(file.cached() <= log_gpui::index::view_rows::ROW_CACHE * 5 / 4, "{} kept", file.cached());
 }
+
+#[test]
+fn the_raw_view_reads_an_indexed_file_s_lines() {
+    use log_gpui::raw_view::RawLines;
+    let text = text();
+    let source: Arc<dyn LineSource> = Arc::new(BytesSource::new(text.clone().into_bytes()));
+    let file = Arc::new(IndexedFile::index_now(source, IndexOptions::default()).unwrap());
+    let held = ParsedFile::from_bytes(text.as_bytes()).lines;
+    let lines = RawLines::Indexed(file.clone());
+    assert_eq!(lines.len(), held.len());
+    assert_eq!(lines.get(7), held.get(7).cloned(), "one line, read from the file");
+    let all = lines.all();
+    assert_eq!(*all, *held, "every line");
+    assert!(Arc::ptr_eq(&all, &lines.all()), "read once, then kept");
+    assert_eq!(lines.get(9), held.get(9).cloned());
+}

@@ -52,7 +52,7 @@ pub struct RawSection {
     pub file_id: String,
     pub display_name: String,
     pub folder: Option<String>,
-    pub lines: Arc<Vec<gpui::SharedString>>,
+    pub lines: crate::raw_view::RawLines,
     /// Breaks of a live file, by position of the line they are drawn above.
     pub breaks: Arc<std::collections::BTreeMap<usize, Arc<crate::live::BreakMark>>>,
     /// A scratch file opened as a File View can be edited here.
@@ -185,7 +185,7 @@ impl AppView {
             TabTarget::FileView { file_id, .. } => Some(file_id.as_str()),
             _ => None,
         };
-        let empty = Arc::new(Vec::new());
+        let empty = crate::raw_view::RawLines::default();
         let no_breaks = Arc::<std::collections::BTreeMap<_, _>>::default();
         space
             .ordered_files()
@@ -196,17 +196,19 @@ impl AppView {
                 // Only a File View edits; a Log Space's Raw View just shows the files.
                 let editable = scratch && only.is_some();
                 let lines = match self.raw.texts.get(&f.file_id) {
-                    Some(text) if scratch => self
-                        .raw
-                        .lines_cache
-                        .borrow_mut()
-                        .entry(f.file_id.clone())
-                        .or_insert_with(|| Arc::new(split_lines(text)))
-                        .clone(),
-                    _ => self
-                        .parsed_files
-                        .get(&f.file_id)
-                        .map_or_else(|| empty.clone(), |p| p.lines.clone()),
+                    Some(text) if scratch => crate::raw_view::RawLines::Held(
+                        self.raw
+                            .lines_cache
+                            .borrow_mut()
+                            .entry(f.file_id.clone())
+                            .or_insert_with(|| Arc::new(split_lines(text)))
+                            .clone(),
+                    ),
+                    _ => match self.parsed_files.get(&f.file_id) {
+                        Some(ParsedFile { indexed: Some(file), .. }) => crate::raw_view::RawLines::Indexed(file.clone()),
+                        Some(p) => crate::raw_view::RawLines::Held(p.lines.clone()),
+                        None => empty.clone(),
+                    },
                 };
                 RawSection {
                     file_id: f.file_id.clone(),
@@ -302,7 +304,7 @@ impl AppView {
                 .texts
                 .get(&section.file_id)
                 .cloned()
-                .unwrap_or_else(|| section.lines.join("\n"));
+                .unwrap_or_else(|| section.lines.all().join("\n"));
             let state = cx.new(|cx| EditorState::new(window, cx).scroll_beyond_last_line(Some(0)));
             state.update(cx, |state, cx| {
                 state.set_value(text.clone(), window, cx);
@@ -512,7 +514,7 @@ impl AppView {
             .raw_sections()
             .into_iter()
             .find(|s| s.file_id == file_id)
-            .and_then(|s| s.lines.get(line).cloned());
+            .and_then(|s| s.lines.get(line));
         if let Some(text) = text {
             cx.write_to_clipboard(gpui::ClipboardItem::new_string(text.to_string()));
         }
@@ -634,9 +636,10 @@ impl AppView {
                 (state.selected_range(), state.cursor())
             };
             if range.start != range.end {
-                let pieces = raw_view::pieces_from_range(&section.lines, range)
+                let all = section.lines.all();
+                let pieces = raw_view::pieces_from_range(&all, range)
                     .into_iter()
-                    .map(|(line, r)| (line, r, section.lines[line - 1].to_string()))
+                    .map(|(line, r)| (line, r, all[line - 1].to_string()))
                     .collect::<Vec<_>>();
                 if !pieces.is_empty() {
                     wanted = Some(ColorTarget::RawMark { file_id: section.file_id.clone(), pieces });
@@ -655,7 +658,7 @@ impl AppView {
                     wanted = Some(ColorTarget::RawRecolor {
                         file_id: section.file_id.clone(),
                         line,
-                        line_text: section.lines[line - 1].to_string(),
+                        line_text: section.lines.get(line - 1).map(|t| t.to_string()).unwrap_or_default(),
                         byte,
                     });
                     break;
@@ -699,7 +702,8 @@ impl AppView {
         let sections = self.raw_sections();
         self.raw.matches = match &self.focus.search().matcher {
             Some(matcher) => {
-                let lists: Vec<&[gpui::SharedString]> = sections.iter().map(|s| s.lines.as_slice()).collect();
+                let all: Vec<Arc<Vec<gpui::SharedString>>> = sections.iter().map(|s| s.lines.all()).collect();
+                let lists: Vec<&[gpui::SharedString]> = all.iter().map(|l| l.as_slice()).collect();
                 raw_view::search_sections(matcher, &lists)
                     .into_iter()
                     .map(|m| RawMatch {
@@ -779,7 +783,7 @@ impl AppView {
         let Some((si, section)) = sections.iter().enumerate().find(|(_, s)| *s.file_id == *file_id) else { return };
         let Some(text) = section.lines.get(line) else { return };
         let Some(editor) = self.raw.editors.get(file_id) else { return };
-        let start = raw_view::line_starts(section.lines.as_slice())[line];
+        let start = raw_view::line_starts(&section.lines.all())[line];
         // An empty line still shows: its newline is filled.
         let range = start..start + text.len().max(1);
         let colors = self.canvas_colors(cx);
@@ -854,7 +858,7 @@ impl AppView {
                     .iter()
                     .filter(|m| {
                         section.lines.get(m.line - 1).is_some_and(|text| {
-                            m.line_hash.is_none_or(|h| h == line_hash(text))
+                            m.line_hash.is_none_or(|h| h == line_hash(&text))
                         })
                     })
                     .map(|m| (m.line, m.range.clone(), m.color.clone()))
@@ -867,7 +871,7 @@ impl AppView {
             let mut decorations = Vec::new();
             if let Some(matcher) = &matcher {
                 let mut offset = 0usize;
-                for (li, line) in section.lines.iter().enumerate() {
+                for (li, line) in section.lines.all().iter().enumerate() {
                     let is_current = current.is_some_and(|m| m.section == si && m.line == li);
                     // Only a line that satisfies the whole expression is a Match;
                     // `a && b` must not paint `a` on a line without `b`.
@@ -892,7 +896,7 @@ impl AppView {
             }
             // Markers paint over the Matches.
             if let Some(markers) = stored.get(&section.file_id) {
-                let starts = raw_view::line_starts(section.lines.as_slice());
+                let starts = raw_view::line_starts(&section.lines.all());
                 for (line, range, color) in markers {
                     let Some(&start) = starts.get(line - 1) else { continue };
                     decorations.push(TextDecoration::new(

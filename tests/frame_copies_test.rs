@@ -21,7 +21,7 @@ fn raw_sections_share_the_files_breaks(cx: &mut TestAppContext) {
         assert_eq!(sections.len(), 1);
         let parsed = &app.parsed_files[&sections[0].file_id];
         assert!(Arc::ptr_eq(&sections[0].breaks, &parsed.raw_breaks), "no copy of the breaks");
-        assert!(Arc::ptr_eq(&sections[0].lines, &parsed.lines), "no copy of the lines");
+        assert!(Arc::ptr_eq(&sections[0].lines.all(), &parsed.lines), "no copy of the lines");
     });
 }
 

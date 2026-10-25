@@ -42,7 +42,7 @@ impl AppView {
                 let fresh = section
                     .lines
                     .get(m.line.wrapping_sub(1))
-                    .is_some_and(|t| m.line_hash.is_none_or(|h| h == line_hash(t)));
+                    .is_some_and(|t| m.line_hash.is_none_or(|h| h == line_hash(&t)));
                 if fresh {
                     by_line
                         .entry(m.line)

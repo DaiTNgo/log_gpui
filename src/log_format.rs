@@ -411,10 +411,10 @@ pub const PREVIEW_LINES: usize = 20;
 
 /// The preview of `format` on `shown` (entry position, line), and the first
 /// of `all` (entry position, line) it does not match.
-pub fn preview_format<'a>(
+pub fn preview_format<S: AsRef<str>>(
     format: &CompiledFormat,
     shown: &[(usize, &str)],
-    all: impl IntoIterator<Item = (usize, &'a str)>,
+    all: impl IntoIterator<Item = (usize, S)>,
 ) -> FormatPreview {
     let lines = shown
         .iter()
@@ -430,6 +430,6 @@ pub fn preview_format<'a>(
             FormatPreviewLine { entry, text: line.to_string(), fields, matched: spans.is_some() }
         })
         .collect();
-    let first_unmatched = all.into_iter().find(|(_, l)| format.read(l).is_none()).map(|(e, _)| e);
+    let first_unmatched = all.into_iter().find(|(_, l)| format.read(l.as_ref()).is_none()).map(|(e, _)| e);
     FormatPreview { lines, field_names: format.fields.clone(), first_unmatched }
 }

@@ -22,6 +22,8 @@ pub struct IndexedFile {
     pub indexed: Arc<Indexed>,
     options: IndexOptions,
     cache: Mutex<RowCache>,
+    /// Every line's text, once something needed all of them (the Raw View).
+    all_lines: std::sync::OnceLock<Arc<Vec<gpui::SharedString>>>,
 }
 
 impl std::fmt::Debug for IndexedFile {
@@ -33,7 +35,7 @@ impl std::fmt::Debug for IndexedFile {
 impl IndexedFile {
     /// The file `source` as Indexing (with `options`) read it into `indexed`.
     pub fn new(source: Arc<dyn LineSource>, indexed: Arc<Indexed>, options: IndexOptions) -> Self {
-        Self { source, indexed, options, cache: Mutex::new(RowCache::new(ROW_CACHE)) }
+        Self { source, indexed, options, cache: Mutex::new(RowCache::new(ROW_CACHE)), all_lines: Default::default() }
     }
 
     /// Index all of `source` now, on this thread.
@@ -87,6 +89,26 @@ impl IndexedFile {
             cache.insert((0, 0, start + i), entry);
         }
         found
+    }
+
+    /// The text of every line, read from the file the first time and then
+    /// kept with the file (empty when the file no longer has them).
+    pub fn all_lines(&self) -> Arc<Vec<gpui::SharedString>> {
+        self.all_lines
+            .get_or_init(|| {
+                let data = self.indexed.data.read().unwrap();
+                let lines = super::read_lines(&*self.source, &data.file.lines, 0..data.file.len()).unwrap_or_default();
+                Arc::new(lines.into_iter().map(gpui::SharedString::from).collect())
+            })
+            .clone()
+    }
+
+    /// The text of line `n`.
+    pub fn line(&self, n: usize) -> Option<gpui::SharedString> {
+        match self.all_lines.get() {
+            Some(lines) => lines.get(n).cloned(),
+            None => self.entry(n).map(|e| e.raw_line.clone()),
+        }
     }
 
     /// How many entries are kept now.

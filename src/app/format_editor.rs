@@ -240,12 +240,11 @@ impl AppView {
             let shown: Vec<(usize, gpui::SharedString)> =
                 rows.iter().filter_map(|&i| Some((i, entries.get(i)?.raw_line.clone()))).collect();
             let shown: Vec<(usize, &str)> = shown.iter().map(|(i, t)| (*i, t.as_str())).collect();
-            let all: Vec<(usize, gpui::SharedString)> = crate::rows::entries(&entries)
-                .enumerate()
-                .filter(|(_, e)| !e.is_continuation())
-                .map(|(i, e)| (i, e.raw_line.clone()))
-                .collect();
-            preview_format(format, &shown, all.iter().map(|(i, t)| (*i, t.as_str())))
+            // Read only as far as the first line the format does not match.
+            let all = (0..entries.len())
+                .filter(|&i| !entries.continues(i))
+                .filter_map(|i| Some((i, entries.get(i)?.raw_line.clone())));
+            preview_format(format, &shown, all)
         });
         let Some(editor) = self.format_editor.as_mut() else { return };
         let edit = editor.template.edit(compiled.map(|_| ()));

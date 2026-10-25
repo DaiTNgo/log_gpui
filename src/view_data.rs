@@ -303,6 +303,11 @@ impl<'a> BoundRows<'a> {
         self.at(row).and_then(|(f, pos)| f.own_time(pos))
     }
 
+    /// Whether `row` is a Continuation Line.
+    pub fn continues(&self, row: usize) -> bool {
+        self.at(row).is_some_and(|(f, pos)| f.continues(pos))
+    }
+
     /// `row`'s level.
     pub fn level(&self, row: usize) -> Option<crate::model::LogLevel> {
         self.at(row).and_then(|(f, pos)| f.level(pos))
@@ -373,7 +378,7 @@ impl Rows for BoundRows<'_> {
     }
 
     fn continues(&self, row: usize) -> bool {
-        self.at(row).is_some_and(|(f, pos)| f.continues(pos))
+        BoundRows::continues(self, row)
     }
 }
 

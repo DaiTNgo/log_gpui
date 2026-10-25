@@ -135,3 +135,46 @@ pub fn line_starts<S: AsRef<str>>(lines: &[S]) -> Vec<usize> {
         })
         .collect()
 }
+
+/// The lines of a file in the Raw View: held, or read from the file when
+/// shown.
+#[derive(Clone)]
+pub enum RawLines {
+    Held(std::sync::Arc<Vec<gpui::SharedString>>),
+    Indexed(std::sync::Arc<crate::index::file::IndexedFile>),
+}
+
+impl Default for RawLines {
+    fn default() -> Self {
+        Self::Held(Default::default())
+    }
+}
+
+impl RawLines {
+    pub fn len(&self) -> usize {
+        match self {
+            Self::Held(lines) => lines.len(),
+            Self::Indexed(file) => file.len(),
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// The text of line `i` (0-based).
+    pub fn get(&self, i: usize) -> Option<gpui::SharedString> {
+        match self {
+            Self::Held(lines) => lines.get(i).cloned(),
+            Self::Indexed(file) => file.line(i),
+        }
+    }
+
+    /// Every line: what is held, or read from the file once and kept.
+    pub fn all(&self) -> std::sync::Arc<Vec<gpui::SharedString>> {
+        match self {
+            Self::Held(lines) => lines.clone(),
+            Self::Indexed(file) => file.all_lines(),
+        }
+    }
+}
