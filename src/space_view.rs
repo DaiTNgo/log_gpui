@@ -37,6 +37,9 @@ pub struct ParsedFile {
     /// The entries the Live Window just trimmed off the front, until the
     /// open view took their rows out (they are what its counts held).
     pub trimmed_off: Vec<LogEntry>,
+    /// The file read through its Line Index: its entries are read again from
+    /// it when shown, and `entries` and `lines` hold none.
+    pub indexed: Option<Arc<crate::index::file::IndexedFile>>,
 }
 
 /// The lines of `text` as shown in the Raw View.
@@ -67,7 +70,31 @@ impl ParsedFile {
             load_error: None,
             format_id: None,
             trimmed_off: Vec::new(),
+            indexed: None,
         })
+    }
+
+    /// A file read through its Line Index.
+    pub fn from_indexed(file: crate::index::file::IndexedFile) -> Self {
+        let max_chars = file.indexed.data.read().unwrap().max_chars.clone();
+        Self { max_chars, indexed: Some(Arc::new(file)), ..Self::empty() }
+    }
+
+    /// Where the file's entries are.
+    pub fn file_entries(&self) -> crate::view_data::FileEntries<'_> {
+        match &self.indexed {
+            Some(file) => crate::view_data::FileEntries::Indexed(file),
+            None => crate::view_data::FileEntries::Held(&self.entries),
+        }
+    }
+
+    /// The number of lines.
+    pub fn len(&self) -> usize {
+        self.file_entries().len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
     }
 
     /// Read the entries again with the Log Format `format` of id `format_id`
@@ -232,42 +259,132 @@ impl BuiltView {
 pub fn build_space_view(space: &LogSpace, parsed: &HashMap<String, ParsedFile>) -> BuiltView {
     let empty = ParsedFile::empty();
     let files = space.ordered_files();
-    let entry_lists: Vec<&[LogEntry]> = files
-        .iter()
-        .map(|f| parsed.get(&f.file_id).unwrap_or(&empty).entries.as_slice())
-        .collect();
-    let timeline = timeline::merge(&entry_lists);
+    let parsed_of: Vec<&ParsedFile> = files.iter().map(|f| parsed.get(&f.file_id).unwrap_or(&empty)).collect();
+    let (rows, effective_ts, no_timestamp) = if parsed_of.iter().any(|p| p.indexed.is_some()) {
+        merge_by_meta(&parsed_of)
+    } else {
+        let entry_lists: Vec<&[LogEntry]> = parsed_of.iter().map(|p| p.entries.as_slice()).collect();
+        let timeline = timeline::merge(&entry_lists);
+        let rows = timeline.rows.iter().map(|r| pack(r.file as usize, r.line as usize)).collect();
+        (rows, timeline.effective_ts, timeline.no_timestamp_files)
+    };
     let mut view = ViewData {
-        rows: timeline.rows.iter().map(|r| pack(r.file as usize, r.line as usize)).collect(),
+        rows,
         files: files.iter().map(|f| ViewFile::new(&f.file_id, Some(&f.display_name))).collect(),
     };
     view.set_markers(files.iter().copied());
 
-    let field_order = timeline::union_field_names(&entry_lists);
+    let field_order = union_field_names(&parsed_of);
     let rows = view.bind(parsed);
-    let index = FilterIndex::build_merged(&rows, &field_order, &timeline.effective_ts);
+    let index = FilterIndex::build_merged(&rows, &field_order, &effective_ts);
     let max_chars = FieldMaxChars::scan_entries(&rows);
     drop(rows);
     BuiltView {
         view,
         index,
         max_chars,
-        no_timestamp_files: timeline
-            .no_timestamp_files
-            .iter()
-            .map(|i| files[*i].file_id.clone())
-            .collect(),
+        no_timestamp_files: no_timestamp.iter().map(|i| files[*i].file_id.clone()).collect(),
     }
+}
+
+/// The fields of the files by name, the first file's order first (as
+/// `timeline::union_field_names`): a file read through its Line Index gives
+/// its Filter columns' fields, which are in the order they first show.
+fn union_field_names(files: &[&ParsedFile]) -> Vec<String> {
+    let mut seen = std::collections::HashSet::new();
+    let mut names = Vec::new();
+    for file in files {
+        let in_file: Vec<String> = match &file.indexed {
+            Some(indexed) => {
+                let data = indexed.indexed.data.read().unwrap();
+                data.filter.field_columns().filter_map(|c| c.field()).map(|k| k.as_str().to_string()).collect()
+            }
+            None => timeline::union_field_names(&[file.entries.as_slice()]),
+        };
+        for name in in_file {
+            if seen.insert(name.clone()) {
+                names.push(name);
+            }
+        }
+    }
+    names
+}
+
+/// The seconds of a timestamp in µs, as the parser reads a time.
+fn seconds(us: i64) -> f64 {
+    us.div_euclid(1_000_000) as f64 + us.rem_euclid(1_000_000) as f64 / 1_000_000.0
+}
+
+/// Merge files of which some are read through their Line Index, with
+/// `Merger` on their `LineMeta`: the merged rows, the timestamp each sorts
+/// by (`NAN` for none), and the files with no timestamp at all.
+fn merge_by_meta(files: &[&ParsedFile]) -> (Vec<u64>, Vec<f64>, Vec<usize>) {
+    use crate::index::meta::{LineMeta, NO_TIME, micros};
+    use crate::index::view_rows::{Lane, Merger, unpack};
+    // A held file's lines as a merge reads them: its effective timestamps,
+    // and which lines continue the one above.
+    let held: Vec<Option<(Vec<LineMeta>, Option<Vec<f64>>)>> = files
+        .iter()
+        .map(|p| {
+            p.indexed.is_none().then(|| {
+                let ts = timeline::effective_timestamps(&p.entries);
+                let metas = p
+                    .entries
+                    .iter()
+                    .enumerate()
+                    .map(|(i, e)| LineMeta {
+                        ts_us: ts.as_ref().map_or(NO_TIME, |ts| micros(ts[i])),
+                        parent_dist: u32::from(e.parent.is_some()),
+                        ..LineMeta::default()
+                    })
+                    .collect();
+                (metas, ts)
+            })
+        })
+        .collect();
+    let guards: Vec<_> = files.iter().map(|p| p.indexed.as_ref().map(|f| f.indexed.data.read().unwrap())).collect();
+    let lanes: Vec<Lane> = files
+        .iter()
+        .enumerate()
+        .map(|(i, _)| match (&guards[i], &held[i]) {
+            (Some(data), _) => Lane { meta: data.file.meta.as_slice(), done: true },
+            (None, Some((metas, _))) => Lane { meta: metas, done: true },
+            (None, None) => Lane { meta: &[], done: true },
+        })
+        .collect();
+    let mut merger = Merger::new(lanes.len());
+    let mut rows = Vec::new();
+    merger.advance(&lanes, &mut rows);
+    let untimed: Vec<usize> = (0..files.len()).filter(|&f| merger.is_untimed(f)).collect();
+    let effective_ts = rows
+        .iter()
+        .map(|&r| {
+            let (file, pos) = unpack(r);
+            if untimed.contains(&file) {
+                return f64::NAN;
+            }
+            match (&guards[file], &held[file]) {
+                (Some(data), _) => data.file.meta.get(pos).map_or(f64::NAN, |m| seconds(m.ts_us)),
+                (None, Some((_, Some(ts)))) => ts[pos],
+                _ => f64::NAN,
+            }
+        })
+        .collect();
+    (rows, effective_ts, untimed)
 }
 
 /// The rows of a single file (a File View): no Source Column.
 pub fn build_file_view(file: &LogFile, parsed: &ParsedFile) -> BuiltView {
     let mut view = ViewData {
-        rows: ViewData::rows_of(0, 0..parsed.entries.len()).collect(),
+        rows: ViewData::rows_of(0, 0..parsed.len()).collect(),
         files: vec![ViewFile::new(&file.file_id, None)],
     };
     view.set_markers([file]);
-    let index = FilterIndex::build(&view.bind_with(|_| Some(parsed.entries.as_slice())));
+    let index = match &parsed.indexed {
+        // Indexing built it as a build from every row would.
+        Some(indexed) => indexed.indexed.data.read().unwrap().filter.clone(),
+        None => FilterIndex::build(&view.bind_with(|_| Some(parsed.entries.as_slice()))),
+    };
     BuiltView { max_chars: parsed.max_chars.clone(), index, no_timestamp_files: Vec::new(), view }
 }
 

@@ -8,6 +8,7 @@ use crate::index::view_rows::{pack, unpack};
 use crate::marker::TextMarker;
 use crate::model::LogEntry;
 use crate::rows::{RowRef, Rows};
+use crate::index::file::IndexedFile;
 use crate::space_view::ParsedFile;
 use crate::workspace::log_space::LogFile;
 use std::collections::HashMap;
@@ -95,12 +96,17 @@ impl ViewData {
 
     /// The view with its files' entries, to read its rows.
     pub fn bind<'a>(&'a self, parsed: &'a HashMap<String, ParsedFile>) -> BoundRows<'a> {
-        self.bind_with(|id| parsed.get(id).map(|p| p.entries.as_slice()))
+        self.bind_files(|id| parsed.get(id).map(ParsedFile::file_entries))
     }
 
     /// The view with the entries `entries` gives for each file id.
     pub fn bind_with<'a>(&'a self, entries: impl Fn(&str) -> Option<&'a [LogEntry]>) -> BoundRows<'a> {
-        let entries = self.files.iter().map(|f| entries(&f.file_id).unwrap_or(&[])).collect();
+        self.bind_files(|id| entries(id).map(FileEntries::Held))
+    }
+
+    /// The view with the lines `files` gives for each file id.
+    pub fn bind_files<'a>(&'a self, files: impl Fn(&str) -> Option<FileEntries<'a>>) -> BoundRows<'a> {
+        let entries = self.files.iter().map(|f| files(&f.file_id).unwrap_or(FileEntries::Held(&[]))).collect();
         BoundRows { data: self, entries }
     }
 
@@ -110,11 +116,46 @@ impl ViewData {
     }
 }
 
+/// Where a file's entries are: held, or read again from the file.
+#[derive(Clone, Copy)]
+pub enum FileEntries<'a> {
+    Held(&'a [LogEntry]),
+    Indexed(&'a IndexedFile),
+}
+
+impl<'a> FileEntries<'a> {
+    pub fn len(&self) -> usize {
+        match self {
+            FileEntries::Held(entries) => entries.len(),
+            FileEntries::Indexed(file) => file.len(),
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// The entry at `pos`.
+    pub fn get(&self, pos: usize) -> Option<RowRef<'a>> {
+        match self {
+            FileEntries::Held(entries) => entries.get(pos).map(RowRef::Borrowed),
+            FileEntries::Indexed(file) => file.entry(pos).map(RowRef::Shared),
+        }
+    }
+}
+
+/// Where a Scan reads a file's lines: held in memory, or from the file.
+enum FileText {
+    Held(Arc<Vec<gpui::SharedString>>),
+    Indexed(crate::index::scan::FileTexts),
+}
+
 /// The texts of a view's rows, for a Scan on a worker thread: the rows, and
-/// each file's lines as stored, shared with the file (nothing is copied).
+/// each file's lines, shared with the file (nothing is copied), or read
+/// from it.
 pub struct ViewTexts {
     rows: Vec<u64>,
-    lines: Vec<Arc<Vec<gpui::SharedString>>>,
+    lines: Vec<FileText>,
 }
 
 impl ViewTexts {
@@ -130,11 +171,30 @@ impl ViewTexts {
 impl crate::index::scan::ScanTexts for ViewTexts {
     fn read(&self, block: std::ops::Range<usize>, each: &mut dyn FnMut(&[&str])) -> Result<(), String> {
         let rows = self.rows.get(block).ok_or("the view has fewer rows")?;
+        // A file's rows in a block are a run of its lines, in order: each
+        // file read from disk is read once per block.
+        let mut read: HashMap<usize, (usize, Vec<String>)> = HashMap::new();
+        for (file, text) in self.lines.iter().enumerate() {
+            let FileText::Indexed(texts) = text else { continue };
+            let mut positions = rows.iter().map(|&r| unpack(r)).filter(|&(f, _)| f == file).map(|(_, p)| p);
+            let Some(first) = positions.next() else { continue };
+            let last = positions.last().unwrap_or(first);
+            let mut lines = Vec::new();
+            texts.read(first..last + 1, &mut |got| lines = got.iter().map(|s| s.to_string()).collect())?;
+            read.insert(file, (first, lines));
+        }
         let texts: Vec<&str> = rows
             .iter()
             .map(|&r| {
                 let (file, pos) = unpack(r);
-                self.lines.get(file).and_then(|l| l.get(pos)).map_or("", |s| s.as_str())
+                match self.lines.get(file) {
+                    Some(FileText::Held(lines)) => lines.get(pos).map_or("", |s| s.as_str()),
+                    Some(FileText::Indexed(_)) => read
+                        .get(&file)
+                        .and_then(|(first, lines)| lines.get(pos.checked_sub(*first)?))
+                        .map_or("", String::as_str),
+                    None => "",
+                }
             })
             .collect();
         each(&texts);
@@ -148,7 +208,11 @@ impl ViewData {
         let lines = self
             .files
             .iter()
-            .map(|f| parsed.get(&*f.file_id).map(|p| p.lines.clone()).unwrap_or_default())
+            .map(|f| match parsed.get(&*f.file_id) {
+                Some(ParsedFile { indexed: Some(file), .. }) => FileText::Indexed(file.texts()),
+                Some(p) => FileText::Held(p.lines.clone()),
+                None => FileText::Held(Arc::default()),
+            })
             .collect();
         ViewTexts { rows: self.rows.clone(), lines }
     }
@@ -157,14 +221,19 @@ impl ViewData {
 /// The rows of a view, readable: the view and its files' entries.
 pub struct BoundRows<'a> {
     pub data: &'a ViewData,
-    entries: Vec<&'a [LogEntry]>,
+    entries: Vec<FileEntries<'a>>,
 }
 
 impl<'a> BoundRows<'a> {
     /// The entry of a packed row.
-    pub fn entry_of(&self, packed: u64) -> Option<&'a LogEntry> {
+    pub fn entry_of(&self, packed: u64) -> Option<RowRef<'a>> {
         let (file, pos) = unpack(packed);
         self.entries.get(file)?.get(pos)
+    }
+
+    /// The lines of the view's file at `file`.
+    pub fn file(&self, file: usize) -> Option<FileEntries<'a>> {
+        self.entries.get(file).copied()
     }
 
     // The `Rows` methods, for references that outlive this value (it is
@@ -179,7 +248,7 @@ impl<'a> BoundRows<'a> {
     }
 
     pub fn get(&self, row: usize) -> Option<RowRef<'a>> {
-        self.entry_of(*self.data.rows.get(row)?).map(RowRef::Borrowed)
+        self.entry_of(*self.data.rows.get(row)?)
     }
 
     pub fn file_id(&self, row: usize) -> Option<&'a str> {
@@ -197,9 +266,10 @@ impl<'a> BoundRows<'a> {
     pub fn markers(&self, row: usize) -> &'a [TextMarker] {
         let data: &'a ViewData = self.data;
         let Some((file, _)) = data.get(row) else { return &[] };
-        match (data.files.get(file), self.entry_of(data.rows[row])) {
-            (Some(f), Some(entry)) => f.markers_of(entry),
-            _ => &[],
+        let Some(f) = data.files.get(file) else { return &[] };
+        match self.entry_of(data.rows[row]) {
+            Some(entry) => f.markers_of_line(entry.index, entry.generation),
+            None => &[],
         }
     }
 
@@ -243,7 +313,7 @@ impl Rows for PickedRows<'_, '_> {
     }
 
     fn get(&self, row: usize) -> Option<RowRef<'_>> {
-        self.bound.entry_of(*self.rows.get(row)?).map(RowRef::Borrowed)
+        self.bound.entry_of(*self.rows.get(row)?)
     }
 
     fn file_id(&self, row: usize) -> Option<&str> {
@@ -259,9 +329,10 @@ impl Rows for PickedRows<'_, '_> {
     fn markers(&self, row: usize) -> &[TextMarker] {
         let Some(&packed) = self.rows.get(row) else { return &[] };
         let (file, _) = unpack(packed);
-        match (self.bound.data.files.get(file), self.bound.entry_of(packed)) {
-            (Some(f), Some(entry)) => f.markers_of(entry),
-            _ => &[],
+        let Some(f) = self.bound.data.files.get(file) else { return &[] };
+        match self.bound.entry_of(packed) {
+            Some(entry) => f.markers_of_line(entry.index, entry.generation),
+            None => &[],
         }
     }
 }
