@@ -1,3 +1,14 @@
+Thứ tự làm (đổi ngày 2026-10-25):
+
+1. Nhóm 1–3.
+2. Phần lõi của 4.1–4.2.
+3. Nhóm 11 (Dormant Tab), vì nhóm này không cần `ViewRows`.
+4. Task 4.3 làm cùng lúc với nhóm 5–8.
+5. Task 7.4 (trước là 4.4).
+6. Nhóm 9, 10, rồi 12.
+
+Lý do: `all_entries` còn là trạng thái được sửa tại chỗ. Filter ghi `delta_time_ms`, Marker gắn vào entry, Live và Detected Field sửa entry. Vì vậy chưa bỏ được việc dựng nó mỗi lần chuyển tab cho tới khi xong nhóm 7.
+
 ## 1. Spike: đo Line Index (cổng go/no-go)
 
 - [x] 1.1 Tạo dữ liệu đo (`index_probe --gen`):
@@ -66,16 +77,17 @@
   - Log Space: `Vec<u64>` đóng gói `(file, line)` từ k-way merge tăng dần.
   - API: số dòng, `meta(row)`, `entry(row)` qua LRU, dải dòng đang hiện.
   - Test thứ tự gộp theo các scenario của `merged-timeline` (trùng timestamp, stack trace, file không có timestamp).
+  - Đã có `index::view_rows` (`ViewRows`, `Merger` gộp tăng dần, `pack`/`unpack`) kèm test: gộp cả file và gộp khi file đang lớn dần đều ra đúng thứ tự của `timeline::merge`. Còn nối vào `AppView`.
 - [ ] 4.2 LRU các dòng đã parse (khoảng 4.096 dòng, khoá `(file, generation, line)`); đọc gom theo khối; canvas vẽ placeholder khi dòng chưa có rồi `cx.notify()` khi có.
-- [ ] 4.3 Chuyển lần lượt các chỗ đọc `all_entries` sang `ViewRows`, mỗi nhóm một commit, giữ test xanh:
+  - Đã có `RowCache` (LRU, `missing` cho ra các đoạn cần đọc gom). Còn phần placeholder và `cx.notify()` trong canvas.
+- [ ] 4.3 Chuyển lần lượt các chỗ đọc `all_entries` sang `ViewRows`, mỗi nhóm một commit, giữ test xanh. Làm cùng lúc với nhóm 5–8, theo từng tính năng:
   1. canvas và Gutter
   2. Focus Pane
   3. Go to
   4. chọn dòng và copy
   5. Minimap
   6. độ rộng cột (`max_chars` tính trong lúc Indexing)
-- [ ] 4.4 Chuyển tab trỏ view vào Line Index và `ViewRows` đã có trong cache, không clone và không dựng lại `FilterIndex`.
-  - Đo bằng `perf_probe`: chuyển tab giữa hai file 3.000.000 dòng dưới 50ms.
+- 4.4 đã chuyển thành 7.4: chuyển tab không clone chỉ làm được khi Filter, Search, Highlight và Marker không còn đọc hay sửa `all_entries`.
 
 ## 5. Filter
 
@@ -106,6 +118,9 @@
 - [ ] 7.2 Rule có Custom Value: tính cho dòng đang hiện lúc parse vào LRU, phần còn lại lấp bằng Scan.
 - [ ] 7.3 Marker: bảng tra đã sắp xếp `(generation, line) → markers` cho mỗi file; vẽ từ bảng cho dòng đang hiện; kiểm `line_hash` khi dòng được đọc ra; Next/Previous Marker trên bảng.
   - Test: chạy lại test của `text-marker`.
+
+- [ ] 7.4 (trước là 4.4) Chuyển tab trỏ view vào Line Index và `ViewRows` đã có trong cache, không clone và không dựng lại `FilterIndex`.
+  - Đo bằng `perf_probe`: chuyển tab giữa hai file 3.000.000 dòng dưới 50ms.
 
 ## 8. Raw View và Scratch
 

@@ -9,6 +9,7 @@ pub mod line_index;
 pub mod meta;
 pub mod source;
 pub mod tail;
+pub mod view_rows;
 
 pub use handles::HandleBudget;
 pub use line_index::LineIndex;
