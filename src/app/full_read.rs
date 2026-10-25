@@ -81,6 +81,34 @@ impl AppView {
         copy::root_in(&base)
     }
 
+    /// Where Archive Entries are unpacked to be read.
+    pub(crate) fn archive_cache_root(&self) -> PathBuf {
+        let base = self.remote.picker_state_path.parent().map(Path::to_path_buf).unwrap_or_default();
+        crate::archive_cache::root_in(&base)
+    }
+
+    #[doc(hidden)]
+    pub fn archive_cache_root_for_test(&self) -> PathBuf {
+        self.archive_cache_root()
+    }
+
+    /// The folders of the Archives that Log Spaces hold Archive Entries of,
+    /// as they are on disk now, for the sweep at start.
+    pub(crate) fn archive_dirs_in_use(&self) -> std::collections::HashSet<PathBuf> {
+        let root = self.archive_cache_root();
+        let mut dirs = std::collections::HashSet::new();
+        for project in &self.workspace_state.projects {
+            for space in &project.log_spaces {
+                for file in space.files.iter().filter(|f| f.entry.is_some()) {
+                    if let Some(dir) = file.path.as_deref().and_then(|a| crate::archive_cache::dir_of(&root, Path::new(a)).ok()) {
+                        dirs.insert(dir);
+                    }
+                }
+            }
+        }
+        dirs
+    }
+
     #[doc(hidden)]
     pub fn copies_root_for_test(&self) -> PathBuf {
         self.copies_root()
@@ -531,8 +559,22 @@ impl AppView {
         }
     }
 
-    /// A Remote Copy leaves the app: its read stops and its folder goes.
+    /// A file leaves the app: what the app keeps of it on disk goes (the
+    /// folder of a Remote Copy, the unpacked file of an Archive Entry no
+    /// other Log Space holds).
     pub(crate) fn delete_copy_of(&mut self, file: &LogFile) {
+        if let (Some(archive), Some(entry)) = (file.path.as_deref(), file.entry.as_deref()) {
+            // `file` left its Log Space already: another one may still hold it.
+            let held_elsewhere = self
+                .workspace_state
+                .projects
+                .iter()
+                .flat_map(|p| &p.log_spaces)
+                .any(|s| s.files.iter().any(|f| f.file_id == file.file_id));
+            if !held_elsewhere {
+                crate::archive_cache::remove_entry(&self.archive_cache_root(), Path::new(archive), entry);
+            }
+        }
         if let Some(read) = self.live.copy_reads.remove(&file.file_id) {
             read.ctl.cancel();
         }

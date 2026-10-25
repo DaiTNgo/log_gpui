@@ -1,6 +1,6 @@
 //! Archives (`.zip`, `.tar`, `.tar.gz`, `.gz`): detected by their first bytes,
-//! listed entry by entry and read straight into memory. Nothing is ever
-//! extracted to disk and the Archive itself is never changed.
+//! listed entry by entry, and read into memory or unpacked to the app's
+//! archive cache (`archive_cache`). The Archive itself is never changed.
 
 use crate::remote::compress::{Compression, decoder};
 use flate2::read::GzDecoder;
@@ -95,7 +95,7 @@ impl From<ArchiveError> for io::Error {
     }
 }
 
-fn io_err(e: io::Error) -> ArchiveError {
+pub(crate) fn io_err(e: io::Error) -> ArchiveError {
     match e.kind() {
         io::ErrorKind::NotFound => ArchiveError::NotFound,
         // A cut or garbled stream surfaces as one of these.
@@ -301,31 +301,44 @@ pub fn read_entries(
     entries: &[&str],
     limit: u64,
 ) -> Result<HashMap<String, Result<Vec<u8>, ArchiveError>>, ArchiveError> {
-    let mut out: HashMap<String, Result<Vec<u8>, ArchiveError>> = HashMap::new();
+    visit_entries(path, kind, entries, limit, |_, reader, declared| read_bounded(reader, declared, limit))
+}
+
+/// Hand each of `entries` to `each` in one pass over the Archive, with its
+/// declared size (`limit` for a lone packed file, which declares none). An
+/// entry missing from the Archive is `NotFound` in the map.
+pub fn visit_entries<T>(
+    path: &Path,
+    kind: ArchiveKind,
+    entries: &[&str],
+    limit: u64,
+    mut each: impl FnMut(&str, &mut dyn Read, u64) -> Result<T, ArchiveError>,
+) -> Result<HashMap<String, Result<T, ArchiveError>>, ArchiveError> {
+    let mut out: HashMap<String, Result<T, ArchiveError>> = HashMap::new();
     match kind {
         ArchiveKind::Zip => {
             let mut archive = zip::ZipArchive::new(open_reader(path)?).map_err(zip_err)?;
             for name in entries {
                 let result = match archive.by_name(name) {
-                    Ok(file) => {
+                    Ok(mut file) => {
                         let declared = file.size();
-                        read_bounded(file, declared, limit)
+                        each(name, &mut file, declared)
                     }
                     Err(e) => Err(zip_err(e)),
                 };
                 out.insert((*name).to_string(), result);
             }
         }
-        ArchiveKind::Tar => read_tar_entries(open_reader(path)?, entries, limit, &mut out)?,
-        ArchiveKind::TarGz => {
-            read_tar_entries(GzDecoder::new(open_reader(path)?), entries, limit, &mut out)?
-        }
+        ArchiveKind::Tar => visit_tar_entries(open_reader(path)?, entries, &mut each, &mut out)?,
+        ArchiveKind::TarGz => visit_tar_entries(GzDecoder::new(open_reader(path)?), entries, &mut each, &mut out)?,
         ArchiveKind::Gz | ArchiveKind::Zstd | ArchiveKind::Xz | ArchiveKind::Bzip2 => {
             // The entry name is not needed: a lone packed file holds exactly one.
-            let content = read_bounded(single_decoder(path, kind)?, limit, limit);
-            let mut content = Some(content);
+            let mut decoder = single_decoder(path, kind)?;
+            let mut first = true;
             for name in entries {
-                out.insert((*name).to_string(), content.take().unwrap_or(Err(ArchiveError::TooLarge)));
+                let result = if first { each(name, &mut decoder, limit) } else { Err(ArchiveError::TooLarge) };
+                first = false;
+                out.insert((*name).to_string(), result);
             }
         }
     }
@@ -335,23 +348,24 @@ pub fn read_entries(
     Ok(out)
 }
 
-fn read_tar_entries(
+fn visit_tar_entries<T>(
     reader: impl Read,
     wanted: &[&str],
-    limit: u64,
-    out: &mut HashMap<String, Result<Vec<u8>, ArchiveError>>,
+    each: &mut impl FnMut(&str, &mut dyn Read, u64) -> Result<T, ArchiveError>,
+    out: &mut HashMap<String, Result<T, ArchiveError>>,
 ) -> Result<(), ArchiveError> {
     let mut archive = tar::Archive::new(reader);
     let mut remaining = wanted.len();
     for entry in archive.entries().map_err(io_err)? {
-        let entry = entry.map_err(io_err)?;
+        let mut entry = entry.map_err(io_err)?;
         if !entry.header().entry_type().is_file() {
             continue;
         }
         let name = entry.path().map_err(io_err)?.to_string_lossy().to_string();
         if wanted.contains(&name.as_str()) && !out.contains_key(&name) {
             let declared = entry.size();
-            out.insert(name, read_bounded(entry, declared, limit));
+            let result = each(&name, &mut entry, declared);
+            out.insert(name, result);
             remaining -= 1;
             if remaining == 0 {
                 break;

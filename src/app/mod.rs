@@ -603,6 +603,9 @@ impl AppView {
         // Remote Copies no Log Space holds any more (the app closed in the
         // middle of removing one) are cleared away.
         crate::remote::copy::sweep(&this.copies_root(), &this.copy_dirs_in_use());
+        // So are Archive Entries cut off while being unpacked, or held by
+        // no Log Space.
+        crate::archive_cache::sweep(&this.archive_cache_root(), &this.archive_dirs_in_use());
         this.start_live_pump(cx);
         this
     }

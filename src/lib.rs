@@ -1,5 +1,6 @@
 pub mod app;
 pub mod archive;
+pub mod archive_cache;
 pub mod column;
 pub mod columns;
 pub mod count;

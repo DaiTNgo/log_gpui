@@ -143,9 +143,10 @@ Lý do: `all_entries` còn là trạng thái được sửa tại chỗ. Filter 
 
 ## 10. Archive Entry
 
-- [ ] 10.1 Giải nén Archive Entry theo luồng vào `<app data>/archive-cache/<hash>/`, mỗi Archive một lượt, giữ `MAX_UNCOMPRESSED_BYTES`; index như file local.
-- [ ] 10.2 Xoá thư mục khi Log Space bị xoá; quét dọn khi khởi động như `remote::copy::sweep`.
+- [x] 10.1 Giải nén Archive Entry theo luồng vào `<app data>/archive-cache/<hash>/`, mỗi Archive một lượt, giữ `MAX_UNCOMPRESSED_BYTES`; index như file local.
+- [x] 10.2 Xoá thư mục khi Log Space bị xoá; quét dọn khi khởi động như `remote::copy::sweep`.
   - Test: tắt ngang giữa chừng.
+  - Entry được ghi ra `.part` trước, đủ rồi mới đổi tên; sweep xoá các `.part` và thư mục không còn Log Space nào dùng. Thư mục đặt tên theo đường dẫn, kích thước và thời điểm sửa của Archive, nên Archive đổi thì được giải nén lại. Hiện vẫn parse entry vào `ParsedFile` như file local; đọc qua Line Index sau khi app chuyển sang Indexing.
 
 ## 11. Dormant Tab
 

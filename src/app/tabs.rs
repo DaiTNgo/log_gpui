@@ -14,7 +14,7 @@ use crate::filter::FilterState;
 use crate::focus::FocusTabs;
 use crate::live::LiveBuffer;
 use crate::space_view::{BuiltView, EmptyCanvas, ParsedFile, build_file_view, build_space_view};
-use crate::archive::{ArchiveError, MAX_UNCOMPRESSED_BYTES, detect, read_entries, read_source};
+use crate::archive::{ArchiveError, MAX_UNCOMPRESSED_BYTES, detect, read_source};
 use crate::workspace::log_space::{LogFile, LogSpace, LogSpaceKind};
 use crate::workspace::project::Project;
 use crate::workspace::working_set::{CloseScope, TabSessionState, TabTarget, ViewMode, WorkingSet};
@@ -221,8 +221,9 @@ impl AppView {
         for (archive, files) in by_archive {
             let names: Vec<&str> = files.iter().filter_map(|f| f.entry.as_deref()).collect();
             let path = Path::new(archive);
+            let root = self.archive_cache_root();
             let result = match detect(path) {
-                Some(kind) => read_entries(path, kind, &names, MAX_UNCOMPRESSED_BYTES),
+                Some(kind) => crate::archive_cache::unpack(&root, path, kind, &names, MAX_UNCOMPRESSED_BYTES),
                 None if path.exists() => Err(ArchiveError::Damaged("not an archive".into())),
                 None => Err(ArchiveError::NotFound),
             };
@@ -240,10 +241,18 @@ impl AppView {
             };
             for file in files {
                 let content = file.entry.as_deref().and_then(|name| entries.remove(name));
-                let parsed = match content {
-                    Some(Ok(bytes)) => ParsedFile::from_bytes(&bytes),
+                let parsed = match content.map(|r| r.map_err(std::io::Error::from)) {
+                    // The entry is read from its unpacked file, like a local one.
+                    Some(Ok(unpacked)) => match ParsedFile::from_path(&unpacked) {
+                        Ok(parsed) => parsed,
+                        Err(e) => {
+                            let error = read_failure(file, &e);
+                            notices.push(error.clone());
+                            ParsedFile::failed(error)
+                        }
+                    },
                     Some(Err(e)) => {
-                        let error = read_failure(file, &std::io::Error::from(e));
+                        let error = read_failure(file, &e);
                         notices.push(error.clone());
                         ParsedFile::failed(error)
                     }
