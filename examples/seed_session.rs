@@ -44,6 +44,19 @@ fn main() {
             space.add_remote_commands(&commands).unwrap();
         }
         space.id.clone()
+    } else if std::env::var("SEED_TABS").is_ok() {
+        // `SEED_TABS`: a Log Space and a tab per file, the first one active.
+        let mut ids = Vec::new();
+        for file in &files {
+            let name = std::path::Path::new(file).file_name().unwrap().to_string_lossy().into_owned();
+            let space = project.create_log_space(&name, LogSpaceKind::Imported).unwrap();
+            space.add_imported_files(std::slice::from_ref(file)).unwrap();
+            ids.push(space.id.clone());
+        }
+        for id in &ids {
+            project.open_log_space(id, TabSessionState::new());
+        }
+        ids[0].clone()
     } else {
         let space = project.create_log_space("Live", LogSpaceKind::Imported).unwrap();
         space.add_imported_files(&files).unwrap();
@@ -77,5 +90,8 @@ fn main() {
         session.mode = log_gpui::workspace::working_set::ViewMode::Raw;
     }
     project.open_log_space(&space_id, session);
+    if std::env::var("SEED_TABS").is_ok() {
+        project.working_set.set_active_tab(0);
+    }
     SessionPersistence::new(base.join("session.json")).save(&ws).unwrap();
 }
