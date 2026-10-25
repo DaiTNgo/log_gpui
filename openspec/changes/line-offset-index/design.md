@@ -322,6 +322,17 @@ Cách làm đã chốt:
 - Khoá: file khoá vào bộ đọc nhanh khi 64 dòng trong 256 KiB đầu đọc nhanh giống hệt Auto-detect và không dòng nào lệch. Dòng bộ đọc nhanh bỏ qua (stack trace, dòng trống) không tính. Bộ đọc nhanh chỉ trả kết quả khi chắc chắn giống Auto-detect, còn lại thì trả `None` và dòng đó đi qua Auto-detect. Vì vậy có khoá hay không thì kết quả vẫn giống nhau (có test so cả hai).
 - Pipeline chạy trên các luồng riêng (một luồng đọc, `cores-1` worker, một luồng nối), không dùng background executor của GPUI. Lý do: đây là việc nặng CPU kéo dài, không phải future. UI nghe `Progress` qua `async_channel`.
 
+#### Scan của app (task 6.1, 2026-10-25)
+
+`index::scan` trên cùng file 376 MB, 3.000.000 dòng, page cache nóng, đọc qua `DiskSource`. Khối đầu là khối chứa dòng đang xem (dòng 1.500.000).
+
+| Search Expression | Lô đầu (10.000 dòng) | Toàn bộ | Match |
+|---|---|---|---|
+| `timeout` | 1,6 ms | 55 ms | 0 |
+| `user=42` | 1,5 ms | 54 ms | 33.781 |
+
+Kết quả là `Vec<u32>` đã sắp xếp, gửi dần mỗi 50 ms. Dòng mới của file live được quét riêng rồi nối vào bằng `Found::append`.
+
 ## Risks / Trade-offs
 
 - **Thay đổi lõi rất lớn**: `all_entries` được dùng ở rất nhiều nơi (Filter, Search, Focus Pane, Highlight, Minimap, Marker, Go to, Live trim, test). → Làm theo từng giai đoạn trong tasks.md, mỗi giai đoạn giữ test xanh. Dựng một lớp truy vấn (`ViewRows`) trước, chuyển dần các chỗ dùng sang đó, rồi mới bỏ `all_entries`.

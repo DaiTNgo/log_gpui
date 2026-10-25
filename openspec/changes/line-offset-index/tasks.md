@@ -101,7 +101,7 @@ Lý do: `all_entries` còn là trạng thái được sửa tại chỗ. Filter 
 
 ## 6. Scan
 
-- [ ] 6.1 Bộ chạy Scan chung:
+- [x] 6.1 Bộ chạy Scan chung (`index::scan`; nối vào Search ở 6.2):
   - Chia khối 10.000 dòng, quét khối quanh vị trí đang xem trước.
   - Kết quả là tập dòng đã sắp xếp; có tổng tạm thời và tiến độ.
   - Scan mới huỷ Scan cũ; dòng live chỉ quét phần mới.
