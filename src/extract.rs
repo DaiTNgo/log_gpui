@@ -42,15 +42,34 @@ impl LineConfig {
         }
         let Some(message) = spans.get("message") else { return Spans::default() };
         let Some(text) = line.get(message.clone()) else { return Spans::default() };
-        let mut found: Vec<(&'static str, Range<usize>)> = Vec::new();
-        for (key, value) in scan_kv(text) {
-            let name = &text[key];
-            let Some(&wanted) = self.kv.iter().find(|k| **k == name) else { continue };
-            if spans.get(wanted).is_none() && !found.iter().any(|(n, _)| *n == wanted) {
-                found.push((wanted, value.start + message.start..value.end + message.start));
-            }
+        let mut found = self.wanted_kv(text, &scan_kv(text), |name| spans.get(name).is_some());
+        for (_, range) in &mut found {
+            *range = range.start + message.start..range.end + message.start;
         }
         if found.is_empty() { Spans::default() } else { Spans::from_pairs(found) }
+    }
+
+    /// The Detected Fields turned on among `pairs` (`scan_kv` of a message),
+    /// the first of each, as ranges of the message. `taken` tells the fields
+    /// the line already has, which are not read again.
+    pub fn wanted_kv(
+        &self,
+        text: &str,
+        pairs: &[(Range<usize>, Range<usize>)],
+        taken: impl Fn(&str) -> bool,
+    ) -> Vec<(&'static str, Range<usize>)> {
+        let mut found: Vec<(&'static str, Range<usize>)> = Vec::new();
+        if self.is_empty() {
+            return found;
+        }
+        for (key, value) in pairs {
+            let name = &text[key.clone()];
+            let Some(&wanted) = self.kv.iter().find(|k| **k == name) else { continue };
+            if !taken(wanted) && !found.iter().any(|(n, _)| *n == wanted) {
+                found.push((wanted, value.clone()));
+            }
+        }
+        found
     }
 
     /// Read the fields of lines copied out of the view, across the cores (off

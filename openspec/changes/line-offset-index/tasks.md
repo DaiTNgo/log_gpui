@@ -48,15 +48,16 @@
 
 ## 3. Indexing ở nền
 
-- [ ] 3.1 Pipeline Indexing (luồng IO, worker theo khối, bước nối tuần tự) chạy trên background executor. Nó gửi lô kèm tiến độ (byte đã đọc / tổng), có token huỷ.
+- [x] 3.1 Pipeline Indexing (luồng IO, worker theo khối, bước nối tuần tự) chạy trên background executor. Nó gửi lô kèm tiến độ (byte đã đọc / tổng), có token huỷ.
   - Test: Continuation Line vắt qua ranh giới khối; timestamp kế thừa qua ranh giới; huỷ giữa chừng.
-- [ ] 3.1b Khoá format và timestamp theo file (spike chọn dùng), kèm bộ đọc nhanh không cấp phát cho các dạng phổ biến như trong `index_probe`:
+- [x] 3.1b Khoá format và timestamp theo file (spike chọn dùng), kèm bộ đọc nhanh không cấp phát cho các dạng phổ biến như trong `index_probe`:
   - Khoá sau khi đủ số dòng liên tiếp khớp; không khớp thì dò lại toàn bộ.
   - Test: `LineMeta` có khoá khớp từng dòng với không khoá, kể cả file trộn hai định dạng thời gian và file có dòng rác xen giữa.
-- [ ] 3.2 Dựng `ColumnIndex::row_ids`, danh sách giá trị, số đếm và Coverage dần theo lô, giữ `MAX_DISTINCT`. Dựng cho mọi cột (a), hay chỉ cho các cột có sẵn trong mọi dòng (b), theo kết quả spike. Với (b), Detected Field được dựng bằng Scan khi người dùng mở picker hoặc Highlight Rule của cột lần đầu, hoặc khi Filter đã lưu có điều kiện trên cột đó.
+- [x] 3.2 Dựng `ColumnIndex::row_ids`, danh sách giá trị, số đếm và Coverage dần theo lô, giữ `MAX_DISTINCT`. Dựng cho mọi cột (a), hay chỉ cho các cột có sẵn trong mọi dòng (b), theo kết quả spike. Với (b), Detected Field được dựng bằng Scan khi người dùng mở picker hoặc Highlight Rule của cột lần đầu, hoặc khi Filter đã lưu có điều kiện trên cột đó.
   - Test: so `FilterIndex` dựng theo lô với `FilterIndex::build` trên cùng file.
 - [ ] 3.3 File live: hiện các dòng cuối trước trong lúc Indexing chạy từ đầu; số dòng đúng khi Indexing xong (L3).
   - Nếu spike cho thấy Indexing đủ nhanh, ghi lại trong design và bỏ bước đọc ngược.
+  - Indexing không khoá mất 2,28 s trên 376MB, nên vẫn cần bước này. Đã có `index::tail::read_tail` (đọc 64 KiB cuối) kèm test. Còn phải nối vào view, ở nhóm 4 và nhóm 9.
 
 ## 4. Lớp ViewRows thay cho all_entries
 

@@ -836,11 +836,49 @@ fn report_index(label: &str, index: &Index, stats: &Stats, rss: Option<f64>) {
     );
 }
 
+/// The app's own Indexing (`log_gpui::index::indexing`) on `path`: with and
+/// without the lock, with the Detected Fields of the spike's columns.
+fn app_probe(path: &str) {
+    use log_gpui::index::indexing::{IndexOptions, Indexing};
+    use log_gpui::index::{DiskSource, HandleBudget, LineSource};
+    let _ = std::fs::read(path).unwrap();
+    let config = Arc::new(LineConfig::new(&KV_KEYS.map(String::from)));
+    for no_lock in [false, true] {
+        let before = rss_mb();
+        let started = Instant::now();
+        let source: Arc<dyn LineSource> = Arc::new(DiskSource::on_demand(path, HandleBudget::for_process()));
+        let indexing = Indexing::start(source, IndexOptions { config: config.clone(), no_lock, ..Default::default() });
+        let first = indexing.updates.recv_blocking().unwrap();
+        let first_at = started.elapsed();
+        let indexed = indexing.wait();
+        let total = started.elapsed();
+        let data = indexed.data.read().unwrap();
+        let lines = data.file.len();
+        let index_bytes = data.file.heap_bytes();
+        let row_ids: usize = data.filter.columns.iter().filter(|c| c.has_row_ids()).count() * 2 * lines;
+        println!(
+            "app Indexing lock={} : first {} lines in {:?}, all {lines} in {:?}; index+meta {:.1} B/line, row_ids ~{:.1} B/line ({} columns), RSS +{:.0} MB",
+            indexed.locked.load(std::sync::atomic::Ordering::Acquire),
+            first.lines,
+            first_at,
+            total,
+            index_bytes as f64 / lines as f64,
+            row_ids as f64 / lines as f64,
+            data.filter.columns.iter().filter(|c| c.has_row_ids()).count(),
+            rss_mb() - before
+        );
+    }
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.first().map(String::as_str) == Some("--gen") {
         let lines = args.get(2).and_then(|a| a.parse().ok()).unwrap_or(3_000_000);
         gen_file(&args[1], lines);
+        return;
+    }
+    if args.first().map(String::as_str) == Some("--app") {
+        app_probe(&args[1]);
         return;
     }
     if args.first().map(String::as_str) == Some("--merge") {

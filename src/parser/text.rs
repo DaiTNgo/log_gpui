@@ -50,6 +50,12 @@ static RE_SYSLOG: LazyLock<Regex> = LazyLock::new(|| {
         .unwrap()
 });
 
+/// Whether Auto-detect reads `trimmed` (a line without its surrounding
+/// whitespace) as an access log line.
+pub fn is_access_line(trimmed: &str) -> bool {
+    RE_ACCESS.is_match(trimmed)
+}
+
 /// How many events to sample when inferring a per-file `LogSchema`.
 const SCHEMA_SAMPLE_LIMIT: usize = 1000;
 /// An enumerable string field must have at most this many distinct values.

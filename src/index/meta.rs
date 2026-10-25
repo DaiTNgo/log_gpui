@@ -169,6 +169,12 @@ impl MetaTable {
         &self.meta
     }
 
+    /// Whether a line has a time of its own: the next line without one
+    /// continues it.
+    pub fn continues(&self) -> bool {
+        self.last_timed.is_some()
+    }
+
     /// Whether any line has a timestamp.
     pub fn has_any_time(&self) -> bool {
         self.cur_ts.is_some()
@@ -197,7 +203,9 @@ impl MetaTable {
             self.cur_ts = Some(ts);
         }
         let ts_us = self.cur_ts.unwrap_or(NO_TIME);
-        self.meta.push(LineMeta { ts_us, parent_dist, level: raw.level as u8, flags });
+        // A Continuation Line is all message: it has no level of its own.
+        let level = if parent_dist > 0 { LogLevel::Unknown } else { raw.level };
+        self.meta.push(LineMeta { ts_us, parent_dist, level: level as u8, flags });
     }
 
     /// Forget the lines from line `n` on.

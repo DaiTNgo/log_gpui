@@ -9,13 +9,16 @@ use crate::model::{FieldKey, LogEntry};
 use crate::unicode_text;
 use std::collections::{HashMap, HashSet};
 
+mod chunk;
+pub use chunk::{ChunkColumns, LineFacts, Overflowed};
+
 /// A column with more distinct values than this cannot be filtered on.
 pub const MAX_DISTINCT: usize = 500;
 
 /// Value id of a row that has no value in a column.
 pub const MISSING: u16 = u16::MAX;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 enum Source {
     /// The Source File of a row in a Log Space (the Source Column).
     SourceFile,

@@ -2,10 +2,13 @@
 //! the app keeps where each line is and a few bytes of metadata per line,
 //! and reads a line's text again from its `LineSource` when it is shown.
 
+pub mod fast;
 pub mod handles;
+pub mod indexing;
 pub mod line_index;
 pub mod meta;
 pub mod source;
+pub mod tail;
 
 pub use handles::HandleBudget;
 pub use line_index::LineIndex;

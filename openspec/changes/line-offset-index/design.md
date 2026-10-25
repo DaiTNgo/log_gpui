@@ -303,6 +303,25 @@ Ngoài ra, file đo khớp bộ đọc nhanh ở 100% số dòng, và ba Detecte
 
 **Kết luận: go.** Mọi mục tiêu có ký hiệu ≤ đều đạt. Còn một việc chưa xong nhưng không chặn cổng: chạy trên log thật của người dùng (task 1.6). Lần chạy dưới sudo đo Indexing không khoá 1,28–1,40 s, nhanh hơn lần đầu.
 
+#### Indexing của app (nhóm 3, 2026-10-25)
+
+Đo bằng `index_probe --app` trên cùng file 376MB, 3.000.000 dòng, 12 nhân, release. Indexing chạy đủ các bước của app: Line Index, `LineMeta`, `FilterIndex` (6 cột, Detected Field `user`, `took`, `trace_id`, `path`) và độ rộng cột.
+
+| | Có khoá | Không khoá |
+|---|---|---|
+| Lô đầu | 2.149 dòng sau 13 ms | 25 ms |
+| Toàn bộ | 0,44 s | 2,28 s |
+| Line Index + `LineMeta` | 17,2 B/dòng | như bên trái |
+| `row_ids` | ~12 B/dòng (6 cột × 2 B) | như bên trái |
+
+So với spike (0,11 s có khoá), phần thêm là dựng đúng `FilterIndex` như `FilterIndex::build`: fold Unicode mỗi giá trị, `effective_ts` dạng `f64`, Coverage và `kv_counts`. Indexing không khoá vượt mục tiêu 2 s khoảng 0,3 s. Đây là file không khoá được (vd. JSON lines); file có định dạng chuẩn thì khoá.
+
+Cách làm đã chốt:
+- Mỗi worker đọc khối của nó vào một `ChunkColumns`: id giá trị riêng của khối, không giữ `LogEntry`. Bước nối gộp vào `FilterIndex` theo thứ tự file (`FilterIndex::append_chunk`).
+- Các dòng không có thời gian ở đầu khối được đọc theo cả hai cách. Bước nối quyết định chúng là Continuation Line hay Parent Line, tuỳ khối trước có dòng có thời gian hay không. Continuation Line chỉ có message: không có level, không có field, giá trị theo Parent Line, Stream là của chính nó.
+- Khoá: file khoá vào bộ đọc nhanh khi 64 dòng trong 256 KiB đầu đọc nhanh giống hệt Auto-detect và không dòng nào lệch. Dòng bộ đọc nhanh bỏ qua (stack trace, dòng trống) không tính. Bộ đọc nhanh chỉ trả kết quả khi chắc chắn giống Auto-detect, còn lại thì trả `None` và dòng đó đi qua Auto-detect. Vì vậy có khoá hay không thì kết quả vẫn giống nhau (có test so cả hai).
+- Pipeline chạy trên các luồng riêng (một luồng đọc, `cores-1` worker, một luồng nối), không dùng background executor của GPUI. Lý do: đây là việc nặng CPU kéo dài, không phải future. UI nghe `Progress` qua `async_channel`.
+
 ## Risks / Trade-offs
 
 - **Thay đổi lõi rất lớn**: `all_entries` được dùng ở rất nhiều nơi (Filter, Search, Focus Pane, Highlight, Minimap, Marker, Go to, Live trim, test). → Làm theo từng giai đoạn trong tasks.md, mỗi giai đoạn giữ test xanh. Dựng một lớp truy vấn (`ViewRows`) trước, chuyển dần các chỗ dùng sang đó, rồi mới bỏ `all_entries`.
