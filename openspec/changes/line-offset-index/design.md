@@ -333,6 +333,21 @@ Cách làm đã chốt:
 
 Kết quả là `Vec<u32>` đã sắp xếp, gửi dần mỗi 50 ms. Dòng mới của file live được quét riêng rồi nối vào bằng `Found::append`.
 
+#### View không còn copy dòng (task 4.3, 2026-10-25)
+
+`AppView::all_entries` đã được thay bằng `ViewData`. Mỗi dòng của view giờ chỉ là cặp (file, vị trí), còn entry vẫn nằm trong `parsed_files`. Marker được tra theo (dòng, Generation), và Detected Field được ghi vào entry của file.
+
+Số đo bằng `perf_probe 1000000` (release, mở một Log Space 1.000.000 dòng):
+
+| | Trước (3981fc7) | Sau (867c99b) |
+|---|---|---|
+| RSS tăng khi mở | +299 MB | +101 MB |
+| Dựng lại view | 418 ms | 390 ms |
+| Trim Live Window (~100k dòng) | 104 ms | 68 ms |
+| Mở Log Space | 2,32 s | 2,26 s |
+
+Kết quả của Search, Filter và trim giống hệt nhau. Thời gian dựng lại view gần như không đổi vì `FilterIndex::build` chiếm phần lớn. Mở file vẫn mất ~2,3 s, vì vẫn parse toàn bộ vào `ParsedFile`; phần này chỉ hết khi app đọc file qua Indexing.
+
 ## Risks / Trade-offs
 
 - **Thay đổi lõi rất lớn**: `all_entries` được dùng ở rất nhiều nơi (Filter, Search, Focus Pane, Highlight, Minimap, Marker, Go to, Live trim, test). → Làm theo từng giai đoạn trong tasks.md, mỗi giai đoạn giữ test xanh. Dựng một lớp truy vấn (`ViewRows`) trước, chuyển dần các chỗ dùng sang đó, rồi mới bỏ `all_entries`.

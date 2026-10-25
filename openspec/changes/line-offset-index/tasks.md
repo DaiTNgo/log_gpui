@@ -87,6 +87,7 @@ Lý do: `all_entries` còn là trạng thái được sửa tại chỗ. Filter 
   4. chọn dòng và copy
   5. Minimap
   6. độ rộng cột (`max_chars` tính trong lúc Indexing)
+  - Đã xong lớp truy cập: trait `Rows` (3981fc7). `ViewData` thay `all_entries`, view không còn copy dòng (867c99b). Mọi chỗ trong danh sách trên đọc qua `Rows`; entry vẫn lấy từ `ParsedFile.entries`. Còn lại: chuyển nguồn entry sang Line Index cộng `RowCache` (cần Indexing được nối vào app), và bỏ các lần duyệt toàn bộ dòng (Search, Highlight, `FilterIndex::build`) theo nhóm 5–7.
 - 4.4 đã chuyển thành 7.4: chuyển tab không clone chỉ làm được khi Filter, Search, Highlight và Marker không còn đọc hay sửa `all_entries`.
 
 ## 5. Filter
