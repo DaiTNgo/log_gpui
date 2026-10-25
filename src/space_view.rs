@@ -15,6 +15,9 @@ use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 use std::sync::Arc;
 
+/// Bytes of a file parsed at a time on each core.
+const PARSE_BLOCK: usize = 4 << 20;
+
 /// One file, parsed once and cached by `file_id`: the entries for the Parsed
 /// View and the text lines for the Raw View.
 #[derive(Debug, Clone)]
@@ -50,7 +53,7 @@ impl ParsedFile {
     /// when it answers false (stop).
     pub fn from_bytes_with_progress(bytes: &[u8], progress: impl FnMut(usize) -> bool) -> Option<Self> {
         let content = String::from_utf8_lossy(bytes);
-        let entries = crate::parser::text::parse_entries_with_progress(&content, progress)?;
+        let entries = crate::parser::text::parse_entries_parallel(&content, PARSE_BLOCK, progress)?;
         let max_chars = FieldMaxChars::scan_entries(&entries);
         let parsed = crate::parser::text::ParseResult { entries, max_chars };
         // Every line is an entry: the Raw View's line is the entry's own text.

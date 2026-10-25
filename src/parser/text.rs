@@ -167,6 +167,93 @@ pub fn parse_entries_with_progress(content: &str, mut progress: impl FnMut(usize
     Some(entries)
 }
 
+/// `parse_entries` on several cores: `content` is cut into blocks of about
+/// `block_bytes` at line breaks, each parsed on its own, numbered from where
+/// it starts in the file. A block cannot tell whether the lines at its top
+/// without a time continue a line of the block before: those are read again
+/// as Continuation Lines when it does. The entries are those `parse_entries`
+/// gives. `progress` hears the bytes parsed after each block (on the
+/// calling thread); `None` when it answers false (stop).
+pub fn parse_entries_parallel(
+    content: &str,
+    block_bytes: usize,
+    mut progress: impl FnMut(usize) -> bool,
+) -> Option<Vec<LogEntry>> {
+    let bytes = content.as_bytes();
+    // Blocks end right after a line break, so they hold whole lines.
+    let mut blocks: Vec<std::ops::Range<usize>> = Vec::new();
+    let mut start = 0;
+    while start < bytes.len() {
+        let want = (start + block_bytes.max(1)).min(bytes.len());
+        let end = if want == bytes.len() {
+            want
+        } else {
+            memchr::memchr(b'\n', &bytes[want..]).map_or(bytes.len(), |at| want + at + 1)
+        };
+        blocks.push(start..end);
+        start = end;
+    }
+    // The number of each block's first line.
+    let mut first_line = Vec::with_capacity(blocks.len());
+    let mut lines = 0usize;
+    for block in &blocks {
+        first_line.push(lines);
+        lines += content[block.clone()].lines().count();
+    }
+    let workers = std::thread::available_parallelism().map_or(1, |n| n.get());
+    let mut entries: Vec<LogEntry> = Vec::with_capacity(lines);
+    let mut parent: Option<usize> = None;
+    let mut done = 0usize;
+    for round in (0..blocks.len()).collect::<Vec<_>>().chunks(workers) {
+        let parsed: Vec<Vec<LogEntry>> = std::thread::scope(|s| {
+            let handles: Vec<_> = round
+                .iter()
+                .map(|&b| {
+                    let (text, first) = (&content[blocks[b].clone()], first_line[b]);
+                    s.spawn(move || {
+                        let mut parent: Option<usize> = None;
+                        text.lines()
+                            .enumerate()
+                            .map(|(i, line)| {
+                                let index = first + i + 1;
+                                let mut event = parse_line(index, line, None);
+                                if event.has_time {
+                                    parent = Some(index);
+                                } else if let Some(p) = parent {
+                                    event = event.into_continuation(p);
+                                }
+                                LogEntry::from_event(&event)
+                            })
+                            .collect()
+                    })
+                })
+                .collect();
+            handles.into_iter().map(|h| h.join().expect("a parse block panicked")).collect()
+        });
+        for (&b, block) in round.iter().zip(parsed) {
+            // The lines at the top without a time continue the last line with
+            // one, when an earlier block has it.
+            let top = block.iter().position(|e| e.has_time).unwrap_or(block.len());
+            for (i, mut entry) in block.into_iter().enumerate() {
+                if i < top {
+                    if let Some(p) = parent {
+                        let event = parse_line(entry.index, &entry.raw_line, None).into_continuation(p);
+                        entry = LogEntry::from_event(&event);
+                    }
+                } else if entry.has_time {
+                    parent = Some(entry.index);
+                }
+                entries.push(entry);
+            }
+            done = blocks[b].end;
+        }
+        if !progress(done) {
+            return None;
+        }
+    }
+    Some(entries)
+}
+
 /// Parses lines one at a time as they arrive, the way `parse_events` parses a
 /// whole file: a line without a time of its own continues the nearest line
 /// above that has one.
