@@ -141,9 +141,20 @@ pub fn parse_events_with(content: &str, format: Option<&CompiledFormat>) -> Vec<
 /// The entries of every stored line, read as `parse_events` reads them, one
 /// line at a time: the events of a million lines are never held together.
 pub fn parse_entries(content: &str) -> Vec<LogEntry> {
+    parse_entries_with_progress(content, |_| true).expect("never stopped")
+}
+
+/// `parse_entries`, telling `progress` the bytes read every 16,384 lines;
+/// `None` when it answers false (stop).
+pub fn parse_entries_with_progress(content: &str, mut progress: impl FnMut(usize) -> bool) -> Option<Vec<LogEntry>> {
     let mut entries = Vec::with_capacity(content.bytes().filter(|b| *b == b'\n').count() + 1);
     let mut parent: Option<usize> = None;
+    let mut read = 0usize;
     for (i, line) in content.lines().enumerate() {
+        read += line.len() + 1;
+        if i % 16_384 == 16_383 && !progress(read) {
+            return None;
+        }
         let index = i + 1;
         let mut event = parse_line(index, line, None);
         if event.has_time {
@@ -153,7 +164,7 @@ pub fn parse_entries(content: &str) -> Vec<LogEntry> {
         }
         entries.push(LogEntry::from_event(&event));
     }
-    entries
+    Some(entries)
 }
 
 /// Parses lines one at a time as they arrive, the way `parse_events` parses a

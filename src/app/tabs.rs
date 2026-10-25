@@ -23,7 +23,7 @@ use std::path::Path;
 
 /// The notice for a file that could not be read; an Archive Entry is named
 /// by its display name.
-fn read_failure(file: &LogFile, e: &std::io::Error) -> String {
+pub(super) fn read_failure(file: &LogFile, e: &std::io::Error) -> String {
     let name = if file.entry.is_some() {
         file.display_name.as_str()
     } else {
@@ -73,6 +73,9 @@ impl AppView {
         }
         if !self.view.is_empty() {
             return None;
+        }
+        if self.is_reading() {
+            return Some(EmptyCanvas::Reading { files: self.reading() });
         }
         // A File View shows one file; a Log Space all of its files.
         let viewed = match self.active_target() {
@@ -127,11 +130,16 @@ impl AppView {
         );
         let filter = self.filter_state.clone();
         let focus = self.focus.clone();
+        // While its files are read the view has no rows: the row the tab
+        // was at stays for when they are.
+        let reading = self.is_reading();
         let mut target = None;
         if let Some(proj) = self.workspace_state.active_project_mut() {
             if let Some(tab) = proj.working_set.active_tab_mut() {
                 tab.session.column_layout = layout;
-                tab.session.selected_row = selected_row;
+                if !reading {
+                    tab.session.selected_row = selected_row;
+                }
                 tab.session.mode = mode;
                 target = Some(tab.target.clone());
             }
@@ -181,6 +189,10 @@ impl AppView {
     pub(crate) fn ensure_live_file_loaded(&mut self, file: &LogFile) {
         if self.parsed_files.contains_key(&file.file_id) {
             return;
+        }
+        // A file on disk is read in the background.
+        if file.entry.is_none() && file.path.is_some() {
+            return self.queue_file_load(file);
         }
         let Some(source) = file.source() else {
             self.parsed_files.insert(file.file_id.clone(), ParsedFile::empty());
@@ -417,6 +429,7 @@ impl AppView {
             self.scroll_to_newest();
         }
         self.sync_live_sources(cx);
+        self.start_queued_loads(cx);
         self.apply_filters_and_refresh(cx);
         if self.view_mode == ViewMode::Raw {
             self.run_raw_search_keep_position(cx);

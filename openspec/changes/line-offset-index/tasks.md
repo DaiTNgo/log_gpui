@@ -158,10 +158,10 @@ Lý do: `all_entries` còn là trạng thái được sửa tại chỗ. Filter 
 - [x] 11.2 File View chỉ đọc file của nó (`build_view_for` không gọi `ensure_space_loaded` cho cả Log Space).
 - [x] 11.3 Rời tab bỏ Line Index, LRU và source live của các file không còn tab đang chọn nào dùng, và đóng mọi file handle của chúng; lưu Scratch trước; giữ session SSH trong `RemoteHub`.
   - Test: memory trả lại sau khi rời tab; quay lại tab Remote không đăng nhập lại.
-- [ ] 11.4 Quay lại Dormant Tab thì index lại với tiến độ, rồi khôi phục Filter, Focus Tab, Search Expression, vị trí đang xem và Marker.
-  - Quay lại tab thì đọc lại file và khôi phục session của tab (test: dòng đang chọn). Phần "có tiến độ" chờ app đọc file qua Indexing (nhóm 4/9).
-- [ ] 11.5 Tab strip hiện trạng thái Dormant và Indexing (tiến độ).
-  - Dormant Tab đã có: chữ nghiêng kèm tooltip, qua `is_dormant_tab`. Trạng thái Indexing cũng chờ app đọc file qua Indexing.
+- [x] 11.4 Quay lại Dormant Tab thì index lại với tiến độ, rồi khôi phục Filter, Focus Tab, Search Expression, vị trí đang xem và Marker.
+  - Quay lại tab thì đọc lại file và khôi phục session của tab (test: dòng đang chọn). File local được đọc ở nền (`app::loading`): canvas hiện "Reading the log · 40%" và tab hiện %, rồi view được dựng theo session của tab. Rời tab giữa chừng thì việc đọc dừng. Chưa qua Indexing: vẫn parse toàn bộ vào `ParsedFile`, chỉ là không còn chặn UI.
+- [x] 11.5 Tab strip hiện trạng thái Dormant và Indexing (tiến độ).
+  - Dormant Tab đã có: chữ nghiêng kèm tooltip, qua `is_dormant_tab`. Tab đang đọc hiện % đọc, từ `AppView::reading`.
 
 ## 12. Dọn đường cũ và đo lại
 

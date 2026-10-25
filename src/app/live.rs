@@ -322,6 +322,7 @@ impl AppView {
         let tabs = self.tab_space_ids();
         self.live.paused_spaces.retain(|id| open.contains(id) || tabs.contains(id));
         self.drop_dormant_files();
+        self.drop_dormant_loads();
         self.start_missing_sources(cx);
         self.sync_glob_watchers(cx);
     }
@@ -1239,6 +1240,7 @@ impl AppView {
         self.filter_index = Default::default();
         let Some(open) = self.build_view_for(&target) else { return };
         self.install_live_rows(open);
+        self.start_queued_loads(cx);
         self.apply_filters_and_refresh(cx);
         if let Some(line) = selected {
             self.selected_row_pos = self.entry_of_line_ref(&line);

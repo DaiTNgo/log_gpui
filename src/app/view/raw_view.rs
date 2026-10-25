@@ -325,6 +325,7 @@ impl AppView {
             EmptyCanvas::NoLogSpace => (IconName::Layers, muted),
             EmptyCanvas::NoFiles { .. } => (IconName::FolderOpen, muted),
             EmptyCanvas::LoadFailed { .. } => (IconName::TriangleAlert, danger),
+            EmptyCanvas::Reading { .. } => (IconName::LoaderCircle, muted),
         };
         let button = match state {
             EmptyCanvas::NoLogSpace => Some(

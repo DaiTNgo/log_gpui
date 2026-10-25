@@ -23,6 +23,7 @@ pub use shortcuts::shortcut_label;
 pub mod live;
 pub mod live_more;
 pub mod live_trim;
+pub mod loading;
 pub mod open_in_full;
 mod marking;
 mod persist;
@@ -206,6 +207,12 @@ pub struct AppView {
     /// The texts of the rows the Search scan reads, kept between scans.
     /// The Scan looking for the Matches of the Search Expression typed last.
     pub(crate) search_scan: Option<search::SearchScan>,
+    /// Local files being read in the background, by `file_id`.
+    pub loads: HashMap<String, loading::FileLoad>,
+    /// Files to read in the background, once there is a context to.
+    pub(crate) load_queue: Vec<crate::workspace::log_space::LogFile>,
+    /// Whether the progress of the reads is being drawn again.
+    pub(crate) read_progress_shown: bool,
     /// Bumped whenever rows left or moved in the open view (not when rows
     /// were only added at the end): a scan of the rows before that is stale.
     pub rows_epoch: u64,
@@ -548,6 +555,9 @@ impl AppView {
             entry_found: std::cell::Cell::new(None),
             search_generation: 0,
             search_scan: None,
+            loads: HashMap::new(),
+            load_queue: Vec::new(),
+            read_progress_shown: false,
             rows_epoch: 0,
             time_range_generation: 0,
             remote,

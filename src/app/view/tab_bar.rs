@@ -49,6 +49,8 @@ impl AppView {
         let mut bar_bg = active_bg;
         bar_bg.l *= 0.55;
         let last = labels.len().saturating_sub(1);
+        // How far the open tab's files are read, while they are.
+        let reading = self.reading().iter().map(|(_, p)| *p).min();
 
         // Zed-style strip: flat tabs split by a hairline; the active tab takes
         // the main view's tone and drops the bottom border so it joins the
@@ -100,6 +102,9 @@ impl AppView {
                     })
                 })
                 .child(label)
+                .when_some(reading.filter(|_| active), |this, percent| {
+                    this.child(div().text_xs().text_color(muted).child(format!("{percent}%")))
+                })
                 .child(
                     div()
                         .id(("close-tab", index))

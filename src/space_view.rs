@@ -5,7 +5,6 @@ use crate::archive::{FileSource, read_source};
 use crate::column::FieldMaxChars;
 use crate::filter_index::FilterIndex;
 use crate::model::LogEntry;
-use crate::parser::text::parse_text_bytes_with_max_chars;
 use crate::index::view_rows::pack;
 use crate::timeline;
 use crate::view_data::{ViewData, ViewFile};
@@ -44,20 +43,28 @@ pub fn split_lines(text: &str) -> Vec<gpui::SharedString> {
 
 impl ParsedFile {
     pub fn from_bytes(bytes: &[u8]) -> Self {
-        let parsed = parse_text_bytes_with_max_chars(bytes)
-            .expect("parsing text bytes never fails");
+        Self::from_bytes_with_progress(bytes, |_| true).expect("never stopped")
+    }
+
+    /// `from_bytes`, telling `progress` the bytes read now and then; `None`
+    /// when it answers false (stop).
+    pub fn from_bytes_with_progress(bytes: &[u8], progress: impl FnMut(usize) -> bool) -> Option<Self> {
+        let content = String::from_utf8_lossy(bytes);
+        let entries = crate::parser::text::parse_entries_with_progress(&content, progress)?;
+        let max_chars = FieldMaxChars::scan_entries(&entries);
+        let parsed = crate::parser::text::ParseResult { entries, max_chars };
         // Every line is an entry: the Raw View's line is the entry's own text.
         let lines = parsed.entries.iter().map(|e| e.raw_line.clone()).collect();
-        Self {
+        Some(Self {
             entries: parsed.entries,
-            max_chars: parsed.max_chars.clone(),
+            max_chars: parsed.max_chars,
             lines: Arc::new(lines),
             raw_breaks: Arc::default(),
             live: None,
             load_error: None,
             format_id: None,
             trimmed_off: Vec::new(),
-        }
+        })
     }
 
     /// Read the entries again with the Log Format `format` of id `format_id`
@@ -169,6 +176,8 @@ pub enum EmptyCanvas {
     NoFiles { can_add: bool },
     /// Every Source File of the open view failed to load: why, per file.
     LoadFailed { errors: Vec<String> },
+    /// The view's files are being read: each name with how far, in percent.
+    Reading { files: Vec<(String, u8)> },
 }
 
 impl EmptyCanvas {
@@ -177,6 +186,7 @@ impl EmptyCanvas {
             Self::NoLogSpace => "No Log Space open",
             Self::NoFiles { .. } => "This Log Space has no files",
             Self::LoadFailed { .. } => "The log could not be read",
+            Self::Reading { .. } => "Reading the log",
         }
     }
 
@@ -188,6 +198,9 @@ impl EmptyCanvas {
             Self::NoFiles { can_add: true } => "Add log files to read them here as one timeline.".into(),
             Self::NoFiles { can_add: false } => "Its lines show here once it has files.".into(),
             Self::LoadFailed { errors } => errors.join("\n"),
+            Self::Reading { files } => {
+                files.iter().map(|(name, percent)| format!("{name} · {percent}%")).collect::<Vec<_>>().join("\n")
+            }
         }
     }
 }
