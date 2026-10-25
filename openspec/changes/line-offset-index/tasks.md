@@ -108,6 +108,7 @@ Lý do: `all_entries` còn là trạng thái được sửa tại chỗ. Filter 
   - Scan mới huỷ Scan cũ; dòng live chỉ quét phần mới.
   - Test cho từng hành vi trong spec `progressive-scan`.
 - [ ] 6.2 Search chạy qua Scan, dùng lại `search_expr` và so khớp Unicode hiện có.
+  - Đã làm: khi gõ Search, Match được tìm bằng `scan_in_steps` qua `ViewData::texts`. Các khối quanh dòng đang xem được quét trước. Match hiện dần, ô đếm có tiến độ (`3/120 · 30%`), và query mới bỏ Scan cũ. `SearchLines` (bản sao text của mọi dòng) đã bỏ. Text vẫn lấy từ `ParsedFile.lines`, chưa đọc từ Line Index trên đĩa (chờ nối Indexing). `run_search` (Enter, đổi Filter) vẫn tìm ngay trên UI thread.
   - Parsed View chỉ đếm dòng Filter đang hiện; Raw View đếm mọi dòng.
   - Ô Search hiện tổng tạm thời và tiến độ; Next/Previous dùng được trên Match đã tìm thấy.
   - Test: chạy lại toàn bộ test của `log-search`.

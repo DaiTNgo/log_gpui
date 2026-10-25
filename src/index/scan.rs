@@ -9,7 +9,7 @@ use super::line_index::{line_text, split_lines};
 use super::{Indexed, LineIndex, LineSource};
 use std::collections::BTreeMap;
 use std::ops::Range;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -43,6 +43,41 @@ impl LineSpans for Indexed {
 
     fn byte_range(&self, from: usize, to: usize) -> Option<Range<u64>> {
         self.data.read().unwrap().file.lines.byte_range(from, to)
+    }
+}
+
+/// Where a Scan reads the texts of the lines it looks at.
+pub trait ScanTexts: Send + Sync {
+    /// Hand the texts of lines `block` to `each`, in one call.
+    fn read(&self, block: Range<usize>, each: &mut dyn FnMut(&[&str])) -> Result<(), String>;
+
+    /// Done reading for now.
+    fn release(&self) {}
+}
+
+/// The lines of a file read from its source, where its Line Index says.
+pub struct FileTexts {
+    pub source: Arc<dyn LineSource>,
+    pub spans: Arc<dyn LineSpans>,
+}
+
+impl ScanTexts for FileTexts {
+    fn read(&self, block: Range<usize>, each: &mut dyn FnMut(&[&str])) -> Result<(), String> {
+        let bytes = self.spans.byte_range(block.start, block.end).ok_or("the lines are no longer indexed")?;
+        let want = usize::try_from(bytes.end - bytes.start).map_err(|e| e.to_string())?;
+        let data = self.source.read_range(bytes.start, want).map_err(|e| e.to_string())?;
+        if data.len() < want {
+            return Err("the file no longer has these lines".into());
+        }
+        let texts: Vec<std::borrow::Cow<str>> =
+            split_lines(&data).map(|bytes| String::from_utf8_lossy(line_text(bytes))).collect();
+        let texts: Vec<&str> = texts.iter().map(|t| t.as_ref()).collect();
+        each(&texts);
+        Ok(())
+    }
+
+    fn release(&self) {
+        self.source.release();
     }
 }
 
@@ -114,23 +149,16 @@ pub struct Scan {
 }
 
 impl Scan {
-    /// Read `lines` of `source` (where `spans` says they are) with `matcher`,
-    /// the blocks around line `around` first.
-    pub fn start(
-        source: Arc<dyn LineSource>,
-        spans: Arc<dyn LineSpans>,
-        lines: Range<usize>,
-        around: usize,
-        matcher: Arc<Matcher>,
-    ) -> Self {
+    /// Read `lines` from `texts` with `matcher`, the blocks around line
+    /// `around` first.
+    pub fn start(texts: Arc<dyn ScanTexts>, lines: Range<usize>, around: usize, matcher: Arc<Matcher>) -> Self {
         let workers = std::thread::available_parallelism().map_or(1, |n| n.get());
-        Self::start_with(source, spans, lines, around, matcher, workers)
+        Self::start_with(texts, lines, around, matcher, workers)
     }
 
     /// `start` with `workers` threads reading blocks.
     pub fn start_with(
-        source: Arc<dyn LineSource>,
-        spans: Arc<dyn LineSpans>,
+        texts: Arc<dyn ScanTexts>,
         lines: Range<usize>,
         around: usize,
         matcher: Arc<Matcher>,
@@ -144,8 +172,8 @@ impl Scan {
             std::thread::Builder::new()
                 .name("scan".into())
                 .spawn(move || {
-                    run(&*source, &*spans, lines, around, &*matcher, workers, &found, &cancel, &tx);
-                    source.release();
+                    run(&*texts, lines, around, &*matcher, workers, &found, &cancel, &tx);
+                    texts.release();
                 })
                 .expect("spawn the scan thread")
         };
@@ -177,32 +205,24 @@ impl Drop for Scan {
 }
 
 /// The same Scan on the calling thread, to the end.
-pub fn scan_all(source: &dyn LineSource, spans: &dyn LineSpans, lines: Range<usize>, matcher: &Matcher) -> Found {
+pub fn scan_all(texts: &dyn ScanTexts, lines: Range<usize>, matcher: &Matcher) -> Found {
     let found = Mutex::new(Found { total: lines.len(), ..Found::default() });
     let (tx, _rx) = async_channel::unbounded();
     let workers = std::thread::available_parallelism().map_or(1, |n| n.get());
-    run(source, spans, lines.clone(), lines.start, matcher, workers, &found, &AtomicBool::new(false), &tx);
-    source.release();
+    run(texts, lines.clone(), lines.start, matcher, workers, &found, &AtomicBool::new(false), &tx);
+    texts.release();
     found.into_inner().unwrap()
 }
 
-fn read_block(source: &dyn LineSource, spans: &dyn LineSpans, block: &Range<usize>, matcher: &Matcher) -> Result<Vec<u32>, String> {
-    let bytes = spans.byte_range(block.start, block.end).ok_or("the lines are no longer indexed")?;
-    let want = usize::try_from(bytes.end - bytes.start).map_err(|e| e.to_string())?;
-    let data = source.read_range(bytes.start, want).map_err(|e| e.to_string())?;
-    if data.len() < want {
-        return Err("the file no longer has these lines".into());
-    }
-    let texts: Vec<std::borrow::Cow<str>> =
-        split_lines(&data).map(|bytes| String::from_utf8_lossy(line_text(bytes))).collect();
-    let texts: Vec<&str> = texts.iter().map(|t| t.as_ref()).collect();
-    Ok(matcher(block.start, &texts))
+fn read_block(texts: &dyn ScanTexts, block: &Range<usize>, matcher: &Matcher) -> Result<Vec<u32>, String> {
+    let mut hits = Vec::new();
+    texts.read(block.clone(), &mut |lines| hits = matcher(block.start, lines))?;
+    Ok(hits)
 }
 
 #[allow(clippy::too_many_arguments)]
 fn run(
-    source: &dyn LineSource,
-    spans: &dyn LineSpans,
+    texts: &dyn ScanTexts,
     lines: Range<usize>,
     around: usize,
     matcher: &Matcher,
@@ -211,48 +231,67 @@ fn run(
     cancel: &AtomicBool,
     tx: &async_channel::Sender<Found>,
 ) {
-    let order = block_order(lines, around);
-    let next = AtomicUsize::new(0);
-    let parts: Mutex<BTreeMap<usize, Vec<u32>>> = Mutex::new(BTreeMap::new());
-    let published = Mutex::new(None::<Instant>);
-    let workers = workers.clamp(1, order.len().max(1));
-    std::thread::scope(|s| {
-        for _ in 0..workers {
-            s.spawn(|| {
-                loop {
-                    if cancel.load(Ordering::Acquire) {
-                        return;
-                    }
-                    let i = next.fetch_add(1, Ordering::Relaxed);
-                    let Some(block) = order.get(i) else { return };
-                    let result = read_block(source, spans, block, matcher);
-                    let mut parts = parts.lock().unwrap();
-                    let mut f = found.lock().unwrap();
-                    match result {
-                        Ok(hits) => {
-                            parts.insert(block.start, hits);
-                            f.scanned += block.len();
-                        }
-                        Err(error) => {
-                            f.error.get_or_insert(error);
-                            cancel.store(true, Ordering::Release);
-                            return;
-                        }
-                    }
-                    let mut published = published.lock().unwrap();
-                    let last = f.scanned == f.total;
-                    if last || published.is_none_or(|at| at.elapsed() >= PUBLISH_EVERY) {
-                        *published = Some(Instant::now());
-                        f.lines = parts.values().flatten().copied().collect();
-                        f.done = last;
-                        let _ = tx.try_send(f.clone());
-                    }
-                }
-            });
-        }
+    let end = scan_in_steps(texts, lines, around, matcher, workers, cancel, |f| {
+        *found.lock().unwrap() = f.clone();
+        let _ = tx.try_send(f);
     });
-    let mut f = found.lock().unwrap();
-    f.lines = parts.into_inner().unwrap().into_values().flatten().collect();
-    f.done = f.scanned == f.total && f.error.is_none();
-    let _ = tx.try_send(f.clone());
+    *found.lock().unwrap() = end.clone();
+    let _ = tx.try_send(end);
+}
+
+/// Read the blocks of `lines` from `texts` with `matcher`, those around
+/// line `around` first, `workers` blocks at a time in parallel. After each
+/// round, at most every 50 ms, `on_step` hears what was found so far; it
+/// runs on the calling thread. Stops after the round in which `cancel` is
+/// set. What was found in the end.
+#[allow(clippy::too_many_arguments)]
+pub fn scan_in_steps(
+    texts: &dyn ScanTexts,
+    lines: Range<usize>,
+    around: usize,
+    matcher: &Matcher,
+    workers: usize,
+    cancel: &AtomicBool,
+    mut on_step: impl FnMut(Found),
+) -> Found {
+    let order = block_order(lines.clone(), around);
+    let mut parts: BTreeMap<usize, Vec<u32>> = BTreeMap::new();
+    let mut found = Found { total: lines.len(), ..Found::default() };
+    let mut published = None::<Instant>;
+    let workers = workers.max(1);
+    for round in order.chunks(workers) {
+        if cancel.load(Ordering::Acquire) {
+            break;
+        }
+        let results: Vec<Result<Vec<u32>, String>> = if round.len() == 1 {
+            vec![read_block(texts, &round[0], matcher)]
+        } else {
+            std::thread::scope(|s| {
+                let handles: Vec<_> = round.iter().map(|block| s.spawn(move || read_block(texts, block, matcher))).collect();
+                handles.into_iter().map(|h| h.join().expect("a scan block panicked")).collect()
+            })
+        };
+        for (block, result) in round.iter().zip(results) {
+            match result {
+                Ok(hits) => {
+                    parts.insert(block.start, hits);
+                    found.scanned += block.len();
+                }
+                Err(error) => {
+                    found.error.get_or_insert(error);
+                }
+            }
+        }
+        if found.error.is_some() {
+            break;
+        }
+        if found.scanned < found.total && published.is_none_or(|at: Instant| at.elapsed() >= PUBLISH_EVERY) {
+            published = Some(Instant::now());
+            found.lines = parts.values().flatten().copied().collect();
+            on_step(found.clone());
+        }
+    }
+    found.lines = parts.into_values().flatten().collect();
+    found.done = found.scanned == found.total && found.error.is_none();
+    found
 }

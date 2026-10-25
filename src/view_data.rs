@@ -105,6 +105,50 @@ impl ViewData {
     }
 }
 
+/// The texts of a view's rows, for a Scan on a worker thread: the rows, and
+/// each file's lines as stored, shared with the file (nothing is copied).
+pub struct ViewTexts {
+    rows: Vec<u64>,
+    lines: Vec<Arc<Vec<gpui::SharedString>>>,
+}
+
+impl ViewTexts {
+    pub fn len(&self) -> usize {
+        self.rows.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.rows.is_empty()
+    }
+}
+
+impl crate::index::scan::ScanTexts for ViewTexts {
+    fn read(&self, block: std::ops::Range<usize>, each: &mut dyn FnMut(&[&str])) -> Result<(), String> {
+        let rows = self.rows.get(block).ok_or("the view has fewer rows")?;
+        let texts: Vec<&str> = rows
+            .iter()
+            .map(|&r| {
+                let (file, pos) = unpack(r);
+                self.lines.get(file).and_then(|l| l.get(pos)).map_or("", |s| s.as_str())
+            })
+            .collect();
+        each(&texts);
+        Ok(())
+    }
+}
+
+impl ViewData {
+    /// The texts of the rows, to read them on a worker thread.
+    pub fn texts(&self, parsed: &HashMap<String, ParsedFile>) -> ViewTexts {
+        let lines = self
+            .files
+            .iter()
+            .map(|f| parsed.get(&*f.file_id).map(|p| p.lines.clone()).unwrap_or_default())
+            .collect();
+        ViewTexts { rows: self.rows.clone(), lines }
+    }
+}
+
 /// The rows of a view, readable: the view and its files' entries.
 pub struct BoundRows<'a> {
     pub data: &'a ViewData,

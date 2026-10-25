@@ -876,7 +876,7 @@ fn app_probe(path: &str) {
 
 /// The app's Scan (`log_gpui::index::scan`) for two Search Expressions.
 fn app_scan(path: &str, indexed: Arc<log_gpui::index::Indexed>) {
-    use log_gpui::index::scan::{Matcher as ScanMatcher, Scan};
+    use log_gpui::index::scan::{FileTexts, Matcher as ScanMatcher, Scan};
     use log_gpui::index::{DiskSource, HandleBudget, LineSource};
     let lines = indexed.data.read().unwrap().file.len();
     for query in ["timeout", "user=42"] {
@@ -886,7 +886,8 @@ fn app_scan(path: &str, indexed: Arc<log_gpui::index::Indexed>) {
         });
         let source: Arc<dyn LineSource> = Arc::new(DiskSource::on_demand(path, HandleBudget::for_process()));
         let started = Instant::now();
-        let scan = Scan::start(source, indexed.clone(), 0..lines, lines / 2, matcher);
+        let texts = Arc::new(FileTexts { source, spans: indexed.clone() });
+        let scan = Scan::start(texts, 0..lines, lines / 2, matcher);
         let first = scan.updates.recv_blocking().unwrap();
         let first_at = started.elapsed();
         let found = scan.wait();

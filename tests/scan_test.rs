@@ -2,7 +2,7 @@
 //! `progressive-scan`): reading lines again in the background, around the
 //! line shown first, with a running total, cancelled by the next Scan.
 
-use log_gpui::index::scan::{Found, Matcher, SCAN_LINES, Scan, block_order, scan_all};
+use log_gpui::index::scan::{FileTexts, Found, Matcher, SCAN_LINES, Scan, ScanTexts, block_order, scan_all};
 use log_gpui::index::{BytesSource, LineIndex, LineSource, index_source};
 use log_gpui::search_expr::{self, Matcher as SearchMatcher};
 use std::sync::Arc;
@@ -16,11 +16,11 @@ fn text(lines: usize) -> String {
         .collect()
 }
 
-fn setup(lines: usize) -> (String, Arc<dyn LineSource>, Arc<LineIndex>) {
+fn setup(lines: usize) -> (String, Arc<dyn ScanTexts>, Arc<LineIndex>) {
     let text = text(lines);
     let source = BytesSource::new(text.clone().into_bytes());
-    let index = index_source(&source, None).unwrap();
-    (text, Arc::new(source), Arc::new(index.lines))
+    let index = Arc::new(index_source(&source, None).unwrap().lines);
+    (text, Arc::new(FileTexts { source: Arc::new(source), spans: index.clone() }), index)
 }
 
 fn search(query: &str) -> Arc<Matcher> {
@@ -39,7 +39,7 @@ fn expected(text: &str, query: &str) -> Vec<u32> {
 fn a_scan_finds_what_reading_every_line_finds() {
     let (text, source, index) = setup(35_000);
     for query in ["timeout", "user=42", "time && !timeout"] {
-        let found = scan_all(&*source, &*index, 0..index.len(), &*search(query));
+        let found = scan_all(&*source, 0..index.len(), &*search(query));
         assert!(found.done, "{query}");
         assert_eq!(found.lines, expected(&text, query), "{query}");
         assert_eq!((found.scanned, found.total), (35_000, 35_000));
@@ -62,7 +62,7 @@ fn blocks_around_the_line_shown_come_first() {
 #[test]
 fn the_running_total_grows_until_the_end() {
     let (text, source, index) = setup(200_000);
-    let scan = Scan::start(source, index.clone(), 0..index.len(), 150_000, search("timeout"));
+    let scan = Scan::start(source, 0..index.len(), 150_000, search("timeout"));
     let updates = scan.updates.clone();
     let end = scan.wait();
     let all: Vec<Found> = std::iter::from_fn(|| updates.try_recv().ok()).collect();
@@ -83,7 +83,7 @@ fn the_match_on_screen_comes_before_the_rest() {
         seen.lock().unwrap().push(start);
         Vec::new()
     });
-    Scan::start_with(source, index.clone(), 0..index.len(), 200_010, matcher, 1).wait();
+    Scan::start_with(source, 0..index.len(), 200_010, matcher, 1).wait();
     let starts = starts.lock().unwrap();
     assert_eq!(&starts[..3], &[200_000, 210_000, 190_000], "the block of the line shown, then outward");
     assert_eq!(starts.len(), 30, "every block once");
@@ -96,7 +96,7 @@ fn a_cancelled_scan_stops_and_is_not_done() {
         std::thread::sleep(std::time::Duration::from_millis(20));
         Vec::new()
     });
-    let scan = Scan::start(source, index.clone(), 0..index.len(), 0, slow);
+    let scan = Scan::start(source, 0..index.len(), 0, slow);
     scan.cancel();
     let found = scan.wait();
     assert!(!found.done);
@@ -106,8 +106,8 @@ fn a_cancelled_scan_stops_and_is_not_done() {
 #[test]
 fn new_lines_are_scanned_alone() {
     let (text, source, index) = setup(30_000);
-    let older = scan_all(&*source, &*index, 0..20_000, &*search("timeout"));
-    let newer = scan_all(&*source, &*index, 20_000..30_000, &*search("timeout"));
+    let older = scan_all(&*source, 0..20_000, &*search("timeout"));
+    let newer = scan_all(&*source, 20_000..30_000, &*search("timeout"));
     let mut all = older;
     all.append(newer);
     assert_eq!(all.lines, expected(&text, "timeout"));
@@ -118,7 +118,8 @@ fn new_lines_are_scanned_alone() {
 fn a_file_that_shrank_ends_the_scan_with_an_error() {
     let (text, _, index) = setup(30_000);
     let short: Arc<dyn LineSource> = Arc::new(BytesSource::new(text.as_bytes()[..text.len() / 2].to_vec()));
-    let found = Scan::start(short, index.clone(), 0..index.len(), 0, search("timeout")).wait();
+    let short = Arc::new(FileTexts { source: short, spans: index.clone() });
+    let found = Scan::start(short, 0..index.len(), 0, search("timeout")).wait();
     assert!(!found.done);
     assert!(found.error.is_some());
 }

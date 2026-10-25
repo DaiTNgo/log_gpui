@@ -548,7 +548,12 @@ impl AppView {
         } else {
             self.focus.search().current_match_display()
         };
-        SearchState::counter_label(self.focus.search().matcher.is_some(), display)
+        let label = SearchState::counter_label(self.focus.search().matcher.is_some(), display);
+        match self.focus.search().scanning.filter(|_| self.view_mode == ViewMode::Parsed) {
+            // The total so far, and how far the Scan is.
+            Some((scanned, total)) if total > 0 => format!("{label} · {}%", scanned * 100 / total),
+            _ => label,
+        }
     }
 
     pub fn focus_pane_has_content(&self) -> bool {

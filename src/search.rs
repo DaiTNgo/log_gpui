@@ -27,6 +27,10 @@ pub struct SearchState {
     /// It stays in place while the typed text is incomplete or invalid.
     #[serde(skip)]
     pub matcher: Option<Matcher>,
+    /// While a Scan looks for the Matches: the rows read so far and to read.
+    /// The Matches are those found so far.
+    #[serde(skip)]
+    pub scanning: Option<(usize, usize)>,
     /// Human-readable error for the current `query`, when it does not parse.
     /// `None` when the query is empty or valid.
     #[serde(skip)]

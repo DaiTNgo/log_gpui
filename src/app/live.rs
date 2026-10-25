@@ -163,7 +163,7 @@ struct NeededFile {
 pub(crate) struct TopAnchor {
     line: LineRef,
     /// Its position in the rows.
-    row: usize,
+    pub(crate) row: usize,
     /// How far the view is scrolled into the row.
     within: Pixels,
     row_height: Pixels,

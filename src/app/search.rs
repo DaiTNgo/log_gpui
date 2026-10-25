@@ -4,9 +4,21 @@
 use super::AppView;
 use super::focus::Origin;
 use crate::workspace::working_set::ViewMode;
+use crate::index::scan::{Found, scan_in_steps};
 use gpui::{Context, Window};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+
+/// A Scan for the Matches under way; dropping it stops it.
+pub(crate) struct SearchScan {
+    cancel: Arc<AtomicBool>,
+}
+
+impl Drop for SearchScan {
+    fn drop(&mut self) {
+        self.cancel.store(true, Ordering::Release);
+    }
+}
 
 impl AppView {
     /// Focus the search field and make sure the active query is surfaced
@@ -32,17 +44,12 @@ impl AppView {
         });
     }
 
-    /// A scan under way is not needed any more: it stops soon, and what it
-    /// would find is dropped.
+    /// A scan under way is not needed any more: it stops, and what it would
+    /// find is dropped.
     pub fn supersede_search_scan(&mut self) {
         self.search_generation += 1;
-        self.search_cancel.store(true, Ordering::Relaxed);
-        self.search_cancel = Arc::new(AtomicBool::new(false));
-    }
-
-    /// The flag the scan started now would stop at.
-    pub fn search_scan_cancel(&self) -> Arc<AtomicBool> {
-        self.search_cancel.clone()
+        self.search_scan = None;
+        self.focus.search_mut().scanning = None;
     }
 
     pub fn run_search(&mut self, cx: &mut Context<Self>) {
@@ -161,54 +168,98 @@ impl AppView {
         self.search_text_changed(cx);
     }
 
-    /// Look for the Matches among every row on a worker thread. The rows are
-    /// read by the worker from a snapshot of their texts (`SearchLines`, only
-    /// brought up to date here), so Live lines can go on arriving.
+    /// Look for the Matches among every row with a Scan: on worker threads,
+    /// the rows around the one shown first. The Matches found so far show as
+    /// they come, with how far the Scan is; Next and Previous go through
+    /// them. Live lines can go on arriving meanwhile.
     fn start_search_scan(&mut self, generation: u64, cx: &mut Context<Self>) {
         if generation != self.search_generation {
             return;
         }
         let Some(matcher) = self.focus.search().matcher.clone() else { return };
-        self.search_lines.sync(&self.view.bind(&self.parsed_files), self.rows_epoch);
-        let lines = self.search_lines.clone();
-        let cancel = self.search_cancel.clone();
-        let (epoch, scanned) = (self.rows_epoch, lines.len());
+        let texts = Arc::new(self.view.texts(&self.parsed_files));
+        let rows = texts.len();
+        let around = self.top_row_anchor().map_or(0, |a| a.row);
+        let epoch = self.rows_epoch;
+        let matcher: Arc<crate::index::scan::Matcher> = Arc::new(move |first: usize, lines: &[&str]| {
+            lines.iter().enumerate().filter(|(_, l)| matcher.is_match(l)).map(|(i, _)| (first + i) as u32).collect()
+        });
+        let cancel = Arc::new(AtomicBool::new(false));
+        self.search_scan = Some(SearchScan { cancel: cancel.clone() });
+        self.focus.search_mut().scanning = Some((0, rows));
         self.refreshes.scans += 1;
+        let (tx, updates) = async_channel::unbounded::<Found>();
+        cx.background_executor()
+            .spawn(async move {
+            let workers = std::thread::available_parallelism().map_or(1, |n| n.get());
+            let end = scan_in_steps(&*texts, 0..rows, around, &*matcher, workers, &cancel, |f| {
+                let _ = tx.try_send(f);
+            });
+            if !cancel.load(Ordering::Acquire) {
+                let _ = tx.try_send(end);
+            }
+        })
+        .detach();
         cx.spawn(async move |this, cx| {
-            let found = cx
-                .background_executor()
-                .spawn(async move {
-                    let rows: Vec<usize> = (0..lines.len()).collect();
-                    crate::par::filter_cancellable(&rows, |ix| matcher.is_match(lines.get(ix)), &cancel)
-                })
-                .await;
-            this.update(cx, |this, cx| this.finish_search_scan(generation, epoch, scanned, found, cx)).ok();
+            while let Ok(found) = updates.recv().await {
+                let done = found.done || found.error.is_some();
+                let go_on = this
+                    .update(cx, |this, cx| this.search_scan_found(generation, epoch, rows, found, cx))
+                    .unwrap_or(false);
+                if done || !go_on {
+                    break;
+                }
+            }
         })
         .detach();
     }
 
-    fn finish_search_scan(
-        &mut self,
-        generation: u64,
-        epoch: u64,
-        scanned: usize,
-        found: Option<Vec<usize>>,
-        cx: &mut Context<Self>,
-    ) {
+    /// Whether a Scan is looking for the Matches.
+    pub fn search_scanning(&self) -> bool {
+        self.search_scan.is_some()
+    }
+
+    /// What the Scan of `generation` found so far; whether to go on
+    /// listening.
+    fn search_scan_found(&mut self, generation: u64, epoch: u64, rows: usize, found: Found, cx: &mut Context<Self>) -> bool {
         if generation != self.search_generation {
-            return;
+            return false;
         }
-        let Some(found) = found.filter(|_| epoch == self.rows_epoch) else {
+        if epoch != self.rows_epoch {
             // Rows left or moved while it ran: look again.
-            return self.start_search_scan(generation, cx);
-        };
-        self.focus.search_mut().set_scanned_matches(found, &self.view.bind(&self.parsed_files), scanned);
+            self.search_scan = None;
+            self.start_search_scan(generation, cx);
+            return false;
+        }
+        let matches: Vec<usize> = found.lines.iter().map(|&r| r as usize).collect();
+        if !found.done {
+            let search = self.focus.search_mut();
+            search.scanning = Some((found.scanned, found.total));
+            if found.error.is_none() {
+                search.matched_visible_indices = Arc::new(matches);
+                if search.current_match_idx >= search.matched_visible_indices.len() {
+                    search.current_match_idx = 0;
+                }
+                cx.notify();
+                return true;
+            }
+            // The rows could not all be read: they are searched here.
+            self.search_scan = None;
+            self.focus.search_mut().scanning = None;
+            self.run_search(cx);
+            return false;
+        }
+        self.search_scan = None;
+        self.focus.search_mut().scanning = None;
+        // Rows that arrived after the Scan started are searched here.
+        self.focus.search_mut().set_scanned_matches(matches, &self.view.bind(&self.parsed_files), rows);
         self.refresh_focus();
         if let Some(entry_ix) = self.focus.search().current_match_pos() {
             self.goto_entry(entry_ix, Origin::Jump, cx);
         }
         self.schedule_session_save(cx);
         cx.notify();
+        false
     }
 }
 

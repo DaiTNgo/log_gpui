@@ -26,7 +26,6 @@ pub mod rows;
 pub mod sample;
 pub mod search;
 pub mod search_color;
-pub mod search_lines;
 pub mod search_expr;
 pub mod search_history;
 pub mod space_view;
