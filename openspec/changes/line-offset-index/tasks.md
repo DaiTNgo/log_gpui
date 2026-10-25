@@ -90,6 +90,31 @@ Lý do: `all_entries` còn là trạng thái được sửa tại chỗ. Filter 
   - Đã xong lớp truy cập: trait `Rows` (3981fc7). `ViewData` thay `all_entries`, view không còn copy dòng (867c99b). Mọi chỗ trong danh sách trên đọc qua `Rows`; entry vẫn lấy từ `ParsedFile.entries`. Còn lại: chuyển nguồn entry sang Line Index cộng `RowCache` (cần Indexing được nối vào app), và bỏ các lần duyệt toàn bộ dòng (Search, Highlight, `FilterIndex::build`) theo nhóm 5–7.
 - 4.4 đã chuyển thành 7.4: chuyển tab không clone chỉ làm được khi Filter, Search, Highlight và Marker không còn đọc hay sửa `all_entries`.
 
+### 4b. Thay `ParsedFile.entries` của file local bằng Indexing (kế hoạch 2026-10-25)
+
+Hiện tại (c8bf40d):
+- view không copy dòng nữa;
+- file được parse song song ở nền (big.log 2,6 s);
+- nhưng mọi entry vẫn nằm trong RAM, khoảng 500 B/dòng.
+
+Để giảm memory, file local phải giữ Line Index, `LineMeta` và `FilterIndex` (khoảng 30 B/dòng), còn entry lấy qua `RowCache`. Làm theo thứ tự sau, mỗi bước một commit, giữ test xanh:
+
+- [ ] 4b.1 `Rows::get` trả về `RowRef` (mượn từ `Vec`, hoặc `Arc<LogEntry>` từ cache) thay cho `&LogEntry`. Chỉ đổi kiểu, chưa đổi hành vi.
+- [ ] 4b.2 Dữ liệu theo file có hai dạng: `Vec<LogEntry>` (Scratch, Remote) và bản đã index (file local). Các phần sau đọc qua API theo file (`len`, `meta(n)`, `entry(n)`, `filter_index`, `max_chars`):
+  - gộp timeline bằng `Merger` trên `LineMeta`;
+  - Go to và `LineRef`;
+  - độ dài message dài nhất;
+  - kiểm thời gian của dòng live mới.
+- [ ] 4b.3 `FilterIndex` của view:
+  - File View dùng thẳng `FilterIndex` của file;
+  - Log Space gộp `FilterIndex` của các file theo thứ tự dòng đã gộp (ánh xạ lại id giá trị).
+- [ ] 4b.4 Highlight Rule theo Filter Value tô bằng `row_ids` (7.1). Rule có Custom Value thì tô bằng Scan (7.2).
+- [ ] 4b.5 `run_search` (Enter, đổi Filter) cũng chạy qua Scan; text đọc từ Line Index trên đĩa.
+- [ ] 4b.6 Raw View và xem trước Log Format đọc dòng qua Line Index (8.1).
+- [ ] 4b.7 File local mở bằng Indexing, entry lấy qua `RowCache`. Canvas chuẩn bị trước các dòng sắp hiện (4.2).
+- [ ] 4b.8 Live tail của file local: index phần byte mới thay vì parse vào `Vec` (9.1, 9.2).
+- [ ] 4b.9 Detected Field hoặc Log Format đổi thì index lại file (6.3).
+
 ## 5. Filter
 
 - [x] 5.1 `FilterState::evaluate` chạy trên `row_ids` và `LineMeta` (Filter Value, Time Range, dòng thiếu giá trị, Hide Mode, Continuation Line theo Parent Line).
