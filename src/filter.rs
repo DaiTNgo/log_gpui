@@ -199,28 +199,18 @@ impl FilterState {
         *self = Self::default();
     }
 
-    /// Evaluate the Filter and return the indices of the rows that pass it.
-    /// Also refreshes every row's delta time from the row above it: Filter
-    /// narrows the Focus Pane, not the view.
-    pub fn evaluate(&self, index: &FilterIndex, entries: &mut [LogEntry]) -> Vec<usize> {
-        self.evaluate_from(index, entries, 0)
+    /// The indices of the rows that pass the Filter.
+    pub fn evaluate<R: RowValues + ?Sized>(&self, index: &FilterIndex, rows: &R) -> Vec<usize> {
+        self.evaluate_from(index, rows, 0)
     }
 
-    /// `evaluate` for the rows from `start` on, which were appended after
-    /// rows that were evaluated already: their indices, and their delta
-    /// times continue from the row above `start`.
-    pub fn evaluate_from(&self, index: &FilterIndex, entries: &mut [LogEntry], start: usize) -> Vec<usize> {
-        let visible = self.pass(index, entries, start);
-        update_delta_times(entries, start);
-        visible
-    }
-
-    /// The indices of the rows from `start` on that pass the Filter. Reads
-    /// the rows only: delta times are the rows' own and do not depend on
-    /// Filter.
-    pub fn pass(&self, index: &FilterIndex, entries: &[LogEntry], start: usize) -> Vec<usize> {
-        let mut visible = Vec::with_capacity(entries.len().saturating_sub(start));
-        let stale = index.rows() != entries.len();
+    /// The indices of the rows from `start` on that pass the Filter. Values
+    /// come from `index`; `rows` reads the text of a value the index does
+    /// not keep (a column with too many values, rows it does not cover).
+    pub fn evaluate_from<R: RowValues + ?Sized>(&self, index: &FilterIndex, rows: &R, start: usize) -> Vec<usize> {
+        let len = rows.rows();
+        let mut visible = Vec::with_capacity(len.saturating_sub(start));
+        let stale = index.rows() != len;
         let active: Vec<(&ColumnFilter, CompiledColumn)> = self
             .columns
             .iter()
@@ -230,9 +220,9 @@ impl FilterState {
         let (from, to) = self.time_range.bounds(index.anchor_day());
         let time_active = (from.is_some() || to.is_some()) && !stale;
 
-        for row in start..entries.len() {
+        for row in start..len {
             let columns_ok = active.iter().all(|(cf, compiled)| {
-                let matched = compiled.matches(row, entries, &cf.column);
+                let matched = compiled.matches(row, rows, &cf.column);
                 matched != cf.hide
             });
             let time_ok = !time_active
@@ -248,16 +238,31 @@ impl FilterState {
     }
 }
 
-/// Give the rows from `start` on their delta time from the row above them (the
-/// view shows every row, so Filter does not change them). `start` rows come
-/// after rows that have theirs already.
-pub fn update_delta_times(entries: &mut [LogEntry], start: usize) {
-    let start = start.min(entries.len());
-    // The row above whose time a delta is counted from: the last row that
-    // is not a Continuation Line.
-    let mut prev_ts: Option<f64> = entries[..start].iter().rev().find(|e| e.parent.is_none()).map(|e| e.timestamp);
-    for entry in entries[start..].iter_mut() {
-        update_entry_delta_time(entry, &mut prev_ts);
+/// The rows a Filter reads values from when its index has none for them.
+pub trait RowValues {
+    fn rows(&self) -> usize;
+    /// The value of `row` in the column `key` (a Continuation Line's is its
+    /// Parent Line's, as `value_of` reads it).
+    fn value(&self, row: usize, key: &str) -> Option<&str>;
+}
+
+impl RowValues for [LogEntry] {
+    fn rows(&self) -> usize {
+        self.len()
+    }
+
+    fn value(&self, row: usize, key: &str) -> Option<&str> {
+        value_of(self, row, key)
+    }
+}
+
+impl RowValues for Vec<LogEntry> {
+    fn rows(&self) -> usize {
+        self.len()
+    }
+
+    fn value(&self, row: usize, key: &str) -> Option<&str> {
+        value_of(self, row, key)
     }
 }
 
@@ -294,35 +299,21 @@ impl<'a> CompiledColumn<'a> {
         Self { ids, table, values, custom }
     }
 
-    fn matches(&self, row: usize, entries: &[LogEntry], key: &str) -> bool {
+    fn matches<R: RowValues + ?Sized>(&self, row: usize, rows: &R, key: &str) -> bool {
         if let Some(col) = self.ids {
             return match col.id_of_row(row) {
                 Some(MISSING) => false,
                 Some(id) => self.table.get(id as usize).copied().unwrap_or(false),
-                None => self.matches_text(entries, row, key),
+                None => self.matches_text(rows, row, key),
             };
         }
-        self.matches_text(entries, row, key)
+        self.matches_text(rows, row, key)
     }
 
-    fn matches_text(&self, entries: &[LogEntry], row: usize, key: &str) -> bool {
-        match value_of(entries, row, key) {
+    fn matches_text<R: RowValues + ?Sized>(&self, rows: &R, row: usize, key: &str) -> bool {
+        match rows.value(row, key) {
             None => false,
             Some(v) => self.values.iter().any(|n| n.equals(v)) || self.custom.iter().any(|n| n.is_in(v)),
         }
     }
-}
-
-pub(crate) fn update_entry_delta_time(entry: &mut LogEntry, prev_ts: &mut Option<f64>) {
-    if entry.parent.is_some() {
-        // A Continuation Line has no time of its own.
-        entry.delta_time_ms = None;
-        return;
-    }
-    if let Some(prev) = *prev_ts {
-        entry.delta_time_ms = Some((entry.timestamp - prev) * 1000.0);
-    } else {
-        entry.delta_time_ms = Some(0.0);
-    }
-    *prev_ts = Some(entry.timestamp);
 }

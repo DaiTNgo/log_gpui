@@ -27,7 +27,7 @@ fn sample() -> Vec<LogEntry> {
     ]
 }
 
-fn visible(state: &FilterState, entries: &mut [LogEntry]) -> Vec<usize> {
+fn visible(state: &FilterState, entries: &[LogEntry]) -> Vec<usize> {
     let index = FilterIndex::build(entries);
     state.evaluate(&index, entries)
 }
@@ -240,7 +240,7 @@ fn counts_do_not_change_with_other_filters() {
     let api = before.column("module").unwrap().values.iter().find(|v| v.display == "API").unwrap().count;
     let mut f = FilterState::new();
     f.toggle_value("level", "ERROR");
-    let _ = f.evaluate(&before, &mut entries);
+    let _ = f.evaluate(&before, &entries);
     let after = FilterIndex::build(&entries);
     assert_eq!(
         after.column("module").unwrap().values.iter().find(|v| v.display == "API").unwrap().count,
@@ -303,7 +303,7 @@ fn stale_index_falls_back_to_comparing_text() {
     entries.push(entry(7, 106.0, "API", LogLevel::Info, "late"));
     let mut f = FilterState::new();
     f.toggle_value("module", "API");
-    assert_eq!(f.evaluate(&index, &mut entries), vec![0, 2, 6]);
+    assert_eq!(f.evaluate(&index, &entries), vec![0, 2, 6]);
 }
 
 #[test]
@@ -318,19 +318,6 @@ fn overflowed_column_conditions_still_apply() {
     assert!(v.contains(&3));
     assert!(v.contains(&50));
     assert!(!v.contains(&4));
-}
-
-#[test]
-fn evaluate_refreshes_delta_time_of_every_row() {
-    let mut entries = sample();
-    let mut f = FilterState::new();
-    f.toggle_value("module", "API");
-    let _ = visible(&f, &mut entries);
-    let ts: Vec<f64> = entries.iter().map(|e| e.timestamp).collect();
-    assert_eq!(entries[0].delta_time_ms, Some(0.0));
-    // The view shows every row, so a row's delta is from the row above it
-    // even when that row does not pass the Filter.
-    assert_eq!(entries[2].delta_time_ms, Some((ts[2] - ts[1]) * 1000.0));
 }
 
 // ─── Tail ────────────────────────────────────────────────────────────────────
@@ -357,7 +344,7 @@ fn tail_appends_new_values_and_counts() {
 
     let mut f = FilterState::new();
     f.toggle_value("module", "SEARCH");
-    assert_eq!(f.evaluate(&index, &mut entries), vec![6]);
+    assert_eq!(f.evaluate(&index, &entries), vec![6]);
 }
 
 #[test]
@@ -376,7 +363,7 @@ fn tail_crossing_the_limit_keeps_existing_conditions() {
     entries.extend(new);
 
     assert!(!index.column("module").unwrap().is_filterable());
-    assert_eq!(f.evaluate(&index, &mut entries), vec![7], "condition keeps working");
+    assert_eq!(f.evaluate(&index, &entries), vec![7], "condition keeps working");
 }
 
 // ─── Time Range ──────────────────────────────────────────────────────────────

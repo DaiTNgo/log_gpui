@@ -166,16 +166,6 @@ impl AppView {
             row.break_before = break_before;
         }
 
-        // The first row left of each run that went has a new row above it.
-        for (i, &first) in dropped.iter().enumerate() {
-            if i == 0 || dropped[i - 1] + 1 != first {
-                let at = first - i;
-                if at < rows {
-                    refresh_delta_times(&mut self.all_entries, at);
-                }
-            }
-        }
-
         if let Some((f, line)) = self.raw.selected.as_mut() {
             if f == file_id {
                 match line.checked_sub(trimmed.removed) {
@@ -192,19 +182,5 @@ impl AppView {
         self.move_current_lines_off_dropped(file_id, trimmed);
         self.restore_top_anchor(anchor);
         true
-    }
-}
-
-/// Give the row at `at` its delta time from the row now above it, and the
-/// rows that follow up to the next row that is not a Continuation Line.
-fn refresh_delta_times(entries: &mut [LogEntry], at: usize) {
-    let mut prev: Option<f64> = entries[..at].iter().rev().find(|e| e.parent.is_none()).map(|e| e.timestamp);
-    for entry in entries[at..].iter_mut() {
-        let parent_row = entry.parent.is_none();
-        crate::filter::update_entry_delta_time(entry, &mut prev);
-        if parent_row {
-            // The rows after it have the same row above them as before.
-            break;
-        }
     }
 }

@@ -91,8 +91,9 @@ Lý do: `all_entries` còn là trạng thái được sửa tại chỗ. Filter 
 
 ## 5. Filter
 
-- [ ] 5.1 `FilterState::evaluate` chạy trên `row_ids` và `LineMeta` (Filter Value, Time Range, dòng thiếu giá trị, Hide Mode, Continuation Line theo Parent Line).
+- [x] 5.1 `FilterState::evaluate` chạy trên `row_ids` và `LineMeta` (Filter Value, Time Range, dòng thiếu giá trị, Hide Mode, Continuation Line theo Parent Line).
   - Test: chạy lại toàn bộ test hiện có của `log-filter`.
+  - `evaluate` không còn sửa entry. Trường `delta_time_ms` đã bỏ, vì UI không hiện nó (chỉ `ui/table_view.rs` đọc, mà file này không được biên dịch). Text chỉ đọc qua `RowValues` cho cột không có `row_ids` (cột tràn, sẽ thành Scan ở 5.3).
 - [ ] 5.2 Picker hiện giá trị và số đếm tăng dần trong lúc Indexing, kèm dấu "chưa đọc hết" (spec `log-filter`, scenario "Giá trị trong lúc Indexing").
 - [ ] 5.3 Custom Value:
   - Cột còn danh sách giá trị: so trên danh sách đó, không cần text.

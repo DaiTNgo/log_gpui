@@ -39,7 +39,6 @@ fn file_lines(range: std::ops::Range<usize>) -> Vec<String> {
 struct Snapshot {
     pass: Vec<usize>,
     visible: Vec<usize>,
-    deltas: Vec<Option<u64>>,
     longest: usize,
     paints: Vec<Option<usize>>,
     counts: Vec<(u64, usize)>,
@@ -56,7 +55,6 @@ fn snapshot(app: &AppView) -> Snapshot {
     Snapshot {
         pass: app.filter_pass.to_vec(),
         visible: app.visible_indices.to_vec(),
-        deltas: app.all_entries.iter().map(|e| e.delta_time_ms.map(|d| (d * 1000.0).round() as u64)).collect(),
         longest: app.longest_row,
         paints: app.highlight_paints.iter().map(|p| p.as_ref().map(|p| p.rule)).collect(),
         counts,
@@ -71,7 +69,6 @@ fn snapshot(app: &AppView) -> Snapshot {
 fn assert_same(a: &Snapshot, b: &Snapshot, what: &str) {
     assert_eq!(a.visible, b.visible, "{what}: rows");
     assert_eq!(a.pass, b.pass, "{what}: Filter pass");
-    assert_eq!(a.deltas, b.deltas, "{what}: delta times");
     assert_eq!(a.longest, b.longest, "{what}: longest row");
     assert_eq!(a.paints, b.paints, "{what}: highlight paints");
     assert_eq!(a.counts, b.counts, "{what}: rule counts");

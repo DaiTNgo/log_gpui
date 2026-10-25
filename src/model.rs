@@ -336,8 +336,6 @@ pub struct LogEntry {
     /// lines of files). A line's own: a Continuation Line never inherits it.
     #[serde(default)]
     pub stream: Option<Stream>,
-    /// Time delta from previous displayed log entry in milliseconds
-    pub delta_time_ms: Option<f64>,
     /// Log severity level, as understood from the level text of the line
     pub level: LogLevel,
     /// Byte range in `raw_line` of each field read from the line.
@@ -402,7 +400,6 @@ impl LogEntry {
             timestamp,
             has_time: timestamp.is_finite() && timestamp > 0.0,
             stream: None,
-            delta_time_ms: None,
             level,
             spans: Spans::default(),
             extra: Spans::default(),

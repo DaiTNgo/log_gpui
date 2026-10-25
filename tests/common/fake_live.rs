@@ -110,7 +110,7 @@ impl Files {
 
 #[derive(Debug, PartialEq)]
 pub struct View {
-    pub rows: Vec<(String, usize, u32, Option<i64>, bool)>,
+    pub rows: Vec<(String, usize, u32, bool)>,
     pub pass: Vec<usize>,
     pub paints: Vec<Option<usize>>,
     pub counts: Vec<(u64, usize)>,
@@ -139,7 +139,6 @@ pub fn view(app: &AppView) -> View {
                     e.file_id.as_deref().unwrap_or("").to_string(),
                     e.index,
                     e.generation,
-                    e.delta_time_ms.map(|d| (d * 1000.0).round() as i64),
                     e.break_before.is_some(),
                 )
             })

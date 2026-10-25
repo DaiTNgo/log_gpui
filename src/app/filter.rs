@@ -122,7 +122,7 @@ impl AppView {
 
     /// Rows from `from` on were appended after the last row, and the rows
     /// before them did not change: the cost is that of the new rows. Filter,
-    /// delta times, the longest row, highlight paints and counts, Matches and
+    /// the longest row, highlight paints and counts, Matches and
     /// the Focus Pane all continue where the last pass stopped, and give what
     /// `apply_filters_and_refresh` would. Call it after `filter_index` took
     /// the new rows in.
@@ -133,7 +133,7 @@ impl AppView {
         }
         self.refreshes.appended += 1;
         let pass_before = self.filter_pass.len();
-        let passing = self.filter_state.evaluate_from(&self.filter_index, &mut self.all_entries, from);
+        let passing = self.filter_state.evaluate_from(&self.filter_index, &self.all_entries, from);
         std::sync::Arc::make_mut(&mut self.filter_pass).extend(passing);
         std::sync::Arc::make_mut(&mut self.visible_indices).extend(from..rows);
 
@@ -180,7 +180,7 @@ impl AppView {
     fn evaluate_filter_pass(&mut self) {
         let pass = self
             .filter_state
-            .evaluate(&self.filter_index, &mut self.all_entries);
+            .evaluate(&self.filter_index, &self.all_entries);
         self.filter_pass = std::sync::Arc::new(pass);
     }
 
