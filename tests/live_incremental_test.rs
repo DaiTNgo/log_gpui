@@ -134,7 +134,7 @@ fn incremental_batches_equal_a_full_refresh(cx: &mut TestAppContext) {
         let after = h.view.read_with(&h.cx, |app, _| app.refreshes);
         assert_eq!((after.full, after.appended), (before.full, before.appended + 1), "only the new rows were read");
         let incremental = h.view.read_with(&h.cx, |app, _| snapshot(app));
-        let rows = h.view.read_with(&h.cx, |app, _| app.all_entries.len());
+        let rows = h.view.read_with(&h.cx, |app, _| app.view.len());
         assert!(rows > 60 + n * 50, "the batch arrived");
         h.view.update(&mut h.cx, |app, cx| app.apply_filters_and_refresh(cx));
         let full = h.view.read_with(&h.cx, |app, _| snapshot(app));

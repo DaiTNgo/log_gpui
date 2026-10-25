@@ -6,7 +6,10 @@ use super::AppView;
 use crate::filter_index::{remove_positions, take_positions};
 use crate::focus::FocusRow;
 use crate::live::Trimmed;
+use crate::index::view_rows::{pack, unpack};
 use crate::model::LogEntry;
+use crate::rows::Rows;
+use crate::view_data::{BoundRows, ViewFile};
 use std::sync::Arc;
 
 /// Remove the numbers at `dropped` (ascending) from `items` (ascending) and
@@ -34,6 +37,77 @@ fn shifted(p: usize, dropped: &[usize]) -> Option<usize> {
     }
 }
 
+/// The rows of the open view as they were before the oldest lines of one
+/// file were trimmed off its entries: that file's rows still count from its
+/// old first line, whose entries are `drained`.
+struct BeforeTrim<'a> {
+    rows: BoundRows<'a>,
+    file: usize,
+    drained: &'a [LogEntry],
+    entries: &'a [LogEntry],
+}
+
+impl Rows for BeforeTrim<'_> {
+    fn len(&self) -> usize {
+        self.rows.len()
+    }
+
+    fn get(&self, row: usize) -> Option<&LogEntry> {
+        let (file, pos) = self.rows.data.get(row)?;
+        if file != self.file {
+            return self.rows.get(row);
+        }
+        match pos.checked_sub(self.drained.len()) {
+            None => self.drained.get(pos),
+            Some(kept) => self.entries.get(kept),
+        }
+    }
+
+    fn file_id(&self, row: usize) -> Option<&str> {
+        self.rows.file_id(row)
+    }
+
+    fn source(&self, row: usize) -> Option<&str> {
+        self.rows.source(row)
+    }
+
+    fn markers(&self, row: usize) -> &[crate::marker::TextMarker] {
+        let Some((file, _)) = self.rows.data.get(row) else { return &[] };
+        match (self.rows.data.files.get(file), self.get(row)) {
+            (Some(f), Some(entry)) => f.markers_of(entry),
+            _ => &[],
+        }
+    }
+}
+
+/// Lines of one file of the view, in order: the rows that left it.
+struct FileRows<'a> {
+    file: &'a ViewFile,
+    entries: &'a [LogEntry],
+}
+
+impl Rows for FileRows<'_> {
+    fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    fn get(&self, row: usize) -> Option<&LogEntry> {
+        self.entries.get(row)
+    }
+
+    fn file_id(&self, _row: usize) -> Option<&str> {
+        Some(&self.file.file_id)
+    }
+
+    fn source(&self, _row: usize) -> Option<&str> {
+        self.file.source.as_deref()
+    }
+
+    fn markers(&self, row: usize) -> &[crate::marker::TextMarker] {
+        self.entries.get(row).map_or(&[], |e| self.file.markers_of(e))
+    }
+}
+
 impl AppView {
     /// The oldest lines of `file_id` left the Live Window: take their rows out
     /// of the open view in place. Returns false, with nothing changed, when
@@ -43,9 +117,19 @@ impl AppView {
         // The rows of the file older than the first line it kept. They are
         // the first rows of the file in the view, wherever the other files'
         // rows are among them.
+        let Some(view_file) = self.view.file_index(file_id) else { return false };
+        let Some(parsed) = self.parsed_files.get(file_id) else { return false };
+        if parsed.trimmed_off.len() != trimmed.removed {
+            return false;
+        }
         let mut dropped: Vec<usize> = Vec::with_capacity(trimmed.removed);
-        let rows = self.rows();
-        for (pos, entry) in crate::rows::entries(rows).enumerate() {
+        let rows = BeforeTrim {
+            rows: self.view.bind(&self.parsed_files),
+            file: view_file,
+            drained: &parsed.trimmed_off,
+            entries: &parsed.entries,
+        };
+        for (pos, entry) in crate::rows::entries(&rows).enumerate() {
             let older = rows.file_id(pos) == Some(file_id)
                 && (entry.generation < generation || (entry.generation == generation && entry.index < first_kept));
             if older {
@@ -60,11 +144,10 @@ impl AppView {
         }
         // The file's new first line: a Continuation Line whose Parent Line
         // left is sorted by a build of the view in its own way.
-        let Some(first) = self.parsed_files.get(file_id).and_then(|p| p.entries.first()) else { return false };
+        let Some(first) = parsed.entries.first() else { return false };
         if first.parent.is_some() {
             return false;
         }
-        let break_before = first.break_before.clone();
 
         let anchor = self.top_row_anchor();
         // A scan of the rows under way is stale: it starts again.
@@ -73,7 +156,16 @@ impl AppView {
 
         // What counted these rows stops counting them.
         for rule in self.highlight_rules().to_vec() {
-            let lost = crate::highlight::count_matches(&rule, &self.all_entries, &dropped);
+            let lost = {
+                let parsed = &self.parsed_files[file_id];
+                let before = BeforeTrim {
+                    rows: self.view.bind(&self.parsed_files),
+                    file: view_file,
+                    drained: &parsed.trimmed_off,
+                    entries: &parsed.entries,
+                };
+                crate::highlight::count_matches(&rule, &before, &dropped)
+            };
             if let Some(n) = self.rule_counts.get_mut(&rule.id) {
                 *n = n.saturating_sub(lost);
             }
@@ -84,9 +176,20 @@ impl AppView {
         // Rows the tab would list without the Find Filter that leave.
         let lost_before_filter = self.rows_before_find_filter_among(&dropped);
 
-        let removed: Vec<LogEntry> = take_positions(&mut self.all_entries, &dropped);
-        let rows = self.all_entries.len();
-        self.filter_index.drop_rows(&dropped, &removed, &self.all_entries);
+        // The file's rows leave; its other rows now count from its new first
+        // line.
+        take_positions(&mut self.view.rows, &dropped);
+        for row in &mut self.view.rows {
+            let (file, pos) = unpack(*row);
+            if file == view_file {
+                *row = pack(file, pos - trimmed.removed);
+            }
+        }
+        let rows = self.view.len();
+        {
+            let removed = FileRows { file: &self.view.files[view_file], entries: &self.parsed_files[file_id].trimmed_off };
+            self.filter_index.drop_rows(&dropped, &removed, &self.view.bind(&self.parsed_files));
+        }
         Arc::make_mut(&mut self.visible_indices).truncate(rows);
         let mut pass = std::mem::take(Arc::make_mut(&mut self.filter_pass));
         shift_sorted(&mut pass, &dropped);
@@ -98,7 +201,7 @@ impl AppView {
         }
         self.longest_row = match longest_row {
             Some(row) if !longest_dropped => row,
-            _ => super::filter::longest(crate::rows::entries(self.rows()).map(|e| e.payload().len())),
+            _ => super::filter::longest(crate::rows::entries(&self.rows()).map(|e| e.payload().len())),
         };
 
         // The Matches and the rows of the Focus Pane, which hold positions.
@@ -152,19 +255,17 @@ impl AppView {
             if find.current >= find.hits.len() {
                 find.current = 0;
             }
-            let entries = &self.all_entries;
+            let entries = &self.view.bind(&self.parsed_files);
             self.focus_longest = super::filter::longest(self.focus_rows.iter().map(|row| match *row {
                 FocusRow::Entry(ix) => entries.get(ix).map_or(0, |e| e.raw_line.len()),
                 FocusRow::Raw { .. } => 0,
             }));
         }
 
-        // The file's first row shows what the Live Window did.
-        if let Some(row) = self.all_entries[dropped[dropped.len() - 1] - (dropped.len() - 1)..]
-            .iter_mut()
-            .find(|e| e.file_id.as_deref() == Some(file_id))
-        {
-            row.break_before = break_before;
+        // The file's first line shows what the Live Window did (a Break the
+        // trim put on it), and the lines that left go.
+        if let Some(parsed) = self.parsed_files.get_mut(file_id) {
+            parsed.trimmed_off = Vec::new();
         }
 
         if let Some((f, line)) = self.raw.selected.as_mut() {

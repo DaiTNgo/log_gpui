@@ -16,7 +16,7 @@ fn clear_file_has_no_default_shortcut() {
 fn cmd_shift_k_and_space_change_nothing(cx: &mut TestAppContext) {
     let mut h = common::open_app_with_lines(cx, &common::sample_lines(20));
     let state = |h: &common::Harness| {
-        h.view.read_with(&h.cx, |app, _| (app.all_entries.len(), app.context_sidebar.visible, app.confirm.clone()))
+        h.view.read_with(&h.cx, |app, _| (app.view.len(), app.context_sidebar.visible, app.confirm.clone()))
     };
     let before = state(&h);
     h.view.update_in(&mut h.cx, |app, window, cx| {

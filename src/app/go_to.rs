@@ -162,7 +162,7 @@ impl AppView {
         if at < time_of(first) || at > time_of(last) {
             return Err(GoToError::TimeOutside);
         }
-        let ix = crate::rows::entries(rows)
+        let ix = crate::rows::entries(&rows)
             .position(|e| e.has_time && e.timestamp >= at)
             .ok_or(GoToError::TimeOutside)?;
         self.line_ref_of_entry(ix).map(GoToTarget::Row).ok_or(GoToError::NoLines)

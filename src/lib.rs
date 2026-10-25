@@ -36,4 +36,5 @@ pub mod density;
 pub mod extract;
 pub mod ui;
 pub mod unicode_text;
+pub mod view_data;
 pub mod workspace;

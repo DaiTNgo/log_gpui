@@ -501,11 +501,11 @@ impl FilterIndex {
 
     /// `append` for rows of which some belong to a file with no time at all
     /// (`untimed`): they have none, instead of the time of the row above.
-    pub fn append_marking_untimed<R: Rows + ?Sized>(&mut self, new_rows: &R, untimed: impl Fn(&LogEntry) -> bool) {
+    pub fn append_marking_untimed<R: Rows + ?Sized>(&mut self, new_rows: &R, untimed: impl Fn(usize) -> bool) {
         for row in 0..new_rows.len() {
             let Some(entry) = new_rows.get(row) else { continue };
             self.push_row(entry, new_rows.source(row));
-            if untimed(entry) {
+            if untimed(row) {
                 if let Some(last) = self.effective_ts.last_mut() {
                     *last = f64::NAN;
                 }
@@ -520,7 +520,7 @@ impl FilterIndex {
     /// entries of those rows. They are meant to be added again with
     /// [`append`](Self::append), in a new order and with new rows among them,
     /// so the earliest and latest time are left as they were.
-    pub fn truncate<R: Rows + ?Sized>(&mut self, kept: &[LogEntry], removed: &R) {
+    pub fn truncate<K: Rows + ?Sized, R: Rows + ?Sized>(&mut self, kept: &K, removed: &R) {
         debug_assert_eq!(self.rows, kept.len() + removed.len());
         for col in &mut self.columns {
             col.truncate(kept.len(), removed);
@@ -528,7 +528,7 @@ impl FilterIndex {
         self.rows = kept.len();
         self.effective_ts.truncate(kept.len());
         self.first_ts = self.effective_ts.iter().copied().find(|t| !t.is_nan());
-        self.parent_row = kept.iter().rposition(|e| e.parent.is_none()).unwrap_or(0);
+        self.parent_row = (0..kept.len()).rev().find(|&r| kept.get(r).is_some_and(|e| e.parent.is_none())).unwrap_or(0);
         self.forget_counts(removed);
     }
 
@@ -549,7 +549,7 @@ impl FilterIndex {
     /// those rows' entries, in the same order, and `kept` the rows left.
     /// Rows from the front of the view leave when the Live Window trims a
     /// file.
-    pub fn drop_rows<R: Rows + ?Sized>(&mut self, dropped: &[usize], removed: &R, kept: &[LogEntry]) {
+    pub fn drop_rows<R: Rows + ?Sized, K: Rows + ?Sized>(&mut self, dropped: &[usize], removed: &R, kept: &K) {
         debug_assert_eq!(self.rows, kept.len() + removed.len());
         for col in &mut self.columns {
             col.drop_rows(dropped, removed);
@@ -564,11 +564,11 @@ impl FilterIndex {
         self.forget_counts(removed);
         // The earliest and latest time are those of the rows left (rows are
         // in time order).
-        let timed = |e: &&LogEntry| has_timestamp(e);
-        if let Some(first) = kept.iter().find(timed) {
+        let timed = |r: &usize| kept.get(*r).filter(|e| has_timestamp(e));
+        if let Some(first) = (0..kept.len()).find_map(|r| timed(&r)) {
             self.min_entry = Some((first.timestamp, first.time_str().to_string()));
         }
-        if let Some(last) = kept.iter().rev().find(timed) {
+        if let Some(last) = (0..kept.len()).rev().find_map(|r| timed(&r)) {
             self.max_entry = Some((last.timestamp, last.time_str().to_string()));
         }
         if kept.is_empty() {

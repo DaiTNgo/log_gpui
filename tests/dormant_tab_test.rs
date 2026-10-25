@@ -68,7 +68,7 @@ fn only_the_active_tab_reads_its_files(cx: &mut TestAppContext) {
     h.view.update(&mut h.cx, |app, cx| app.switch_to_tab(at, cx));
     h.cx.run_until_parked();
     assert_eq!(read_now(&h), (set(&first_files), set(&first_files)), "leaving a tab lets go of its files");
-    h.view.read_with(&h.cx, |app, _| assert_eq!(app.all_entries.len(), 50, "the chosen tab reads its file again"));
+    h.view.read_with(&h.cx, |app, _| assert_eq!(app.view.len(), 50, "the chosen tab reads its file again"));
 }
 
 #[gpui::test]
@@ -81,7 +81,7 @@ fn a_file_view_reads_its_own_file_only(cx: &mut TestAppContext) {
     h.cx.run_until_parked();
     let only = vec![ids[1].clone()];
     assert_eq!(read_now(&h), (set(&only), set(&only)));
-    h.view.read_with(&h.cx, |app, _| assert_eq!(app.all_entries.len(), 20));
+    h.view.read_with(&h.cx, |app, _| assert_eq!(app.view.len(), 20));
 }
 
 #[gpui::test]

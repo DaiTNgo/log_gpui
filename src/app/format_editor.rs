@@ -217,10 +217,11 @@ impl AppView {
     /// Lines, from the selected row on (else from the top).
     fn format_preview_rows(&self) -> Vec<usize> {
         let start = self.selected_row_pos.and_then(|p| self.visible_indices.get(p).copied()).unwrap_or(0);
+        let entries = self.rows();
         let parents = |range: std::ops::Range<usize>| {
-            range.filter(|&i| self.rows().get(i).is_some_and(|e| !e.is_continuation())).collect::<Vec<_>>()
+            range.filter(|&i| entries.get(i).is_some_and(|e| !e.is_continuation())).collect::<Vec<_>>()
         };
-        let mut rows: Vec<usize> = parents(start..self.rows().len()).into_iter().take(PREVIEW_LINES).collect();
+        let mut rows: Vec<usize> = parents(start..entries.len()).into_iter().take(PREVIEW_LINES).collect();
         if rows.len() < PREVIEW_LINES {
             let before = parents(0..start);
             let need = PREVIEW_LINES - rows.len();
@@ -238,7 +239,7 @@ impl AppView {
             let entries = self.rows();
             let shown: Vec<(usize, &str)> =
                 rows.iter().filter_map(|&i| Some((i, entries.get(i)?.raw_line.as_str()))).collect();
-            let all = crate::rows::entries(entries)
+            let all = crate::rows::entries(&entries)
                 .enumerate()
                 .filter(|(_, e)| !e.is_continuation())
                 .map(|(i, e)| (i, e.raw_line.as_str()));

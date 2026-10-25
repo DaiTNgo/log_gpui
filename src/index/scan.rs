@@ -123,6 +123,19 @@ impl Scan {
         around: usize,
         matcher: Arc<Matcher>,
     ) -> Self {
+        let workers = std::thread::available_parallelism().map_or(1, |n| n.get());
+        Self::start_with(source, spans, lines, around, matcher, workers)
+    }
+
+    /// `start` with `workers` threads reading blocks.
+    pub fn start_with(
+        source: Arc<dyn LineSource>,
+        spans: Arc<dyn LineSpans>,
+        lines: Range<usize>,
+        around: usize,
+        matcher: Arc<Matcher>,
+        workers: usize,
+    ) -> Self {
         let found = Arc::new(Mutex::new(Found { total: lines.len(), ..Found::default() }));
         let cancel = Arc::new(AtomicBool::new(false));
         let (tx, updates) = async_channel::unbounded();
@@ -131,7 +144,7 @@ impl Scan {
             std::thread::Builder::new()
                 .name("scan".into())
                 .spawn(move || {
-                    run(&*source, &*spans, lines, around, &*matcher, &found, &cancel, &tx);
+                    run(&*source, &*spans, lines, around, &*matcher, workers, &found, &cancel, &tx);
                     source.release();
                 })
                 .expect("spawn the scan thread")
@@ -167,7 +180,8 @@ impl Drop for Scan {
 pub fn scan_all(source: &dyn LineSource, spans: &dyn LineSpans, lines: Range<usize>, matcher: &Matcher) -> Found {
     let found = Mutex::new(Found { total: lines.len(), ..Found::default() });
     let (tx, _rx) = async_channel::unbounded();
-    run(source, spans, lines.clone(), lines.start, matcher, &found, &AtomicBool::new(false), &tx);
+    let workers = std::thread::available_parallelism().map_or(1, |n| n.get());
+    run(source, spans, lines.clone(), lines.start, matcher, workers, &found, &AtomicBool::new(false), &tx);
     source.release();
     found.into_inner().unwrap()
 }
@@ -192,6 +206,7 @@ fn run(
     lines: Range<usize>,
     around: usize,
     matcher: &Matcher,
+    workers: usize,
     found: &Mutex<Found>,
     cancel: &AtomicBool,
     tx: &async_channel::Sender<Found>,
@@ -200,7 +215,7 @@ fn run(
     let next = AtomicUsize::new(0);
     let parts: Mutex<BTreeMap<usize, Vec<u32>>> = Mutex::new(BTreeMap::new());
     let published = Mutex::new(None::<Instant>);
-    let workers = std::thread::available_parallelism().map_or(1, |n| n.get()).min(order.len().max(1));
+    let workers = workers.clamp(1, order.len().max(1));
     std::thread::scope(|s| {
         for _ in 0..workers {
             s.spawn(|| {

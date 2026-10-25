@@ -99,7 +99,7 @@ fn open_in_full_makes_an_imported_space_with_a_copy_that_opens_again(cx: &mut Te
     wait_for(&mut h, |app| app.live.copy_reads.is_empty());
 
     h.view.read_with(&h.cx, |app, _| {
-        assert_eq!(app.all_entries.len(), 160);
+        assert_eq!(app.view.len(), 160);
         assert!(!app.live.follow, "opens with Follow off");
         let space = last_space(app);
         assert_eq!(space.name, "Checkout (full)");
@@ -108,9 +108,9 @@ fn open_in_full_makes_an_imported_space_with_a_copy_that_opens_again(cx: &mut Te
         assert_eq!(file.generation, 1);
         // The first row is line 1 of `app.log.1`; the file's own first line
         // follows with a Break between.
-        assert_eq!(app.all_entries[0].index, 1);
-        assert!(app.all_entries[100].break_before.is_some());
-        assert_eq!(app.all_entries[100].index, 1);
+        assert_eq!(app.rows_snapshot()[0].index, 1);
+        assert!(app.rows_snapshot()[100].break_before.is_some());
+        assert_eq!(app.rows_snapshot()[100].index, 1);
     });
 
     // Reopening reads the folder, with no connection involved.
@@ -307,7 +307,7 @@ fn the_dialog_lists_rotated_files_estimates_and_opens_the_ticked_ones(cx: &mut T
     h.view.update(&mut h.cx, |app, cx| app.toggle_full_rotated(0, 0, cx));
     wait_for(&mut h, estimate_ready);
     h.view.update(&mut h.cx, |app, cx| app.confirm_open_in_full(cx));
-    wait_for(&mut h, |app| app.live.copy_reads.is_empty() && app.all_entries.len() == 160);
+    wait_for(&mut h, |app| app.live.copy_reads.is_empty() && app.view.len() == 160);
     h.view.read_with(&h.cx, |app, _| {
         assert!(app.remote.full_dialog.is_none());
         let space = last_space(app);
@@ -338,14 +338,14 @@ fn above_the_limit_the_dialog_waits_for_a_choice_and_newest_reads_less(cx: &mut 
     h.view.update(&mut h.cx, |app, cx| app.confirm_open_in_full(cx));
     h.view.read_with(&h.cx, |app, _| assert!(app.remote.full_dialog.is_some()));
     h.view.update(&mut h.cx, |app, cx| app.full_read_newest(cx));
-    wait_for(&mut h, |app| app.live.copy_reads.is_empty() && !app.all_entries.is_empty());
+    wait_for(&mut h, |app| app.live.copy_reads.is_empty() && !app.view.is_empty());
     h.view.read_with(&h.cx, |app, _| {
-        assert!(app.all_entries.len() <= 1_000 && app.all_entries.len() > 800, "{}", app.all_entries.len());
-        let first = &app.all_entries[0];
+        assert!(app.view.len() <= 1_000 && app.view.len() > 800, "{}", app.view.len());
+        let first = &app.rows_snapshot()[0];
         let top = first.break_before.as_ref().expect("a Break saying older lines were not read");
         assert_eq!(top.kind, log_gpui::live::BreakKind::OlderNotRead);
         // The numbers are the real ones in the file: the end of 5,000 lines.
-        assert_eq!(app.all_entries.last().unwrap().index, 5_000);
+        assert_eq!(app.rows_snapshot().last().unwrap().index, 5_000);
     });
 }
 

@@ -3,6 +3,7 @@
 //! applies it once: parse, place by timestamp, update Filter, Search and the
 //! Focus Pane, and follow the end when Follow is on.
 
+use crate::rows::Rows as _;
 use super::AppView;
 use crate::focus::LineRef;
 use crate::live::{
@@ -15,7 +16,6 @@ use crate::workspace::working_set::{TabTarget, ViewMode};
 use gpui::{Context, Pixels, point};
 use std::collections::{HashMap, HashSet};
 use std::ops::Range;
-use std::sync::Arc;
 use std::time::Duration;
 
 /// How long the app gathers new lines before applying them.
@@ -557,7 +557,7 @@ impl AppView {
                 "live batch: parse {:?}, view {:?}, rows {}",
                 parsed_in,
                 started.elapsed() - parsed_in,
-                self.all_entries.len()
+                self.view.len()
             );
         }
         more
@@ -899,7 +899,7 @@ impl AppView {
             return;
         }
 
-        let before = self.all_entries.len();
+        let before = self.view.len();
         let structural = relevant.iter().any(|(_, d)| d.structural);
         let trimmed_any = relevant.iter().any(|(_, d)| d.trimmed.is_some());
         let in_place = !structural && self.apply_trims_and_appends(&relevant, cx);
@@ -912,6 +912,13 @@ impl AppView {
                 }
             }
         }
+        // Lines trimmed off a file the open view does not show were never
+        // taken out of a view: they go now.
+        for parsed in self.parsed_files.values_mut() {
+            if !parsed.trimmed_off.is_empty() {
+                parsed.trimmed_off = Vec::new();
+            }
+        }
         // Rows are copied and freed in large blocks all the time: give the
         // allocator's cache back now and then, or it grows to gigabytes.
         self.live.batches_since_release += 1;
@@ -919,7 +926,7 @@ impl AppView {
             self.live.batches_since_release = 0;
             release_freed_memory();
         }
-        let grew = self.all_entries.len().saturating_sub(before);
+        let grew = self.view.len().saturating_sub(before);
         if self.live.follow {
             self.live.unseen = 0;
             self.scroll_to_newest();
@@ -1013,23 +1020,40 @@ impl AppView {
             HashSet::new()
         };
 
+        // The Detected Fields of the new lines, read in their file.
+        let config = self.line_config();
+        if !config.is_empty() {
+            for (file_id, delta) in relevant {
+                let (Some(range), Some(parsed)) = (delta.appended.clone(), self.parsed_files.get_mut(file_id.as_str()))
+                else {
+                    continue;
+                };
+                for entry in parsed.entries.get_mut(range).into_iter().flatten() {
+                    entry.extra = config.extra_spans(entry);
+                }
+            }
+        }
+
         // New rows with the time they sort by and where they came from.
         struct NewRow {
             /// 0 for a row sorted by its time, 1 for a row of a file with none.
             class: u8,
             ts: f64,
+            /// The file's place in the Log Space's file order.
             file: usize,
+            /// The row, packed: its file in the view and its position there.
+            packed: u64,
             pos: usize,
-            entry: LogEntry,
         }
         let mut rows: Vec<NewRow> = Vec::new();
         for (file_id, delta) in relevant {
             let Some(range) = delta.appended.clone() else { continue };
             let Some(parsed) = self.parsed_files.get(file_id) else { return false };
-            let Some(file) = space.file(file_id) else { return false };
+            if space.file(file_id).is_none() {
+                return false;
+            }
+            let Some(view_file) = self.view.file_index(file_id) else { return false };
             let file_ix = order.get(file_id.as_str()).copied().unwrap_or(0);
-            let name: Arc<str> = Arc::from(file.display_name.as_str());
-            let id: Arc<str> = Arc::from(file_id.as_str());
             let file_untimed = untimed.contains(file_id);
             // A file whose time goes backwards is not a sorted lane.
             let mut lane_ts = f64::NEG_INFINITY;
@@ -1054,12 +1078,8 @@ impl AppView {
                     lane_ts = ts;
                     ts
                 };
-                let mut entry = entry.clone();
-                entry.file_id = Some(id.clone());
-                if is_space {
-                    entry.source = Some(name.clone());
-                }
-                rows.push(NewRow { class: u8::from(file_untimed), ts, file: file_ix, pos, entry });
+                let packed = crate::index::view_rows::pack(view_file, pos);
+                rows.push(NewRow { class: u8::from(file_untimed), ts, file: file_ix, packed, pos });
             }
         }
         if rows.is_empty() {
@@ -1100,10 +1120,14 @@ impl AppView {
         // full merge uses. Continuation Lines share their Parent's key and
         // follow it in line order, so they stay under it.
         // Rows that all sort after the last one only add to the view.
-        let at_end = from == self.all_entries.len();
-        let tail: Vec<LogEntry> = self.all_entries.split_off(from);
-        self.filter_index.truncate(&self.all_entries, &tail);
-        let mut merged: Vec<LogEntry> = Vec::with_capacity(tail.len() + rows.len());
+        let at_end = from == self.view.len();
+        let tail: Vec<u64> = self.view.rows.split_off(from);
+        {
+            let bound = self.view.bind(&self.parsed_files);
+            self.filter_index.truncate(&bound, &bound.picked(&tail));
+        }
+        let mut merged: Vec<u64> = Vec::with_capacity(tail.len() + rows.len());
+        let mut fresh: Vec<u64> = Vec::with_capacity(rows.len());
         let mut old = tail.into_iter().zip(tail_keys).peekable();
         let mut new = rows.into_iter().peekable();
         loop {
@@ -1116,20 +1140,32 @@ impl AppView {
             if take_old {
                 merged.push(old.next().map(|(e, _)| e).unwrap());
             } else {
-                let mut row = new.next().unwrap();
-                self.read_detected_fields_of(&mut row.entry);
-                self.column_layout.max_chars.record_entry(&row.entry);
-                merged.push(row.entry);
+                let row = new.next().unwrap();
+                fresh.push(row.packed);
+                merged.push(row.packed);
             }
         }
-        let grew_from = self.all_entries.len();
+        {
+            let bound = self.view.bind(&self.parsed_files);
+            let new_rows = bound.picked(&fresh);
+            for r in 0..fresh.len() {
+                if let Some(entry) = new_rows.get(r) {
+                    let source = if is_space { new_rows.source(r) } else { None };
+                    self.column_layout.max_chars.record_row(entry, source);
+                }
+            }
+        }
+        let grew_from = self.view.len();
         if std::env::var_os("LOG_GPUI_LIVE_TRACE").is_some() {
             eprintln!("live insert: {} rows from row {grew_from} of {}", merged.len(), grew_from + merged.len());
         }
-        self.all_entries.extend(merged);
-        self.filter_index.append_marking_untimed(&self.all_entries[grew_from..], |e| {
-            e.file_id.as_deref().is_some_and(|id| untimed.contains(id))
-        });
+        self.view.rows.extend(merged);
+        {
+            let bound = self.view.bind(&self.parsed_files);
+            let added = bound.picked(&self.view.rows[grew_from..]);
+            self.filter_index
+                .append_marking_untimed(&added, |r| added.file_id(r).is_some_and(|id| untimed.contains(id)));
+        }
         if at_end {
             self.apply_rows_appended(grew_from, cx);
         } else {
@@ -1153,8 +1189,8 @@ impl AppView {
     /// the last one before it when none follows.
     fn next_surviving_line(&self, row: usize, gone: &HashSet<String>) -> Option<LineRef> {
         let found = super::live_more::next_surviving_row(
-            self.rows().len(),
-            |ix| self.rows().file_id(ix),
+            self.view.len(),
+            |ix| self.view.get(ix).and_then(|(file, _)| self.view.files.get(file)).map(|f| &*f.file_id),
             row,
             gone,
         );
@@ -1199,7 +1235,7 @@ impl AppView {
         let Some(target) = self.active_target() else { return };
         // The old rows go first: both lists at once would double the memory
         // for a moment.
-        self.all_entries = Vec::new();
+        self.view = Default::default();
         self.filter_index = Default::default();
         let Some(open) = self.build_view_for(&target) else { return };
         self.install_live_rows(open);

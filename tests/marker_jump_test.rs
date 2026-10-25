@@ -3,17 +3,20 @@ mod common;
 
 use gpui::TestAppContext;
 use log_gpui::keymap::{Command, Keymap, Shortcut};
-use log_gpui::marker::TextMarker;
 use log_gpui::palette::{HighlightColor, Hue, Shade};
 
 fn marked(cx: &mut TestAppContext, rows: &[usize]) -> common::Harness {
     let mut h = common::open_app_with_lines(cx, &common::sample_lines(30));
     h.view.update(&mut h.cx, |app, _| {
+        // Painted on the file, as marking a line does; the view looks them up.
+        let lines = app.rows_snapshot();
+        let project = app.workspace_state.active_project_mut().unwrap();
+        let file = project.log_spaces.last_mut().unwrap().files.first_mut().unwrap();
         for &row in rows {
-            app.all_entries[row]
-                .markers
-                .push(TextMarker { range: 0..4, color: HighlightColor::palette(Hue::Red, Shade::Medium) });
+            let color = HighlightColor::palette(Hue::Red, Shade::Medium);
+            assert!(file.paint_marker(lines[row].index, &lines[row].raw_line, 0..4, color));
         }
+        app.reapply_markers();
     });
     h
 }

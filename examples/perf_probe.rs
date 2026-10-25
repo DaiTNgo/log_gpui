@@ -21,6 +21,14 @@ use std::time::Instant;
 #[path = "../tests/common/mod.rs"]
 mod common;
 
+fn rss_mb() -> f64 {
+    let out = std::process::Command::new("ps")
+        .args(["-o", "rss=", "-p", &std::process::id().to_string()])
+        .output()
+        .unwrap();
+    String::from_utf8_lossy(&out.stdout).trim().parse::<f64>().unwrap_or(0.0) / 1024.0
+}
+
 fn time<T>(label: &str, f: impl FnOnce() -> T) -> T {
     let t = Instant::now();
     let out = f();
@@ -105,12 +113,17 @@ fn app_probe(n: usize) {
     std::fs::write(&path, &text).unwrap();
     drop(text);
     let source = ImportSource::Disk(path.to_string_lossy().into_owned());
+    let rss_before = rss_mb();
     time("app open Log Space", || {
         h.view.update(&mut h.cx, |app, cx| app.create_log_space("Probe", LogSpaceKind::Imported, &[source], cx));
         h.cx.run_until_parked();
     });
-    let rows = h.view.read_with(&h.cx, |app, _| app.all_entries.len());
-    println!("  app rows {rows}");
+    let rows = h.view.read_with(&h.cx, |app, _| app.view.len());
+    println!("  app rows {rows}, RSS +{:.0} MB", rss_mb() - rss_before);
+    // The view built again from the files, as a rebuild or a tab switch does.
+    time("app rebuild the open view", || {
+        h.view.update(&mut h.cx, |app, cx| app.rebuild_open_view_keeping_position(cx));
+    });
 
     // Two Highlight Rules, and a Search that matches many lines.
     h.view.update(&mut h.cx, |app, cx| {
@@ -150,7 +163,7 @@ fn app_probe(n: usize) {
 
     let state = |h: &mut common::Harness, what: &str| {
         let (rows, matches, pass) = h.view.read_with(&h.cx, |app, _| {
-            (app.all_entries.len(), app.focus.search().total_matches(), app.filter_pass.len())
+            (app.view.len(), app.focus.search().total_matches(), app.filter_pass.len())
         });
         println!("  after {what}: rows {rows}, matches {matches}, passing {pass}");
     };

@@ -101,8 +101,6 @@ impl CanvasColors {
 
 pub struct CanvasViewState<'a> {
     pub view: gpui::Entity<crate::app::AppView>,
-    /// The rows, borrowed from the view for this frame only (never cloned).
-    pub entries: &'a dyn crate::rows::Rows,
     pub visible_indices: Arc<Vec<usize>>,
     /// Position of the row with the longest message (sets the list's width).
     pub longest_row: usize,
@@ -278,9 +276,9 @@ impl LogCanvas {
                 // The rows are read from the view as each one is drawn, so a
                 // frame never copies them.
                 let mono_font = cx.theme().mono_font_family.clone();
-                let this = env.view.read(cx);
+                let rows = env.view.read(cx).rows();
                 range
-                    .filter_map(|vis_pos| env.row(vis_pos, this.rows(), &mono_font))
+                    .filter_map(|vis_pos| env.row(vis_pos, &rows, &mono_font))
                     .collect::<Vec<_>>()
             },
         )

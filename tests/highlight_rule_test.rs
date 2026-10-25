@@ -143,7 +143,7 @@ fn a_rule_can_use_the_source_column_of_a_log_space() {
     parsed.insert("/worker.log".to_string(), ParsedFile::from_text("2026-10-18 10:00:02 [INFO] [W] two\n"));
     let view = build_space_view(&space, &parsed);
     let r = rule(1, "source", &["worker.log"], &[], color(Hue::Purple));
-    let paints = paint_rows(&[r], &view.entries);
+    let paints = paint_rows(&[r], &view.materialize(&parsed));
     assert!(paints[0].is_none());
     assert!(paints[1].is_some());
 }

@@ -68,7 +68,7 @@ fn the_nginx_template_gives_columns_and_interleaves_by_time(cx: &mut TestAppCont
     let cols = columns(&mut h);
     assert!(cols.contains(&field("client")) && cols.contains(&field("status")), "{cols:?}");
     let order: Vec<String> = h.view.read_with(&h.cx, |a, _| {
-        a.all_entries.iter().map(|e| e.raw_line.chars().take(10).collect()).collect()
+        a.rows_snapshot().iter().map(|e| e.raw_line.chars().take(10).collect()).collect()
     });
     assert_eq!(order, vec!["10.0.4.17 ", "2026-10-20", "203.0.113.", "2026-10-20", "198.51.100"]);
     let groups = h.view.read_with(&h.cx, |a, _| a.column_groups(""));
@@ -103,7 +103,7 @@ fn changing_the_format_keeps_markers_and_filter_conditions(cx: &mut TestAppConte
     let id = add_nginx(&mut h);
     choose_for_access(&mut h, &id);
     h.view.update(&mut h.cx, |a, cx| {
-        let row = a.all_entries.iter().position(|e| e.raw_line.starts_with("203.0.113.9")).unwrap();
+        let row = a.rows_snapshot().iter().position(|e| e.raw_line.starts_with("203.0.113.9")).unwrap();
         a.text_selection = Some(TextSelection::new(TextPos::new(row, 0), TextPos::new(row, 11)));
         a.mark_selection(HighlightColor::palette(Hue::Orange, Shade::Medium), cx);
         a.filter_toggle_value("client", "203.0.113.9", cx);
@@ -113,7 +113,7 @@ fn changing_the_format_keeps_markers_and_filter_conditions(cx: &mut TestAppConte
     h.view.update(&mut h.cx, |a, cx| a.set_file_format(&file, Some(FormatChoice::AutoDetect), cx));
     h.cx.run_until_parked();
     let (marked, kept, passing) = h.view.read_with(&h.cx, |a, _| {
-        let e = a.all_entries.iter().find(|e| e.raw_line.starts_with("203.0.113.9")).unwrap();
+        let e = a.rows_snapshot().into_iter().find(|e| e.raw_line.starts_with("203.0.113.9")).unwrap();
         (e.markers.len(), a.filter_state.column("client").is_some_and(|c| c.is_active()), a.filter_pass.len())
     });
     assert_eq!(marked, 1, "the Marker stays on its line");
@@ -268,7 +268,7 @@ fn with_no_format_applied_the_editor_opens_new_with_a_sample_line_and_applies_to
 fn row_of_file(h: &mut Harness, file: &str) -> usize {
     h.view.read_with(&h.cx, |a, _| {
         (0..a.visible_indices.len())
-            .find(|&r| a.all_entries[a.visible_indices[r]].file_id.as_deref() == Some(file))
+            .find(|&r| a.rows_snapshot()[a.visible_indices[r]].file_id.as_deref() == Some(file))
             .expect("a row of the file")
     })
 }

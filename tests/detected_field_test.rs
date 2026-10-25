@@ -104,7 +104,7 @@ fn turning_a_detected_field_on_makes_a_column_that_filters(cx: &mut TestAppConte
 
     show(&mut h, "user", true);
     assert!(h.view.read_with(&h.cx, |a, _| a.pane_columns().unwrap().columns().contains(&user_col())));
-    let note = h.view.read_with(&h.cx, |a, _| a.all_entries[0].span_text("note").map(str::to_string));
+    let note = h.view.read_with(&h.cx, |a, _| a.rows_snapshot()[0].span_text("note").map(str::to_string));
     assert_eq!(note, None, "only fields turned on are read");
     h.view.update(&mut h.cx, |a, cx| a.filter_toggle_value("user", "alice", cx));
     h.cx.run_until_parked();
@@ -125,6 +125,6 @@ fn turning_a_detected_field_on_makes_a_column_that_filters(cx: &mut TestAppConte
 fn a_quoted_value_shows_with_its_quotes(cx: &mut TestAppContext) {
     let mut h = common::open_app_with_lines(cx, &lines());
     show(&mut h, "note", true);
-    let note = h.view.read_with(&h.cx, |a, _| a.all_entries[3].span_text("note").map(str::to_string));
+    let note = h.view.read_with(&h.cx, |a, _| a.rows_snapshot()[3].span_text("note").map(str::to_string));
     assert_eq!(note.as_deref(), Some(r#""order 3""#));
 }

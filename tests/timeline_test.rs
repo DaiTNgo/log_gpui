@@ -1,7 +1,7 @@
 use log_gpui::filter::FilterState;
 use log_gpui::model::LogEntry;
 use log_gpui::space_view::{
-    ParsedFile, apply_markers_merged, build_file_view, build_space_view,
+    ParsedFile, build_file_view, build_space_view,
 };
 use log_gpui::timeline::{effective_timestamps, materialize, merge, union_field_names};
 use log_gpui::workspace::log_space::{LogSpace, LogSpaceKind};
@@ -126,7 +126,7 @@ fn columns_are_united_by_name() {
     // `region` exists only in the first file: the rows of the other file leave it empty.
     let region = view.index.column("region").expect("union has the column");
     let empty_rows = view
-        .entries
+        .materialize(&parsed)
         .iter()
         .enumerate()
         .filter(|(row, _)| region.id_of_row(*row) == Some(u16::MAX))
@@ -162,9 +162,9 @@ fn the_source_column_is_filterable_by_file_name() {
 
     let mut filter = FilterState::new();
     filter.toggle_value("source", "api.log");
-    let visible = filter.evaluate(&view.index, &mut view.entries);
+    let visible = filter.evaluate(&view.index, &view.materialize(&parsed));
     assert_eq!(visible.len(), 1);
-    assert_eq!(view.entries[visible[0]].source.as_deref(), Some("api.log"));
+    assert_eq!(view.materialize(&parsed)[visible[0]].source.as_deref(), Some("api.log"));
 }
 
 #[test]
@@ -186,8 +186,8 @@ fn a_file_view_shows_only_its_file_and_has_no_source() {
         ("/b.log", "2026-09-05 10:00:02 [INFO] [JOB] b\n"),
     ]);
     let view = build_file_view(space.file("/a.log").unwrap(), &parsed["/a.log"]);
-    assert_eq!(view.entries.len(), 1);
-    assert!(view.entries[0].source.is_none());
+    assert_eq!(view.materialize(&parsed).len(), 1);
+    assert!(view.materialize(&parsed)[0].source.is_none());
     assert!(view.index.columns_in_use().all(|c| c.key != "source"));
 }
 
@@ -199,7 +199,7 @@ fn a_file_without_timestamps_is_flagged_in_the_view() {
     ]);
     let view = build_space_view(&space, &parsed);
     assert_eq!(view.no_timestamp_files, vec!["/notes.txt".to_string()]);
-    assert_eq!(view.entries.last().unwrap().source.as_deref(), Some("notes.txt"));
+    assert_eq!(view.materialize(&parsed).last().unwrap().source.as_deref(), Some("notes.txt"));
 }
 
 // ─── Markers belong to the line of a file ────────────────────────────────────
@@ -221,19 +221,18 @@ fn markers_painted_on_a_file_show_in_the_merged_view_a_file_view_and_a_rebuild()
 
     // The merged view: the row of b.log is the second one.
     let view = build_space_view(&space, &parsed);
-    assert!(view.entries[0].markers.is_empty());
-    assert_eq!(view.entries[1].markers.len(), 1);
-    assert_eq!(view.entries[1].markers[0].range, at..at + 4);
+    assert!(view.materialize(&parsed)[0].markers.is_empty());
+    assert_eq!(view.materialize(&parsed)[1].markers.len(), 1);
+    assert_eq!(view.materialize(&parsed)[1].markers[0].range, at..at + 4);
 
     // A File View of b.log shows the same marker.
     let file_view = build_file_view(space.file("/b.log").unwrap(), &parsed["/b.log"]);
-    assert_eq!(file_view.entries[0].markers[0].color, color);
+    assert_eq!(file_view.materialize(&parsed)[0].markers[0].color, color);
 
     // Taking the marker off clears it from a rebuilt view.
     assert!(space.file_mut("/b.log").unwrap().remove_marker_at(1, &line, at));
     let mut rebuilt = build_space_view(&space, &parsed);
-    apply_markers_merged(&space, &mut rebuilt.entries);
-    assert!(rebuilt.entries[1].markers.is_empty());
+    assert!(rebuilt.materialize(&parsed)[1].markers.is_empty());
 }
 
 #[test]

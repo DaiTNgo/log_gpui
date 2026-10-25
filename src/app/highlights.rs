@@ -19,11 +19,11 @@ impl AppView {
     /// shows it.
     pub fn recompute_highlight_paints(&mut self) {
         let rules = self.highlight_rules().to_vec();
-        self.highlight_paints = Arc::new(paint_rows(&rules, &self.all_entries));
+        self.highlight_paints = Arc::new(paint_rows(&rules, &self.view.bind(&self.parsed_files)));
         self.rule_counts = rules
             .iter()
             .map(|r| {
-                let n = crate::highlight::count_matches(r, &self.all_entries, &self.visible_indices);
+                let n = crate::highlight::count_matches(r, &self.view.bind(&self.parsed_files), &self.visible_indices);
                 (r.id, n)
             })
             .collect();
@@ -37,10 +37,10 @@ impl AppView {
             return false;
         }
         let rules = self.highlight_rules().to_vec();
-        let new = crate::highlight::paint_rows_from(&rules, &self.all_entries, from);
+        let new = crate::highlight::paint_rows_from(&rules, &self.view.bind(&self.parsed_files), from);
         Arc::make_mut(&mut self.highlight_paints).extend(new);
         for rule in &rules {
-            let n = crate::highlight::count_matches(rule, &self.all_entries, &self.visible_indices[from..]);
+            let n = crate::highlight::count_matches(rule, &self.view.bind(&self.parsed_files), &self.visible_indices[from..]);
             *self.rule_counts.entry(rule.id).or_insert(0) += n;
         }
         true

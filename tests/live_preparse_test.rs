@@ -61,7 +61,7 @@ fn lines_sent_while_a_batch_is_read_keep_their_order(cx: &mut TestAppContext) {
 fn a_burst_is_applied_over_several_pumps_each_short(cx: &mut TestAppContext) {
     let mut f = open(cx, &[("alpha", 0)], 10, 10_000_000);
     let total = 200_000;
-    let start = f.h.view.read_with(&f.h.cx, |app, _| app.all_entries.len());
+    let start = f.h.view.read_with(&f.h.cx, |app, _| app.view.len());
     let burst: Vec<String> = (0..total).map(|i| format!("2026-10-19 11:00:00.{:03} INFO burst line {i}", i % 1000)).collect();
     f.send("alpha", burst);
     let mut slowest = std::time::Duration::ZERO;
@@ -78,7 +78,7 @@ fn a_burst_is_applied_over_several_pumps_each_short(cx: &mut TestAppContext) {
             break;
         }
     }
-    let rows = f.h.view.read_with(&f.h.cx, |app, _| app.all_entries.len());
+    let rows = f.h.view.read_with(&f.h.cx, |app, _| app.view.len());
     assert!(pumps > 3, "a burst this size takes several pumps, took {pumps}");
     assert_eq!(rows, start + total, "every line arrived");
     eprintln!("burst: {pumps} pumps, slowest {slowest:?}");

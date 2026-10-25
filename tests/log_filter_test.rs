@@ -235,7 +235,7 @@ fn unknown_level_counts_as_missing() {
 
 #[test]
 fn counts_do_not_change_with_other_filters() {
-    let mut entries = sample();
+    let entries = sample();
     let before = FilterIndex::build(&entries);
     let api = before.column("module").unwrap().values.iter().find(|v| v.display == "API").unwrap().count;
     let mut f = FilterState::new();

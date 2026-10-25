@@ -104,24 +104,23 @@ impl AppView {
     /// their Filter columns.
     pub(crate) fn read_detected_fields(&mut self) {
         let config = self.line_config();
-        if config.is_empty() && self.all_entries.iter().all(|e| e.extra.is_empty()) {
-            return;
+        let mut read = false;
+        for file in &self.view.files {
+            let Some(parsed) = self.parsed_files.get_mut(&*file.file_id) else { continue };
+            if config.is_empty() && parsed.entries.iter().all(|e| e.extra.is_empty()) {
+                continue;
+            }
+            config.apply(&mut parsed.entries);
+            read = true;
         }
-        config.apply(&mut self.all_entries);
-        self.after_detected_fields_read();
-    }
-
-    /// The fields of a new live line.
-    pub(crate) fn read_detected_fields_of(&mut self, entry: &mut crate::model::LogEntry) {
-        let config = self.line_config();
-        if !config.is_empty() {
-            entry.extra = config.extra_spans(entry);
+        if read {
+            self.after_detected_fields_read();
         }
     }
 
     fn after_detected_fields_read(&mut self) {
-        self.filter_index.rebuild_fields(&self.all_entries);
-        let fitted = crate::column::FieldMaxChars::scan_entries(&self.all_entries);
+        self.filter_index.rebuild_fields(&self.view.bind(&self.parsed_files));
+        let fitted = crate::column::FieldMaxChars::scan_entries(&self.view.bind(&self.parsed_files));
         self.column_layout.max_chars.fields = fitted.fields;
     }
 
@@ -132,8 +131,8 @@ impl AppView {
         let config = self.line_config();
         self.line_cache.generation += 1;
         let generation = self.line_cache.generation;
-        let rows = self.all_entries.len();
-        let lines = crate::extract::snapshot(&self.all_entries);
+        let rows = self.view.len();
+        let lines = crate::extract::snapshot(&self.view.bind(&self.parsed_files));
         self.line_cache.reading = true;
         cx.notify();
         cx.spawn(async move |this, cx| {
@@ -143,9 +142,18 @@ impl AppView {
                     return;
                 }
                 this.line_cache.reading = false;
-                if this.all_entries.len() == rows {
-                    for (entry, extra) in this.all_entries.iter_mut().zip(read) {
-                        entry.extra = extra;
+                if this.view.len() == rows {
+                    // Each read goes to the line of its row, file by file.
+                    for (at, file) in this.view.files.iter().enumerate() {
+                        let Some(parsed) = this.parsed_files.get_mut(&*file.file_id) else { continue };
+                        for (&row, extra) in this.view.rows.iter().zip(&read) {
+                            let (f, pos) = crate::index::view_rows::unpack(row);
+                            if f == at {
+                                if let Some(entry) = parsed.entries.get_mut(pos) {
+                                    entry.extra = extra.clone();
+                                }
+                            }
+                        }
                     }
                     this.after_detected_fields_read();
                 } else {

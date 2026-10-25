@@ -137,7 +137,7 @@ impl AppView {
                 None => number,
             });
         }
-        labels.push(format!("{} lines", format_count(self.all_entries.len())));
+        labels.push(format!("{} lines", format_count(self.view.len())));
         if self.focus_pane_shows_lines() {
             let n = self.focus_rows.len();
             labels.push(format!("{} {} in Focus", format_count(n), if n == 1 { "line" } else { "lines" }));

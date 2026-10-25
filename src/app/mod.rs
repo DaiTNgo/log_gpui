@@ -48,7 +48,6 @@ mod workspace_items;
 use crate::column::ColumnLayoutState;
 use crate::filter::FilterState;
 use crate::filter_index::FilterIndex;
-use crate::model::LogEntry;
 use crate::focus::{FocusRow, FocusTabs};
 use crate::space_view::ParsedFile;
 use crate::density::Density;
@@ -99,7 +98,8 @@ pub struct RefreshCounts {
 }
 
 pub struct AppView {
-    pub all_entries: Vec<LogEntry>,
+    /// The rows of the open view: lines of the files in `parsed_files`.
+    pub view: crate::view_data::ViewData,
     pub visible_indices: Arc<Vec<usize>>,
     pub filter_state: FilterState,
     pub filter_index: FilterIndex,
@@ -312,11 +312,10 @@ impl AppView {
         crate::ui::mono::measure(cx);
         let focus_handle = cx.focus_handle();
         let scroll_handle = UniformListScrollHandle::new();
-        let all_entries: Vec<LogEntry> = Vec::new();
         let column_layout = ColumnLayoutState::new();
 
         let filter_state = FilterState::new();
-        let filter_index = FilterIndex::build(&all_entries);
+        let filter_index = FilterIndex::default();
         let filter_ui = filter::FilterUi::new(window, cx);
 
         let search_input = cx.new(|cx| {
@@ -484,7 +483,7 @@ impl AppView {
         .detach();
 
         let mut this = Self {
-            all_entries,
+            view: Default::default(),
             visible_indices: Arc::new(Vec::new()),
             filter_state,
             filter_index,

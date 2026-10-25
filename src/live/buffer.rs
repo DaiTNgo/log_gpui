@@ -913,7 +913,7 @@ impl LiveBuffer {
     fn trim_to(&mut self, parsed: &mut ParsedFile, keep: usize) -> Option<Trimmed> {
         let removed = parsed.entries.len() - keep;
         let text_bytes = parsed.lines.iter().take(removed).map(|l| l.len() + 1).sum();
-        parsed.entries.drain(..removed);
+        parsed.trimmed_off = parsed.entries.drain(..removed).collect();
         parsed.lines_mut().drain(..removed);
         self.sync_byte_lens(removed + keep);
         self.byte_lens.drain_front(removed);

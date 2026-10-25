@@ -55,7 +55,7 @@ impl AppView {
         }
         self.focus
             .search_mut()
-            .update_matches(&self.all_entries, &self.visible_indices);
+            .update_matches(&self.view.bind(&self.parsed_files), &self.visible_indices);
         self.refresh_focus();
         if let Some(entry_ix) = self.focus.search().current_match_pos() {
             self.goto_entry(entry_ix, Origin::Jump, cx);
@@ -169,7 +169,7 @@ impl AppView {
             return;
         }
         let Some(matcher) = self.focus.search().matcher.clone() else { return };
-        self.search_lines.sync(&self.all_entries, self.rows_epoch);
+        self.search_lines.sync(&self.view.bind(&self.parsed_files), self.rows_epoch);
         let lines = self.search_lines.clone();
         let cancel = self.search_cancel.clone();
         let (epoch, scanned) = (self.rows_epoch, lines.len());
@@ -202,7 +202,7 @@ impl AppView {
             // Rows left or moved while it ran: look again.
             return self.start_search_scan(generation, cx);
         };
-        self.focus.search_mut().set_scanned_matches(found, &self.all_entries, scanned);
+        self.focus.search_mut().set_scanned_matches(found, &self.view.bind(&self.parsed_files), scanned);
         self.refresh_focus();
         if let Some(entry_ix) = self.focus.search().current_match_pos() {
             self.goto_entry(entry_ix, Origin::Jump, cx);

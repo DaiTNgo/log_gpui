@@ -440,7 +440,7 @@ impl FocusPane {
             .into_any_element()
     }
 
-    fn render_rows(state: PaneState, cx: &mut gpui::App) -> gpui::AnyElement {
+    fn render_rows(state: PaneState, _cx: &mut gpui::App) -> gpui::AnyElement {
         // The widest row sets the width the list scrolls to. The rows are
         // read from the view, never copied.
         let longest = state.longest;

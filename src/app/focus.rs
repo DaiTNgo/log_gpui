@@ -110,7 +110,7 @@ impl AppView {
 
     /// The stored text of every row of the open tab, in order.
     fn focus_row_texts<'a>(
-        entries: &'a dyn crate::rows::Rows,
+        entries: crate::view_data::BoundRows<'a>,
         sections: &'a [RawSection],
         rows: &'a [FocusRow],
     ) -> impl Iterator<Item = &'a str> {
@@ -142,7 +142,7 @@ impl AppView {
                         .map(|&ix| FocusRow::Entry(ix))
                         .collect()
                 } else {
-                    compute_focus_rows(self.rows(), &self.filter_pass, self.filter_limits_focus(), None)
+                    compute_focus_rows(&self.rows(), &self.filter_pass, self.filter_limits_focus(), None)
                 }
             }
             ViewMode::Raw => self
@@ -156,7 +156,7 @@ impl AppView {
         let rows = self.apply_find_filter(rows, &sections);
         self.focus_rows = Arc::new(rows);
         let texts: Vec<&str> =
-            Self::focus_row_texts(&self.all_entries, &sections, &self.focus_rows).collect();
+            Self::focus_row_texts(self.view.bind(&self.parsed_files), &sections, &self.focus_rows).collect();
         self.focus_longest = super::filter::longest(texts.iter().map(|t| t.len()));
         self.focus.find_mut().compute_hits(texts.into_iter(), false);
         self.pane_selection = None;
@@ -182,7 +182,7 @@ impl AppView {
         if !find.find_filter_narrows() {
             return rows;
         }
-        let texts = Self::focus_row_texts(&self.all_entries, sections, &rows);
+        let texts = Self::focus_row_texts(self.view.bind(&self.parsed_files), sections, &rows);
         rows.iter().zip(texts).filter(|(_, text)| find.matches(text)).map(|(row, _)| *row).collect()
     }
 
@@ -259,8 +259,9 @@ impl AppView {
             Vec::new()
         };
         let new_rows = self.apply_find_filter_appended(new_rows);
+        let rows = self.view.bind(&self.parsed_files);
         let text = |row: &FocusRow| match *row {
-            FocusRow::Entry(ix) => self.all_entries.get(ix).map_or("", |e| e.raw_line.as_str()),
+            FocusRow::Entry(ix) => rows.get(ix).map_or("", |e| e.raw_line.as_str()),
             FocusRow::Raw { .. } => "",
         };
         let mut longest_len = match self.focus_rows.get(self.focus_longest) {
@@ -421,7 +422,7 @@ impl AppView {
             ViewMode::Parsed => {
                 self.supersede_search_scan();
                 self.active_search_mut().reparse();
-                self.focus.search_mut().update_matches(&self.all_entries, &self.visible_indices);
+                self.focus.search_mut().update_matches(&self.view.bind(&self.parsed_files), &self.visible_indices);
             }
             ViewMode::Raw => {
                 self.run_raw_search_keep_position(cx);
@@ -479,7 +480,7 @@ impl AppView {
     pub fn on_focus_find_changed(&mut self, text: &str, cx: &mut Context<Self>) {
         let sections = self.sections_if_raw();
         let texts: Vec<&str> =
-            Self::focus_row_texts(&self.all_entries, &sections, &self.focus_rows).collect();
+            Self::focus_row_texts(self.view.bind(&self.parsed_files), &sections, &self.focus_rows).collect();
         self.focus.find_mut().set_query(text, texts.into_iter());
         if self.focus.find().find_filter {
             // The rows the tab lists change with the text.
@@ -656,7 +657,7 @@ impl AppView {
             - f32::from(offset.x)
             - crate::ui::focus_pane::text_offset(parsed, self.pane_shows_source());
         let sections = self.sections_if_raw();
-        let text = Self::focus_row_texts(&self.all_entries, &sections, &self.focus_rows[row..=row])
+        let text = Self::focus_row_texts(self.view.bind(&self.parsed_files), &sections, &self.focus_rows[row..=row])
             .next()
             .unwrap_or("");
         let byte = crate::ui::mono::index_for_x(text, x, self.text_scale().font_size(), window, cx);
@@ -732,7 +733,7 @@ impl AppView {
     pub fn pane_selected_text(&self) -> Option<String> {
         let sel = self.pane_selection.filter(|s| !s.is_empty())?;
         let sections = self.sections_if_raw();
-        let rows = Self::focus_row_texts(&self.all_entries, &sections, &self.focus_rows)
+        let rows = Self::focus_row_texts(self.view.bind(&self.parsed_files), &sections, &self.focus_rows)
             .enumerate();
         Some(sel.copy_text(rows))
     }

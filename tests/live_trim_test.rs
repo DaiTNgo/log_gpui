@@ -19,7 +19,7 @@ fn trimming_one_file_equals_building_the_view_again(cx: &mut TestAppContext) {
         f.pump();
         let after = f.h.view.read_with(&f.h.cx, |app, _| app.refreshes);
         assert_eq!(after.full, before.full, "batch {n}: the view was not built again");
-        let rows = f.h.view.read_with(&f.h.cx, |app, _| app.all_entries.len());
+        let rows = f.h.view.read_with(&f.h.cx, |app, _| app.view.len());
         assert!(rows <= 150 + 15 + 20, "the Live Window held: {rows} rows");
         check_against_rebuild(&mut f, &format!("batch {n}"));
     }
@@ -47,7 +47,7 @@ fn only_the_trimmed_files_rows_leave_a_merged_space(cx: &mut TestAppContext) {
     let mut f = open(cx, &[("alpha", 0), ("beta", 1)], 100, 130);
     setup(&mut f);
     let b_before: Vec<usize> = f.h.view.read_with(&f.h.cx, |app, _| {
-        app.all_entries.iter().filter(|e| e.raw_line.contains(" beta ")).map(|e| e.index).collect()
+        app.rows_snapshot().iter().filter(|e| e.raw_line.contains(" beta ")).map(|e| e.index).collect()
     });
     for n in 0..3 {
         let start = 100 + n * 40;
@@ -57,9 +57,9 @@ fn only_the_trimmed_files_rows_leave_a_merged_space(cx: &mut TestAppContext) {
     }
     f.h.view.read_with(&f.h.cx, |app, _| {
         let b_after: Vec<usize> =
-            app.all_entries.iter().filter(|e| e.raw_line.contains(" beta ")).map(|e| e.index).collect();
+            app.rows_snapshot().iter().filter(|e| e.raw_line.contains(" beta ")).map(|e| e.index).collect();
         assert_eq!(b_after, b_before, "the other file keeps every row, in order");
-        let a_first = app.all_entries.iter().find(|e| e.raw_line.contains(" alpha ")).unwrap().index;
+        let a_first = app.rows_snapshot().iter().find(|e| e.raw_line.contains(" alpha ")).unwrap().index;
         assert!(a_first > 1, "the oldest rows of the trimmed file left");
     });
 }

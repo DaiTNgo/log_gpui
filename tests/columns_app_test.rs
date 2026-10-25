@@ -112,7 +112,8 @@ fn coverage_shows_99_percent(cx: &mut TestAppContext) {
 fn a_continuation_line_shows_the_placeholder_in_field_columns(cx: &mut TestAppContext) {
     let h = common::open_app_with_lines(cx, &json_lines());
     let placeholder = h.view.read_with(&h.cx, |app, _| {
-        let last = app.all_entries.last().unwrap();
+        let rows = app.rows_snapshot();
+        let last = rows.last().unwrap();
         last.is_continuation() && shows_placeholder(last, TextCell::Field(FieldKey::new("user")))
     });
     assert!(placeholder);

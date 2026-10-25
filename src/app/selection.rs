@@ -1,5 +1,6 @@
 //! Logic: selected entry, markers and error navigation.
 
+use crate::rows::Rows as _;
 use super::AppView;
 use crate::model::{LogEntry, LogLevel};
 use gpui::Context;
@@ -8,7 +9,7 @@ impl AppView {
     pub fn selected_entry(&self) -> Option<&LogEntry> {
         self.selected_row_pos
             .and_then(|pos| self.visible_indices.get(pos))
-            .and_then(|&ix| self.all_entries.get(ix))
+            .and_then(|&ix| self.rows().get(ix))
     }
 
     /// The text the Inspector shows: the current line as stored, followed by
@@ -76,11 +77,8 @@ impl AppView {
 
     fn jump_to_marker(&mut self, forward: bool, cx: &mut Context<Self>) {
         let total = self.visible_indices.len();
-        let marked = |pos: usize| {
-            self.visible_indices
-                .get(pos)
-                .is_some_and(|&ix| !self.rows().markers(ix).is_empty())
-        };
+        let rows = self.rows();
+        let marked = |pos: usize| self.visible_indices.get(pos).is_some_and(|&ix| !rows.markers(ix).is_empty());
         // With nothing selected the search starts just before the first row
         // (or after the last), so that row counts too.
         let found = (1..=total).find_map(|offset| {
@@ -101,35 +99,30 @@ impl AppView {
         }
     }
 
+    /// Whether the row shown at `pos` is an Error or Fatal line.
+    fn is_error_row(&self, pos: usize) -> bool {
+        let rows = self.rows();
+        self.visible_indices
+            .get(pos)
+            .and_then(|&ix| rows.get(ix))
+            .is_some_and(|e| matches!(e.level, LogLevel::Fatal | LogLevel::Error))
+    }
+
     pub fn jump_to_next_error(&mut self, cx: &mut Context<Self>) {
         let current_pos = self.selected_row_pos.unwrap_or(0);
         let total = self.visible_indices.len();
-        for offset in 1..total {
-            let next_pos = (current_pos + offset) % total;
-            if let Some(&entry_ix) = self.visible_indices.get(next_pos) {
-                if let Some(entry) = self.all_entries.get(entry_ix) {
-                    if matches!(entry.level, LogLevel::Fatal | LogLevel::Error) {
-                        self.jump_to_row(next_pos, cx);
-                        break;
-                    }
-                }
-            }
+        let found = (1..total).map(|offset| (current_pos + offset) % total).find(|&pos| self.is_error_row(pos));
+        if let Some(pos) = found {
+            self.jump_to_row(pos, cx);
         }
     }
 
     pub fn jump_to_prev_error(&mut self, cx: &mut Context<Self>) {
         let current_pos = self.selected_row_pos.unwrap_or(0);
         let total = self.visible_indices.len();
-        for offset in 1..total {
-            let prev_pos = (current_pos + total - offset) % total;
-            if let Some(&entry_ix) = self.visible_indices.get(prev_pos) {
-                if let Some(entry) = self.all_entries.get(entry_ix) {
-                    if matches!(entry.level, LogLevel::Fatal | LogLevel::Error) {
-                        self.jump_to_row(prev_pos, cx);
-                        break;
-                    }
-                }
-            }
+        let found = (1..total).map(|offset| (current_pos + total - offset) % total).find(|&pos| self.is_error_row(pos));
+        if let Some(pos) = found {
+            self.jump_to_row(pos, cx);
         }
     }
 }

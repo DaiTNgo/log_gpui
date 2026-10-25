@@ -125,7 +125,7 @@ fn an_archive_entry_is_read_from_its_unpacked_file_and_goes_with_its_space(cx: &
     });
     h.cx.run_until_parked();
     let (root, space_id) = h.view.read_with(&h.cx, |app, _| {
-        assert_eq!(app.all_entries.len(), 2);
+        assert_eq!(app.view.len(), 2);
         let project = app.workspace_state.active_project().unwrap();
         let space = project.working_set.active_tab().unwrap().target.space_id().unwrap().to_string();
         (app.archive_cache_root_for_test(), space)

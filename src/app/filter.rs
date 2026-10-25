@@ -92,10 +92,10 @@ impl AppView {
         self.rows_epoch += 1;
         self.supersede_search_scan();
         self.evaluate_filter_pass();
-        if self.visible_indices.len() != self.all_entries.len() {
+        if self.visible_indices.len() != self.view.len() {
             // Always every row in order: grow or cut the list where it is, not
             // a new one of the size of the file for every batch of live lines.
-            let rows = self.all_entries.len();
+            let rows = self.view.len();
             let visible = std::sync::Arc::make_mut(&mut self.visible_indices);
             let have = visible.len();
             if have < rows {
@@ -104,7 +104,7 @@ impl AppView {
                 visible.truncate(rows);
             }
         }
-        self.longest_row = longest(crate::rows::entries(self.rows()).map(|e| e.payload().len()));
+        self.longest_row = longest(crate::rows::entries(&self.rows()).map(|e| e.payload().len()));
         // A Field Column shows once a row has a value in it.
         self.sync_view_columns();
         // Rows may be new: a selection of them no longer means the same.
@@ -113,7 +113,7 @@ impl AppView {
         self.recompute_highlight_paints();
         self.focus
             .search_mut()
-            .update_matches(&self.all_entries, &self.visible_indices);
+            .update_matches(&self.view.bind(&self.parsed_files), &self.visible_indices);
         self.refresh_focus();
         self.clamp_selected_row();
         self.schedule_session_save(cx);
@@ -127,18 +127,18 @@ impl AppView {
     /// `apply_filters_and_refresh` would. Call it after `filter_index` took
     /// the new rows in.
     pub fn apply_rows_appended(&mut self, from: usize, cx: &mut Context<Self>) {
-        let rows = self.all_entries.len();
+        let rows = self.view.len();
         if from > rows || self.visible_indices.len() != from || self.filter_pass.len() > from {
             return self.apply_filters_and_refresh(cx);
         }
         self.refreshes.appended += 1;
         let pass_before = self.filter_pass.len();
-        let passing = self.filter_state.evaluate_from(&self.filter_index, &self.all_entries, from);
+        let passing = self.filter_state.evaluate_from(&self.filter_index, &self.view.bind(&self.parsed_files), from);
         std::sync::Arc::make_mut(&mut self.filter_pass).extend(passing);
         std::sync::Arc::make_mut(&mut self.visible_indices).extend(from..rows);
 
-        let mut longest_len = self.all_entries.get(self.longest_row).map_or(0, |e| e.payload().len());
-        for (i, entry) in crate::rows::entries_from(&self.all_entries, from).enumerate() {
+        let mut longest_len = self.rows().get(self.longest_row).map_or(0, |e| e.payload().len());
+        for (i, entry) in crate::rows::entries_from(&self.view.bind(&self.parsed_files), from).enumerate() {
             if entry.payload().len() > longest_len {
                 longest_len = entry.payload().len();
                 self.longest_row = from + i;
@@ -154,7 +154,7 @@ impl AppView {
         // A scan under way takes the new rows in when it is done.
         if !self.focus.search().pending {
             let matches_before = self.focus.search().total_matches();
-            self.focus.search_mut().extend_matches(&self.all_entries, from);
+            self.focus.search_mut().extend_matches(&self.view.bind(&self.parsed_files), from);
             self.extend_focus(matches_before, pass_before);
         }
         self.clamp_selected_row();
@@ -180,7 +180,7 @@ impl AppView {
     fn evaluate_filter_pass(&mut self) {
         let pass = self
             .filter_state
-            .evaluate(&self.filter_index, &self.all_entries);
+            .evaluate(&self.filter_index, &self.view.bind(&self.parsed_files));
         self.filter_pass = std::sync::Arc::new(pass);
     }
 
@@ -195,7 +195,7 @@ impl AppView {
     /// Detect the columns and values of the loaded file. Call whenever
     /// `all_entries` is replaced.
     pub fn rebuild_filter_index(&mut self) {
-        self.filter_index = crate::filter_index::FilterIndex::build(&self.all_entries);
+        self.filter_index = crate::filter_index::FilterIndex::build(&self.view.bind(&self.parsed_files));
         self.filter_ui.picker_open = false;
         self.filter_ui.expanded = None;
         self.filter_ui.inputs_dirty = true;

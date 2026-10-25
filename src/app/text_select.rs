@@ -46,7 +46,7 @@ impl AppView {
         let row = ((y / row_h).floor().max(0.0) as usize).min(total - 1);
         let x = f32::from(at.x - bounds.origin.x);
         let hit = hit_cell(&self.column_layout, x, f32::from(horizontal_scroll_x(&self.scroll_handle)));
-        let entry = self.all_entries.get(*self.visible_indices.get(row)?)?;
+        let entry = self.rows().get(*self.visible_indices.get(row)?)?;
         let font_size = self.text_scale().font_size();
         let byte = byte_for_hit(entry, hit, |text, x| {
             crate::ui::mono::index_for_x(text, x, font_size, window, cx)
@@ -181,8 +181,9 @@ impl AppView {
     /// Filter hides is not among the rows shown, so it is not copied.
     pub fn selected_text(&self) -> Option<String> {
         let sel = self.text_selection.filter(|s| !s.is_empty())?;
+        let entries = self.rows();
         let rows = self.visible_indices.iter().enumerate().filter_map(|(pos, &ix)| {
-            self.all_entries.get(ix).map(|e| (pos, e.raw_line.as_str()))
+            entries.get(ix).map(|e| (pos, e.raw_line.as_str()))
         });
         Some(sel.copy_text(rows))
     }

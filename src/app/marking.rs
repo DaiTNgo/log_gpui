@@ -5,7 +5,6 @@
 use super::AppView;
 use crate::marker::{TextMarker, marker_at};
 use crate::palette::HighlightColor;
-use crate::space_view::apply_markers_merged;
 use crate::workspace::log_space::LogFile;
 use crate::workspace::working_set::TabTarget;
 use gpui::Context;
@@ -50,15 +49,8 @@ impl AppView {
         let Some(space) = self.active_project().and_then(|p| p.log_space(space_id)).cloned() else {
             return;
         };
-        match target {
-            TabTarget::LogSpace { .. } => apply_markers_merged(&space, &mut self.all_entries),
-            TabTarget::FileView { file_id, .. } => {
-                if let Some(file) = space.file(&file_id) {
-                    file.apply_markers(&mut self.all_entries);
-                }
-            }
-            TabTarget::InvestigationBoard { .. } => {}
-        }
+        // The view holds only its own files; the others are not looked at.
+        self.view.set_markers(space.files.iter());
     }
 
     /// The pieces of the text selection, one per line that has selected text.
@@ -66,9 +58,10 @@ impl AppView {
         let Some(sel) = self.text_selection else { return Vec::new() };
         let (start, end) = sel.ordered();
         let mut pieces = Vec::new();
+        let rows = self.rows();
         for row in start.row..=end.row {
             let Some(&entry_ix) = self.visible_indices.get(row) else { continue };
-            let Some(entry) = self.all_entries.get(entry_ix) else { continue };
+            let Some(entry) = rows.get(entry_ix) else { continue };
             if let Some(range) = sel.range_in_row(row, entry.raw_line.len()) {
                 pieces.push(LinePiece { entry_ix, range });
             }
@@ -83,7 +76,7 @@ impl AppView {
         let mut painted = false;
         for piece in pieces {
             let Some(file_id) = self.file_id_of_entry(piece.entry_ix) else { continue };
-            let Some(entry) = self.all_entries.get(piece.entry_ix) else { continue };
+            let Some(entry) = self.rows().get(piece.entry_ix) else { continue };
             let (line, text, generation) = (entry.index, entry.raw_line.clone(), entry.generation);
             let c = color.clone();
             painted |= self
@@ -110,7 +103,7 @@ impl AppView {
     pub fn remove_marker_under(&mut self, vis_pos: usize, byte: usize, cx: &mut Context<Self>) {
         let Some(&entry_ix) = self.visible_indices.get(vis_pos) else { return };
         let Some(file_id) = self.file_id_of_entry(entry_ix) else { return };
-        let Some(entry) = self.all_entries.get(entry_ix) else { return };
+        let Some(entry) = self.rows().get(entry_ix) else { return };
         let (line, text, generation) = (entry.index, entry.raw_line.clone(), entry.generation);
         let removed = self
             .with_file_mut(&file_id, |file| file.remove_marker_in(file.generations_ago(generation), line, &text, byte))
@@ -132,7 +125,7 @@ impl AppView {
     ) {
         let Some(&entry_ix) = self.visible_indices.get(vis_pos) else { return };
         let Some(file_id) = self.file_id_of_entry(entry_ix) else { return };
-        let Some(entry) = self.all_entries.get(entry_ix) else { return };
+        let Some(entry) = self.rows().get(entry_ix) else { return };
         let (line, text, generation) = (entry.index, entry.raw_line.clone(), entry.generation);
         let c = color.clone();
         let changed = self

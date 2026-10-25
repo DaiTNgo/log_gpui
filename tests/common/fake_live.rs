@@ -132,7 +132,7 @@ pub fn view(app: &AppView) -> View {
     let index = &app.filter_index;
     View {
         rows: app
-            .all_entries
+            .rows_snapshot()
             .iter()
             .map(|e| {
                 (
@@ -164,7 +164,7 @@ pub fn view(app: &AppView) -> View {
                 (c.key.clone(), values)
             })
             .collect(),
-        times: (0..app.all_entries.len()).map(|r| index.effective_timestamp(r).map(|t| (t * 1000.0).round() as i64)).collect(),
+        times: (0..app.view.len()).map(|r| index.effective_timestamp(r).map(|t| (t * 1000.0).round() as i64)).collect(),
         hint: index.time_hint(),
         parents: (index.parent_lines(), index.timed_lines()),
     }

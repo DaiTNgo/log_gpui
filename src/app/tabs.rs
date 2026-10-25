@@ -71,7 +71,7 @@ impl AppView {
         if space.files.is_empty() {
             return Some(EmptyCanvas::NoFiles { can_add: space.kind == LogSpaceKind::Imported });
         }
-        if !self.all_entries.is_empty() {
+        if !self.view.is_empty() {
             return None;
         }
         // A File View shows one file; a Log Space all of its files.
@@ -284,7 +284,7 @@ impl AppView {
         self.no_timestamp_files = built.no_timestamp_files.iter().cloned().collect();
         // Other rows: a scan of the old ones is stale.
         self.rows_epoch += 1;
-        self.all_entries = built.entries;
+        self.view = built.view;
         self.filter_index = built.index;
         self.column_layout.max_chars = built.max_chars;
         self.read_detected_fields();
@@ -294,8 +294,14 @@ impl AppView {
     }
 
     /// The rows of the open view.
-    pub fn rows(&self) -> &dyn crate::rows::Rows {
-        &self.all_entries
+    pub fn rows(&self) -> crate::view_data::BoundRows<'_> {
+        self.view.bind(&self.parsed_files)
+    }
+
+    /// The rows of the open view with what the view adds to them, copied.
+    #[doc(hidden)]
+    pub fn rows_snapshot(&self) -> Vec<crate::model::LogEntry> {
+        crate::view_data::materialize(&self.rows())
     }
 
     /// Load every file of the Log Space into the cache and re-parse the
@@ -444,7 +450,7 @@ impl AppView {
         self.no_timestamp_files = built.no_timestamp_files.iter().cloned().collect();
         // Other rows: a scan of the old ones is stale.
         self.rows_epoch += 1;
-        self.all_entries = built.entries;
+        self.view = built.view;
         self.filter_index = built.index;
         self.filter_state = filter;
         self.filter_ui.picker_open = false;
@@ -456,7 +462,7 @@ impl AppView {
         self.sync_stream_column();
         self.sync_pane_columns();
         if fresh {
-            self.column_layout.update_from_entries(&self.all_entries, self.text_scale());
+            self.column_layout.update_from_entries(&self.view.bind(&self.parsed_files), self.text_scale());
         }
         self.file_name = name;
     }

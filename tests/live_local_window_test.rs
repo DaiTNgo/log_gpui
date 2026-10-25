@@ -133,10 +133,10 @@ fn a_local_file_grown_past_the_window_holds_the_window(cx: &mut TestAppContext) 
         let start = 120 + n * 40;
         f.send("alpha", lines("alpha", start..start + 40, 0));
         f.pump();
-        let rows = f.h.view.read_with(&f.h.cx, |app, _| app.all_entries.len());
+        let rows = f.h.view.read_with(&f.h.cx, |app, _| app.view.len());
         assert!(rows <= 150 + 15 + 20, "batch {n}: the window held: {rows} rows");
         check_against_rebuild(&mut f, &format!("batch {n}"));
     }
-    let first = f.h.view.read_with(&f.h.cx, |app, _| app.all_entries[0].index);
+    let first = f.h.view.read_with(&f.h.cx, |app, _| app.rows_snapshot()[0].index);
     assert!(first > 1, "the oldest lines left");
 }

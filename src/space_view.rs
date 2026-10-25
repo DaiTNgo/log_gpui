@@ -6,7 +6,9 @@ use crate::column::FieldMaxChars;
 use crate::filter_index::FilterIndex;
 use crate::model::LogEntry;
 use crate::parser::text::parse_text_bytes_with_max_chars;
+use crate::index::view_rows::pack;
 use crate::timeline;
+use crate::view_data::{ViewData, ViewFile};
 use crate::marker::TextMarker;
 use crate::workspace::log_space::{LogFile, LogSpace};
 use crate::live::{BreakMark, LiveBuffer};
@@ -30,6 +32,9 @@ pub struct ParsedFile {
     pub load_error: Option<String>,
     /// Id of the Log Format the entries were read with (`None`: Auto-detect).
     pub format_id: Option<String>,
+    /// The entries the Live Window just trimmed off the front, until the
+    /// open view took their rows out (they are what its counts held).
+    pub trimmed_off: Vec<LogEntry>,
 }
 
 /// The lines of `text` as shown in the Raw View.
@@ -51,6 +56,7 @@ impl ParsedFile {
             live: None,
             load_error: None,
             format_id: None,
+            trimmed_off: Vec::new(),
         }
     }
 
@@ -189,15 +195,24 @@ impl EmptyCanvas {
 /// What the canvas shows for one view.
 #[derive(Debug, Clone, Default)]
 pub struct BuiltView {
-    pub entries: Vec<LogEntry>,
+    pub view: ViewData,
     pub index: FilterIndex,
     pub max_chars: FieldMaxChars,
     /// `file_id`s of the files with no timestamp at all.
     pub no_timestamp_files: Vec<String>,
 }
 
+impl BuiltView {
+    /// The rows with what the view adds to them, copied (for tests).
+    #[doc(hidden)]
+    pub fn materialize(&self, parsed: &HashMap<String, ParsedFile>) -> Vec<LogEntry> {
+        crate::view_data::materialize(&self.view.bind(parsed))
+    }
+}
+
 /// Merge the files of a Log Space by timestamp (in the space's file order),
-/// restore the files' Markers and detect the Filter columns on the merged rows.
+/// look up the files' Markers and detect the Filter columns on the merged
+/// rows. No line is copied: the rows point into `parsed`.
 pub fn build_space_view(space: &LogSpace, parsed: &HashMap<String, ParsedFile>) -> BuiltView {
     let empty = ParsedFile::empty();
     let files = space.ordered_files();
@@ -206,22 +221,19 @@ pub fn build_space_view(space: &LogSpace, parsed: &HashMap<String, ParsedFile>) 
         .map(|f| parsed.get(&f.file_id).unwrap_or(&empty).entries.as_slice())
         .collect();
     let timeline = timeline::merge(&entry_lists);
-    let named: Vec<(&str, &str, &[LogEntry])> = files
-        .iter()
-        .zip(&entry_lists)
-        .map(|(f, e)| (f.file_id.as_str(), f.display_name.as_str(), *e))
-        .collect();
-    let mut entries = timeline::materialize(&named, &timeline);
-    apply_markers_merged(space, &mut entries);
+    let mut view = ViewData {
+        rows: timeline.rows.iter().map(|r| pack(r.file as usize, r.line as usize)).collect(),
+        files: files.iter().map(|f| ViewFile::new(&f.file_id, Some(&f.display_name))).collect(),
+    };
+    view.set_markers(files.iter().copied());
 
     let field_order = timeline::union_field_names(&entry_lists);
-    let index = FilterIndex::build_merged(&entries, &field_order, &timeline.effective_ts);
-    let mut max_chars = FieldMaxChars::new();
-    for entry in &entries {
-        max_chars.record_entry(entry);
-    }
+    let rows = view.bind(parsed);
+    let index = FilterIndex::build_merged(&rows, &field_order, &timeline.effective_ts);
+    let max_chars = FieldMaxChars::scan_entries(&rows);
+    drop(rows);
     BuiltView {
-        entries,
+        view,
         index,
         max_chars,
         no_timestamp_files: timeline
@@ -234,20 +246,13 @@ pub fn build_space_view(space: &LogSpace, parsed: &HashMap<String, ParsedFile>) 
 
 /// The rows of a single file (a File View): no Source Column.
 pub fn build_file_view(file: &LogFile, parsed: &ParsedFile) -> BuiltView {
-    let mut entries = parsed.entries.clone();
-    // Lines are told apart by file and number, in a File View too.
-    let file_id: Arc<str> = Arc::from(file.file_id.as_str());
-    for entry in &mut entries {
-        entry.file_id = Some(file_id.clone());
-    }
-    file.apply_markers(&mut entries);
-    let index = FilterIndex::build(&entries);
-    BuiltView {
-        max_chars: parsed.max_chars.clone(),
-        index,
-        no_timestamp_files: Vec::new(),
-        entries,
-    }
+    let mut view = ViewData {
+        rows: ViewData::rows_of(0, 0..parsed.entries.len()).collect(),
+        files: vec![ViewFile::new(&file.file_id, None)],
+    };
+    view.set_markers([file]);
+    let index = FilterIndex::build(&view.bind_with(|_| Some(parsed.entries.as_slice())));
+    BuiltView { max_chars: parsed.max_chars.clone(), index, no_timestamp_files: Vec::new(), view }
 }
 
 /// Restore each file's stored Markers onto the merged rows.
