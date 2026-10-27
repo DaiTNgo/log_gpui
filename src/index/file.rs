@@ -16,6 +16,10 @@ use std::sync::{Arc, Mutex};
 /// Lines read from the file at a time when one is not in the cache.
 pub const READ_AROUND: usize = 256;
 
+/// Bytes hashed at each end of what was indexed, to tell a file rewritten
+/// in place from one only written on (how klogg tells them).
+pub const FINGERPRINT_BYTES: u64 = 4096;
+
 /// A file and what Indexing built of it.
 pub struct IndexedFile {
     pub source: Arc<dyn LineSource>,
@@ -24,6 +28,32 @@ pub struct IndexedFile {
     cache: Mutex<RowCache>,
     /// Every line's text, once something needed all of them (the Raw View).
     all_lines: Mutex<Option<Arc<Vec<gpui::SharedString>>>>,
+    fingerprint: Mutex<Fingerprint>,
+}
+
+/// What the indexed part of a file was: which file, how long, and a hash of
+/// its first and last `FINGERPRINT_BYTES`.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Fingerprint {
+    pub identity: Option<crate::live::local::FileId>,
+    pub len: u64,
+    pub head: u64,
+    pub tail: u64,
+    /// The size and time of change the path had when last found unchanged:
+    /// while they stay so, nothing is read to check.
+    seen: Option<(u64, std::time::SystemTime)>,
+}
+
+/// How the file at a path is, next to what was indexed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OnDisk {
+    Same,
+    /// Only written on: what was indexed is still there, unchanged.
+    Appended,
+    /// Another file, cut shorter, or rewritten: read it again from its start.
+    Replaced,
+    /// No file at the path.
+    Gone,
 }
 
 /// What reading on in a file found.
@@ -48,7 +78,45 @@ impl std::fmt::Debug for IndexedFile {
 impl IndexedFile {
     /// The file `source` as Indexing (with `options`) read it into `indexed`.
     pub fn new(source: Arc<dyn LineSource>, indexed: Arc<Indexed>, options: IndexOptions) -> Self {
-        Self { source, indexed, options, cache: Mutex::new(RowCache::new(ROW_CACHE)), all_lines: Mutex::default() }
+        let fingerprint = {
+            let end = indexed.data.read().unwrap().file.lines.end();
+            Mutex::new(fingerprint_of(&*source, end))
+        };
+        Self { source, indexed, options, cache: Mutex::new(RowCache::new(ROW_CACHE)), all_lines: Mutex::default(), fingerprint }
+    }
+
+    /// What the indexed part of the file was.
+    pub fn fingerprint(&self) -> Fingerprint {
+        self.fingerprint.lock().unwrap().clone()
+    }
+
+    /// Whether the file at `path` is still the one indexed, only written on,
+    /// or another one (rewritten in place counts: its first or last indexed
+    /// bytes differ). Reads only metadata while the path's size and time of
+    /// change stay those last found unchanged.
+    pub fn changed_on_disk(&self, path: &std::path::Path) -> std::io::Result<OnDisk> {
+        let meta = match std::fs::metadata(path) {
+            Ok(meta) => meta,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(OnDisk::Gone),
+            Err(e) => return Err(e),
+        };
+        let mut known = self.fingerprint.lock().unwrap();
+        let seen = meta.modified().ok().map(|at| (meta.len(), at));
+        if seen.is_some() && seen == known.seen {
+            return Ok(OnDisk::Same);
+        }
+        if crate::live::local::is_rotated(known.identity, crate::live::local::id_of_path(path, &meta)) {
+            return Ok(OnDisk::Replaced);
+        }
+        let now = fingerprint_of(&*self.source, known.len);
+        if now.len < known.len || now.head != known.head || now.tail != known.tail {
+            return Ok(OnDisk::Replaced);
+        }
+        if self.source.len()? > known.len {
+            return Ok(OnDisk::Appended);
+        }
+        known.seen = seen;
+        Ok(OnDisk::Same)
     }
 
     /// Index all of `source` now, on this thread.
@@ -170,6 +238,7 @@ impl IndexedFile {
         let locked = self.indexed.locked.load(std::sync::atomic::Ordering::Acquire);
         super::indexing::index_more(&mut data, bytes, &self.options, locked);
         let new_len = data.file.len();
+        *self.fingerprint.lock().unwrap() = fingerprint_of(&*self.source, data.file.lines.end());
         *self.all_lines.lock().unwrap() = None;
         let first = cut_last.map_or(count, |(last, _)| last);
         Ok(Extended::Appended { range: first..new_len, replaced_last: cut_last.is_some() })
@@ -201,4 +270,18 @@ impl IndexedFile {
         let ids = data.filter.columns.iter().filter(|c| c.has_row_ids()).count() * 2 * data.file.len();
         data.file.heap_bytes() + ids
     }
+}
+
+/// The fingerprint of the first `end` bytes of `source` (fewer when the
+/// source is shorter now: `len` says how many were there).
+fn fingerprint_of(source: &dyn LineSource, end: u64) -> Fingerprint {
+    let len = source.len().unwrap_or(0).min(end);
+    let n = len.min(FINGERPRINT_BYTES);
+    let hash = |at: u64| source.read_range(at, n as usize).map(|b| fnv(&b)).unwrap_or(0);
+    Fingerprint { identity: source.identity(), len, head: hash(0), tail: hash(len - n), seen: None }
+}
+
+/// FNV-1a: the same across runs.
+fn fnv(bytes: &[u8]) -> u64 {
+    bytes.iter().fold(0xcbf29ce484222325, |hash, &b| (hash ^ u64::from(b)).wrapping_mul(0x100000001b3))
 }

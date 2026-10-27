@@ -8,7 +8,7 @@ Mỗi task là một commit, và test phải xanh sau mỗi commit. Nhóm 3 cầ
 
 ## 2. Static Log Space
 
-- [ ] 2.1 `Fingerprint` trong `IndexedFile`: inode, kích thước đã index, hash 4 KiB đầu và hash 4 KiB cuối. Cập nhật sau mỗi `extend()`. `IndexedFile::changed_on_disk()` trả về `Same`, `Appended` hoặc `Replaced`. Test trên file thật cho `mv`, `cp` dài hơn, `cp` cùng kích thước, truncate và ghi thêm.
+- [x] 2.1 `Fingerprint` trong `IndexedFile`: inode, kích thước đã index, hash 4 KiB đầu và hash 4 KiB cuối. Cập nhật sau mỗi `extend()`. `IndexedFile::changed_on_disk(path)` trả về `Same`, `Appended`, `Replaced` hoặc `Gone`; khi kích thước và mtime của path vẫn như lần trước thấy không đổi thì chỉ đọc metadata. Test trên file thật cho `mv`, `cp` dài hơn, `cp` cùng kích thước, truncate và ghi thêm.
 - [ ] 2.2 File local của Static không có `LocalFileSource`. Thay vào đó là `FileWatch` poll metadata cho tab đang mở:
   - `Appended` thì gọi `extend()` và không tự cuộn;
   - `Replaced` thì gọi `read_indexed_again`, có lưu session trước.

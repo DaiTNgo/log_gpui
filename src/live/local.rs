@@ -53,21 +53,21 @@ struct Open {
 /// Identity of a file: its inode on Unix; on Windows its volume serial number
 /// and file index (the creation time is no identity there: a file created
 /// within ~15 s of another's rename inherits its creation time).
-type FileId = u128;
+pub type FileId = u128;
 
 #[cfg(unix)]
-fn id_of_open(_file: &File, meta: &std::fs::Metadata) -> Option<FileId> {
+pub(crate) fn id_of_open(_file: &File, meta: &std::fs::Metadata) -> Option<FileId> {
     Some(std::os::unix::fs::MetadataExt::ino(meta) as FileId)
 }
 
 /// The identity of whatever `path` names now; `None` when that cannot be told.
 #[cfg(unix)]
-fn id_of_path(_path: &std::path::Path, meta: &std::fs::Metadata) -> Option<FileId> {
+pub(crate) fn id_of_path(_path: &std::path::Path, meta: &std::fs::Metadata) -> Option<FileId> {
     Some(std::os::unix::fs::MetadataExt::ino(meta) as FileId)
 }
 
 #[cfg(windows)]
-fn id_of_open(file: &File, _meta: &std::fs::Metadata) -> Option<FileId> {
+pub(crate) fn id_of_open(file: &File, _meta: &std::fs::Metadata) -> Option<FileId> {
     use std::os::windows::io::AsRawHandle;
     use windows_sys::Win32::Storage::FileSystem::{
         GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION,
@@ -88,7 +88,7 @@ fn id_of_open(file: &File, _meta: &std::fs::Metadata) -> Option<FileId> {
 
 /// std opens files with full sharing on Windows, so this does not block a rename.
 #[cfg(windows)]
-fn id_of_path(path: &std::path::Path, meta: &std::fs::Metadata) -> Option<FileId> {
+pub(crate) fn id_of_path(path: &std::path::Path, meta: &std::fs::Metadata) -> Option<FileId> {
     let file = File::open(path).ok()?;
     id_of_open(&file, meta)
 }
@@ -98,7 +98,7 @@ fn id_of_path(path: &std::path::Path, meta: &std::fs::Metadata) -> Option<FileId
 /// and unknown never equals (or differs from) anything, so no false rotation
 /// is reported. The size checks still catch a truncation or a swap that
 /// shrinks the file.
-fn is_rotated(open: Option<FileId>, at_path: Option<FileId>) -> bool {
+pub(crate) fn is_rotated(open: Option<FileId>, at_path: Option<FileId>) -> bool {
     matches!((open, at_path), (Some(a), Some(b)) if a != b)
 }
 

@@ -22,6 +22,12 @@ pub trait LineSource: Send + Sync {
     /// what it holds open. It opens again on the next read.
     fn release(&self) {}
 
+    /// The identity of the file read (its inode on Unix), when the source
+    /// is a file and it can be told.
+    fn identity(&self) -> Option<crate::live::local::FileId> {
+        None
+    }
+
     fn is_empty(&self) -> io::Result<bool> {
         Ok(self.len()? == 0)
     }
@@ -111,6 +117,10 @@ impl LineSource for DiskSource {
 
     fn read_at(&self, offset: u64, buf: &mut [u8]) -> io::Result<usize> {
         self.with_file(|file| read_full_at(file, offset, buf))
+    }
+
+    fn identity(&self) -> Option<crate::live::local::FileId> {
+        self.with_file(|file| Ok(crate::live::local::id_of_open(file, &file.metadata()?))).ok().flatten()
     }
 
     fn release(&self) {

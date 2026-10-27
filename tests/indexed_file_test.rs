@@ -127,3 +127,56 @@ fn lines_written_since_are_indexed_on() {
     std::fs::OpenOptions::new().write(true).open(&path).unwrap().set_len(10).unwrap();
     assert_eq!(file.extend().unwrap(), Extended::Shrunk);
 }
+
+/// `text` written to `app.log` in a fresh folder, indexed and kept open.
+fn indexed_on_disk(text: &str) -> (tempfile::TempDir, std::path::PathBuf, IndexedFile) {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("app.log");
+    std::fs::write(&path, text).unwrap();
+    let source: Arc<dyn LineSource> = Arc::new(DiskSource::stay_open(&path, HandleBudget::new(4)).unwrap());
+    let file = IndexedFile::index_now(source, IndexOptions::default()).unwrap();
+    (dir, path, file)
+}
+
+#[test]
+fn a_file_changed_on_disk_is_told_apart_from_one_written_on() {
+    use log_gpui::index::file::OnDisk;
+    use std::io::Write;
+    let first = text();
+
+    // Unchanged, then written on.
+    let (_dir, path, file) = indexed_on_disk(&first);
+    assert_eq!(file.changed_on_disk(&path).unwrap(), OnDisk::Same);
+    assert_eq!(file.changed_on_disk(&path).unwrap(), OnDisk::Same, "the second time from metadata only");
+    std::fs::OpenOptions::new().append(true).open(&path).unwrap().write_all(b"2026-09-05 11:00:00 [INFO] [api] more\n").unwrap();
+    assert_eq!(file.changed_on_disk(&path).unwrap(), OnDisk::Appended);
+    file.extend().unwrap();
+    assert_eq!(file.changed_on_disk(&path).unwrap(), OnDisk::Same, "the new lines are indexed");
+
+    // `mv other app.log`: another inode at the path.
+    let (dir, path, file) = indexed_on_disk(&first);
+    let other = dir.path().join("other.log");
+    std::fs::write(&other, "2026-09-05 12:00:00 [INFO] [api] another file\n").unwrap();
+    std::fs::rename(&other, &path).unwrap();
+    assert_eq!(file.changed_on_disk(&path).unwrap(), OnDisk::Replaced);
+
+    // `cp bigger app.log`: the same inode, longer, other bytes.
+    let (_dir, path, file) = indexed_on_disk(&first);
+    std::fs::write(&path, first.replace("request", "REQUEST") + &first).unwrap();
+    assert_eq!(file.changed_on_disk(&path).unwrap(), OnDisk::Replaced);
+
+    // The same size, only the last line other.
+    let (_dir, path, file) = indexed_on_disk(&first);
+    let mut same_size = first.clone().into_bytes();
+    let at = same_size.len() - 3;
+    same_size[at] = b'X';
+    std::fs::write(&path, same_size).unwrap();
+    assert_eq!(file.changed_on_disk(&path).unwrap(), OnDisk::Replaced);
+
+    // Cut shorter (copytruncate), then deleted.
+    let (_dir, path, file) = indexed_on_disk(&first);
+    std::fs::OpenOptions::new().write(true).open(&path).unwrap().set_len(0).unwrap();
+    assert_eq!(file.changed_on_disk(&path).unwrap(), OnDisk::Replaced);
+    std::fs::remove_file(&path).unwrap();
+    assert_eq!(file.changed_on_disk(&path).unwrap(), OnDisk::Gone);
+}
