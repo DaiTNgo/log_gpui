@@ -665,3 +665,19 @@ fn the_first_tints_are_all_different() {
         }
     }
 }
+
+#[test]
+fn a_live_space_takes_files_on_disk_and_leaves_archive_entries_out() {
+    use log_gpui::workspace::log_space::{ImportSource, LogSpace, LogSpaceKind};
+    let mut space = LogSpace::new("l1".into(), "Both".into(), LogSpaceKind::Live);
+    let outcome = space
+        .add_imported_sources(&[
+            ImportSource::Disk("/var/log/api.log".into()),
+            ImportSource::Entry { archive: "/tmp/logs.tar.gz".into(), entry: "a.log".into() },
+        ])
+        .unwrap();
+    assert_eq!(outcome.added, ["/var/log/api.log"]);
+    assert_eq!(outcome.static_only.len(), 1, "{outcome:?}");
+    assert_eq!(space.files.len(), 1);
+    assert!(LogSpace::new("s1".into(), "S".into(), LogSpaceKind::Scratch).add_imported_sources(&[ImportSource::Disk("/a.log".into())]).is_err());
+}

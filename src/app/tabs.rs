@@ -333,9 +333,10 @@ impl AppView {
             }
             match space.kind {
                 LogSpaceKind::Scratch => self.ensure_file_loaded(file),
-                LogSpaceKind::Live => {
+                LogSpaceKind::Live if file.remote.is_some() => {
                     self.ensure_remote_file_loaded(&file.file_id, &file.display_name, file.is_remote_command())
                 }
+                // A file on disk, in a Static or a Live Log Space.
                 _ => self.ensure_live_file_loaded(file),
             }
         }

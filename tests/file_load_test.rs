@@ -111,10 +111,10 @@ fn append(h: &Harness, name: &str, text: &str) {
 }
 
 #[gpui::test]
-fn a_local_file_is_followed_through_its_line_index(cx: &mut TestAppContext) {
+fn a_local_file_of_a_live_space_is_followed_through_its_line_index(cx: &mut TestAppContext) {
     let mut h = open_app(cx);
     let source = log_file(&h, "a.log", 100);
-    h.view.update(&mut h.cx, |app, cx| app.create_log_space("A", LogSpaceKind::Static, &[source], cx));
+    h.view.update(&mut h.cx, |app, cx| app.create_log_space("A", LogSpaceKind::Live, &[source], cx));
     h.cx.run_until_parked();
     h.view.read_with(&h.cx, |app, _| {
         let parsed = app.parsed_files.values().next().unwrap();
@@ -154,10 +154,10 @@ fn a_local_file_is_followed_through_its_line_index(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn a_rotated_local_file_is_read_again(cx: &mut TestAppContext) {
+fn a_rotated_local_file_of_a_live_space_is_read_again(cx: &mut TestAppContext) {
     let mut h = open_app(cx);
     let source = log_file(&h, "a.log", 20);
-    h.view.update(&mut h.cx, |app, cx| app.create_log_space("A", LogSpaceKind::Static, &[source], cx));
+    h.view.update(&mut h.cx, |app, cx| app.create_log_space("A", LogSpaceKind::Live, &[source], cx));
     h.cx.run_until_parked();
     pump_until(&mut h, "the source is live", |app| {
         app.live_file_statuses().iter().all(|(_, s)| *s == log_gpui::live::SourceStatus::Live)
@@ -168,4 +168,39 @@ fn a_rotated_local_file_is_read_again(cx: &mut TestAppContext) {
     pump_until(&mut h, "the new file shows", |app| {
         app.rows_snapshot().last().is_some_and(|e| e.raw_line.ends_with("after the rotation"))
     });
+}
+
+#[gpui::test]
+fn the_local_files_of_a_live_space_share_one_timeline_and_pause_together(cx: &mut TestAppContext) {
+    let mut h = open_app(cx);
+    let (a, b) = (log_file(&h, "a.log", 3), log_file(&h, "b.log", 3));
+    h.view.update(&mut h.cx, |app, cx| app.create_log_space("Both", LogSpaceKind::Live, &[a, b], cx));
+    h.cx.run_until_parked();
+    pump_until(&mut h, "both sources are live", |app| {
+        let statuses = app.live_file_statuses();
+        statuses.len() == 2 && statuses.iter().all(|(_, s)| *s == log_gpui::live::SourceStatus::Live)
+    });
+
+    append(&h, "b.log", "2026-09-05 11:00:02 [INFO] [b.log] b later\n");
+    append(&h, "a.log", "2026-09-05 11:00:01 [INFO] [a.log] a sooner\n");
+    pump_until(&mut h, "both new lines show", |app| app.view.len() == 8);
+    h.view.read_with(&h.cx, |app, _| {
+        let rows = app.rows_snapshot();
+        let last: Vec<&str> = rows[6..].iter().map(|e| e.raw_line.rsplit("] ").next().unwrap()).collect();
+        assert_eq!(last, ["a sooner", "b later"], "in time order, across the files");
+    });
+
+    // Pause holds both files; Live brings what both wrote.
+    h.view.update(&mut h.cx, |app, cx| app.toggle_pause(cx));
+    append(&h, "a.log", "2026-09-05 11:00:03 [INFO] [a.log] a paused\n");
+    append(&h, "b.log", "2026-09-05 11:00:04 [INFO] [b.log] b paused\n");
+    for _ in 0..10 {
+        h.view.update(&mut h.cx, |app, cx| {
+            app.pump_live(cx);
+        });
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    assert_eq!(h.view.read_with(&h.cx, |app, _| app.view.len()), 8, "nothing while paused");
+    h.view.update(&mut h.cx, |app, cx| app.toggle_pause(cx));
+    pump_until(&mut h, "the paused lines of both come", |app| app.view.len() == 10);
 }

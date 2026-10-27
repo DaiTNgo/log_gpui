@@ -578,13 +578,16 @@ pub enum AddCommandError {
     Elevation(Elevation),
 }
 
-/// Outcome of importing files into an Imported Log Space.
+/// Outcome of importing files into a Static or Live Log Space.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ImportOutcome {
     /// `file_id`s of the files that were added.
     pub added: Vec<String>,
     /// Paths skipped because the space already holds them.
     pub skipped: Vec<String>,
+    /// Archive Entries left out of a Live Log Space: only a Static one
+    /// holds them.
+    pub static_only: Vec<String>,
 }
 
 /// What a Live Glob brought into a space.
@@ -826,15 +829,21 @@ impl LogSpace {
         self.add_imported_sources(&sources)
     }
 
-    /// Import files and Archive Entries. A source the space already holds
-    /// (same path, or same Archive and entry) is skipped and reported by name.
+    /// Import files and Archive Entries into a Static Log Space, or files on
+    /// disk into a Live one (its Archive Entries are left out). A source the
+    /// space already holds (same path, or same Archive and entry) is skipped
+    /// and reported by name.
     pub fn add_imported_sources(&mut self, sources: &[ImportSource]) -> Result<ImportOutcome, WrongKind> {
-        if self.kind != LogSpaceKind::Static {
+        if self.kind == LogSpaceKind::Scratch {
             return Err(WrongKind);
         }
         let mut outcome = ImportOutcome::default();
         for source in sources {
             let mut file = source.to_file();
+            if self.kind == LogSpaceKind::Live && matches!(source, ImportSource::Entry { .. }) {
+                outcome.static_only.push(file.display_name.clone());
+                continue;
+            }
             if self.has_file(&file.file_id) {
                 outcome.skipped.push(match source {
                     ImportSource::Disk(path) => path.clone(),

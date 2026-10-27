@@ -78,6 +78,8 @@ pub struct FileRef {
     pub gone: bool,
     /// The file is a Remote Copy, read whole from a Server.
     pub is_copy: bool,
+    /// The file is on a Server: a Remote File or a Remote Command.
+    pub remote: bool,
     /// Tooltip of a Remote Copy: when it was read and what.
     pub copy_tip: Option<String>,
     /// Shown under a Live Glob row.
@@ -188,11 +190,16 @@ pub fn space_menu(
         LogSpaceKind::Live => {
             let download = space.clone();
             let add_command = space.clone();
+            let add_remote = space.clone();
             let clear_all = space.clone();
             let full = space.clone();
-            menu.item(PopupMenuItem::new("Add remote files…").on_click(move |_, _, app| {
+            menu.item(PopupMenuItem::new("Add files…").on_click(move |_, _, app| {
                 let id = add.space_id.clone();
-                add.view.update(app, |this, cx| this.add_remote_files_dialog(&id, cx));
+                add.view.update(app, |this, cx| this.add_files_dialog(&id, false, cx));
+            }))
+            .item(PopupMenuItem::new("Add remote files…").on_click(move |_, _, app| {
+                let id = add_remote.space_id.clone();
+                add_remote.view.update(app, |this, cx| this.add_remote_files_dialog(&id, cx));
             }))
             .item(PopupMenuItem::new("Add remote command…").on_click(move |_, _, app| {
                 let id = add_command.space_id.clone();
@@ -243,8 +250,9 @@ pub fn space_menu(
 /// its Log Space, shown in the menu of the Space row: no live items (they are in
 /// the status bar) and no removal (deleting the Space does it).
 fn file_menu(menu: PopupMenu, file: &FileRef, in_space_menu: bool, cx: &mut App) -> PopupMenu {
-    match file.kind {
-        LogSpaceKind::Static => {
+    match (file.kind, file.remote) {
+        // A file on disk, in a Static or a Live Log Space.
+        (LogSpaceKind::Static, _) | (LogSpaceKind::Live, false) => {
             let remove = file.clone();
             let reveal = file.clone();
             let again = file.clone();
@@ -275,7 +283,7 @@ fn file_menu(menu: PopupMenu, file: &FileRef, in_space_menu: bool, cx: &mut App)
                     }),
             )
         }
-        LogSpaceKind::Live if file.command.is_some() => {
+        (LogSpaceKind::Live, true) if file.command.is_some() => {
             // A command has no file to download.
             let restart = file.clone();
             let on_exit = file.clone();
@@ -302,7 +310,7 @@ fn file_menu(menu: PopupMenu, file: &FileRef, in_space_menu: bool, cx: &mut App)
                     }))
             })
         }
-        LogSpaceKind::Live => {
+        (LogSpaceKind::Live, true) => {
             let remove = file.clone();
             let download = file.clone();
             let full = file.clone();
@@ -332,7 +340,7 @@ fn file_menu(menu: PopupMenu, file: &FileRef, in_space_menu: bool, cx: &mut App)
                 }))
             })
         }
-        LogSpaceKind::Scratch => {
+        (LogSpaceKind::Scratch, _) => {
             let rename = file.clone();
             let save_as = file.clone();
             let delete = file.clone();
@@ -646,7 +654,7 @@ pub fn push_file(list: MenuList, file: FileRef, active: bool) -> MenuList {
     let no_timestamps = file.no_timestamps;
     let hold_view = file.view.clone();
     let hold_file = file.file_id.clone();
-    let remote = file.kind == LogSpaceKind::Live;
+    let remote = file.remote;
     let copy_tip = file.copy_tip.clone();
     let item = SidebarMenuItem::new(file.display_name.clone())
         .icon(

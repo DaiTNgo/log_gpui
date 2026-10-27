@@ -375,12 +375,11 @@ impl AppView {
                 }
             };
             match kind {
-                LogSpaceKind::Static => {
+                LogSpaceKind::Static | LogSpaceKind::Live => {
                     if let Ok(outcome) = space.add_imported_sources(sources) {
                         skipped = outcome.skipped;
                     }
                 }
-                LogSpaceKind::Live => {}
                 LogSpaceKind::Scratch => {
                     let dir = scratch_dir_for(&space.id);
                     if let Ok(file) = space.new_scratch_file(&dir) {
@@ -484,7 +483,7 @@ impl AppView {
     }
 
     /// "Add files…" or "Add folder…" (`folders`): pick files or folders for
-    /// an Imported Log Space.
+    /// a Static or Live Log Space.
     pub fn add_files_dialog(&mut self, space_id: &str, folders: bool, cx: &mut Context<Self>) {
         let space_id = space_id.to_string();
         cx.spawn(async move |this, cx| {
@@ -502,7 +501,7 @@ impl AppView {
         .detach();
     }
 
-    /// Add files to an Imported Log Space. Folders are opened one level,
+    /// Add files to a Static or Live Log Space. Folders are opened one level,
     /// Archives are opened into their entries (in the background), binary
     /// files are left out, and files already in the space are skipped.
     pub fn add_files_to_space(&mut self, space_id: &str, paths: Vec<String>, cx: &mut Context<Self>) {
@@ -539,6 +538,9 @@ impl AppView {
         if let Some(outcome) = &outcome {
             if !outcome.skipped.is_empty() {
                 messages.push(format!("{} file(s) already in this Log Space", outcome.skipped.len()));
+            }
+            if !outcome.static_only.is_empty() {
+                messages.push(format!("{} archive file(s) can only be added to a Static Log Space", outcome.static_only.len()));
             }
         }
         if left_out > 0 {
