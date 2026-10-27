@@ -244,9 +244,37 @@ impl AppView {
             ParsedFile::failed(error)
         });
         self.parsed_files.insert(file.file_id.clone(), parsed);
+        self.drop_markers_that_no_longer_match(&file.file_id);
         if !self.is_reading() {
             // Every file of the tab is read: its view, as the tab keeps it.
             self.restore_active_session(cx);
+        }
+    }
+
+    /// A file read from disk may have changed since its Markers were set: it
+    /// was replaced or rewritten, or changed while the app was closed. A
+    /// Marker stays on a line whose text still has the hash it was set on;
+    /// the others are dropped, and the user is told how many.
+    fn drop_markers_that_no_longer_match(&mut self, file_id: &str) {
+        let Some(indexed) = self.parsed_files.get(file_id).and_then(|p| p.indexed.clone()) else { return };
+        let hash_of = |line: usize| {
+            line.checked_sub(1).and_then(|n| indexed.line(n)).map(|text| crate::workspace::log_space::line_hash(&text))
+        };
+        let mut dropped = 0;
+        if let Some(project) = self.active_project_mut() {
+            for space in &mut project.log_spaces {
+                if let Some(f) = space.file_mut(file_id) {
+                    let before = f.markers.len();
+                    f.markers.retain(|m| m.generations_ago != 0 || m.line_hash.is_none() || hash_of(m.line) == m.line_hash);
+                    dropped = dropped.max(before - f.markers.len());
+                }
+            }
+        }
+        if dropped > 0 {
+            self.notice = Some(match dropped {
+                1 => "1 Marker no longer matches the file".to_string(),
+                n => format!("{n} Markers no longer match the file"),
+            });
         }
     }
 

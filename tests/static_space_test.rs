@@ -130,3 +130,39 @@ fn a_dormant_static_tab_shows_its_file_as_it_is_now_when_chosen(cx: &mut TestApp
         assert!(last_line(app).contains("[new]"));
     });
 }
+
+/// Paint a Marker on `line` (1-based) of the only file, as its text is now.
+fn mark(h: &mut Harness, line: usize) {
+    h.view.update(&mut h.cx, |app, _| {
+        let text = app.rows_snapshot()[line - 1].raw_line.to_string();
+        let file = &mut app.workspace_state.active_project_mut().unwrap().log_spaces[0].files[0];
+        let color = log_gpui::palette::HighlightColor::palette(log_gpui::palette::Hue::Orange, log_gpui::palette::Shade::Medium);
+        assert!(file.paint_marker(line, &text, 0..4, color));
+        app.reapply_markers();
+    });
+}
+
+fn marked_lines(h: &Harness) -> Vec<usize> {
+    h.view.read_with(&h.cx, |app, _| {
+        app.workspace_state.active_project().unwrap().log_spaces[0].files[0].markers.iter().map(|m| m.line).collect()
+    })
+}
+
+#[gpui::test]
+fn markers_stay_on_lines_that_still_match_after_a_read_again(cx: &mut TestAppContext) {
+    let first = lines("app", 0, 20, "INFO");
+    let mut h = open_static(cx, &first);
+    mark(&mut h, 5);
+    mark(&mut h, 9);
+    assert_eq!(marked_lines(&h), [5, 9]);
+
+    // The same file but line 9, rewritten and longer.
+    let changed = first.replace("line 8\n", "line 8 changed\n") + &lines("app", 20, 25, "INFO");
+    std::fs::write(h.dir.path().join("app.log"), changed).unwrap();
+    pump_until(&mut h, "the rewritten file shows", |app| app.view.len() == 25);
+    assert_eq!(marked_lines(&h), [5], "the Marker of the changed line is dropped");
+    h.view.read_with(&h.cx, |app, _| {
+        assert_eq!(app.notice.as_deref(), Some("1 Marker no longer matches the file"));
+        assert!(!app.rows_snapshot()[4].markers.is_empty(), "line 5 is still painted");
+    });
+}
