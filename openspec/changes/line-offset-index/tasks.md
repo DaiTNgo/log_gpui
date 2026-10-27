@@ -118,6 +118,7 @@ Hiện tại (c8bf40d):
   - Viết lại test live của file local: ghi byte thật vào file. Bỏ các test Live Window của file local.
   - Đã làm: file local mở qua `IndexedFile` ở nền (`index_into`). Live/Pause và Follow index phần dòng trọn vẹn mới (`IndexedFile::extend`); dòng cuối chưa có line break được đọc lại khi nó đủ dòng. big.log (376 MB, 3M dòng): đọc xong trong 1,28 s, RSS 470 MB (trước 2,6 GB).
   - Còn lại (9.2): rotate và truncate (file ngắn đi, hoặc Break mở Generation) chỉ đọc lại file từ đầu. Dòng của Generation cũ bị bỏ, chưa có Break.
+  - Change `static-live-log-spaces` (chốt 2026-10-27): Imported thành Static, không còn Live/Pause và Follow. Live/Pause và Follow của file local chuyển sang Live Log Space (task 4.1 của change đó).
 - [x] 4b.8 Detected Field hoặc Log Format đổi thì index lại file (6.3).
   - Đã làm: file đã index nào có Line Config hoặc Log Format khác cái đang dùng được đọc lại ở nền. Session được lưu trước, nên Filter và Marker giữ nguyên.
   - Còn lại (6.3): đọc lại cả file chứ chưa chỉ dựng `row_ids` của cột mới; cột mới chưa hiện ngay cho dòng đang xem.
@@ -168,7 +169,7 @@ Hiện tại (c8bf40d):
 
 - [ ] 9.1 File local live: bytes mới từ `LocalFileSource` được index thành lô nhỏ, rồi thêm vào Line Index, `row_ids`, `ViewRows`, kết quả Scan đang dùng, và paint của Highlight Rule.
   - Bỏ Live Window cho file local.
-- [ ] 9.2 Phát hiện rotate và truncate bằng kích thước cộng hash 4 KiB đầu và 4 KiB cuối đã index; Generation mới kèm Break.
+- [ ] 9.2 Phát hiện rotate và truncate bằng kích thước cộng hash 4 KiB đầu và 4 KiB cuối đã index; Generation mới kèm Break. Làm trong change `static-live-log-spaces` (task 2.1, 4.3 và 4.4).
   - Giữ file handle của Generation cũ; dòng không còn trên đĩa hiện "no longer on disk".
   - Test: đổi tên, xoá, `copytruncate`.
 - [ ] 9.3 Phát hiện file Imported bị ghi đè (không phải append): index lại và báo người dùng.
