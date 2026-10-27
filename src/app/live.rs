@@ -334,8 +334,12 @@ impl AppView {
                 continue;
             }
             let Some(parsed) = self.parsed_files.get(&file_id) else { continue };
-            let Some(buffer) = parsed.live.as_ref() else { continue };
-            let local_offset = buffer.local_offset;
+            // A file read through its Line Index follows from what is indexed.
+            let local_offset = match (&parsed.indexed, parsed.live.as_ref()) {
+                (Some(indexed), _) => indexed.indexed.data.read().unwrap().file.lines.end(),
+                (None, Some(buffer)) => buffer.local_offset,
+                (None, None) => continue,
+            };
             let handle = match (&file.remote, &file.path) {
                 (Some(remote), _) => {
                     let spawned = match &remote.target {
@@ -695,6 +699,9 @@ impl AppView {
         let window = self.live.window;
         let time = now_label();
         let Some(mut parsed) = self.parsed_files.remove(file_id) else { return delta };
+        if parsed.indexed.is_some() {
+            return self.apply_indexed_events(file_id, parsed, events);
+        }
         let Some(mut buffer) = parsed.live.take() else {
             self.parsed_files.insert(file_id.to_string(), parsed);
             return delta;
@@ -831,6 +838,57 @@ impl AppView {
         if let Some(trimmed) = delta.trimmed.clone() {
             self.drop_markers_for(file_id, &trimmed);
         }
+        delta
+    }
+
+    /// Events of a local file read through its Line Index. Its source only
+    /// tells that the file grew (what grew is read from the file), was
+    /// rotated, cut or deleted, and how it is.
+    fn apply_indexed_events(&mut self, file_id: &str, parsed: crate::space_view::ParsedFile, events: Vec<SourceEvent>) -> FileDelta {
+        let mut delta = FileDelta::default();
+        let mut grew = false;
+        let mut again = false;
+        for event in events {
+            if let Some(source) = self.live.sources.get_mut(file_id) {
+                source.health.observe(&event, std::time::SystemTime::now());
+            }
+            match event {
+                SourceEvent::Append { .. } => grew = true,
+                // The file at the path is another one now: it is read again.
+                SourceEvent::Break { kind } if kind.starts_generation() => again = true,
+                SourceEvent::Problem(message) => self.notice = Some(message),
+                SourceEvent::Status(status) => {
+                    if let Some(source) = self.live.sources.get_mut(file_id) {
+                        source.status = status;
+                    }
+                }
+                _ => {}
+            }
+        }
+        if grew && !again {
+            let read = parsed.indexed.as_ref().map(|f| f.extend());
+            match read {
+                Some(Ok(crate::index::file::Extended::Appended { range, replaced_last })) => {
+                    delta.shown = true;
+                    delta.replaced_last = replaced_last;
+                    delta.appended = Some(range);
+                }
+                Some(Ok(crate::index::file::Extended::Same)) => {}
+                Some(Ok(crate::index::file::Extended::Shrunk)) | Some(Err(_)) | None => again = true,
+            }
+        }
+        if again {
+            // Read the file at the path from its start, in the background;
+            // its source goes on from where it is.
+            delta.shown = true;
+            delta.structural = true;
+            let file = self.active_space().and_then(|s| s.file(file_id).cloned());
+            if let Some(file) = file {
+                self.queue_file_load(&file);
+            }
+            return delta;
+        }
+        self.parsed_files.insert(file_id.to_string(), parsed);
         delta
     }
 
@@ -1059,20 +1117,22 @@ impl AppView {
             // A file whose time goes backwards is not a sorted lane.
             let mut lane_ts = f64::NEG_INFINITY;
             if let (Some(before), false) = (range.start.checked_sub(1), file_untimed) {
-                let Some(prev) = effective_ts_at(&parsed.entries, before) else { return false };
+                let Some(prev) = parsed_effective_ts(parsed, before) else { return false };
                 lane_ts = prev;
             }
             for pos in range {
-                let Some(entry) = parsed.entries.get(pos) else { return false };
+                if pos >= parsed.len() {
+                    return false;
+                }
                 let ts = if file_untimed {
                     // A line with a time in a file that had none: the file
                     // sorts another way now.
-                    if entry.has_time && entry.timestamp.is_finite() && entry.timestamp > 0.0 {
+                    if own_timestamp(parsed, pos).is_some() {
                         return false;
                     }
                     0.0
                 } else {
-                    let Some(ts) = effective_ts_at(&parsed.entries, pos) else { return false };
+                    let Some(ts) = parsed_effective_ts(parsed, pos) else { return false };
                     if ts < lane_ts {
                         return false;
                     }
@@ -1375,6 +1435,36 @@ impl AppView {
 
 /// The time row `pos` of a file sorts by: its own, or its Parent Line's.
 /// `None` when it has none (the rows then need the view built again).
+/// The timestamp line `pos` of `parsed` has of its own, when it is usable.
+fn own_timestamp(parsed: &crate::space_view::ParsedFile, pos: usize) -> Option<f64> {
+    match &parsed.indexed {
+        Some(file) => file
+            .meta(pos)
+            .filter(|m| m.flags & crate::index::meta::flags::OWN_TS != 0)
+            .map(|m| crate::index::meta::seconds(m.ts_us)),
+        None => parsed
+            .entries
+            .get(pos)
+            .filter(|e| e.has_time && e.timestamp.is_finite() && e.timestamp > 0.0)
+            .map(|e| e.timestamp),
+    }
+}
+
+/// `effective_ts_at` for a file held or read through its Line Index.
+fn parsed_effective_ts(parsed: &crate::space_view::ParsedFile, pos: usize) -> Option<f64> {
+    match &parsed.indexed {
+        Some(file) => {
+            let meta = file.meta(pos)?;
+            if meta.flags & crate::index::meta::flags::OWN_TS != 0 || meta.parent_dist > 0 {
+                (meta.ts_us != crate::index::meta::NO_TIME).then(|| crate::index::meta::seconds(meta.ts_us))
+            } else {
+                None
+            }
+        }
+        None => effective_ts_at(&parsed.entries, pos),
+    }
+}
+
 fn effective_ts_at(entries: &[LogEntry], pos: usize) -> Option<f64> {
     let entry = entries.get(pos)?;
     if entry.has_time && entry.timestamp.is_finite() && entry.timestamp > 0.0 {

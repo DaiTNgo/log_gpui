@@ -15,7 +15,7 @@ fn log_lines(n: usize) -> Vec<String> {
 
 #[gpui::test]
 fn raw_sections_share_the_files_breaks(cx: &mut TestAppContext) {
-    let mut h = open_app_with_lines(cx, &log_lines(20));
+    let mut h = common::open_app_with_held_lines(cx, &log_lines(20));
     h.view.update(&mut h.cx, |app, _| {
         let sections = app.raw_sections();
         assert_eq!(sections.len(), 1);

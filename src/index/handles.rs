@@ -42,6 +42,12 @@ impl HandleBudget {
         Arc::new(Self { limit: limit.max(1), open: AtomicUsize::new(0) })
     }
 
+    /// The budget every file source of the app shares.
+    pub fn shared() -> Arc<Self> {
+        static SHARED: std::sync::OnceLock<Arc<HandleBudget>> = std::sync::OnceLock::new();
+        SHARED.get_or_init(Self::for_process).clone()
+    }
+
     /// A budget of what the process may open, less `RESERVED`.
     pub fn for_process() -> Arc<Self> {
         Self::new(process_limit().saturating_sub(RESERVED))

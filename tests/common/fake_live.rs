@@ -47,6 +47,9 @@ pub struct Files {
 /// sources the test sends lines to.
 pub fn open(cx: &mut TestAppContext, names: &[(&str, usize)], count: usize, window: usize) -> Files {
     let mut h = open_app(cx);
+    // These tests send lines that are not in the files: the files are held
+    // in memory, the way Remote files are, not read through a Line Index.
+    h.view.update(&mut h.cx, |app, _| app.index_local_files = false);
     let mut sources = Vec::new();
     for (name, offset) in names {
         let path = h.dir.path().join(format!("{name}.log"));

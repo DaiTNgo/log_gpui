@@ -103,6 +103,8 @@ impl AppView {
     /// Read the Detected Fields of the rows just put in the view, and detect
     /// their Filter columns.
     pub(crate) fn read_detected_fields(&mut self) {
+        // A file read through its Line Index is read again from the file.
+        self.read_indexed_again_if_stale();
         let config = self.line_config();
         let mut read = false;
         for file in &self.view.files {
@@ -128,6 +130,10 @@ impl AppView {
     /// background; the view stays usable meanwhile.
     pub(crate) fn detected_fields_changed(&mut self, cx: &mut Context<Self>) {
         self.schedule_session_save(cx);
+        if self.read_indexed_again_if_stale() {
+            self.start_queued_loads(cx);
+            self.rebuild_open_view_keeping_position(cx);
+        }
         let config = self.line_config();
         self.line_cache.generation += 1;
         let generation = self.line_cache.generation;

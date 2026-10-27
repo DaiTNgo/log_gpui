@@ -213,6 +213,9 @@ pub struct AppView {
     pub(crate) load_queue: Vec<crate::workspace::log_space::LogFile>,
     /// Whether the progress of the reads is being drawn again.
     pub(crate) read_progress_shown: bool,
+    /// Local files are read through their Line Index (off only in tests of
+    /// the held path, which Remote files still take).
+    pub index_local_files: bool,
     /// Bumped whenever rows left or moved in the open view (not when rows
     /// were only added at the end): a scan of the rows before that is stale.
     pub rows_epoch: u64,
@@ -558,6 +561,7 @@ impl AppView {
             loads: HashMap::new(),
             load_queue: Vec::new(),
             read_progress_shown: false,
+            index_local_files: true,
             rows_epoch: 0,
             time_range_generation: 0,
             remote,

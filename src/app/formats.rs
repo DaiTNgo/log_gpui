@@ -71,7 +71,7 @@ impl AppView {
     }
 
     /// The files of `space` and the format each should be read with.
-    fn wanted_formats(&self, space: &LogSpace) -> Vec<(String, Option<String>)> {
+    pub(crate) fn wanted_formats(&self, space: &LogSpace) -> Vec<(String, Option<String>)> {
         space
             .files
             .iter()
@@ -82,6 +82,8 @@ impl AppView {
     /// Read again, now, the cached files of `space` read with another format
     /// than theirs (a file loaded for the first time, a glob that matches).
     pub(crate) fn apply_log_formats(&mut self, space: &LogSpace) {
+        // A file read through its Line Index is read again from the file.
+        self.read_indexed_again_if_stale();
         for (file_id, wanted) in self.wanted_formats(space) {
             let have = self.parsed_files.get(&file_id).map(|p| p.format_id.clone());
             if have.is_none() || have == Some(wanted.clone()) {
@@ -98,6 +100,9 @@ impl AppView {
     /// background, then rebuild the view (time order, Filter columns).
     pub(crate) fn reread_formats(&mut self, cx: &mut Context<Self>) {
         let Some(space) = self.active_space().cloned() else { return };
+        if self.read_indexed_again_if_stale() {
+            self.start_queued_loads(cx);
+        }
         let mut jobs = Vec::new();
         for (file_id, wanted) in self.wanted_formats(&space) {
             let Some(parsed) = self.parsed_files.get(&file_id) else { continue };

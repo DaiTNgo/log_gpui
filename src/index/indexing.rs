@@ -172,6 +172,15 @@ impl Drop for Indexing {
     }
 }
 
+/// Index all of `source` into `indexed` on the calling thread (the work
+/// still runs on every core), stopping soon after `cancel` is set.
+pub fn index_into(source: &dyn LineSource, options: &IndexOptions, indexed: &Indexed, cancel: &AtomicBool) -> Outcome {
+    let (tx, _rx) = async_channel::unbounded();
+    let outcome = run(source, options, indexed, cancel, &tx);
+    *indexed.outcome.lock().unwrap() = Some(outcome.clone());
+    outcome
+}
+
 /// Index all of `source` on the calling thread, the same way.
 pub fn index_all(source: &dyn LineSource, options: &IndexOptions) -> (IndexedData, Outcome) {
     let indexed = Indexed::default();
@@ -264,6 +273,13 @@ fn index_block(block: Block, options: &IndexOptions, locked: bool, overflowed: O
         });
     }
     out
+}
+
+/// Index `bytes`, the lines of the source right after those `data` holds,
+/// into `data`, as Indexing would have.
+pub fn index_more(data: &mut IndexedData, bytes: Vec<u8>, options: &IndexOptions, locked: bool) {
+    let out = index_block(Block { seq: 0, data: bytes }, options, locked, data.filter.overflowed());
+    add_block(data, out);
 }
 
 fn add_block(data: &mut IndexedData, out: BlockOut) {

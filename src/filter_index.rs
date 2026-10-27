@@ -522,14 +522,21 @@ impl FilterIndex {
     /// [`append`](Self::append), in a new order and with new rows among them,
     /// so the earliest and latest time are left as they were.
     pub fn truncate<K: Rows + ?Sized, R: Rows + ?Sized>(&mut self, kept: &K, removed: &R) {
-        debug_assert_eq!(self.rows, kept.len() + removed.len());
+        let parent_row = (0..kept.len()).rev().find(|&r| kept.get(r).is_some_and(|e| e.parent.is_none())).unwrap_or(0);
+        self.truncate_to(kept.len(), parent_row, removed);
+    }
+
+    /// `truncate` to the first `keep` rows, of which the last that is not a
+    /// Continuation Line is `parent_row`.
+    pub fn truncate_to<R: Rows + ?Sized>(&mut self, keep: usize, parent_row: usize, removed: &R) {
+        debug_assert_eq!(self.rows, keep + removed.len());
         for col in &mut self.columns {
-            col.truncate(kept.len(), removed);
+            col.truncate(keep, removed);
         }
-        self.rows = kept.len();
-        self.effective_ts.truncate(kept.len());
+        self.rows = keep;
+        self.effective_ts.truncate(keep);
         self.first_ts = self.effective_ts.iter().copied().find(|t| !t.is_nan());
-        self.parent_row = (0..kept.len()).rev().find(|&r| kept.get(r).is_some_and(|e| e.parent.is_none())).unwrap_or(0);
+        self.parent_row = parent_row;
         self.forget_counts(removed);
     }
 

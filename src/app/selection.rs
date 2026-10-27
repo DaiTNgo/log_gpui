@@ -1,6 +1,5 @@
 //! Logic: selected entry, markers and error navigation.
 
-use crate::rows::Rows as _;
 use super::AppView;
 use crate::model::LogLevel;
 use gpui::Context;
@@ -46,14 +45,23 @@ impl AppView {
                     .get(&section.file_id)
                     .filter(|_| !self.raw.edited.contains(&section.file_id));
                 if let Some(parsed) = parsed {
-                    let entries = &parsed.entries;
-                    let start = entries.partition_point(|e| e.index < current.line);
-                    let is_parent = entries
-                        .get(start)
-                        .is_some_and(|e| e.index == current.line && !e.is_continuation());
-                    if is_parent {
-                        for e in entries[start + 1..].iter().take_while(|e| e.is_continuation()) {
-                            if let Some(t) = section.lines.get(e.index - 1) {
+                    let file = parsed.file_entries();
+                    let number = |pos: usize| file.line_number(pos).map(|(n, _)| n);
+                    let start = {
+                        let (mut lo, mut hi) = (0, file.len());
+                        while lo < hi {
+                            let mid = lo + (hi - lo) / 2;
+                            if number(mid).is_some_and(|n| n < current.line) {
+                                lo = mid + 1;
+                            } else {
+                                hi = mid;
+                            }
+                        }
+                        lo
+                    };
+                    if number(start) == Some(current.line) && !file.continues(start) {
+                        for pos in (start + 1..file.len()).take_while(|&p| file.continues(p)) {
+                            if let Some(t) = number(pos).and_then(|n| section.lines.get(n - 1)) {
                                 lines.push(t.to_string());
                             }
                         }

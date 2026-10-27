@@ -114,7 +114,7 @@ fn send(tx: &async_channel::Sender<SourceEvent>, lines: Vec<String>) {
 
 #[gpui::test]
 fn incremental_batches_equal_a_full_refresh(cx: &mut TestAppContext) {
-    let mut h = common::open_app_with_lines(cx, &file_lines(0..60));
+    let mut h = common::open_app_with_held_lines(cx, &file_lines(0..60));
     let (tx, _) = fake_source(&mut h);
     h.view.update(&mut h.cx, |app, cx| {
         let color = log_gpui::palette::next_rule_color(0);
@@ -145,7 +145,7 @@ fn incremental_batches_equal_a_full_refresh(cx: &mut TestAppContext) {
 
 #[gpui::test]
 fn the_same_with_the_find_filter_on(cx: &mut TestAppContext) {
-    let mut h = common::open_app_with_lines(cx, &file_lines(0..60));
+    let mut h = common::open_app_with_held_lines(cx, &file_lines(0..60));
     let (tx, _) = fake_source(&mut h);
     h.view.update(&mut h.cx, |app, cx| {
         app.trigger_search_query("user=4 || ERROR", cx);
@@ -179,7 +179,7 @@ fn the_same_with_the_find_filter_on(cx: &mut TestAppContext) {
 
 #[gpui::test]
 fn the_same_without_search_or_filter_and_with_a_time_range(cx: &mut TestAppContext) {
-    let mut h = common::open_app_with_lines(cx, &file_lines(0..30));
+    let mut h = common::open_app_with_held_lines(cx, &file_lines(0..30));
     let (tx, _) = fake_source(&mut h);
     h.view.update(&mut h.cx, |app, cx| {
         app.filter_state.set_time_range("10:00:20", "");

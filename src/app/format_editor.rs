@@ -173,7 +173,9 @@ impl AppView {
     fn sample_line(&self, space_id: &str, file_id: Option<&str>) -> Option<String> {
         let space = self.active_project()?.log_spaces.iter().find(|s| s.id == space_id)?;
         let first = |id: &str| {
-            self.parsed_files.get(id)?.entries.iter().find(|e| !e.is_continuation()).map(|e| e.raw_line.to_string())
+            let lines = self.parsed_files.get(id)?.file_entries();
+            let at = (0..lines.len()).find(|&i| !lines.continues(i))?;
+            lines.get(at).map(|e| e.raw_line.to_string())
         };
         match file_id {
             Some(id) => first(id),
