@@ -3,7 +3,7 @@ use log_gpui::workspace::log_space::{AddCommandError, LogFile, LogSpace, LogSpac
 use serde_json::json;
 
 fn remote_space() -> LogSpace {
-    LogSpace::new("s1".into(), "Checkout".into(), LogSpaceKind::Remote)
+    LogSpace::new("s1".into(), "Checkout".into(), LogSpaceKind::Live)
 }
 
 fn command(server: &str, text: &str) -> (String, String, String, Option<PresetFields>) {
@@ -42,7 +42,7 @@ fn the_same_command_on_the_same_server_is_added_once() {
 
 #[test]
 fn only_a_remote_log_space_takes_commands() {
-    for kind in [LogSpaceKind::Imported, LogSpaceKind::Scratch] {
+    for kind in [LogSpaceKind::Static, LogSpaceKind::Scratch] {
         let mut space = LogSpace::new("s".into(), "x".into(), kind);
         assert_eq!(space.add_remote_commands(&[command("srv-1", "date")]), Err(AddCommandError::WrongKind));
         assert!(space.files.is_empty());

@@ -45,7 +45,7 @@ fn texts() -> Vec<(&'static str, String)> {
 }
 
 fn space(files: &[(&str, String)]) -> LogSpace {
-    let mut space = LogSpace::new("s".into(), "Payment".into(), LogSpaceKind::Imported);
+    let mut space = LogSpace::new("s".into(), "Payment".into(), LogSpaceKind::Static);
     let paths: Vec<String> = files.iter().map(|(p, _)| p.to_string()).collect();
     space.add_imported_files(&paths).unwrap();
     space

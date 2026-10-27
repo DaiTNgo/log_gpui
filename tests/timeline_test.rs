@@ -106,7 +106,7 @@ fn each_file_keeps_its_own_line_order_even_when_it_goes_back_in_time() {
 // ─── Columns and the Filter index ────────────────────────────────────────────
 
 fn space_with(files: &[(&str, &str)]) -> (LogSpace, HashMap<String, ParsedFile>) {
-    let mut space = LogSpace::new("s".into(), "Payment".into(), LogSpaceKind::Imported);
+    let mut space = LogSpace::new("s".into(), "Payment".into(), LogSpaceKind::Static);
     let paths: Vec<String> = files.iter().map(|(p, _)| p.to_string()).collect();
     space.add_imported_files(&paths).unwrap();
     let parsed = files

@@ -121,7 +121,7 @@ fn an_archive_entry_is_read_from_its_unpacked_file_and_goes_with_its_space(cx: &
     tar_gz(&archive, &[("app.log", b"2026-09-05 10:00:00 [INFO] [a] one\n2026-09-05 10:00:01 [WARN] [a] two\n")]);
     let source = ImportSource::Entry { archive: archive.to_string_lossy().into_owned(), entry: "app.log".into() };
     h.view.update(&mut h.cx, |app, cx| {
-        app.create_log_space("Bundle", LogSpaceKind::Imported, &[source], cx);
+        app.create_log_space("Bundle", LogSpaceKind::Static, &[source], cx);
     });
     h.cx.run_until_parked();
     let (root, space_id) = h.view.read_with(&h.cx, |app, _| {

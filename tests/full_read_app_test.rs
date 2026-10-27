@@ -312,7 +312,7 @@ fn the_dialog_lists_rotated_files_estimates_and_opens_the_ticked_ones(cx: &mut T
         assert!(app.remote.full_dialog.is_none());
         let space = last_space(app);
         assert_eq!(space.name, "Checkout (full)");
-        assert_eq!(space.kind, log_gpui::workspace::log_space::LogSpaceKind::Imported);
+        assert_eq!(space.kind, log_gpui::workspace::log_space::LogSpaceKind::Static);
         assert_eq!(space.files.len(), 1);
     });
 }

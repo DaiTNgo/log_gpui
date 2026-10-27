@@ -165,7 +165,7 @@ impl AppView {
     /// line, or the only Remote File of the open Log Space.
     pub fn request_open_in_full(&mut self, file_id: &str, cx: &mut Context<Self>) {
         let space_id = self.active_project().and_then(|p| {
-            p.log_spaces.iter().find(|s| s.kind == LogSpaceKind::Remote && s.has_file(file_id)).map(|s| s.id.clone())
+            p.log_spaces.iter().find(|s| s.kind == LogSpaceKind::Live && s.has_file(file_id)).map(|s| s.id.clone())
         });
         match space_id {
             Some(space_id) => self.open_in_full_file(&space_id, file_id, cx),

@@ -22,7 +22,7 @@ fn a_file_is_read_in_the_background(cx: &mut TestAppContext) {
     let mut h = open_app(cx);
     let source = log_file(&h, "a.log", 500);
     h.view.update(&mut h.cx, |app, cx| {
-        app.create_log_space("A", LogSpaceKind::Imported, &[source], cx);
+        app.create_log_space("A", LogSpaceKind::Static, &[source], cx);
         // Nothing waited for the file: it is being read.
         assert!(app.is_reading());
         assert!(app.view.is_empty());
@@ -44,11 +44,11 @@ fn a_file_is_read_in_the_background(cx: &mut TestAppContext) {
 fn leaving_a_tab_while_it_reads_drops_the_read(cx: &mut TestAppContext) {
     let mut h = open_app(cx);
     let (a, b) = (log_file(&h, "a.log", 50), log_file(&h, "b.log", 50));
-    h.view.update(&mut h.cx, |app, cx| app.create_log_space("A", LogSpaceKind::Imported, &[a], cx));
+    h.view.update(&mut h.cx, |app, cx| app.create_log_space("A", LogSpaceKind::Static, &[a], cx));
     h.cx.run_until_parked();
     let a_ids: Vec<String> = h.view.read_with(&h.cx, |app, _| app.parsed_files.keys().cloned().collect());
     h.view.update(&mut h.cx, |app, cx| {
-        app.create_log_space("B", LogSpaceKind::Imported, &[b], cx);
+        app.create_log_space("B", LogSpaceKind::Static, &[b], cx);
         assert!(app.is_reading());
         // Back to the first tab before b.log is read.
         let first = app
@@ -79,7 +79,7 @@ fn a_file_that_cannot_be_read_says_why(cx: &mut TestAppContext) {
     let mut h = open_app(cx);
     let source = log_file(&h, "gone.log", 3);
     std::fs::remove_file(h.dir.path().join("gone.log")).unwrap();
-    h.view.update(&mut h.cx, |app, cx| app.create_log_space("Gone", LogSpaceKind::Imported, &[source], cx));
+    h.view.update(&mut h.cx, |app, cx| app.create_log_space("Gone", LogSpaceKind::Static, &[source], cx));
     h.cx.run_until_parked();
     h.view.read_with(&h.cx, |app, _| {
         assert!(matches!(app.empty_canvas(), Some(EmptyCanvas::LoadFailed { .. })), "{:?}", app.empty_canvas());
@@ -114,7 +114,7 @@ fn append(h: &Harness, name: &str, text: &str) {
 fn a_local_file_is_followed_through_its_line_index(cx: &mut TestAppContext) {
     let mut h = open_app(cx);
     let source = log_file(&h, "a.log", 100);
-    h.view.update(&mut h.cx, |app, cx| app.create_log_space("A", LogSpaceKind::Imported, &[source], cx));
+    h.view.update(&mut h.cx, |app, cx| app.create_log_space("A", LogSpaceKind::Static, &[source], cx));
     h.cx.run_until_parked();
     h.view.read_with(&h.cx, |app, _| {
         let parsed = app.parsed_files.values().next().unwrap();
@@ -157,7 +157,7 @@ fn a_local_file_is_followed_through_its_line_index(cx: &mut TestAppContext) {
 fn a_rotated_local_file_is_read_again(cx: &mut TestAppContext) {
     let mut h = open_app(cx);
     let source = log_file(&h, "a.log", 20);
-    h.view.update(&mut h.cx, |app, cx| app.create_log_space("A", LogSpaceKind::Imported, &[source], cx));
+    h.view.update(&mut h.cx, |app, cx| app.create_log_space("A", LogSpaceKind::Static, &[source], cx));
     h.cx.run_until_parked();
     pump_until(&mut h, "the source is live", |app| {
         app.live_file_statuses().iter().all(|(_, s)| *s == log_gpui::live::SourceStatus::Live)

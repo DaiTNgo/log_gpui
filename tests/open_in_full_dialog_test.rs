@@ -64,7 +64,7 @@ fn many_log_spaces_scroll_and_open_stays_on_screen(cx: &mut TestAppContext) {
     h.view.update(&mut h.cx, |app, _| {
         let project = app.workspace_state.active_project_mut().unwrap();
         for i in 1..=40 {
-            project.create_log_space(&format!("Imported {i}"), log_gpui::workspace::log_space::LogSpaceKind::Imported).unwrap();
+            project.create_log_space(&format!("Imported {i}"), log_gpui::workspace::log_space::LogSpaceKind::Static).unwrap();
         }
     });
     open_dialog(&mut h);

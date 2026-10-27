@@ -84,7 +84,7 @@ fn open_app_with_lines_as(cx: &mut TestAppContext, lines: &[String], indexed: bo
     std::fs::write(&path, lines.join("\n")).unwrap();
     let source = ImportSource::Disk(path.to_string_lossy().into_owned());
     h.view.update(&mut h.cx, |app, cx| {
-        app.create_log_space("Test", LogSpaceKind::Imported, &[source], cx);
+        app.create_log_space("Test", LogSpaceKind::Static, &[source], cx);
     });
     h.cx.run_until_parked();
     h

@@ -153,7 +153,7 @@ fn test_remove_log_space_closes_its_tabs() {
     let mut ws = WorkspaceState::new();
     ws.create_project("P", ProjectColorAccent::Blue);
     let p = ws.active_project_mut().unwrap();
-    let id = p.create_log_space("Payment", LogSpaceKind::Imported).unwrap().id.clone();
+    let id = p.create_log_space("Payment", LogSpaceKind::Static).unwrap().id.clone();
     p.log_space_mut(&id)
         .unwrap()
         .add_imported_files(&["/var/log/api.log".to_string()])

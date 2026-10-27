@@ -1,9 +1,11 @@
 //! Log Space: a named group of log files inside a Project.
 //!
-//! A Log Space is either *Imported* (files picked from disk, read-only) or
-//! *Scratch* (files the app creates in its own data folder, editable in the
-//! Raw View). The kind is a property of the space, so "Imported and Scratch
-//! never mix" is enforced by the operations below rather than by convention.
+//! A Log Space is *Static* (a fixed import of files on disk, Archive
+//! Entries or Remote Copies), *Live* (local files and Remote Files followed
+//! as they are written) or *Scratch* (files the app creates in its own data
+//! folder, editable in the Raw View). The kind is a property of the space,
+//! so which files a kind holds is enforced by the operations below rather
+//! than by convention.
 
 use crate::filter::FilterState;
 use crate::local_path::{self, PathStyle};
@@ -148,8 +150,8 @@ impl RemoteRef {
     }
 }
 
-/// A log file belonging to a Log Space. For an Imported space the file on
-/// disk is never modified or deleted; for a Scratch space it lives in the
+/// A log file belonging to a Log Space. For a Static or Live space the file
+/// on disk is never modified or deleted; for a Scratch space it lives in the
 /// app's data folder.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LogFile {
@@ -504,10 +506,15 @@ impl LogFile {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum LogSpaceKind {
-    Imported,
+    /// A fixed import: files on disk, Archive Entries and Remote Copies,
+    /// shown as they are on disk; read-only. Saved as `Imported` before.
+    #[serde(alias = "Imported")]
+    Static,
     Scratch,
-    /// Files on Servers, read live over SSH; read-only.
-    Remote,
+    /// Local files and Remote Files, followed as they are written;
+    /// read-only. Saved as `Remote` before.
+    #[serde(alias = "Remote")]
+    Live,
 }
 
 /// How the files of a Log Space are ordered everywhere: sidebar, File
@@ -546,7 +553,7 @@ pub enum RemoveFileError {
     LastScratchFile,
 }
 
-/// What to import into an Imported Log Space.
+/// What to import into a Static Log Space.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ImportSource {
     Disk(String),
@@ -803,7 +810,7 @@ impl LogSpace {
     /// Add a Remote Copy (from `LogFile::remote_copy`) to an Imported Log
     /// Space. It comes only through Open in full.
     pub fn add_remote_copy(&mut self, mut file: LogFile) -> Result<String, WrongKind> {
-        if self.kind != LogSpaceKind::Imported || !file.is_remote_copy() {
+        if self.kind != LogSpaceKind::Static || !file.is_remote_copy() {
             return Err(WrongKind);
         }
         file.added_seq = self.take_seq();
@@ -822,7 +829,7 @@ impl LogSpace {
     /// Import files and Archive Entries. A source the space already holds
     /// (same path, or same Archive and entry) is skipped and reported by name.
     pub fn add_imported_sources(&mut self, sources: &[ImportSource]) -> Result<ImportOutcome, WrongKind> {
-        if self.kind != LogSpaceKind::Imported {
+        if self.kind != LogSpaceKind::Static {
             return Err(WrongKind);
         }
         let mut outcome = ImportOutcome::default();
@@ -882,7 +889,7 @@ impl LogSpace {
         server_name: &str,
         target: RemoteTarget,
     ) -> Result<(), EditError> {
-        if self.kind != LogSpaceKind::Remote {
+        if self.kind != LogSpaceKind::Live {
             return Err(EditError::WrongKind);
         }
         let Some(current) = self.file(file_id) else { return Err(EditError::NotFound) };
@@ -950,7 +957,7 @@ impl LogSpace {
         pattern: &str,
         plan: &GlobEditPlan,
     ) -> Result<Vec<LogFile>, EditError> {
-        if self.kind != LogSpaceKind::Remote {
+        if self.kind != LogSpaceKind::Live {
             return Err(EditError::WrongKind);
         }
         let Some(glob) = self.glob(glob_id) else { return Err(EditError::NotFound) };
@@ -984,7 +991,7 @@ impl LogSpace {
     /// its name. A path a Live Glob of the same Server had excluded is taken
     /// off its exclusions and comes back as one of that glob's files.
     pub fn add_remote_files(&mut self, files: &[(String, String, String)]) -> Result<ImportOutcome, WrongKind> {
-        if self.kind != LogSpaceKind::Remote {
+        if self.kind != LogSpaceKind::Live {
             return Err(WrongKind);
         }
         let mut outcome = ImportOutcome::default();
@@ -1013,7 +1020,7 @@ impl LogSpace {
     /// Add a Live Glob on a Server: `dir` is an existing folder and `pattern`
     /// has the glob characters. Returns its id.
     pub fn add_live_glob(&mut self, server_id: &str, dir: &str, pattern: &str) -> Result<String, AddGlobError> {
-        if self.kind != LogSpaceKind::Remote {
+        if self.kind != LogSpaceKind::Live {
             return Err(AddGlobError::WrongKind);
         }
         if self.globs.iter().any(|g| g.server_id == server_id && g.dir == dir && g.pattern == pattern) {
@@ -1120,7 +1127,7 @@ impl LogSpace {
         &mut self,
         commands: &[(String, String, String, Option<PresetFields>)],
     ) -> Result<ImportOutcome, AddCommandError> {
-        if self.kind != LogSpaceKind::Remote {
+        if self.kind != LogSpaceKind::Live {
             return Err(AddCommandError::WrongKind);
         }
         let mut outcome = ImportOutcome::default();

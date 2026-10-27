@@ -181,7 +181,7 @@ fn picker_remembers_the_last_folder_sorts_filters_and_adds_on_two_servers(cx: &m
     let space_id = space_id.expect("space created");
     h.view.read_with(&h.cx, |app, _| {
         let space = app.workspace_state.active_project().unwrap().log_space(&space_id).unwrap();
-        assert_eq!(space.kind, LogSpaceKind::Remote);
+        assert_eq!(space.kind, LogSpaceKind::Live);
         assert_eq!(space.globs.len(), 2);
     });
 }

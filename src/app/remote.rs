@@ -408,7 +408,7 @@ impl AppView {
     /// first Server needing a secret, or the files to Reconnect.
     pub fn connect_button(&self) -> Option<(String, ConnectAction)> {
         let space = self.active_space()?;
-        if space.kind != LogSpaceKind::Remote {
+        if space.kind != LogSpaceKind::Live {
             return None;
         }
         for file in &space.files {
@@ -895,7 +895,7 @@ impl AppView {
                         _ => crate::workspace::log_space::ImportSource::Disk(path),
                     })
                     .collect();
-                self.create_log_space(&name, LogSpaceKind::Imported, &sources, cx);
+                self.create_log_space(&name, LogSpaceKind::Static, &sources, cx);
             }
         }
         cx.notify();

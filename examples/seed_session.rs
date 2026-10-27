@@ -32,7 +32,7 @@ fn main() {
         let mut store = ServerStore::default();
         let id = store.save(server).unwrap();
         store.save_to(&base.join("servers.json")).unwrap();
-        let space = project.create_log_space("Remote", LogSpaceKind::Remote).unwrap();
+        let space = project.create_log_space("Remote", LogSpaceKind::Live).unwrap();
         let triples: Vec<_> = files.iter().map(|p| (id.clone(), "web1".to_string(), p.clone())).collect();
         space.add_remote_files(&triples).unwrap();
         // `SEED_REMOTE_COMMANDS="cmd one;;cmd two"` adds Remote Commands.
@@ -49,7 +49,7 @@ fn main() {
         let mut ids = Vec::new();
         for file in &files {
             let name = std::path::Path::new(file).file_name().unwrap().to_string_lossy().into_owned();
-            let space = project.create_log_space(&name, LogSpaceKind::Imported).unwrap();
+            let space = project.create_log_space(&name, LogSpaceKind::Static).unwrap();
             space.add_imported_files(std::slice::from_ref(file)).unwrap();
             ids.push(space.id.clone());
         }
@@ -58,7 +58,7 @@ fn main() {
         }
         ids[0].clone()
     } else {
-        let space = project.create_log_space("Live", LogSpaceKind::Imported).unwrap();
+        let space = project.create_log_space("Live", LogSpaceKind::Static).unwrap();
         space.add_imported_files(&files).unwrap();
         space.id.clone()
     };

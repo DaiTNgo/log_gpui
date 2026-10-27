@@ -491,7 +491,7 @@ fn markers_round_trip_through_the_file_descriptor() {
 
 #[test]
 fn a_log_space_and_each_file_view_have_their_own_filter() {
-    let mut space = LogSpace::new("s".into(), "Payment".into(), LogSpaceKind::Imported);
+    let mut space = LogSpace::new("s".into(), "Payment".into(), LogSpaceKind::Static);
     space.add_imported_files(&["/a.log".to_string(), "/b.log".to_string()]).unwrap();
     space.filter.toggle_value("level", "ERROR");
 

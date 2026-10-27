@@ -64,7 +64,7 @@ fn the_kind_follows_the_files_and_the_label_says_so() {
     assert_eq!(form.create_label(), "Create empty");
 
     form.push("/a.log".into(), PendingStatus::Ok);
-    assert_eq!(form.kind(), LogSpaceKind::Imported);
+    assert_eq!(form.kind(), LogSpaceKind::Static);
     assert_eq!(form.create_label(), "Create with 1 file");
 
     form.push("/b.log".into(), PendingStatus::Ok);

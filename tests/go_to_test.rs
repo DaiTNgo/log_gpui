@@ -171,7 +171,7 @@ fn file_and_line_picks_the_file(cx: &mut TestAppContext) {
         sources.push(log_gpui::workspace::log_space::ImportSource::Disk(path.to_string_lossy().into_owned()));
     }
     h.view.update(&mut h.cx, |app, cx| {
-        app.create_log_space("Two", log_gpui::workspace::log_space::LogSpaceKind::Imported, &sources, cx);
+        app.create_log_space("Two", log_gpui::workspace::log_space::LogSpaceKind::Static, &sources, cx);
     });
     h.cx.run_until_parked();
     go_to_line(&mut h, "b.log:5");

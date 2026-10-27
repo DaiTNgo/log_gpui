@@ -18,7 +18,7 @@ fn log_file(h: &Harness, name: &str, lines: usize) -> ImportSource {
 
 fn new_space(h: &mut Harness, name: &str, files: &[ImportSource]) -> String {
     h.view.update(&mut h.cx, |app, cx| {
-        app.create_log_space(name, LogSpaceKind::Imported, files, cx);
+        app.create_log_space(name, LogSpaceKind::Static, files, cx);
     });
     h.cx.run_until_parked();
     active_space(h)

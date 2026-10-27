@@ -115,7 +115,7 @@ fn app_probe(n: usize) {
     let source = ImportSource::Disk(path.to_string_lossy().into_owned());
     let rss_before = rss_mb();
     time("app open Log Space", || {
-        h.view.update(&mut h.cx, |app, cx| app.create_log_space("Probe", LogSpaceKind::Imported, &[source], cx));
+        h.view.update(&mut h.cx, |app, cx| app.create_log_space("Probe", LogSpaceKind::Static, &[source], cx));
         h.cx.run_until_parked();
     });
     let rows = h.view.read_with(&h.cx, |app, _| app.view.len());

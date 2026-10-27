@@ -332,7 +332,7 @@ impl AppView {
         self.persist_active_session();
         let space_id = {
             let project = self.active_project_mut()?;
-            let space = match project.create_log_space(name, LogSpaceKind::Remote) {
+            let space = match project.create_log_space(name, LogSpaceKind::Live) {
                 Ok(space) => space,
                 Err(e) => {
                     self.notice = Some(e.message().to_string());
@@ -375,12 +375,12 @@ impl AppView {
                 }
             };
             match kind {
-                LogSpaceKind::Imported => {
+                LogSpaceKind::Static => {
                     if let Ok(outcome) = space.add_imported_sources(sources) {
                         skipped = outcome.skipped;
                     }
                 }
-                LogSpaceKind::Remote => {}
+                LogSpaceKind::Live => {}
                 LogSpaceKind::Scratch => {
                     let dir = scratch_dir_for(&space.id);
                     if let Ok(file) = space.new_scratch_file(&dir) {

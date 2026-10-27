@@ -136,7 +136,7 @@ fn match_counts_skip_continuation_lines() {
 
 #[test]
 fn a_rule_can_use_the_source_column_of_a_log_space() {
-    let mut space = LogSpace::new("s".into(), "s".into(), LogSpaceKind::Imported);
+    let mut space = LogSpace::new("s".into(), "s".into(), LogSpaceKind::Static);
     space.add_imported_files(&["/a.log".to_string(), "/worker.log".to_string()]).unwrap();
     let mut parsed = HashMap::new();
     parsed.insert("/a.log".to_string(), ParsedFile::from_text("2026-10-18 10:00:01 [INFO] [A] one\n"));

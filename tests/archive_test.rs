@@ -200,7 +200,7 @@ fn entry(archive: &str, name: &str) -> ImportSource {
 
 #[test]
 fn adding_an_archive_again_only_adds_new_entries() {
-    let mut space = LogSpace::new("s".into(), "S".into(), LogSpaceKind::Imported);
+    let mut space = LogSpace::new("s".into(), "S".into(), LogSpaceKind::Static);
     space.add_imported_sources(&[entry("/b.zip", "app.log")]).unwrap();
     let outcome = space
         .add_imported_sources(&[entry("/b.zip", "app.log"), entry("/b.zip", "db.log")])
@@ -212,7 +212,7 @@ fn adding_an_archive_again_only_adds_new_entries() {
 
 #[test]
 fn the_same_entry_name_in_another_archive_is_added() {
-    let mut space = LogSpace::new("s".into(), "S".into(), LogSpaceKind::Imported);
+    let mut space = LogSpace::new("s".into(), "S".into(), LogSpaceKind::Static);
     space.add_imported_sources(&[entry("/a.zip", "app.log")]).unwrap();
     let outcome = space.add_imported_sources(&[entry("/b.zip", "app.log")]).unwrap();
     assert_eq!(outcome.added.len(), 1);

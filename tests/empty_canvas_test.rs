@@ -13,7 +13,7 @@ fn empty_canvas(h: &mut Harness) -> Option<EmptyCanvas> {
 
 fn create_space(h: &mut Harness, sources: &[ImportSource]) {
     h.view.update(&mut h.cx, |app, cx| {
-        app.create_log_space("Test", LogSpaceKind::Imported, sources, cx);
+        app.create_log_space("Test", LogSpaceKind::Static, sources, cx);
     });
     h.cx.run_until_parked();
 }

@@ -374,7 +374,7 @@ impl NewLogSpaceForm {
         if self.importable_sources().is_empty() {
             LogSpaceKind::Scratch
         } else {
-            LogSpaceKind::Imported
+            LogSpaceKind::Static
         }
     }
 

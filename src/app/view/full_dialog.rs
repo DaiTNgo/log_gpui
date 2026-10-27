@@ -88,7 +88,7 @@ impl AppView {
             .map(|p| {
                 p.log_spaces
                     .iter()
-                    .filter(|s| s.kind == LogSpaceKind::Imported)
+                    .filter(|s| s.kind == LogSpaceKind::Static)
                     .map(|s| (s.id.clone(), s.name.clone()))
                     .collect()
             })

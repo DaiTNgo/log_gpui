@@ -69,7 +69,7 @@ impl AppView {
             return Some(if log_space_open { EmptyCanvas::NoFiles { can_add: false } } else { EmptyCanvas::NoLogSpace });
         };
         if space.files.is_empty() {
-            return Some(EmptyCanvas::NoFiles { can_add: space.kind == LogSpaceKind::Imported });
+            return Some(EmptyCanvas::NoFiles { can_add: space.kind == LogSpaceKind::Static });
         }
         if !self.view.is_empty() {
             return None;
@@ -333,7 +333,7 @@ impl AppView {
             }
             match space.kind {
                 LogSpaceKind::Scratch => self.ensure_file_loaded(file),
-                LogSpaceKind::Remote => {
+                LogSpaceKind::Live => {
                     self.ensure_remote_file_loaded(&file.file_id, &file.display_name, file.is_remote_command())
                 }
                 _ => self.ensure_live_file_loaded(file),
@@ -634,7 +634,7 @@ impl AppView {
         self.ensure_space_loaded(space);
         let mut session = TabSessionState::new();
         session.mode = match space.kind {
-            LogSpaceKind::Imported | LogSpaceKind::Remote => ViewMode::Parsed,
+            LogSpaceKind::Static | LogSpaceKind::Live => ViewMode::Parsed,
             LogSpaceKind::Scratch => {
                 let empty = space.files.iter().all(|f| {
                     self.parsed_files

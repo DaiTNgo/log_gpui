@@ -10,7 +10,7 @@ fn three_tabs(cx: &mut TestAppContext) -> common::Harness {
         let path = h.dir.path().join(format!("{name}.log"));
         std::fs::write(&path, common::sample_lines(3).join("\n")).unwrap();
         let source = ImportSource::Disk(path.to_string_lossy().into_owned());
-        h.view.update(&mut h.cx, |app, cx| app.create_log_space(name, LogSpaceKind::Imported, &[source], cx));
+        h.view.update(&mut h.cx, |app, cx| app.create_log_space(name, LogSpaceKind::Static, &[source], cx));
         h.cx.run_until_parked();
     }
     h

@@ -15,7 +15,7 @@ fn remote_space(h: &mut Harness, auth: AuthMethod, remember: bool) -> (String, S
         server.remember_secret = remember;
         let server_id = app.remote.servers.save(server).unwrap();
         *app.remote.shared_servers.lock().unwrap() = app.remote.servers.clone();
-        let space_id = app.create_log_space("Remote", LogSpaceKind::Remote, &[], cx).unwrap();
+        let space_id = app.create_log_space("Remote", LogSpaceKind::Live, &[], cx).unwrap();
         app.add_remote_files_to_space(&space_id, vec![(server_id.clone(), "box".into(), "/var/log/app.log".into())], cx);
         let space = app.workspace_state.projects.iter().find_map(|p| p.log_space(&space_id)).unwrap();
         let file_id = space.files[0].file_id.clone();

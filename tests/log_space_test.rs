@@ -11,7 +11,7 @@ fn project() -> Project {
 }
 
 fn imported(paths: &[&str]) -> LogSpace {
-    let mut space = LogSpace::new("s".into(), "Payment".into(), LogSpaceKind::Imported);
+    let mut space = LogSpace::new("s".into(), "Payment".into(), LogSpaceKind::Static);
     let paths: Vec<String> = paths.iter().map(|p| p.to_string()).collect();
     space.add_imported_files(&paths).unwrap();
     space
@@ -33,7 +33,7 @@ fn duplicate_names_are_refused_after_trimming() {
     p.create_log_space("Payment", LogSpaceKind::Scratch).unwrap();
     assert!(p.has_space_named(" Payment "));
     assert_eq!(
-        p.create_log_space(" Payment ", LogSpaceKind::Imported).err(),
+        p.create_log_space(" Payment ", LogSpaceKind::Static).err(),
         Some(SpaceNameError::Duplicate)
     );
     assert_eq!(p.log_spaces.len(), 1);
@@ -187,7 +187,7 @@ fn the_source_column_defaults_to_two_or_more_files() {
 #[test]
 fn opening_a_view_twice_focuses_the_existing_tab() {
     let mut p = project();
-    let id = p.create_log_space("Payment", LogSpaceKind::Imported).unwrap().id.clone();
+    let id = p.create_log_space("Payment", LogSpaceKind::Static).unwrap().id.clone();
     p.log_space_mut(&id).unwrap().add_imported_files(&["/a.log".to_string()]).unwrap();
 
     assert!(p.open_log_space(&id, TabSessionState::new()).is_some());
@@ -204,7 +204,7 @@ fn opening_a_view_twice_focuses_the_existing_tab() {
 #[test]
 fn removing_a_file_closes_its_file_view() {
     let mut p = project();
-    let id = p.create_log_space("Payment", LogSpaceKind::Imported).unwrap().id.clone();
+    let id = p.create_log_space("Payment", LogSpaceKind::Static).unwrap().id.clone();
     p.log_space_mut(&id)
         .unwrap()
         .add_imported_files(&["/a.log".to_string(), "/b.log".to_string()])
@@ -268,7 +268,7 @@ fn a_line_with_several_markers_loses_them_all_when_edited() {
 // ─── Live Globs ──────────────────────────────────────────────────────────────
 
 fn remote_space() -> LogSpace {
-    LogSpace::new("r".into(), "Prod".into(), LogSpaceKind::Remote)
+    LogSpace::new("r".into(), "Prod".into(), LogSpaceKind::Live)
 }
 
 fn remote(sid: &str, path: &str) -> (String, String, String) {
@@ -398,7 +398,7 @@ mod edit {
     use log_gpui::workspace::log_space::{EditError, GlobEditPlan, RemoteTarget};
 
     fn space() -> LogSpace {
-        LogSpace::new("r".into(), "Checkout".into(), LogSpaceKind::Remote)
+        LogSpace::new("r".into(), "Checkout".into(), LogSpaceKind::Live)
     }
 
     fn file_target(path: &str) -> RemoteTarget {
@@ -619,7 +619,7 @@ fn only_several_files_or_a_live_glob_show_a_group() {
     assert!(two.shows_group());
     assert!(two.single_file().is_none());
 
-    let mut glob = LogSpace::new("g".into(), "Globbed".into(), LogSpaceKind::Remote);
+    let mut glob = LogSpace::new("g".into(), "Globbed".into(), LogSpaceKind::Live);
     glob.add_live_glob("s1", "/var/log/app", "*.log").unwrap();
     assert!(glob.shows_group());
     assert!(glob.single_file().is_none());

@@ -21,7 +21,7 @@ fn build_workspace() -> WorkspaceState {
     let mut ws = WorkspaceState::new();
     ws.create_project("Payment Service", ProjectColorAccent::Blue);
     let proj = ws.active_project_mut().unwrap();
-    let space = proj.create_log_space("Payment", LogSpaceKind::Imported).unwrap();
+    let space = proj.create_log_space("Payment", LogSpaceKind::Static).unwrap();
     space.add_imported_files(&["/tmp/api.log".to_string()]).unwrap();
     space.filter.toggle_value("level", "WARN");
     space.filter.add_custom("module", "pay");
@@ -70,7 +70,7 @@ fn test_manifest_round_trips_project_and_working_set() {
     assert_eq!(project.log_spaces.len(), 1);
     let space = &project.log_spaces[0];
     assert_eq!(space.name, "Payment");
-    assert_eq!(space.kind, LogSpaceKind::Imported);
+    assert_eq!(space.kind, LogSpaceKind::Static);
     assert_eq!(space.files.len(), 1);
     assert_eq!(space.files[0].file_id, "/tmp/api.log");
 
@@ -227,7 +227,7 @@ fn test_workspaces_remain_isolated_after_round_trip() {
     let mut ws = WorkspaceState::new();
     ws.create_project("a", ProjectColorAccent::Blue);
     let proj = ws.active_project_mut().unwrap();
-    let id = proj.create_log_space("Shared", LogSpaceKind::Imported).unwrap().id.clone();
+    let id = proj.create_log_space("Shared", LogSpaceKind::Static).unwrap().id.clone();
     proj.log_space_mut(&id).unwrap().add_imported_files(&["/shared.log".to_string()]).unwrap();
     let _ = proj.open_file_view(&id, "/shared.log", TabSessionState::new());
 
@@ -432,4 +432,21 @@ fn test_phrase_colors_default_on_survive_a_restart_and_old_manifests_load_on() {
     value.as_object_mut().unwrap().remove("phrase_colors");
     let old = SessionManifest::from_json(&value.to_string()).unwrap().into_workspace();
     assert!(old.phrase_colors);
+}
+
+#[test]
+fn a_session_saved_with_the_old_kinds_opens_as_static_and_live() {
+    let mut ws = build_workspace();
+    let proj = ws.active_project_mut().unwrap();
+    proj.create_log_space("Checkout", LogSpaceKind::Live).unwrap();
+    let json = SessionManifest::from_workspace(&ws).to_json().unwrap();
+    assert!(json.contains("\"kind\": \"Static\"") && json.contains("\"kind\": \"Live\""), "{json}");
+    let old = json.replace("\"kind\": \"Static\"", "\"kind\": \"Imported\"").replace("\"kind\": \"Live\"", "\"kind\": \"Remote\"");
+
+    let restored = SessionManifest::from_json(&old).unwrap().into_workspace();
+    let kinds: Vec<(String, LogSpaceKind)> =
+        restored.projects[0].log_spaces.iter().map(|s| (s.name.clone(), s.kind)).collect();
+    assert_eq!(kinds, [("Payment".to_string(), LogSpaceKind::Static), ("Checkout".to_string(), LogSpaceKind::Live)]);
+    let saved_again = SessionManifest::from_workspace(&restored).to_json().unwrap();
+    assert!(!saved_again.contains("Imported") && !saved_again.contains("\"Remote\""), "{saved_again}");
 }

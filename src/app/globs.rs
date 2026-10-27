@@ -88,7 +88,7 @@ impl AppView {
         self.open_space_ids()
             .into_iter()
             .filter(|id| !self.live.paused_spaces.contains(id))
-            .filter(|id| project.log_space(id).is_some_and(|s| s.kind == LogSpaceKind::Remote))
+            .filter(|id| project.log_space(id).is_some_and(|s| s.kind == LogSpaceKind::Live))
             .collect()
     }
 

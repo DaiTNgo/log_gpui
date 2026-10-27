@@ -156,7 +156,7 @@ impl AppView {
             let space_id = match &request.destination {
                 Destination::NewSpace(name) => {
                     let project = self.active_project_mut()?;
-                    match project.create_log_space(name, LogSpaceKind::Imported) {
+                    match project.create_log_space(name, LogSpaceKind::Static) {
                         Ok(space) => {
                             let _ = space.add_remote_copy(file);
                             space.id.clone()
@@ -173,7 +173,7 @@ impl AppView {
                     let added = self
                         .active_project_mut()
                         .and_then(|p| p.log_space_mut(id))
-                        .filter(|s| s.kind == LogSpaceKind::Imported)
+                        .filter(|s| s.kind == LogSpaceKind::Static)
                         .map(|space| space.add_remote_copy(file).is_ok())
                         .unwrap_or(false);
                     if !added {

@@ -24,7 +24,7 @@ fn open_raw(cx: &mut TestAppContext, files: &[&str]) -> common::Harness {
             ImportSource::Disk(path.to_string_lossy().into_owned())
         })
         .collect();
-    h.view.update(&mut h.cx, |app, cx| app.create_log_space("Raw", LogSpaceKind::Imported, &sources, cx));
+    h.view.update(&mut h.cx, |app, cx| app.create_log_space("Raw", LogSpaceKind::Static, &sources, cx));
     h.cx.run_until_parked();
     h.view.update(&mut h.cx, |app, cx| app.toggle_view_mode(cx));
     h.cx.run_until_parked();
@@ -65,7 +65,7 @@ fn with_follow_off_the_raw_view_stays_at_the_top(cx: &mut TestAppContext) {
     let path = h.dir.path().join("one.log");
     std::fs::write(&path, common::sample_lines(300).join("\n")).unwrap();
     let source = ImportSource::Disk(path.to_string_lossy().into_owned());
-    h.view.update(&mut h.cx, |app, cx| app.create_log_space("Raw", LogSpaceKind::Imported, &[source], cx));
+    h.view.update(&mut h.cx, |app, cx| app.create_log_space("Raw", LogSpaceKind::Static, &[source], cx));
     h.cx.run_until_parked();
     h.view.update(&mut h.cx, |app, cx| {
         app.toggle_view_mode(cx);

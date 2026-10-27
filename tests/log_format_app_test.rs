@@ -29,7 +29,7 @@ fn open(cx: &mut TestAppContext) -> Harness {
         ImportSource::Disk(access.to_string_lossy().into_owned()),
         ImportSource::Disk(app.to_string_lossy().into_owned()),
     ];
-    h.view.update(&mut h.cx, |a, cx| a.create_log_space("Web", LogSpaceKind::Imported, &sources, cx));
+    h.view.update(&mut h.cx, |a, cx| a.create_log_space("Web", LogSpaceKind::Static, &sources, cx));
     h.cx.run_until_parked();
     h
 }

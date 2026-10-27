@@ -59,7 +59,7 @@ pub fn open(cx: &mut TestAppContext, names: &[(&str, usize)], count: usize, wind
         sources.push(ImportSource::Disk(path.to_string_lossy().into_owned()));
     }
     h.view.update(&mut h.cx, |app, cx| {
-        app.create_log_space("Test", LogSpaceKind::Imported, &sources, cx);
+        app.create_log_space("Test", LogSpaceKind::Static, &sources, cx);
     });
     h.cx.run_until_parked();
     let ids: Vec<(String, String)> = h.view.read_with(&h.cx, |app, _| {
