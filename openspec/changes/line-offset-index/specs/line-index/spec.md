@@ -72,3 +72,18 @@ Chuyển sang một tab có các file đã được index SHALL NOT clone dòng 
 #### Scenario: Chuyển qua lại hai tab lớn
 - **WHEN** hai tab, mỗi tab một file 3.000.000 dòng đã index, và người dùng chuyển qua lại giữa chúng
 - **THEN** mỗi lần chuyển hiện view trong vòng khoảng 50ms
+
+### Requirement: File local không có thao tác của Remote
+Một file local của Imported Log Space SHALL được đọc trọn từ đĩa và theo dõi dòng mới khi Live. Status bar của nó SHALL chỉ có Live/Pause, Follow và trạng thái file. Nó SHALL NOT có Load more, Open in full, Live Window, Back to Live Window, số dòng đang giữ hay Clear. Pause SHALL dừng nhận dòng mới, để view, Filter và Focus Pane đứng yên; Live SHALL index mọi dòng được ghi trong lúc Pause.
+
+#### Scenario: File local lớn đang được ghi
+- **WHEN** người dùng mở một file local 3.000.000 dòng đang được ghi thêm
+- **THEN** mọi dòng của file đọc được, dòng cũ nhất không rời view, và status bar chỉ có Live/Pause và Follow
+
+#### Scenario: Pause để đọc
+- **WHEN** người dùng Pause một file local đang ghi nhanh, đọc 5 phút, rồi bấm Live
+- **THEN** trong 5 phút đó view và số đếm không đổi, và sau khi bấm Live mọi dòng ghi thêm trong lúc Pause hiện ra
+
+#### Scenario: Không có Clear
+- **WHEN** người dùng chuột phải lên file local trong sidebar
+- **THEN** menu không có Clear, Load more hay Open in full

@@ -114,6 +114,8 @@ Hiện tại (c8bf40d):
   - Đã làm: `RawSection.lines` thành `RawLines`. Một dòng lẻ của file đã index đọc qua cache; khi cần toàn bộ text (editor của Raw View, Raw Search), file được đọc một lần và giữ cho tới khi rời tab. Xem trước Log Format chỉ đọc tới dòng đầu tiên không khớp.
   - Còn lại (8.1): Raw View vẫn đưa toàn bộ text vào một editor, nên mở Raw View một file lớn vẫn tốn memory bằng cỡ file. Muốn bỏ phải chuyển sang danh sách ảo.
 - [ ] 4b.7 Mở file local bằng `IndexedFile` khi đọc ở nền (`app::loading`). Live tail của file đó index phần byte mới (9.1); rotate và truncate mở Generation mới (9.2).
+  - Status bar của file local chỉ còn Live/Pause, Follow và trạng thái file. Không có Load more, Open in full, Live Window, Back to Live Window, "N lines held" hay Clear (design quyết định 12).
+  - Viết lại test live của file local: ghi byte thật vào file. Bỏ các test Live Window của file local.
 - [ ] 4b.8 Detected Field hoặc Log Format đổi thì index lại file (6.3).
 
 ## 5. Filter

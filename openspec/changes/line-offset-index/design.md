@@ -228,6 +228,10 @@ Archive Entry được giải nén một lần, theo luồng, vào `<app data>/a
 - **Phát hiện rotate và truncate**: so kích thước file với vị trí đã index, cộng hash 4 KiB đầu và 4 KiB cuối đã index (cách của klogg). Lệch thì là Generation mới, kèm Break.
 - **Text của Generation cũ**: hệ thống giữ file handle đã mở cho mỗi Generation. Trên Unix, handle vẫn đọc được file đã đổi tên hoặc bị xoá. Với `copytruncate` thì text cũ không còn trên đĩa (Risks).
 - Live Window của file local không cần nữa, vì text nằm trên đĩa. Nó vẫn áp cho Remote (quyết định 2).
+- **Thanh trạng thái của file local** (chốt với người dùng 2026-10-27):
+  - Chỉ còn Live/Pause, Follow, và trạng thái file (đang theo dõi, đã tạm dừng, chờ file khi file bị xoá).
+  - Pause của file local không phải để tiết kiệm băng thông. Nó đóng băng view trong lúc phân tích một log đang ghi nhanh: Match, số đếm của Filter và vị trí cuộn đứng yên. Bấm Live thì app index phần ghi thêm từ chỗ đã dừng.
+  - File local không có Load more, Open in full, Live Window, Back to Live Window, "N lines held" và Clear. Mọi dòng của nó luôn đọc được từ đĩa, nên các thao tác này không có việc gì để làm. Spec `live-log`, `remote-load-more` và `remote-clear` vốn đã nói Imported Log Space không có chúng; code trước change này áp Live Window lên cả file local, nay bỏ.
 
 ### 13. Dormant Tab
 
