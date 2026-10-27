@@ -346,11 +346,9 @@ impl AppView {
             Ok(keymap) => (keymap, None),
             Err(e) => (Default::default(), Some(format!("keymap.json could not be read ({e}); using the default shortcuts."))),
         };
-        let mut workspace_state = persistence
-            .as_ref()
-            .and_then(|p| p.load().ok().flatten())
-            .map(|manifest| manifest.into_workspace())
-            .unwrap_or_default();
+        let manifest = persistence.as_ref().and_then(|p| p.load().ok().flatten());
+        let imported_now_static = manifest.as_ref().is_some_and(|m| m.imported_local_files);
+        let mut workspace_state = manifest.map(|manifest| manifest.into_workspace()).unwrap_or_default();
         if workspace_state.projects.is_empty() {
             workspace_state = WorkspaceState::new();
             workspace_state.create_project("Log Workspace", crate::workspace::ProjectColorAccent::Blue);
@@ -589,7 +587,8 @@ impl AppView {
             new_space: None,
             confirm: None,
             custom_load: None,
-            notice: keymap_error,
+            notice: keymap_error
+                .or_else(|| imported_now_static.then(|| crate::workspace::session::IMPORTED_NOW_STATIC.to_string())),
             session_save_gen: 0,
             persistence,
             focus_handle,

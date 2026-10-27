@@ -8,6 +8,10 @@ use serde::{Deserialize, Serialize};
 pub struct SessionManifest {
     /// Format version for future migrations.
     pub version: u32,
+    /// Whether the file, saved before Static and Live, had an Imported Log
+    /// Space with files on disk: they open as Static and are not followed.
+    #[serde(skip)]
+    pub imported_local_files: bool,
     /// Id of the active project at save time.
     pub active_project_id: Option<String>,
     /// All registered projects and their full state.
@@ -62,6 +66,10 @@ pub struct ProjectSnapshot {
     pub search_history: crate::search_history::SearchHistory,
 }
 
+/// Shown once when a session saved before Static and Live had local files in
+/// an Imported Log Space.
+pub const IMPORTED_NOW_STATIC: &str = "Imported Log Spaces are now Static. Create a Live Log Space to follow files.";
+
 impl SessionManifest {
     pub const CURRENT_VERSION: u32 = 4;
     /// The last format still opened. Version 3 Markers (a whole line with a
@@ -72,6 +80,24 @@ impl SessionManifest {
         version.is_some_and(|v| {
             (u64::from(Self::OLDEST_READABLE_VERSION)..=u64::from(Self::CURRENT_VERSION)).contains(&v)
         })
+    }
+
+    /// Whether `value`, a session file, has an Imported Log Space (saved
+    /// before Static and Live) holding a file on disk: not an Archive Entry,
+    /// a Remote Copy or a Remote File.
+    fn has_imported_local_files(value: &serde_json::Value) -> bool {
+        let absent = |file: &serde_json::Value, key: &str| file.get(key).is_none_or(|v| v.is_null());
+        value
+            .get("projects")
+            .and_then(|p| p.as_array())
+            .into_iter()
+            .flatten()
+            .filter_map(|p| p.get("log_spaces")?.as_array())
+            .flatten()
+            .filter(|s| s.get("kind").and_then(|k| k.as_str()) == Some("Imported"))
+            .filter_map(|s| s.get("files")?.as_array())
+            .flatten()
+            .any(|f| ["entry", "copy", "remote"].iter().all(|key| absent(f, key)))
     }
 
     /// Capture the current workspace state into a serializable manifest.
@@ -96,6 +122,7 @@ impl SessionManifest {
 
         Self {
             version: Self::CURRENT_VERSION,
+            imported_local_files: false,
             active_project_id: ws.active_project_id.clone(),
             projects,
             focus_pane: ws.focus_pane.clone(),
@@ -253,8 +280,9 @@ impl SessionPersistence {
                 if !SessionManifest::is_readable_version(value.get("version").and_then(|v| v.as_u64())) {
                     return Ok(None);
                 }
+                let imported_local_files = SessionManifest::has_imported_local_files(&value);
                 serde_json::from_value(value)
-                    .map(Some)
+                    .map(|manifest: SessionManifest| Some(SessionManifest { imported_local_files, ..manifest }))
                     .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
             }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),

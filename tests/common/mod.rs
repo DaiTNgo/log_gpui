@@ -44,11 +44,22 @@ fn isolate_config_dir() {
 
 /// Open `AppView` in a test window with config in a fresh temp dir.
 pub fn open_app(cx: &mut TestAppContext) -> Harness {
+    open_app_in(cx, tempfile::tempdir().unwrap())
+}
+
+/// Open `AppView` with `session` (JSON) as its saved session, written to
+/// `session.json` in `dir`.
+pub fn open_app_with_session(cx: &mut TestAppContext, dir: tempfile::TempDir, session: &str) -> Harness {
+    std::fs::write(dir.path().join("session.json"), session).unwrap();
+    open_app_in(cx, dir)
+}
+
+/// Open `AppView` with its session and config in `dir`.
+pub fn open_app_in(cx: &mut TestAppContext, dir: tempfile::TempDir) -> Harness {
     isolate_config_dir();
     cx.update(|cx| {
         gpui_component::init(cx);
     });
-    let dir = tempfile::tempdir().unwrap();
     let persistence = SessionPersistence::new(dir.path().join("session.json"));
     let remote = RemoteUi::with_paths(
         &dir.path().join("servers.json"),

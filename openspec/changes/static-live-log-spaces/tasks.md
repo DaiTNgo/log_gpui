@@ -3,7 +3,7 @@ Mỗi task là một commit, và test phải xanh sau mỗi commit. Nhóm 3 cầ
 ## 1. Đổi loại Log Space
 
 - [x] 1.1 `LogSpaceKind { Static, Live, Scratch }` với `#[serde(alias = "Imported")]` và `#[serde(alias = "Remote")]`. Đổi mọi nhánh `match` trong `src` và `tests` theo tên mới, chưa đổi hành vi. Test: một session cũ có `Imported` và `Remote` mở thành `Static` và `Live`, rồi được lưu lại bằng tên mới.
-- [ ] 1.2 Notice một lần khi session có Imported Log Space chứa file local ("Imported Log Spaces are now Static…").
+- [x] 1.2 Notice một lần khi session có Imported Log Space chứa file local ("Imported Log Spaces are now Static…").
 - [ ] 1.3 Sidebar: ba biểu tượng cho Static, Live, Scratch. Menu chuột phải theo bảng loại file (requirement "Loại file theo loại Log Space"): Live có "Add files…", "Add remote files…" và "Add remote command…".
 
 ## 2. Static Log Space
