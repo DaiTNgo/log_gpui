@@ -9,10 +9,11 @@ Mỗi task là một commit, và test phải xanh sau mỗi commit. Nhóm 3 cầ
 ## 2. Static Log Space
 
 - [x] 2.1 `Fingerprint` trong `IndexedFile`: inode, kích thước đã index, hash 4 KiB đầu và hash 4 KiB cuối. Cập nhật sau mỗi `extend()`. `IndexedFile::changed_on_disk(path)` trả về `Same`, `Appended`, `Replaced` hoặc `Gone`; khi kích thước và mtime của path vẫn như lần trước thấy không đổi thì chỉ đọc metadata. Test trên file thật cho `mv`, `cp` dài hơn, `cp` cùng kích thước, truncate và ghi thêm.
-- [ ] 2.2 File local của Static không có `LocalFileSource`. Thay vào đó là `FileWatch` poll metadata cho tab đang mở:
+- [x] 2.2 File local của Static không có `LocalFileSource`. Thay vào đó là `FileWatch` poll metadata cho tab đang mở:
   - `Appended` thì gọi `extend()` và không tự cuộn;
   - `Replaced` thì gọi `read_indexed_again`, có lưu session trước.
   Bỏ Live/Pause và Follow khỏi status bar của Static. Test: hai scenario `mv` và `cp` của spec `static-log-space`.
+  - Đã làm: `watch_static_files` chạy trong `pump_live`, mỗi `LOCAL_POLL_INTERVAL`, chỉ cho file của tab đang mở. `active_space_is_live` chỉ đúng với Live, nên status bar của Static tự bỏ Live/Pause và Follow (không sửa `status_bar.rs`). Đọc lại file thì lưu session trước để giữ Filter, cho cả Live. Các test về Follow, Pause và Dormant Tab của file local chuyển sang Live space.
 - [ ] 2.3 Tab từ Dormant được mở lại thì so `Fingerprint` trước khi hiện. File bị xoá thì hiện trạng thái "File deleted" và chờ file có lại.
 - [ ] 2.4 Marker sau khi đọc lại: giữ Marker còn khớp `line_hash`, bỏ Marker không khớp, kèm notice "N Markers no longer match the file". Dùng chung với `full_read.rs`.
 - [ ] 2.5 "Reload" cho Remote Copy: chạy lại `full_read` với cùng Starting Time, giữ Marker theo 2.4. Remote Copy không giữ SSH session.

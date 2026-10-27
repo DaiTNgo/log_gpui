@@ -7,7 +7,7 @@ use gpui::TestAppContext;
 
 #[gpui::test]
 fn a_local_file_has_no_hold_info(cx: &mut TestAppContext) {
-    let mut h = common::open_app_with_lines(cx, &common::sample_lines(30));
+    let mut h = common::open_app_with_live_lines(cx, &common::sample_lines(30));
     // The source says it is Live once its thread has opened the file.
     for _ in 0..200 {
         h.view.update(&mut h.cx, |app, cx| {

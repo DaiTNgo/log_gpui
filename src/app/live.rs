@@ -107,6 +107,8 @@ pub struct LiveRuntime {
     parsing: HashMap<String, u64>,
     /// Where the next pump starts among the files, so every file gets turns.
     pump_cursor: usize,
+    /// When the files of an open Static Log Space were last looked at.
+    static_watched: Option<std::time::Instant>,
     /// A batch of this many lines is read on a worker thread.
     pub preparse_min: usize,
     /// Batches applied since the allocator's cache was last given back.
@@ -137,6 +139,7 @@ impl LiveRuntime {
             backlog: HashMap::new(),
             parsing: HashMap::new(),
             pump_cursor: 0,
+            static_watched: None,
             preparse_min: PREPARE_MIN_LINES,
             batches_since_release: 0,
         }
@@ -257,14 +260,10 @@ impl AppView {
         self.parsed_files.retain(|id, _| keep.contains(id));
     }
 
-    /// Whether the open tab reads a Log Space that is read live (Scratch is
-    /// not).
+    /// Whether the open tab reads a Live Log Space: it has Live/Pause and
+    /// Follow. A Static one shows its files as they are on disk.
     pub fn active_space_is_live(&self) -> bool {
-        // A space of only Archive Entries has nothing to follow.
-        self.active_space().is_some_and(|s| {
-            s.kind != LogSpaceKind::Scratch
-                && (s.files.is_empty() || s.files.iter().any(|f| f.entry.is_none()))
-        })
+        self.active_space().is_some_and(|s| s.kind == LogSpaceKind::Live)
     }
 
     /// The files of the Log Spaces with a tab open that are read live, by
@@ -277,7 +276,9 @@ impl AppView {
         if let Some(project) = self.active_project() {
             for space_id in &open {
                 let Some(space) = project.log_space(space_id) else { continue };
-                if space.kind == LogSpaceKind::Scratch {
+                // Only a Live Log Space is followed: a Static one is watched
+                // for changes instead (`watch_static_files`).
+                if space.kind != LogSpaceKind::Live {
                     continue;
                 }
                 // Archive Entries are static: they are read once, never live.
@@ -516,6 +517,7 @@ impl AppView {
     /// whether lines are left for another pump.
     pub fn pump_live(&mut self, cx: &mut Context<Self>) -> bool {
         self.pump_copy_reads(cx);
+        self.watch_static_files(cx);
         if self.live.sources.is_empty() {
             return false;
         }
@@ -845,7 +847,7 @@ impl AppView {
     /// tells that the file grew (what grew is read from the file), was
     /// rotated, cut or deleted, and how it is.
     fn apply_indexed_events(&mut self, file_id: &str, parsed: crate::space_view::ParsedFile, events: Vec<SourceEvent>) -> FileDelta {
-        let mut delta = FileDelta::default();
+        let delta = FileDelta::default();
         let mut grew = false;
         let mut again = false;
         for event in events {
@@ -865,6 +867,20 @@ impl AppView {
                 _ => {}
             }
         }
+        self.index_written_since(file_id, parsed, grew, again, delta)
+    }
+
+    /// Index what was written to an indexed file since (`grew`), or read it
+    /// again from its start in the background (`again`: another file, or
+    /// one cut or rewritten).
+    fn index_written_since(
+        &mut self,
+        file_id: &str,
+        parsed: crate::space_view::ParsedFile,
+        grew: bool,
+        mut again: bool,
+        mut delta: FileDelta,
+    ) -> FileDelta {
         if grew && !again {
             let read = parsed.indexed.as_ref().map(|f| f.extend());
             match read {
@@ -879,7 +895,9 @@ impl AppView {
         }
         if again {
             // Read the file at the path from its start, in the background;
-            // its source goes on from where it is.
+            // its source goes on from where it is. The open tab's Filter
+            // and Focus Tabs are kept first: the view is built again from them.
+            self.persist_active_session();
             delta.shown = true;
             delta.structural = true;
             let file = self.active_space().and_then(|s| s.file(file_id).cloned());
@@ -890,6 +908,38 @@ impl AppView {
         }
         self.parsed_files.insert(file_id.to_string(), parsed);
         delta
+    }
+
+    /// A Static Log Space has no live source: the files its open tab reads
+    /// are looked at every `LOCAL_POLL_INTERVAL`, read on when written on
+    /// and read again when another file, or a rewritten one, is at the path.
+    /// The view stays where it is (a Static space has no Follow).
+    fn watch_static_files(&mut self, cx: &mut Context<Self>) {
+        let now = std::time::Instant::now();
+        if self.live.static_watched.is_some_and(|at| now.duration_since(at) < crate::live::source::LOCAL_POLL_INTERVAL) {
+            return;
+        }
+        self.live.static_watched = Some(now);
+        let Some(space) = self.active_space().filter(|s| s.kind == LogSpaceKind::Static).cloned() else { return };
+        let reads = self.active_file_ids();
+        let mut deltas = Vec::new();
+        for file in space.files.iter().filter(|f| reads.contains(&f.file_id) && f.entry.is_none() && f.copy.is_none()) {
+            let Some(path) = &file.path else { continue };
+            // A file still being read has no index to compare yet.
+            let Some(indexed) = self.parsed_files.get(&file.file_id).and_then(|p| p.indexed.clone()) else { continue };
+            let (grew, again) = match indexed.changed_on_disk(std::path::Path::new(path)) {
+                Ok(crate::index::file::OnDisk::Appended) => (true, false),
+                Ok(crate::index::file::OnDisk::Replaced) => (false, true),
+                // Gone, unchanged or unreadable for now: looked at again later.
+                _ => continue,
+            };
+            let Some(parsed) = self.parsed_files.remove(&file.file_id) else { continue };
+            let delta = self.index_written_since(&file.file_id, parsed, grew, again, FileDelta::default());
+            deltas.push((file.file_id.clone(), delta));
+        }
+        if !deltas.is_empty() {
+            self.apply_deltas(deltas, cx);
+        }
     }
 
     /// The file has a new Generation in every Log Space that holds it.

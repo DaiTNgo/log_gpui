@@ -59,7 +59,7 @@ fn home_and_end_go_to_the_first_and_last_row(cx: &mut TestAppContext) {
 
 #[gpui::test]
 fn end_turns_follow_back_on(cx: &mut TestAppContext) {
-    let mut h = common::open_app_with_lines(cx, &common::sample_lines(50));
+    let mut h = common::open_app_with_live_lines(cx, &common::sample_lines(50));
     h.view.update(&mut h.cx, |app, cx| app.set_follow(false, cx));
     press(&mut h, "end");
     assert!(h.view.read_with(&h.cx, |app, _| app.live.follow));

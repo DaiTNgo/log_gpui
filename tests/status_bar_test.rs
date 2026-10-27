@@ -68,8 +68,8 @@ fn the_focus_count_shows_while_the_focus_pane_lists_lines(cx: &mut TestAppContex
 }
 
 #[gpui::test]
-fn local_files_are_live_once_open(cx: &mut TestAppContext) {
-    let mut h = common::open_app_with_lines(cx, &common::sample_lines(40));
+fn local_files_of_a_live_space_are_live_once_open(cx: &mut TestAppContext) {
+    let mut h = common::open_app_with_live_lines(cx, &common::sample_lines(40));
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
     loop {
         h.view.update(&mut h.cx, |app, cx| {

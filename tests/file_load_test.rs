@@ -36,7 +36,7 @@ fn a_file_is_read_in_the_background(cx: &mut TestAppContext) {
         assert!(!app.is_reading());
         assert_eq!(app.view.len(), 500, "the view is built once the file is read");
         assert!(app.empty_canvas().is_none());
-        assert_eq!(app.live.sources.len(), 1, "and then followed");
+        assert!(app.live.sources.is_empty(), "a Static file is not followed");
     });
 }
 

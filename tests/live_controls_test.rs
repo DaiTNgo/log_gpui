@@ -11,7 +11,7 @@ fn controls(h: &common::Harness) -> (String, String) {
 
 #[gpui::test]
 fn follow_and_pause_read_their_state(cx: &mut TestAppContext) {
-    let mut h = common::open_app_with_lines(cx, &common::sample_lines(20));
+    let mut h = common::open_app_with_live_lines(cx, &common::sample_lines(20));
     assert_eq!(controls(&h), ("Following".into(), "Pause".into()));
 
     h.view.update(&mut h.cx, |app, cx| app.toggle_follow(cx));

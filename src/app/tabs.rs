@@ -423,7 +423,8 @@ impl AppView {
             self.column_layout.update_density(scale);
         }
 
-        self.live.follow = true;
+        // A Live Log Space opens with Follow on; a Static one has none.
+        self.live.follow = self.active_space_is_live();
         self.live.unseen = 0;
         // A live Log Space opens at its newest lines, in either view (L3).
         if self.active_space_is_live() {
