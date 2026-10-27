@@ -113,10 +113,14 @@ Hiện tại (c8bf40d):
 - [x] 4b.6 Raw View và xem trước Log Format đọc dòng qua Line Index (8.1).
   - Đã làm: `RawSection.lines` thành `RawLines`. Một dòng lẻ của file đã index đọc qua cache; khi cần toàn bộ text (editor của Raw View, Raw Search), file được đọc một lần và giữ cho tới khi rời tab. Xem trước Log Format chỉ đọc tới dòng đầu tiên không khớp.
   - Còn lại (8.1): Raw View vẫn đưa toàn bộ text vào một editor, nên mở Raw View một file lớn vẫn tốn memory bằng cỡ file. Muốn bỏ phải chuyển sang danh sách ảo.
-- [ ] 4b.7 Mở file local bằng `IndexedFile` khi đọc ở nền (`app::loading`). Live tail của file đó index phần byte mới (9.1); rotate và truncate mở Generation mới (9.2).
+- [x] 4b.7 Mở file local bằng `IndexedFile` khi đọc ở nền (`app::loading`). Live tail của file đó index phần byte mới (9.1); rotate và truncate mở Generation mới (9.2).
   - Status bar của file local chỉ còn Live/Pause, Follow và trạng thái file. Không có Load more, Open in full, Live Window, Back to Live Window, "N lines held" hay Clear (design quyết định 12).
   - Viết lại test live của file local: ghi byte thật vào file. Bỏ các test Live Window của file local.
-- [ ] 4b.8 Detected Field hoặc Log Format đổi thì index lại file (6.3).
+  - Đã làm: file local mở qua `IndexedFile` ở nền (`index_into`). Live/Pause và Follow index phần dòng trọn vẹn mới (`IndexedFile::extend`); dòng cuối chưa có line break được đọc lại khi nó đủ dòng. big.log (376 MB, 3M dòng): đọc xong trong 1,28 s, RSS 470 MB (trước 2,6 GB).
+  - Còn lại (9.2): rotate và truncate (file ngắn đi, hoặc Break mở Generation) chỉ đọc lại file từ đầu. Dòng của Generation cũ bị bỏ, chưa có Break.
+- [x] 4b.8 Detected Field hoặc Log Format đổi thì index lại file (6.3).
+  - Đã làm: file đã index nào có Line Config hoặc Log Format khác cái đang dùng được đọc lại ở nền. Session được lưu trước, nên Filter và Marker giữ nguyên.
+  - Còn lại (6.3): đọc lại cả file chứ chưa chỉ dựng `row_ids` của cột mới; cột mới chưa hiện ngay cho dòng đang xem.
 
 ## 5. Filter
 
