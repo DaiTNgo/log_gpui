@@ -131,11 +131,13 @@ fn rename_row(view: Entity<AppView>, input: Entity<InputState>, icon: IconName) 
         .into_any_element()
 }
 
+/// The icon of a Log Space on the sidebar: one per kind. A Live space may
+/// hold local files too, so its icon says "followed", not "on a Server".
 fn kind_icon(kind: LogSpaceKind) -> IconName {
     match kind {
         LogSpaceKind::Static => IconName::Layers,
         LogSpaceKind::Scratch => IconName::FilePen,
-        LogSpaceKind::Live => IconName::Globe,
+        LogSpaceKind::Live => IconName::Activity,
     }
 }
 
@@ -821,3 +823,14 @@ trait WhenItem: Sized {
 }
 
 impl WhenItem for PopupMenu {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn each_kind_of_log_space_has_its_own_icon() {
+        let icons = [LogSpaceKind::Static, LogSpaceKind::Live, LogSpaceKind::Scratch].map(kind_icon);
+        assert_eq!(icons, [IconName::Layers, IconName::Activity, IconName::FilePen]);
+    }
+}

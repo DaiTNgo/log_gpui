@@ -4,7 +4,7 @@ Mỗi task là một commit, và test phải xanh sau mỗi commit. Nhóm 3 cầ
 
 - [x] 1.1 `LogSpaceKind { Static, Live, Scratch }` với `#[serde(alias = "Imported")]` và `#[serde(alias = "Remote")]`. Đổi mọi nhánh `match` trong `src` và `tests` theo tên mới, chưa đổi hành vi. Test: một session cũ có `Imported` và `Remote` mở thành `Static` và `Live`, rồi được lưu lại bằng tên mới.
 - [x] 1.2 Notice một lần khi session có Imported Log Space chứa file local ("Imported Log Spaces are now Static…").
-- [ ] 1.3 Sidebar: ba biểu tượng cho Static, Live, Scratch. Menu chuột phải theo bảng loại file (requirement "Loại file theo loại Log Space"): Live có "Add files…", "Add remote files…" và "Add remote command…".
+- [x] 1.3 Sidebar: ba biểu tượng cho Static, Live, Scratch (Live dùng `Activity` thay cho `Globe`, vì Live space có cả file local). Menu của Static và Scratch đã đúng bảng loại file; "Add files…" của Live làm ở 4.1, cùng lúc file local chạy được trong Live space.
 
 ## 2. Static Log Space
 
@@ -26,7 +26,7 @@ Mỗi task là một commit, và test phải xanh sau mỗi commit. Nhóm 3 cầ
 
 ## 4. Live Log Space: file local
 
-- [ ] 4.1 Chuyển Live/Pause và Follow của file local (line-offset-index 4b.7) từ Static sang Live. Một Live space trộn file local với Remote File trên cùng timeline; Pause dừng mọi file. Test: scenario "Trộn trên một timeline" và "Pause dừng cả hai".
+- [ ] 4.1 Chuyển Live/Pause và Follow của file local (line-offset-index 4b.7) từ Static sang Live. Menu của Live space có thêm "Add files…". Một Live space trộn file local với Remote File trên cùng timeline; Pause dừng mọi file. Test: scenario "Trộn trên một timeline" và "Pause dừng cả hai".
 - [ ] 4.2 Status bar và menu: Load more, Open in full, Live Window, Back to Live Window, "N lines held" và Clear chỉ hiện khi space có Remote File, và chỉ tác động lên Remote File. Clear không bỏ dòng local. File View của file local không có các mục này.
 - [ ] 4.3 `BreakKind::Replaced` và `BreakKind::Rewritten`. `LocalFileSource` đọc nlink của handle cũ bằng `fstat` khi thấy inode mới; `extend()` dùng `Fingerprint` để nhận ra ghi đè cùng inode.
 - [ ] 4.4 Generation của file local: mỗi Generation là một `IndexedFile` cùng handle `stay_open` của nó, gộp theo (Generation, dòng). Sau Break "rotated" hoặc "replaced", dòng cũ vẫn đọc được; sau "truncated" hoặc "rewritten", dòng cũ bị bỏ. Đây là line-offset-index 9.2. Test: bốn scenario của requirement "Generation của file local".
