@@ -46,7 +46,7 @@ fn last_line(app: &log_gpui::app::AppView) -> String {
 
 #[gpui::test]
 fn a_static_space_is_not_followed(cx: &mut TestAppContext) {
-    let mut h = open_static(cx, &lines("app", 0, 20, "INFO"));
+    let h = open_static(cx, &lines("app", 0, 20, "INFO"));
     h.view.read_with(&h.cx, |app, _| {
         assert_eq!(app.view.len(), 20);
         assert!(app.live.sources.is_empty(), "no live source");
@@ -95,5 +95,38 @@ fn a_static_file_rewritten_in_place_and_longer_is_read_again(cx: &mut TestAppCon
         let rows = app.rows_snapshot();
         assert!(rows.iter().all(|e| e.raw_line.contains("[big]")), "no line read at an old offset");
         assert!(rows[0].raw_line.ends_with("line 0") && rows[299].raw_line.ends_with("line 299"));
+    });
+}
+
+#[gpui::test]
+fn a_deleted_static_file_keeps_its_lines_until_it_is_back(cx: &mut TestAppContext) {
+    let mut h = open_static(cx, &lines("app", 0, 20, "INFO"));
+    let path = h.dir.path().join("app.log");
+    std::fs::remove_file(&path).unwrap();
+    pump_until(&mut h, "the status bar says so", |app| app.status_bar_labels().iter().any(|l| l == "File deleted"));
+    h.view.read_with(&h.cx, |app, _| assert_eq!(app.view.len(), 20, "the lines stay"));
+
+    std::fs::write(&path, lines("back", 0, 5, "INFO")).unwrap();
+    pump_until(&mut h, "the file back at the path shows", |app| app.view.len() == 5 && last_line(app).contains("[back]"));
+    h.view.read_with(&h.cx, |app, _| assert!(!app.status_bar_labels().iter().any(|l| l.contains("deleted"))));
+}
+
+#[gpui::test]
+fn a_dormant_static_tab_shows_its_file_as_it_is_now_when_chosen(cx: &mut TestAppContext) {
+    let mut h = open_static(cx, &lines("app", 0, 20, "INFO"));
+    let tab = h.view.read_with(&h.cx, |app, _| app.workspace_state.active_project().unwrap().working_set.active_tab_index().unwrap());
+    let other = h.dir.path().join("other.log");
+    std::fs::write(&other, lines("other", 0, 3, "INFO")).unwrap();
+    let source = ImportSource::Disk(other.to_string_lossy().into_owned());
+    h.view.update(&mut h.cx, |app, cx| app.create_log_space("B", LogSpaceKind::Static, &[source], cx));
+    h.cx.run_until_parked();
+
+    // Replaced while its tab is Dormant: nothing looks at it then.
+    std::fs::write(h.dir.path().join("app.log"), lines("new", 0, 7, "WARN")).unwrap();
+    h.view.update(&mut h.cx, |app, cx| app.switch_to_tab(tab, cx));
+    h.cx.run_until_parked();
+    h.view.read_with(&h.cx, |app, _| {
+        assert_eq!(app.view.len(), 7);
+        assert!(last_line(app).contains("[new]"));
     });
 }

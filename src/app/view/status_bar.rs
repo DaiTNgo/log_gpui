@@ -138,6 +138,12 @@ impl AppView {
             });
         }
         labels.push(format!("{} lines", format_count(self.view.len())));
+        // A Static file deleted from disk: its lines stay until it is back.
+        if let Some(space) = self.active_space() {
+            for file in space.files.iter().filter(|f| self.live.static_gone.contains(&f.file_id)) {
+                labels.push(if space.files.len() > 1 { format!("{} deleted", file.display_name) } else { "File deleted".to_string() });
+            }
+        }
         if self.focus_pane_shows_lines() {
             let n = self.focus_rows.len();
             labels.push(format!("{} {} in Focus", format_count(n), if n == 1 { "line" } else { "lines" }));

@@ -109,6 +109,10 @@ pub struct LiveRuntime {
     pump_cursor: usize,
     /// When the files of an open Static Log Space were last looked at.
     static_watched: Option<std::time::Instant>,
+    /// Files of the open Static Log Space that are no longer on disk: their
+    /// lines stay, read through the handle still open, until a file is at
+    /// the path again.
+    pub static_gone: HashSet<String>,
     /// A batch of this many lines is read on a worker thread.
     pub preparse_min: usize,
     /// Batches applied since the allocator's cache was last given back.
@@ -140,6 +144,7 @@ impl LiveRuntime {
             parsing: HashMap::new(),
             pump_cursor: 0,
             static_watched: None,
+            static_gone: HashSet::new(),
             preparse_min: PREPARE_MIN_LINES,
             batches_since_release: 0,
         }
@@ -922,6 +927,7 @@ impl AppView {
         self.live.static_watched = Some(now);
         let Some(space) = self.active_space().filter(|s| s.kind == LogSpaceKind::Static).cloned() else { return };
         let reads = self.active_file_ids();
+        self.live.static_gone.retain(|id| reads.contains(id));
         let mut deltas = Vec::new();
         for file in space.files.iter().filter(|f| reads.contains(&f.file_id) && f.entry.is_none() && f.copy.is_none()) {
             let Some(path) = &file.path else { continue };
@@ -929,10 +935,18 @@ impl AppView {
             let Some(indexed) = self.parsed_files.get(&file.file_id).and_then(|p| p.indexed.clone()) else { continue };
             let (grew, again) = match indexed.changed_on_disk(std::path::Path::new(path)) {
                 Ok(crate::index::file::OnDisk::Appended) => (true, false),
+                // Another file at the path, or one back where it was deleted.
                 Ok(crate::index::file::OnDisk::Replaced) => (false, true),
-                // Gone, unchanged or unreadable for now: looked at again later.
+                Ok(crate::index::file::OnDisk::Gone) => {
+                    if self.live.static_gone.insert(file.file_id.clone()) {
+                        cx.notify();
+                    }
+                    continue;
+                }
+                // Unchanged or unreadable for now: looked at again later.
                 _ => continue,
             };
+            self.live.static_gone.remove(&file.file_id);
             let Some(parsed) = self.parsed_files.remove(&file.file_id) else { continue };
             let delta = self.index_written_since(&file.file_id, parsed, grew, again, FileDelta::default());
             deltas.push((file.file_id.clone(), delta));

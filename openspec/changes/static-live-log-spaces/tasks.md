@@ -14,7 +14,8 @@ Mỗi task là một commit, và test phải xanh sau mỗi commit. Nhóm 3 cầ
   - `Replaced` thì gọi `read_indexed_again`, có lưu session trước.
   Bỏ Live/Pause và Follow khỏi status bar của Static. Test: hai scenario `mv` và `cp` của spec `static-log-space`.
   - Đã làm: `watch_static_files` chạy trong `pump_live`, mỗi `LOCAL_POLL_INTERVAL`, chỉ cho file của tab đang mở. `active_space_is_live` chỉ đúng với Live, nên status bar của Static tự bỏ Live/Pause và Follow (không sửa `status_bar.rs`). Đọc lại file thì lưu session trước để giữ Filter, cho cả Live. Các test về Follow, Pause và Dormant Tab của file local chuyển sang Live space.
-- [ ] 2.3 Tab từ Dormant được mở lại thì so `Fingerprint` trước khi hiện. File bị xoá thì hiện trạng thái "File deleted" và chờ file có lại.
+- [x] 2.3 Tab từ Dormant được mở lại thì so `Fingerprint` trước khi hiện. File bị xoá thì hiện trạng thái "File deleted" và chờ file có lại.
+  - Đã làm: Dormant Tab vốn bỏ dòng của file và đọc lại từ đĩa khi được chọn, nên không cần so `Fingerprint`; có test. File bị xoá: dòng vẫn còn (đọc qua handle đang mở), status bar có "File deleted" ("<tên> deleted" khi space có nhiều file), file có lại ở path thì được đọc lại.
 - [ ] 2.4 Marker sau khi đọc lại: giữ Marker còn khớp `line_hash`, bỏ Marker không khớp, kèm notice "N Markers no longer match the file". Dùng chung với `full_read.rs`.
 - [ ] 2.5 "Reload" cho Remote Copy: chạy lại `full_read` với cùng Starting Time, giữ Marker theo 2.4. Remote Copy không giữ SSH session.
 
