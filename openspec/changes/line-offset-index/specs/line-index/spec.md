@@ -34,7 +34,7 @@ Một Log Space đọc live SHALL mở ở dòng mới nhất (L3) ngay cả khi
 - **THEN** view hiện các dòng cuối gần như ngay với Follow bật, và Gutter hiện đúng số dòng khi Indexing xong
 
 ### Requirement: Dòng thêm vào và rotate của file local
-Khi một file local live được ghi thêm, hệ thống SHALL thêm các dòng mới vào Line Index mà không index lại phần đã có. Khi file bị rotate hoặc truncate, hệ thống SHALL bắt đầu một Generation mới với một Break, và SHALL giữ đọc được dòng của Generation cũ khi file cũ vẫn còn trên đĩa (kể cả đã đổi tên hoặc đã xoá mà app còn mở). Dòng của Generation cũ không còn trên đĩa SHALL hiện là không còn đọc được, không hiện text sai.
+Khi một file local của Live Log Space được ghi thêm, hệ thống SHALL thêm các dòng mới vào Line Index mà không index lại phần đã có. Khi file bị rotate, bị thay, bị truncate hoặc bị ghi đè, hệ thống SHALL bắt đầu một Generation mới với một Break, và SHALL giữ đọc được dòng của Generation cũ khi file cũ vẫn còn trên đĩa (kể cả đã đổi tên hoặc đã xoá mà app còn mở). Dòng có text không còn trên đĩa (sau truncate hoặc ghi đè) SHALL bị bỏ, không hiện text sai. Lý do của Break và các trường hợp được nói trong spec `live-log-space` của change `static-live-log-spaces`.
 
 #### Scenario: Ghi thêm
 - **WHEN** một file 3.000.000 dòng đang mở nhận thêm 1.000 dòng
@@ -46,14 +46,14 @@ Khi một file local live được ghi thêm, hệ thống SHALL thêm các dòn
 
 #### Scenario: Truncate tại chỗ
 - **WHEN** `app.log` bị truncate tại chỗ (`copytruncate`)
-- **THEN** một Break hiện, và các dòng cũ không còn trong bộ đệm hiện là "no longer on disk" thay vì text của file mới
+- **THEN** một Break "truncated" hiện, các dòng cũ không còn, và không dòng nào hiện text của file mới ở chỗ dòng cũ
 
 ### Requirement: File bị sửa khi đang mở
-Khi nội dung đã index của một file bị đổi (không phải chỉ ghi thêm), hệ thống SHALL nhận ra trước khi hiện dòng sai, SHALL index lại file và SHALL báo cho người dùng.
+Khi nội dung đã index của một file bị đổi (không phải chỉ ghi thêm), hệ thống SHALL nhận ra trước khi hiện dòng sai, và SHALL index lại file. Một file của Static Log Space được đọc lại ở nền, giữ Filter (spec `static-log-space` của change `static-live-log-spaces`); một file của Live Log Space có Break "rewritten".
 
-#### Scenario: File Imported bị ghi đè
-- **WHEN** một file Imported đang mở bị một chương trình khác ghi đè nội dung khác
-- **THEN** app báo file đã đổi và index lại, không hiện text lệch với số dòng
+#### Scenario: File của Static Log Space bị ghi đè
+- **WHEN** một file local đang mở trong Static Log Space bị một chương trình khác ghi đè nội dung khác
+- **THEN** view hiện nội dung mới sau khi đọc lại, không hiện text lệch với số dòng
 
 ### Requirement: Archive Entry giải nén ra file tạm
 Hệ thống SHALL giải nén Archive Entry một lần vào thư mục dữ liệu của app rồi index như file local. Các entry của cùng một Archive SHALL được giải nén trong một lượt. File tạm SHALL bị xoá khi Log Space chứa nó bị xoá, và các file tạm không Log Space nào dùng SHALL bị dọn khi app khởi động.
@@ -74,7 +74,7 @@ Chuyển sang một tab có các file đã được index SHALL NOT clone dòng 
 - **THEN** mỗi lần chuyển hiện view trong vòng khoảng 50ms
 
 ### Requirement: File local không có thao tác của Remote
-Một file local của Imported Log Space SHALL được đọc trọn từ đĩa và theo dõi dòng mới khi Live. Status bar của nó SHALL chỉ có Live/Pause, Follow và trạng thái file. Nó SHALL NOT có Load more, Open in full, Live Window, Back to Live Window, số dòng đang giữ hay Clear. Pause SHALL dừng nhận dòng mới, để view, Filter và Focus Pane đứng yên; Live SHALL index mọi dòng được ghi trong lúc Pause.
+Một file local của Live Log Space SHALL được đọc trọn từ đĩa và theo dõi dòng mới khi Live. Status bar của nó SHALL chỉ có Live/Pause, Follow và trạng thái file; một Static Log Space không có cả Live/Pause lẫn Follow. Khi Live Log Space có cả Remote File, các thao tác của Remote File SHALL chỉ tác động lên Remote File. Nó SHALL NOT có Load more, Open in full, Live Window, Back to Live Window, số dòng đang giữ hay Clear. Pause SHALL dừng nhận dòng mới, để view, Filter và Focus Pane đứng yên; Live SHALL index mọi dòng được ghi trong lúc Pause.
 
 #### Scenario: File local lớn đang được ghi
 - **WHEN** người dùng mở một file local 3.000.000 dòng đang được ghi thêm

@@ -169,10 +169,12 @@ Hiện tại (c8bf40d):
 
 - [ ] 9.1 File local live: bytes mới từ `LocalFileSource` được index thành lô nhỏ, rồi thêm vào Line Index, `row_ids`, `ViewRows`, kết quả Scan đang dùng, và paint của Highlight Rule.
   - Bỏ Live Window cho file local.
-- [ ] 9.2 Phát hiện rotate và truncate bằng kích thước cộng hash 4 KiB đầu và 4 KiB cuối đã index; Generation mới kèm Break. Làm trong change `static-live-log-spaces` (task 2.1, 4.3 và 4.4).
-  - Giữ file handle của Generation cũ; dòng không còn trên đĩa hiện "no longer on disk".
+- [x] 9.2 Phát hiện rotate và truncate bằng kích thước cộng hash 4 KiB đầu và 4 KiB cuối đã index; Generation mới kèm Break. Làm trong change `static-live-log-spaces` (task 2.1, 4.3 và 4.4).
+  - Giữ file handle của Generation cũ; dòng có text không còn trên đĩa (sau truncate hoặc ghi đè) bị bỏ, thay cho "no longer on disk" (quyết định của change `static-live-log-spaces`).
   - Test: đổi tên, xoá, `copytruncate`.
-- [ ] 9.3 Phát hiện file Imported bị ghi đè (không phải append): index lại và báo người dùng.
+  - Đã làm trong `static-live-log-spaces` 4.3 (`Replaced`, `Rewritten`) và 4.4 (`ChainSource`, Generation của file local), handle đóng khi rời tab ở 4.5.
+- [x] 9.3 Phát hiện file Imported bị ghi đè (không phải append): index lại và báo người dùng.
+  - Đã làm trong `static-live-log-spaces` 2.1 và 2.2: file của Static Log Space bị ghi đè được đọc lại ở nền, giữ Filter; không có notice riêng, chỉ có notice khi Marker bị bỏ (2.4).
 - [ ] 9.4 Remote File và Remote Command: Line Index trên bytes của Live Window; Backfill, Load More, Open in full và cắt Live Window cập nhật Line Index.
   - Test: chạy lại test của `live-log` và `remote-log-space`.
 
