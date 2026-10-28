@@ -134,7 +134,7 @@ fn a_folder_can_be_chosen_as_well_as_files(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn local_and_remote_lists_do_not_block_each_other(cx: &mut TestAppContext) {
+fn the_static_and_live_lists_are_kept_apart(cx: &mut TestAppContext) {
     let mut h = common::open_app(cx);
     let server = add_server(&mut h);
     open_on(&mut h, NewSpaceKind::Static);
@@ -143,14 +143,17 @@ fn local_and_remote_lists_do_not_block_each_other(cx: &mut TestAppContext) {
     h.view.update(&mut h.cx, |app, cx| app.new_space_add_paths(vec![log.to_string_lossy().into_owned()], cx));
     h.cx.run_until_parked();
     assert!(h.cx.debug_bounds("new-space-drop").is_some());
-    assert!(h.cx.debug_bounds("new-space-remote").is_none(), "the Remote list is hidden");
+    assert!(h.cx.debug_bounds("new-space-remote").is_none(), "the Live step's lists are hidden");
+    assert!(h.cx.debug_bounds("new-space-live-drop").is_none());
 
-    // Switching does not open the picker, and the Remote buttons are on.
+    // Switching does not open the picker, and the Live step's buttons show.
     h.view.update(&mut h.cx, |app, cx| app.new_space_set_kind(NewSpaceKind::Live, cx));
     h.cx.run_until_parked();
     h.view.read_with(&h.cx, |app, _| assert!(app.remote.picker.is_none()));
     assert!(h.cx.debug_bounds("new-space-remote").is_some());
-    assert!(h.cx.debug_bounds("new-space-drop").is_none());
+    assert!(h.cx.debug_bounds("new-space-live-browse").is_some());
+    assert!(h.cx.debug_bounds("new-space-drop").is_none(), "the Static step's list is hidden");
+    assert!(h.cx.debug_bounds("new-space-files").is_none());
     assert!(h.cx.debug_bounds("new-space-empty-hint").is_some(), "Add files to follow, remote files or a command");
     h.cx.update(|window, _| window.refresh());
     let text = h.cx.debug_bounds("new-space-already-listed");

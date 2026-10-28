@@ -72,25 +72,25 @@ fn create_depends_on_the_kind_showing_and_its_own_list() {
     let p = project_with(&[]);
     let mut form = NewLogSpaceForm::new();
     form.set_name("Payment");
-    let (local, remote, scratch) = (NewSpaceKind::Static, NewSpaceKind::Live, NewSpaceKind::Scratch);
+    let (fixed, live, scratch) = (NewSpaceKind::Static, NewSpaceKind::Live, NewSpaceKind::Scratch);
 
     // Nothing listed: only Scratch can be created.
     assert!(form.can_create(scratch, 0, &p));
-    assert!(!form.can_create(local, 0, &p));
-    assert!(!form.can_create(remote, 0, &p));
+    assert!(!form.can_create(fixed, 0, &p));
+    assert!(!form.can_create(live, 0, &p));
     assert_eq!(form.create_label(scratch, LiveCounts::default()), "Create");
-    assert_eq!(local.empty_hint(), Some("Choose or drop files"));
-    assert_eq!(remote.empty_hint(), Some("Add files to follow, remote files or a command"));
+    assert_eq!(fixed.empty_hint(), Some("Choose or drop files"));
+    assert_eq!(live.empty_hint(), Some("Add files to follow, remote files or a command"));
     assert_eq!(scratch.empty_hint(), None);
 
-    // Local files do not make Remote creatable, and the other way round.
+    // The Static list does not make Live creatable, and the other way round.
     form.push("/a.log".into(), PendingStatus::Ok);
-    assert!(form.can_create(local, 0, &p));
-    assert!(!form.can_create(remote, 0, &p));
-    assert!(form.can_create(remote, 2, &p));
-    assert_eq!(form.create_label(remote, LiveCounts { files: 2, ..LiveCounts::default() }), "Create with 2 remote files");
+    assert!(form.can_create(fixed, 0, &p));
+    assert!(!form.can_create(live, 0, &p));
+    assert!(form.can_create(live, 2, &p));
+    assert_eq!(form.create_label(live, LiveCounts { files: 2, ..LiveCounts::default() }), "Create with 2 remote files");
     assert_eq!(form.create_label(scratch, LiveCounts { files: 2, ..LiveCounts::default() }), "Create");
-    assert_eq!(form.create_label(local, LiveCounts::default()), "Create with 1 file");
+    assert_eq!(form.create_label(fixed, LiveCounts::default()), "Create with 1 file");
 
     form.push("/b.log".into(), PendingStatus::Ok);
     assert_eq!(form.create_label(NewSpaceKind::Static, LiveCounts::default()), "Create with 2 files");
@@ -199,7 +199,7 @@ fn only_files_that_cannot_be_added_never_make_an_empty_log_space() {
     assert_eq!(form.create_label(NewSpaceKind::Static, LiveCounts::default()), "Create");
     assert_eq!(form.files_message().as_deref(), Some("None of these files can be added"));
 
-    // Removing them leaves nothing to create from on Local files.
+    // Removing them leaves nothing to create from on Static.
     form.remove_file(1);
     form.remove_file(0);
     assert!(!form.can_create(NewSpaceKind::Static, 0, &p));

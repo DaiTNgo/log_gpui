@@ -30,7 +30,8 @@ Mỗi task là một commit, và test phải xanh sau mỗi commit. Nhóm 3 cầ
   - Đã làm: `NewSpaceDialog::live_form` giữ file local của nấc Live; nấc này có "Choose files…" và danh sách local trên danh sách remote. Create tạo Live Log Space với cả hai qua `create_live_log_space` (`create_remote_log_space` gọi nó với danh sách local rỗng). Nhãn đếm qua `LiveCounts`, Remote File giờ là "remote file(s)". Archive ở nấc Live có `PendingStatus::StaticOnly`, không được đọc và không được đếm. Vùng kéo thả của nấc Live làm ở 3.3.
 - [x] 3.3 Thả file: ở nấc Live thì vào danh sách của Live, ở nấc khác thì gạt sang Static. Thả vào cửa sổ khi không có dialog nào mở thì tạo Static.
   - Đã làm: `drop_paths_on_window` đưa file vào danh sách local của nấc Live khi nấc này đang hiện, các nấc khác thì gạt sang Static như trước. Nấc Live có vùng kéo thả riêng cùng nút "Choose files…". Thả vào cửa sổ khi không có dialog vẫn tạo Static (đã có từ change `new-space-kind-switch`); test kiểm tra thêm loại. File mà dialog nhận sau khi đọc xong Archive vẫn vào nấc Static.
-- [ ] 3.4 Sửa `tests/new_space_dialog_test.rs`, `tests/new_space_test.rs` và `tests/archive_test.rs` theo nấc mới.
+- [x] 3.4 Sửa `tests/new_space_dialog_test.rs`, `tests/new_space_test.rs` và `tests/archive_test.rs` theo nấc mới.
+  - Đã làm: phần lớn được sửa cùng 3.1–3.3 để mỗi commit đều xanh (tên nấc, `LiveCounts`, nhãn "remote file(s)", thả file ở nấc Live). Commit này đổi nốt tên test và chú thích còn nói Local/Remote, và kiểm tra mỗi nấc ẩn danh sách của nấc kia.
 
 ## 4. Live Log Space: file local
 
