@@ -113,6 +113,13 @@ pub struct LiveRuntime {
     /// lines stay, read through the handle still open, until a file is at
     /// the path again.
     pub static_gone: HashSet<String>,
+    /// Local files of a Live Log Space deleted from disk: when a file is at
+    /// the path again, its lines are a new Generation below a Break
+    /// "replaced".
+    pub local_deleted: HashSet<String>,
+    /// The Break above the first line of a local file read again from its
+    /// start (it was cut, or written over), until it is read.
+    pub first_marks: HashMap<String, std::sync::Arc<crate::live::BreakMark>>,
     /// A batch of this many lines is read on a worker thread.
     pub preparse_min: usize,
     /// Batches applied since the allocator's cache was last given back.
@@ -145,6 +152,8 @@ impl LiveRuntime {
             pump_cursor: 0,
             static_watched: None,
             static_gone: HashSet::new(),
+            local_deleted: HashSet::new(),
+            first_marks: HashMap::new(),
             preparse_min: PREPARE_MIN_LINES,
             batches_since_release: 0,
         }
@@ -851,22 +860,37 @@ impl AppView {
     /// Events of a local file read through its Line Index. Its source only
     /// tells that the file grew (what grew is read from the file), was
     /// rotated, cut or deleted, and how it is.
-    fn apply_indexed_events(&mut self, file_id: &str, parsed: crate::space_view::ParsedFile, events: Vec<SourceEvent>) -> FileDelta {
-        let delta = FileDelta::default();
+    fn apply_indexed_events(&mut self, file_id: &str, mut parsed: crate::space_view::ParsedFile, events: Vec<SourceEvent>) -> FileDelta {
+        let mut delta = FileDelta::default();
         let mut grew = false;
-        let mut again = false;
+        let mut again = None;
         for event in events {
             if let Some(source) = self.live.sources.get_mut(file_id) {
                 source.health.observe(&event, std::time::SystemTime::now());
             }
             match event {
                 SourceEvent::Append { .. } => grew = true,
-                // The file at the path is another one now: it is read again.
-                SourceEvent::Break { kind } if kind.starts_generation() => again = true,
+                // Another file at the path: its lines follow the old ones',
+                // which stay readable.
+                SourceEvent::Break { kind: kind @ (BreakKind::Rotated | BreakKind::Replaced) } => {
+                    if !self.begin_local_generation(file_id, &mut parsed, kind, &mut delta) {
+                        again = Some(kind);
+                    }
+                }
+                // The lines stay, read through the handle still open.
+                SourceEvent::Break { kind: BreakKind::Deleted } => {
+                    self.live.local_deleted.insert(file_id.to_string());
+                }
+                // The text of the lines is gone from disk: read the file again.
+                SourceEvent::Break { kind } if kind.starts_generation() => again = Some(kind),
                 SourceEvent::Problem(message) => self.notice = Some(message),
                 SourceEvent::Status(status) => {
+                    let back = status == SourceStatus::Live && self.live.local_deleted.remove(file_id);
                     if let Some(source) = self.live.sources.get_mut(file_id) {
                         source.status = status;
+                    }
+                    if back && !self.begin_local_generation(file_id, &mut parsed, BreakKind::Replaced, &mut delta) {
+                        again = Some(BreakKind::Replaced);
                     }
                 }
                 _ => {}
@@ -875,18 +899,50 @@ impl AppView {
         self.index_written_since(file_id, parsed, grew, again, delta)
     }
 
+    /// A local file of a Live Log Space has another file at its path: the
+    /// new file's lines are a new Generation of it, below a Break. False
+    /// when the new file cannot be opened, or the file is not read live.
+    fn begin_local_generation(
+        &mut self,
+        file_id: &str,
+        parsed: &mut crate::space_view::ParsedFile,
+        kind: BreakKind,
+        delta: &mut FileDelta,
+    ) -> bool {
+        let Some(file) = self.active_space().and_then(|s| s.file(file_id).cloned()) else { return false };
+        let (Some(indexed), Some(path)) = (parsed.indexed.clone(), file.path.as_deref()) else { return false };
+        let Ok(source) = crate::index::DiskSource::stay_open(path, crate::index::HandleBudget::shared()) else { return false };
+        let mark = std::sync::Arc::new(crate::live::BreakMark {
+            kind,
+            label: format!("{} {} {}", file.display_name, kind.label(), now_label()),
+        });
+        let generation = file.generation + 1;
+        match indexed.begin_generation(std::sync::Arc::new(source), generation, mark.clone()) {
+            Some(Ok(_)) => {}
+            _ => return false,
+        }
+        self.begin_generation_for(file_id);
+        if let Some(start) = indexed.generations().last() {
+            std::sync::Arc::make_mut(&mut parsed.raw_breaks).insert(start.pos, mark);
+        }
+        delta.shown = true;
+        delta.structural = true;
+        true
+    }
+
     /// Index what was written to an indexed file since (`grew`), or read it
-    /// again from its start in the background (`again`: another file, or
-    /// one cut or rewritten).
+    /// again from its start in the background (`again`, with why: another
+    /// file, or one cut or rewritten). A local file of a Live Log Space read
+    /// again is a new Generation, with the Break above its first line.
     fn index_written_since(
         &mut self,
         file_id: &str,
         parsed: crate::space_view::ParsedFile,
         grew: bool,
-        mut again: bool,
+        mut again: Option<BreakKind>,
         mut delta: FileDelta,
     ) -> FileDelta {
-        if grew && !again {
+        if grew && again.is_none() {
             use crate::index::file::Extended;
             let read = parsed.indexed.as_ref().map(|f| f.extend());
             match read {
@@ -896,10 +952,18 @@ impl AppView {
                     delta.appended = Some(range);
                 }
                 Some(Ok(Extended::Same)) => {}
-                Some(Ok(Extended::Shrunk | Extended::Rewritten)) | Some(Err(_)) | None => again = true,
+                Some(Ok(Extended::Shrunk)) => again = Some(BreakKind::Truncated),
+                Some(Ok(Extended::Rewritten)) | Some(Err(_)) | None => again = Some(BreakKind::Rewritten),
             }
         }
-        if again {
+        if let Some(kind) = again {
+            let live = self.active_space().is_some_and(|s| s.kind == LogSpaceKind::Live);
+            let name = self.active_space().and_then(|s| s.file(file_id)).map(|f| f.display_name.clone());
+            if let (true, Some(name)) = (live, name) {
+                let label = format!("{name} {} {}", kind.label(), now_label());
+                self.live.first_marks.insert(file_id.to_string(), std::sync::Arc::new(crate::live::BreakMark { kind, label }));
+                self.begin_generation_for(file_id);
+            }
             // Read the file at the path from its start, in the background;
             // its source goes on from where it is. The open tab's Filter
             // and Focus Tabs are kept first: the view is built again from them.
@@ -935,9 +999,9 @@ impl AppView {
             // A file still being read has no index to compare yet.
             let Some(indexed) = self.parsed_files.get(&file.file_id).and_then(|p| p.indexed.clone()) else { continue };
             let (grew, again) = match indexed.changed_on_disk(std::path::Path::new(path)) {
-                Ok(crate::index::file::OnDisk::Appended) => (true, false),
+                Ok(crate::index::file::OnDisk::Appended) => (true, None),
                 // Another file at the path, or one back where it was deleted.
-                Ok(crate::index::file::OnDisk::Replaced) => (false, true),
+                Ok(crate::index::file::OnDisk::Replaced) => (false, Some(BreakKind::Replaced)),
                 Ok(crate::index::file::OnDisk::Gone) => {
                     if self.live.static_gone.insert(file.file_id.clone()) {
                         cx.notify();

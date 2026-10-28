@@ -8,7 +8,7 @@
 use super::AppView;
 use crate::index::file::IndexedFile;
 use crate::index::indexing::{IndexOptions, Indexed, Outcome, index_into};
-use crate::index::{DiskSource, HandleBudget, LineSource};
+use crate::index::{ChainSource, DiskSource, HandleBudget, LineSource};
 use crate::live::LiveBuffer;
 use crate::space_view::ParsedFile;
 use crate::workspace::log_space::{LogFile, StoredMarker};
@@ -75,12 +75,13 @@ fn read_file(name: &str, path: &str, done: &AtomicU64, total: &AtomicU64, cancel
 /// Read the file at `path` through its Line Index: Indexing builds it into
 /// `indexed`, and the file stays open to read its lines again.
 fn index_file(path: &str, options: IndexOptions, indexed: Arc<Indexed>, cancel: &AtomicBool) -> Option<std::io::Result<ParsedFile>> {
-    let source: Arc<dyn LineSource> = match DiskSource::stay_open(path, HandleBudget::shared()) {
-        Ok(source) => Arc::new(source),
+    // Read as a chain: a Live Log Space's file can take on a new Generation.
+    let source = match DiskSource::stay_open(path, HandleBudget::shared()) {
+        Ok(source) => Arc::new(ChainSource::new(Arc::new(source) as Arc<dyn LineSource>)),
         Err(e) => return Some(Err(e)),
     };
     match index_into(&*source, &options, &indexed, cancel) {
-        Outcome::Done => Some(Ok(ParsedFile::from_indexed(IndexedFile::new(source, indexed, options)))),
+        Outcome::Done => Some(Ok(ParsedFile::from_indexed(IndexedFile::with_chain(source, indexed, options)))),
         Outcome::Cancelled => None,
         Outcome::Failed(error) => Some(Err(std::io::Error::other(error))),
     }
@@ -238,11 +239,21 @@ impl AppView {
         if !self.active_file_ids().contains(&file.file_id) || self.parsed_files.contains_key(&file.file_id) {
             return;
         }
-        let parsed = result.unwrap_or_else(|e| {
+        let mut parsed = result.unwrap_or_else(|e| {
             let error = super::tabs::read_failure(file, &e);
             self.notice = Some(error.clone());
             ParsedFile::failed(error)
         });
+        // Its lines are the file's current Generation, below the Break of
+        // why it was read again, if it was.
+        let mark = self.live.first_marks.remove(&file.file_id);
+        if let Some(indexed) = &parsed.indexed {
+            let generation = self.active_space().and_then(|s| s.file(&file.file_id)).map_or(0, |f| f.generation);
+            indexed.set_first_generation(generation, mark.clone());
+            if let Some(mark) = mark {
+                Arc::make_mut(&mut parsed.raw_breaks).insert(0, mark);
+            }
+        }
         self.parsed_files.insert(file.file_id.clone(), parsed);
         self.drop_markers_that_no_longer_match(&file.file_id);
         if !self.is_reading() {

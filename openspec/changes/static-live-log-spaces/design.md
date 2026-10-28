@@ -68,7 +68,7 @@ Marker có sẵn `line_hash`. `full_read.rs` đã dùng nó để giữ Marker k
 ### 5. Live: Generation cho file local
 
 - File local của Live có `LocalFileSource` như hiện nay.
-- Mỗi Generation là một `IndexedFile` cùng handle `stay_open` của nó. Thứ tự gộp giữ (Generation, dòng), giống Remote File.
+- Mỗi Generation được đọc qua handle `stay_open` của nó. Các Generation nối liền nhau trong một `ChainSource`, nên file vẫn là một `IndexedFile` với một Filter index: offset của dòng cũ không đổi khi Generation mới bắt đầu, và thứ tự (Generation, dòng) là thứ tự vị trí. Một `IndexedFile` cho mỗi Generation thì phải gộp Filter index của chúng, và không có gì thêm cho người dùng.
 - Break có thêm hai `BreakKind` mới:
 
 | Quan sát | Break | Dòng cũ |

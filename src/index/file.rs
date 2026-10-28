@@ -8,7 +8,7 @@ use super::indexing::{IndexOptions, Indexed, Outcome, index_all};
 use super::meta::LineMeta;
 use super::scan::FileTexts;
 use super::view_rows::{ROW_CACHE, RowCache};
-use super::{LineSource, read_entries};
+use super::{ChainSource, LineSource, read_entries};
 use crate::model::LogEntry;
 use crate::parser::text::LineParser;
 use std::sync::{Arc, Mutex};
@@ -29,6 +29,21 @@ pub struct IndexedFile {
     /// Every line's text, once something needed all of them (the Raw View).
     all_lines: Mutex<Option<Arc<Vec<gpui::SharedString>>>>,
     fingerprint: Mutex<Fingerprint>,
+    /// Where each Generation starts, oldest first: a file not read live has
+    /// one.
+    generations: Mutex<Vec<GenerationStart>>,
+    /// The source of a local file read live: its Generations end to end.
+    chain: Option<Arc<ChainSource>>,
+}
+
+/// The first line of a Generation of a file, and the Break drawn above it.
+#[derive(Debug, Clone)]
+pub struct GenerationStart {
+    /// Its position in the file's lines.
+    pub pos: usize,
+    /// Its number, as the file's Markers count Generations.
+    pub generation: u32,
+    pub mark: Option<Arc<crate::live::BreakMark>>,
 }
 
 /// What the indexed part of a file was: which file, how long, and a hash of
@@ -85,7 +100,85 @@ impl IndexedFile {
             let end = indexed.data.read().unwrap().file.lines.end();
             Mutex::new(fingerprint_of(&*source, end))
         };
-        Self { source, indexed, options, cache: Mutex::new(RowCache::new(ROW_CACHE)), all_lines: Mutex::default(), fingerprint }
+        let generations = Mutex::new(vec![GenerationStart { pos: 0, generation: 0, mark: None }]);
+        Self {
+            source,
+            indexed,
+            options,
+            cache: Mutex::new(RowCache::new(ROW_CACHE)),
+            all_lines: Mutex::default(),
+            fingerprint,
+            generations,
+            chain: None,
+        }
+    }
+
+    /// A local file read live: a new Generation can follow its lines
+    /// (`begin_generation`).
+    pub fn with_chain(chain: Arc<ChainSource>, indexed: Arc<Indexed>, options: IndexOptions) -> Self {
+        Self { chain: Some(chain.clone()), ..Self::new(chain, indexed, options) }
+    }
+
+    /// The number of the Generation the file's lines start with, and the
+    /// Break above its first line (a file read again after it was cut).
+    pub fn set_first_generation(&self, generation: u32, mark: Option<Arc<crate::live::BreakMark>>) {
+        let mut generations = self.generations.lock().unwrap();
+        generations[0].generation = generation;
+        generations[0].mark = mark;
+        self.cache.lock().unwrap().forget_file(0);
+    }
+
+    /// Where each Generation starts, oldest first.
+    pub fn generations(&self) -> Vec<GenerationStart> {
+        self.generations.lock().unwrap().clone()
+    }
+
+    /// Another file is at the path (rotated or replaced): what the old one
+    /// still had is indexed, then `source`'s lines follow as Generation
+    /// `generation`, below the Break `mark`. The old lines stay readable
+    /// through the old handle. `None`: the file is not read live.
+    pub fn begin_generation(
+        &self,
+        source: Arc<dyn LineSource>,
+        generation: u32,
+        mark: Arc<crate::live::BreakMark>,
+    ) -> Option<std::io::Result<Extended>> {
+        let chain = self.chain.as_ref()?;
+        let begun = (|| {
+            chain.freeze()?;
+            self.extend()?;
+            let pos = self.len();
+            chain.push(source)?;
+            self.generations.lock().unwrap().push(GenerationStart { pos, generation, mark: Some(mark) });
+            self.extend()
+        })();
+        Some(begun)
+    }
+
+    /// Line `n`'s number in its Generation (1-based), and its Generation.
+    pub fn line_number(&self, n: usize) -> Option<(usize, u32)> {
+        if n >= self.len() {
+            return None;
+        }
+        let start = self.generation_of(&self.generations.lock().unwrap(), n);
+        Some((n - start.pos + 1, start.generation))
+    }
+
+    fn generation_of(&self, generations: &[GenerationStart], n: usize) -> GenerationStart {
+        generations[generations.partition_point(|g| g.pos <= n).saturating_sub(1)].clone()
+    }
+
+    /// Number the entry of line `n` in its Generation, and give the first
+    /// line of a Generation its Break.
+    fn place(&self, generations: &[GenerationStart], n: usize, entry: &mut LogEntry) {
+        let start = self.generation_of(generations, n);
+        entry.index = n - start.pos + 1;
+        entry.generation = start.generation;
+        // The line above a Generation is no parent of its lines.
+        entry.parent = entry.parent.and_then(|p| (p > start.pos).then(|| p - start.pos));
+        if n == start.pos {
+            entry.break_before = start.mark;
+        }
     }
 
     /// What the indexed part of the file was.
@@ -168,9 +261,11 @@ impl IndexedFile {
         parser.set_format(self.options.format.clone());
         let entries = read_entries(&*self.source, &data.file, start..end, &mut parser).ok()?;
         drop(data);
+        let generations = self.generations.lock().unwrap().clone();
         let mut cache = self.cache.lock().unwrap();
         let mut found = None;
-        for (i, entry) in entries.into_iter().enumerate() {
+        for (i, mut entry) in entries.into_iter().enumerate() {
+            self.place(&generations, start + i, &mut entry);
             let entry = Arc::new(entry);
             if start + i == n {
                 found = Some(entry.clone());

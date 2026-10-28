@@ -193,3 +193,26 @@ fn a_file_changed_on_disk_is_told_apart_from_one_written_on() {
     std::fs::remove_file(&path).unwrap();
     assert_eq!(file.changed_on_disk(&path).unwrap(), OnDisk::Gone);
 }
+
+/// The Generations of a file end to end: an older one keeps the bytes it had
+/// (a line break added after a last line that had none), whatever is
+/// written to it since, and the new one's lines follow.
+#[test]
+fn a_chain_reads_each_generation_through_its_own_handle() {
+    use log_gpui::index::ChainSource;
+    use std::io::Write;
+    let dir = tempfile::tempdir().unwrap();
+    let (old, new) = (dir.path().join("app.log.1"), dir.path().join("app.log"));
+    std::fs::write(&old, "a\nb").unwrap();
+    std::fs::write(&new, "c\n").unwrap();
+    let open = |p: &std::path::Path| Arc::new(DiskSource::stay_open(p, HandleBudget::new(4)).unwrap()) as Arc<dyn LineSource>;
+    let chain = ChainSource::new(open(&old));
+    assert_eq!(chain.push(open(&new)).unwrap(), 4, "b, then its added line break");
+    std::fs::OpenOptions::new().append(true).open(&old).unwrap().write_all(b"late\n").unwrap();
+    assert_eq!(chain.len().unwrap(), 6);
+    assert_eq!(chain.read_range(0, 100).unwrap(), b"a\nb\nc\n");
+    assert_eq!(chain.read_range(3, 2).unwrap(), b"\nc", "across the two");
+    std::fs::OpenOptions::new().append(true).open(&new).unwrap().write_all(b"d\n").unwrap();
+    assert_eq!(chain.read_range(4, 100).unwrap(), b"c\nd\n", "the newest one grows");
+    assert_eq!(chain.generations(), 2);
+}

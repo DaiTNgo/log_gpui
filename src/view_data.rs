@@ -150,7 +150,7 @@ impl<'a> FileEntries<'a> {
     pub fn line_number(&self, pos: usize) -> Option<(usize, u32)> {
         match self {
             FileEntries::Held(entries) => entries.get(pos).map(|e| (e.index, e.generation)),
-            FileEntries::Indexed(file) => (pos < file.len()).then_some((pos + 1, 0)),
+            FileEntries::Indexed(file) => file.line_number(pos),
         }
     }
 

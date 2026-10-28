@@ -17,7 +17,7 @@ pub use handles::HandleBudget;
 pub use line_index::LineIndex;
 pub use meta::{LineMeta, MetaTable, RawMeta};
 pub use indexing::Indexed;
-pub use source::{BytesSource, DiskSource, LineSource};
+pub use source::{BytesSource, ChainSource, DiskSource, LineSource};
 
 use crate::log_format::CompiledFormat;
 use crate::model::LogEntry;

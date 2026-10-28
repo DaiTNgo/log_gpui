@@ -153,39 +153,100 @@ fn a_local_file_of_a_live_space_is_followed_through_its_line_index(cx: &mut Test
     });
 }
 
-#[gpui::test]
-fn a_rotated_local_file_of_a_live_space_is_read_again(cx: &mut TestAppContext) {
-    let mut h = open_app(cx);
-    let source = log_file(&h, "a.log", 20);
+/// `a.log` of 20 lines open in a Live Log Space, its source live.
+fn live_a(h: &mut Harness) {
+    let source = log_file(h, "a.log", 20);
     h.view.update(&mut h.cx, |app, cx| app.create_log_space("A", LogSpaceKind::Live, &[source], cx));
     h.cx.run_until_parked();
-    pump_until(&mut h, "the source is live", |app| {
-        app.live_file_statuses().iter().all(|(_, s)| *s == log_gpui::live::SourceStatus::Live)
-    });
-    let path = h.dir.path().join("a.log");
-    std::fs::rename(&path, h.dir.path().join("a.log.1")).unwrap();
-    std::fs::write(&path, "2026-09-05 12:00:00 [INFO] [a.log] after the rotation\n").unwrap();
-    pump_until(&mut h, "the new file shows", |app| {
-        app.rows_snapshot().last().is_some_and(|e| e.raw_line.ends_with("after the rotation"))
+    pump_until(h, "the source is live", |app| {
+        app.live_file_statuses().iter().all(|(_, s)| *s == log_gpui::live::SourceStatus::Live) && app.view.len() == 20
     });
 }
 
-/// `cp bigger.log a.log`: the same inode, longer, other text. The file is
-/// read again: no line cut at the old offsets shows.
+fn new_lines(n: usize, what: &str) -> String {
+    (0..n).map(|i| format!("2026-09-05 12:00:{:02} [WARN] [a.log] {what} {i}\n", i % 60)).collect()
+}
+
+/// The Break drawn above each row that has one, by row.
+fn breaks(app: &log_gpui::app::AppView) -> Vec<(usize, log_gpui::live::BreakKind)> {
+    app.rows_snapshot().iter().enumerate().filter_map(|(i, e)| e.break_before.as_ref().map(|b| (i, b.kind))).collect()
+}
+
 #[gpui::test]
-fn a_local_file_of_a_live_space_written_over_in_place_is_read_again(cx: &mut TestAppContext) {
+fn a_local_file_rotated_like_logrotate_keeps_its_old_lines_above_a_break(cx: &mut TestAppContext) {
     let mut h = open_app(cx);
-    let source = log_file(&h, "a.log", 20);
-    h.view.update(&mut h.cx, |app, cx| app.create_log_space("A", LogSpaceKind::Live, &[source], cx));
-    h.cx.run_until_parked();
-    pump_until(&mut h, "the source is live", |app| {
-        app.live_file_statuses().iter().all(|(_, s)| *s == log_gpui::live::SourceStatus::Live)
+    live_a(&mut h);
+    let path = h.dir.path().join("a.log");
+    std::fs::rename(&path, h.dir.path().join("a.log.1")).unwrap();
+    std::fs::write(&path, new_lines(3, "after")).unwrap();
+    pump_until(&mut h, "the old and the new lines show", |app| app.view.len() == 23);
+    h.view.read_with(&h.cx, |app, _| {
+        let rows = app.rows_snapshot();
+        assert!(rows[19].raw_line.ends_with("line 19"), "the old lines are read through the old handle");
+        assert!(rows[20].raw_line.ends_with("after 0"));
+        assert_eq!(breaks(app), [(20, log_gpui::live::BreakKind::Rotated)]);
+        assert_eq!((rows[20].index, rows[20].generation), (1, 1), "the new file's lines are numbered from 1, a Generation on");
+        assert_eq!((rows[19].index, rows[19].generation), (20, 0));
     });
-    let bigger: String = (0..30).map(|i| format!("2026-09-05 12:00:{:02} [WARN] [a.log] bigger {i}\n", i % 60)).collect();
-    std::fs::write(h.dir.path().join("a.log"), bigger).unwrap();
+}
+
+#[gpui::test]
+fn a_local_file_replaced_with_mv_keeps_its_old_lines_above_a_break(cx: &mut TestAppContext) {
+    let mut h = open_app(cx);
+    live_a(&mut h);
+    let other = h.dir.path().join("other.log");
+    std::fs::write(&other, new_lines(5, "other")).unwrap();
+    std::fs::rename(&other, h.dir.path().join("a.log")).unwrap();
+    pump_until(&mut h, "the old and the other lines show", |app| app.view.len() == 25);
+    h.view.read_with(&h.cx, |app, _| {
+        let rows = app.rows_snapshot();
+        assert!(rows[0].raw_line.ends_with("line 0"), "the deleted file's lines stay");
+        assert!(rows[24].raw_line.ends_with("other 4"));
+        assert_eq!(breaks(app), [(20, log_gpui::live::BreakKind::Replaced)]);
+    });
+}
+
+/// `cp bigger.log a.log`: the same inode, longer, other text. The old lines
+/// are gone from disk: they go, and no line cut at the old offsets shows.
+#[gpui::test]
+fn a_local_file_written_over_in_place_is_read_again_below_a_break(cx: &mut TestAppContext) {
+    let mut h = open_app(cx);
+    live_a(&mut h);
+    std::fs::write(h.dir.path().join("a.log"), new_lines(30, "bigger")).unwrap();
     pump_until(&mut h, "only the new text shows", |app| {
         let rows = app.rows_snapshot();
         rows.len() == 30 && rows.iter().enumerate().all(|(i, e)| e.raw_line.ends_with(&format!("bigger {i}")))
+    });
+    h.view.read_with(&h.cx, |app, _| assert_eq!(breaks(app), [(0, log_gpui::live::BreakKind::Rewritten)]));
+}
+
+#[gpui::test]
+fn a_deleted_local_file_back_at_its_path_is_a_new_generation_below_a_break(cx: &mut TestAppContext) {
+    let mut h = open_app(cx);
+    live_a(&mut h);
+    let path = h.dir.path().join("a.log");
+    std::fs::remove_file(&path).unwrap();
+    pump_until(&mut h, "the source waits for the file", |app| {
+        app.live_file_statuses().iter().all(|(_, s)| *s == log_gpui::live::SourceStatus::WaitingForFile)
+    });
+    h.view.read_with(&h.cx, |app, _| assert_eq!(app.view.len(), 20, "the lines stay"));
+    std::fs::write(&path, new_lines(2, "back")).unwrap();
+    pump_until(&mut h, "the new file's lines show", |app| app.view.len() == 22);
+    h.view.read_with(&h.cx, |app, _| assert_eq!(breaks(app), [(20, log_gpui::live::BreakKind::Replaced)]));
+}
+
+#[gpui::test]
+fn a_local_file_cut_by_copytruncate_shows_only_its_new_lines_below_a_break(cx: &mut TestAppContext) {
+    let mut h = open_app(cx);
+    live_a(&mut h);
+    let path = h.dir.path().join("a.log");
+    std::fs::OpenOptions::new().write(true).open(&path).unwrap().set_len(0).unwrap();
+    pump_until(&mut h, "the cut is seen", |app| app.view.len() == 0);
+    append(&h, "a.log", &new_lines(3, "after"));
+    pump_until(&mut h, "the new lines show", |app| app.view.len() == 3);
+    h.view.read_with(&h.cx, |app, _| {
+        assert!(app.rows_snapshot()[0].raw_line.ends_with("after 0"));
+        assert_eq!(breaks(app), [(0, log_gpui::live::BreakKind::Truncated)]);
     });
 }
 
