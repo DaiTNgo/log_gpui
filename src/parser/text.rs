@@ -16,13 +16,16 @@ static RE_STANDARD: LazyLock<Regex> = LazyLock::new(|| {
     // Matches: [2026-09-05T12:34:56.789Z] [WARN] [api] Message
     // Matches: 2026-09-05 12:34:56 ERROR: Something went wrong
     // Matches: 2026-09-05 12:34:56,789 ERROR [main] c.a.Service - Message (logback, log4j)
-    Regex::new(r#"^(?:\[?(\d{4}[-/]\d{2}[-/]\d{2}[T ]\d{2}:\d{2}:\d{2}(?:[.,]\d+)?(?:Z|[+-]\d{2}:?\d{2})?)\]?\s+)?(?:\[?([A-Za-z]{1,7})\]?:?\s+)?(?:\[([a-zA-Z0-9_\-.]+)\]:?\s+)?(.*)$"#)
+    Regex::new(r#"^(?:\[?(\d{4}[-/]\d{2}[-/]\d{2}[T ]\d{2}:\d{2}:\d{2}(?:[.,]\d+)?(?:Z|[+-]\d{2}:?\d{2})?)\]?\s+)?(?:\[?([A-Za-z]{1,7})\]?:?\s+)?(?:\[([a-zA-Z0-9_\-.]+)\]:?\s+)?((?s:.*))$"#)
         .unwrap()
 });
 
 static RE_STANDARD_NO_LEVEL: LazyLock<Regex> = LazyLock::new(|| {
-    // The same line when the word after the timestamp is not a level.
-    Regex::new(r#"^(?:\[?(\d{4}[-/]\d{2}[-/]\d{2}[T ]\d{2}:\d{2}:\d{2}(?:[.,]\d+)?(?:Z|[+-]\d{2}:?\d{2})?)\]?\s+)?(?:\[([a-zA-Z0-9_\-.]+)\]:?\s+)?(.*)$"#)
+    // The same line when the word after the timestamp is not a level. Every
+    // part is optional and the message takes line breaks too (`(?s:…)`), so
+    // it matches any text: a line read at offsets its file no longer has
+    // may hold one.
+    Regex::new(r#"^(?:\[?(\d{4}[-/]\d{2}[-/]\d{2}[T ]\d{2}:\d{2}:\d{2}(?:[.,]\d+)?(?:Z|[+-]\d{2}:?\d{2})?)\]?\s+)?(?:\[([a-zA-Z0-9_\-.]+)\]:?\s+)?((?s:.*))$"#)
         .unwrap()
 });
 

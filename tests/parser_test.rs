@@ -120,3 +120,17 @@ fn test_json_ts_and_epoch_times_are_read() {
     assert!(!entries[3].has_time);
     assert!(!entries[4].has_time);
 }
+
+/// Any text is a line: one with a line break inside it (as when a file is
+/// read at offsets it no longer has) is read whole, never a panic.
+#[test]
+fn test_a_line_with_a_line_break_inside_is_read_whole() {
+    let mut parser = log_gpui::parser::text::LineParser::new();
+    for line in ["cut here\nand on", "2026-09-05 10:00:00 [INFO] [db] one\ntwo", "2026-09-05 10:00:00 one\n\ttwo", "\u{FFFD}\n\u{FFFD}"] {
+        let entry = parser.parse(0, line);
+        assert_eq!(entry.raw_line, line);
+    }
+    let entry = parser.parse(0, "2026-09-05 10:00:00 [WARN] [db] one\ntwo");
+    assert_eq!(entry.level, LogLevel::Warn);
+    assert_eq!(entry.payload(), "one\ntwo");
+}
