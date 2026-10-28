@@ -265,9 +265,10 @@ impl AppView {
     }
 
     /// Files or folders dropped anywhere on the window: with the New Log
-    /// Space dialog open they go to its list of local files; with nothing
-    /// open they make an Imported Log Space at once. Ignored while another
-    /// dialog is open.
+    /// Space dialog open they go to the Live step's list when it shows, and
+    /// to the Static step's otherwise (switching to it); with nothing open
+    /// they make a Static Log Space at once. Ignored while another dialog is
+    /// open.
     pub fn drop_paths_on_window(&mut self, paths: Vec<String>, cx: &mut Context<Self>) {
         let other_dialog = self.confirm.is_some()
             || self.server_dialog.is_some()
@@ -284,14 +285,16 @@ impl AppView {
         if paths.is_empty() || other_dialog {
             return;
         }
-        if self.new_space.is_some() {
+        if self.new_space.as_ref().is_some_and(|d| d.kind == NewSpaceKind::Live) {
+            self.new_space_add_live_paths(paths, cx);
+        } else if self.new_space.is_some() {
             self.new_space_add_paths(paths, cx);
         } else {
             self.drop_create_imported(paths, cx);
         }
     }
 
-    /// Make an Imported Log Space of dropped paths, named after the first.
+    /// Make a Static Log Space of dropped paths, named after the first.
     /// Archives are read first ("Reading archive…" in the status bar). When
     /// some item cannot be added, or there is none, nothing is made: the
     /// dialog opens on Static with the list and each file's warning.

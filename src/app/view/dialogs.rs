@@ -246,10 +246,23 @@ impl AppView {
                     .when(kind == NewSpaceKind::Live, |this| this.child(
                         v_flex()
                             .gap_1()
+                            .child(div().text_sm().child("Files and commands"))
                             .child(
                                 h_flex()
+                                    .id("new-space-live-drop")
+                                    .debug_selector(|| "new-space-live-drop".into())
                                     .items_center()
-                                    .child(div().flex_1().text_sm().child("Files and commands"))
+                                    .justify_between()
+                                    .gap_2()
+                                    .px_3()
+                                    .h(px(48.0))
+                                    .rounded_md()
+                                    .border_1()
+                                    .border_dashed()
+                                    .border_color(border)
+                                    // The drop itself is taken by the backdrop.
+                                    .drag_over::<ExternalPaths>(move |style, _, _, _| style.bg(warning.opacity(0.12)))
+                                    .child(div().text_sm().text_color(muted).child("Drop log files here to follow them"))
                                     .child(
                                         div().debug_selector(|| "new-space-live-browse".into()).child(
                                             Button::new("new-space-live-browse")

@@ -446,7 +446,7 @@ fn space_files(h: &mut Harness, name: &str) -> Option<Vec<String>> {
 }
 
 #[gpui::test]
-fn files_dropped_with_no_dialog_make_an_imported_log_space(cx: &mut TestAppContext) {
+fn files_dropped_with_no_dialog_make_a_static_log_space(cx: &mut TestAppContext) {
     let mut h = common::open_app(cx);
     let a = h.dir.path().join("api.log");
     let b = h.dir.path().join("worker.log");
@@ -460,6 +460,10 @@ fn files_dropped_with_no_dialog_make_an_imported_log_space(cx: &mut TestAppConte
 
     drop_files(&mut h, vec![a, b], 500.0, 300.0);
     assert_eq!(space_files(&mut h, "api 2"), Some(vec!["api.log".to_string(), "worker.log".to_string()]));
+    h.view.read_with(&h.cx, |app, _| {
+        let space = app.workspace_state.active_project().unwrap().log_spaces.last().unwrap().clone();
+        assert_eq!(space.kind, log_gpui::workspace::log_space::LogSpaceKind::Static);
+    });
 }
 
 #[gpui::test]
@@ -484,7 +488,7 @@ fn a_dropped_folder_and_archive_make_a_log_space(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn a_drop_with_an_unusable_file_opens_the_dialog_on_local_files(cx: &mut TestAppContext) {
+fn a_drop_with_an_unusable_file_opens_the_dialog_on_static(cx: &mut TestAppContext) {
     let mut h = common::open_app(cx);
     let a = h.dir.path().join("api.log");
     let dump = h.dir.path().join("core.dump");
@@ -501,7 +505,7 @@ fn a_drop_with_an_unusable_file_opens_the_dialog_on_local_files(cx: &mut TestApp
 }
 
 #[gpui::test]
-fn a_drop_on_the_dialog_switches_to_local_and_keeps_the_remote_list(cx: &mut TestAppContext) {
+fn a_drop_on_the_live_step_goes_to_its_list(cx: &mut TestAppContext) {
     let mut h = common::open_app(cx);
     let server = add_server(&mut h);
     open_on(&mut h, NewSpaceKind::Live);
@@ -509,10 +513,28 @@ fn a_drop_on_the_dialog_switches_to_local_and_keeps_the_remote_list(cx: &mut Tes
     let a = h.dir.path().join("api.log");
     std::fs::write(&a, "one\n").unwrap();
     drop_files(&mut h, vec![a], 40.0, 40.0);
+    assert_eq!(kind_of(&mut h), Some(NewSpaceKind::Live));
+    assert!(h.cx.debug_bounds("new-space-live-drop").is_some());
+    h.view.read_with(&h.cx, |app, _| {
+        let dialog = app.new_space.as_ref().unwrap();
+        assert_eq!(dialog.live_form.files.len(), 1);
+        assert!(dialog.form.files.is_empty(), "the Static step's list is untouched");
+        assert_eq!(app.remote.new_space_files.len(), 1);
+    });
+}
+
+#[gpui::test]
+fn a_drop_on_another_step_switches_to_static(cx: &mut TestAppContext) {
+    let mut h = common::open_app(cx);
+    open_on(&mut h, NewSpaceKind::Scratch);
+    let a = h.dir.path().join("api.log");
+    std::fs::write(&a, "one\n").unwrap();
+    drop_files(&mut h, vec![a], 40.0, 40.0);
     assert_eq!(kind_of(&mut h), Some(NewSpaceKind::Static));
     h.view.read_with(&h.cx, |app, _| {
-        assert_eq!(app.new_space.as_ref().unwrap().form.files.len(), 1);
-        assert_eq!(app.remote.new_space_files.len(), 1);
+        let dialog = app.new_space.as_ref().unwrap();
+        assert_eq!(dialog.form.files.len(), 1);
+        assert!(dialog.live_form.files.is_empty());
     });
 }
 
