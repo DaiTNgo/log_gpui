@@ -39,6 +39,12 @@ pub trait Rows: Sync {
     /// The entry of `row`.
     fn get(&self, row: usize) -> Option<RowRef<'_>>;
 
+    /// The entry of `row` when it can be had without reading a file: what
+    /// a frame draws. `None` also while its line is not read yet.
+    fn cached(&self, row: usize) -> Option<RowRef<'_>> {
+        self.get(row)
+    }
+
     /// The `file_id` of the Source File of `row`.
     fn file_id(&self, row: usize) -> Option<&str>;
 

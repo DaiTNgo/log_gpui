@@ -274,6 +274,11 @@ pub struct AppView {
     /// Archives dropped on the window and still being read, before the
     /// Imported Log Space they make is created.
     pub dropped_archives_reading: usize,
+    /// Blocks of lines of indexed files being read on a worker thread for
+    /// rows the canvas drew as placeholders, by (file, block).
+    pub(crate) rows_reading: std::collections::HashSet<(String, usize)>,
+    /// How many such blocks were asked for (for tests).
+    pub blocks_read_soon: usize,
     pub confirm: Option<ConfirmAction>,
     /// Load more with a number the user types.
     pub custom_load: Option<live_more::CustomLoad>,
@@ -589,6 +594,8 @@ impl AppView {
             raw: raw::RawViewState::new(),
             new_space: None,
             dropped_archives_reading: 0,
+            rows_reading: std::collections::HashSet::new(),
+            blocks_read_soon: 0,
             confirm: None,
             custom_load: None,
             notice: keymap_error

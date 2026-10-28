@@ -243,6 +243,16 @@ impl IndexedFile {
         self.indexed.data.read().unwrap().file.meta.get(n).copied()
     }
 
+    /// Let go of every entry kept: they are read again when asked for.
+    pub fn forget_cached(&self) {
+        self.cache.lock().unwrap().forget_file(0);
+    }
+
+    /// The entry of line `n` (0-based) if the cache has it: nothing is read.
+    pub fn cached_entry(&self, n: usize) -> Option<Arc<LogEntry>> {
+        self.cache.lock().unwrap().get((0, 0, n))
+    }
+
     /// The entry of line `n` (0-based), from the cache or read from the
     /// file with the lines around it. `None` when the file no longer has it.
     pub fn entry(&self, n: usize) -> Option<Arc<LogEntry>> {

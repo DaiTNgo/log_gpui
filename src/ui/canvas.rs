@@ -277,9 +277,17 @@ impl LogCanvas {
                 // frame never copies them.
                 let mono_font = cx.theme().mono_font_family.clone();
                 let rows = env.view.read(cx).rows();
-                range
-                    .filter_map(|vis_pos| env.row(vis_pos, &rows, &mono_font))
-                    .collect::<Vec<_>>()
+                // Rows whose line is not read yet are drawn as placeholders,
+                // and read on a worker thread after this frame.
+                let mut missing = Vec::new();
+                let drawn = range
+                    .filter_map(|vis_pos| env.row(vis_pos, &rows, &mono_font, &mut missing))
+                    .collect::<Vec<_>>();
+                if !missing.is_empty() {
+                    let view = env.view.clone();
+                    cx.defer(move |cx| view.update(cx, |this, cx| this.read_rows_soon(missing, cx)));
+                }
+                drawn
             },
         )
         .size_full()
@@ -769,15 +777,39 @@ impl RowEnv {
         gpui::rgb(rgb).into()
     }
 
+    /// A row whose line is not read yet: as tall as a row, with nothing
+    /// in it but a mark.
+    fn placeholder(&self, vis_pos: usize) -> gpui::Stateful<gpui::Div> {
+        div()
+            .id(ElementId::from(vis_pos))
+            .debug_selector(|| "row-placeholder".into())
+            .h(px(self.row_height))
+            .w_full()
+            .flex()
+            .items_center()
+            .pl(px(8.0))
+            .text_color(self.colors.muted)
+            .child("…")
+    }
+
+    /// The element of the row at `vis_pos`; a placeholder while its line is
+    /// not read yet, its row then put in `missing`.
     fn row(
         &self,
         vis_pos: usize,
         entries: &dyn crate::rows::Rows,
         mono_font: &gpui::SharedString,
+        missing: &mut Vec<usize>,
     ) -> Option<gpui::Stateful<gpui::Div>> {
         let colors = self.colors;
         let &entry_ix = self.visible.get(vis_pos)?;
-        let entry = entries.get(entry_ix)?;
+        let Some(entry) = entries.cached(entry_ix) else {
+            if entry_ix >= entries.len() {
+                return None;
+            }
+            missing.push(entry_ix);
+            return Some(self.placeholder(vis_pos));
+        };
         let file_id = entries.file_id(entry_ix);
         let paint = self.paints.get(entry_ix).and_then(|p| p.as_deref());
 

@@ -310,6 +310,50 @@ impl AppView {
         self.view.bind(&self.parsed_files)
     }
 
+    /// Rows the canvas drew as placeholders: the lines of their files are
+    /// read on a worker thread, a block of `READ_AROUND` at a time, and the
+    /// canvas is drawn again once one was read. A block already being read
+    /// is not asked for again.
+    pub(crate) fn read_rows_soon(&mut self, rows: Vec<usize>, cx: &mut Context<Self>) {
+        use crate::index::file::READ_AROUND;
+        let mut wanted = Vec::new();
+        for row in rows {
+            let Some((file, pos)) = self.view.get(row) else { continue };
+            let Some(file_id) = self.view.files.get(file).map(|f| f.file_id.to_string()) else { continue };
+            let Some(indexed) = self.parsed_files.get(&file_id).and_then(|p| p.indexed.clone()) else { continue };
+            let key = (file_id, pos / READ_AROUND);
+            if self.rows_reading.insert(key.clone()) {
+                wanted.push((indexed, pos, key));
+            }
+        }
+        if wanted.is_empty() {
+            return;
+        }
+        self.blocks_read_soon += wanted.len();
+        let read = cx.background_executor().spawn(async move {
+            let mut found = false;
+            for (file, pos, _) in &wanted {
+                found |= file.entry(*pos).is_some();
+            }
+            (found, wanted.into_iter().map(|(_, _, key)| key).collect::<Vec<_>>())
+        });
+        cx.spawn(async move |this, cx| {
+            let (found, keys) = read.await;
+            this.update(cx, |this, cx| {
+                for key in keys {
+                    this.rows_reading.remove(&key);
+                }
+                // Nothing read (the file has fewer lines now): drawing again
+                // would only ask again.
+                if found {
+                    cx.notify();
+                }
+            })
+            .ok();
+        })
+        .detach();
+    }
+
     /// The rows of the open view with what the view adds to them, copied.
     #[doc(hidden)]
     pub fn rows_snapshot(&self) -> Vec<crate::model::LogEntry> {

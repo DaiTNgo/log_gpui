@@ -144,6 +144,14 @@ impl<'a> FileEntries<'a> {
         }
     }
 
+    /// The entry at `pos` if nothing has to be read for it.
+    pub fn cached(&self, pos: usize) -> Option<RowRef<'a>> {
+        match self {
+            FileEntries::Held(entries) => entries.get(pos).map(RowRef::Borrowed),
+            FileEntries::Indexed(file) => file.cached_entry(pos).map(RowRef::Shared),
+        }
+    }
+
     // What the view asks of a line without reading it: from its entry when
     // it is held, from its `LineMeta` when it is not.
 
@@ -332,6 +340,12 @@ impl<'a> BoundRows<'a> {
         self.entry_of(self.data.rows.packed(row)?)
     }
 
+    /// The entry of `row` if nothing has to be read for it.
+    pub fn cached(&self, row: usize) -> Option<RowRef<'a>> {
+        let (file, pos) = self.data.get(row)?;
+        self.file(file)?.cached(pos)
+    }
+
     pub fn file_id(&self, row: usize) -> Option<&'a str> {
         let data: &'a ViewData = self.data;
         let (file, _) = data.get(row)?;
@@ -367,6 +381,10 @@ impl Rows for BoundRows<'_> {
 
     fn get(&self, row: usize) -> Option<RowRef<'_>> {
         BoundRows::get(self, row)
+    }
+
+    fn cached(&self, row: usize) -> Option<RowRef<'_>> {
+        BoundRows::cached(self, row)
     }
 
     fn file_id(&self, row: usize) -> Option<&str> {
