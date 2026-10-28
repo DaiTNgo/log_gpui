@@ -213,7 +213,7 @@ fn red() -> log_gpui::palette::HighlightColor {
 }
 
 #[gpui::test]
-fn read_again_replaces_the_copy_and_keeps_only_markers_on_unchanged_lines(cx: &mut TestAppContext) {
+fn reload_replaces_the_copy_and_keeps_only_markers_on_unchanged_lines(cx: &mut TestAppContext) {
     if ssh().is_none() {
         return;
     }
@@ -252,7 +252,7 @@ fn read_again_replaces_the_copy_and_keeps_only_markers_on_unchanged_lines(cx: &m
     text[49] = "2026-10-19 00:00:49 WARN something else".into();
     text.extend((100..120).map(|i| stamp(i).trim_end().to_string()));
     std::fs::write(&file, text.join("\n") + "\n").unwrap();
-    h.view.update(&mut h.cx, |app, cx| app.read_again(&file_id, cx));
+    h.view.update(&mut h.cx, |app, cx| app.reload_copy(&file_id, cx));
     wait_for(&mut h, |app| app.live.copy_reads.is_empty() && app.parsed_files.get(&file_id).is_some_and(|p| p.entries.len() == 120));
     h.view.read_with(&h.cx, |app, _| {
         let f = last_space(app).file(&file_id).unwrap();
@@ -262,7 +262,45 @@ fn read_again_replaces_the_copy_and_keeps_only_markers_on_unchanged_lines(cx: &m
         assert!(std::path::Path::new(&new_dir).join("gen-0.log").exists());
         let lines: Vec<usize> = f.markers.iter().map(|m| m.line).collect();
         assert_eq!(lines, [5]);
+        assert_eq!(app.notice.as_deref(), Some("1 Marker no longer matches the file"));
     });
+}
+
+#[gpui::test]
+fn a_remote_copy_does_not_follow_the_server_until_reloaded(cx: &mut TestAppContext) {
+    if ssh().is_none() {
+        return;
+    }
+    let mut h = common::open_app(cx);
+    let server_id = add_server(&mut h, "web1");
+    let root = tempfile::tempdir().unwrap();
+    let file = root.path().join("app.log");
+    std::fs::write(&file, (0..50).map(stamp).collect::<String>()).unwrap();
+    let request = FullReadRequest {
+        server_id,
+        server_name: "web1".into(),
+        path: file.to_string_lossy().to_string(),
+        generations: vec![plan(root.path(), 0, "app.log")],
+        start: None,
+        to: None,
+        start_text: None,
+        to_text: None,
+        destination: Destination::NewSpace("Copy".into()),
+        limit_lines: 2_000_000,
+        replace: None,
+    };
+    let file_id = h.view.update(&mut h.cx, |app, cx| app.start_full_read(request, cx)).unwrap();
+    wait_for(&mut h, |app| app.live.copy_reads.is_empty());
+    std::fs::write(&file, (0..100).map(stamp).collect::<String>()).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(1);
+    wait_for(&mut h, |_| Instant::now() > deadline);
+    h.view.read_with(&h.cx, |app, _| {
+        assert!(app.live.sources.is_empty(), "nothing follows the server");
+        assert!(!app.active_space_is_live());
+        assert_eq!(app.parsed_files[&file_id].entries.len(), 50);
+    });
+    h.view.update(&mut h.cx, |app, cx| app.reload_copy(&file_id, cx));
+    wait_for(&mut h, |app| app.live.copy_reads.is_empty() && app.parsed_files.get(&file_id).is_some_and(|p| p.entries.len() == 100));
 }
 
 fn estimate_ready(app: &log_gpui::app::AppView) -> bool {

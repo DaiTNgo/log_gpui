@@ -1,5 +1,5 @@
 //! Logic: Open in full. A Remote File and the Rotated Files chosen are read
-//! whole from the Server into a Remote Copy in an Imported Log Space. Lines
+//! whole from the Server into a Remote Copy in a Static Log Space. Lines
 //! show as they come; the copy is on disk, so it opens again without a
 //! connection.
 
@@ -19,9 +19,9 @@ use std::sync::Arc;
 /// Where the Remote Copy goes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Destination {
-    /// A new Imported Log Space with this name.
+    /// A new Static Log Space with this name.
     NewSpace(String),
-    /// An Imported Log Space that exists.
+    /// A Static Log Space that exists.
     Existing(String),
 }
 
@@ -40,7 +40,7 @@ pub struct FullReadRequest {
     pub destination: Destination,
     /// The Full Read Limit of this read.
     pub limit_lines: usize,
-    /// Read again: the file whose copy this read replaces when it ends.
+    /// Reload: the file whose copy this read replaces when it ends.
     pub replace: Option<String>,
 }
 
@@ -48,12 +48,12 @@ pub struct FullReadRequest {
 pub struct CopyRead {
     pub rx: Receiver<ReadEvent>,
     pub ctl: Arc<ReadControl>,
-    /// The Imported Log Space that holds the file.
+    /// The Static Log Space that holds the file.
     pub space_id: String,
     pub progress: Option<(String, u64, u64)>,
     /// The folder this read writes.
     pub dir: PathBuf,
-    /// Read again: the folder of the copy this read replaces.
+    /// Reload: the folder of the copy this read replaces.
     pub replaces: Option<PathBuf>,
     /// The first line numbers could not be counted.
     pub numbers_unavailable: bool,
@@ -125,7 +125,7 @@ impl AppView {
     }
 
     /// Start reading: make the folder and the file, show the empty copy in its
-    /// Imported Log Space, and read in the background.
+    /// Static Log Space, and read in the background.
     pub fn start_full_read(&mut self, request: FullReadRequest, cx: &mut Context<Self>) -> Option<String> {
         let root = self.copies_root();
         let dir = match copy::create_dir(&root) {
@@ -138,7 +138,7 @@ impl AppView {
         };
         self.persist_active_session();
         let (file_id, display, space_id, replaces) = if let Some(file_id) = request.replace.clone() {
-            // Read again: the file and its Log Space stay, the content is
+            // Reload: the file and its Log Space stay, the content is
             // replaced when the new read ends.
             let found = self.active_project().and_then(|p| {
                 p.log_spaces.iter().find_map(|s| {
@@ -276,7 +276,7 @@ impl AppView {
             return delta;
         };
         let limit = self.live.full_read_limit;
-        // Read again ended: whether its copy replaces the old one.
+        // Reload ended: whether its copy replaces the old one.
         let mut replaced: Option<bool> = None;
         for event in events {
             match event {
@@ -347,20 +347,21 @@ impl AppView {
         let _ = now_label;
         let generation = buffer.generation;
         if replaced == Some(true) {
-            self.restore_markers_after_read_again(file_id, &parsed, generation);
+            self.restore_markers_after_reload(file_id, &parsed, generation);
         }
         parsed.live = Some(buffer);
         self.parsed_files.insert(file_id.to_string(), parsed);
         if let Some(done) = replaced {
-            self.finish_read_again(file_id, done);
+            self.finish_reload(file_id, done);
             delta.structural = true;
         }
         delta
     }
 
-    /// "Read again": read the same Generations again from the Server, with the
-    /// same Starting Time and To, and replace the copy when it ends.
-    pub fn read_again(&mut self, file_id: &str, cx: &mut Context<Self>) {
+    /// "Reload": read the same Generations again from the Server, with the
+    /// same Starting Time and To, and replace the copy when it ends. A Remote
+    /// Copy does not follow its Remote File: only this reads it again.
+    pub fn reload_copy(&mut self, file_id: &str, cx: &mut Context<Self>) {
         if self.live.copy_reads.contains_key(file_id) {
             return;
         }
@@ -429,18 +430,18 @@ impl AppView {
                 let (plans, newest, gone) = match result {
                     Ok(Ok(found)) => found,
                     Ok(Err(message)) => {
-                        this.notice = Some(format!("Read again: {message}"));
+                        this.notice = Some(format!("Reload: {message}"));
                         cx.notify();
                         return;
                     }
                     Err(e) => {
-                        this.notice = Some(format!("Read again: could not reach the server ({e})"));
+                        this.notice = Some(format!("Reload: could not reach the server ({e})"));
                         cx.notify();
                         return;
                     }
                 };
                 if plans.is_empty() {
-                    this.notice = Some("Read again: the files are no longer on the Server".into());
+                    this.notice = Some("Reload: the files are no longer on the Server".into());
                     cx.notify();
                     return;
                 }
@@ -470,9 +471,9 @@ impl AppView {
         .detach();
     }
 
-    /// Read again ended: the file takes the new folder and the old one goes
+    /// Reload ended: the file takes the new folder and the old one goes
     /// (or, when it failed, the new one goes and the old one stays).
-    fn finish_read_again(&mut self, file_id: &str, done: bool) {
+    fn finish_reload(&mut self, file_id: &str, done: bool) {
         let Some(read) = self.live.copy_reads.get(file_id) else { return };
         let (new_dir, old_dir) = (read.dir.clone(), read.replaces.clone());
         let Some(old_dir) = old_dir else { return };
@@ -494,8 +495,8 @@ impl AppView {
 
     /// The Markers of the file go on lines that are the same (by Generation
     /// distance, number and content) in the new copy, and are dropped on the
-    /// others.
-    fn restore_markers_after_read_again(&mut self, file_id: &str, parsed: &ParsedFile, generation: u32) {
+    /// others, as when a file on disk is read again.
+    fn restore_markers_after_reload(&mut self, file_id: &str, parsed: &ParsedFile, generation: u32) {
         let hash_at = |ago: u32, line: usize| -> Option<u64> {
             let wanted = generation.checked_sub(ago)?;
             let pos = parsed.entries.iter().position(|e| e.generation == wanted && e.index == line)?;
@@ -505,10 +506,10 @@ impl AppView {
             for space in &mut project.log_spaces {
                 if let Some(f) = space.file_mut(file_id) {
                     f.generation = generation;
-                    f.markers.retain(|m| m.line_hash.is_none() || hash_at(m.generations_ago, m.line) == m.line_hash);
                 }
             }
         }
+        self.keep_markers_that_match(file_id, |m| hash_at(m.generations_ago, m.line) == m.line_hash);
     }
 
     /// Stop reading a Remote Copy; what was read stays.
@@ -533,7 +534,7 @@ impl AppView {
         }
     }
 
-    /// Load a Remote Copy of an Imported Log Space from its folder.
+    /// Load a Remote Copy of a Static Log Space from its folder.
     pub fn ensure_copy_loaded(&mut self, file: &LogFile) {
         if self.parsed_files.contains_key(&file.file_id) {
             return;

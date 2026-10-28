@@ -116,7 +116,7 @@ Marker có sẵn `line_hash`. `full_read.rs` đã dùng nó để giữ Marker k
 - **Imported Log Space** đổi thành **Static Log Space**: một Log Space là bản cố định của file local, Archive Entry hoặc Remote Copy. Nó hiện nội dung file như đang có trên đĩa và đọc lại khi file đổi; nó không có Live/Pause, Follow hay Generation. _Avoid_: Imported space, snapshot space.
 - **Remote Log Space** đổi thành **Live Log Space**: một Log Space theo dõi file đang được ghi, gồm file local và Remote File, trên một timeline. _Avoid_: Remote space, tail space.
 - **Remote File**: "a file of a Remote Log Space" đổi thành "a file on a Server, in a Live Log Space".
-- **Remote Copy**: "added to an Imported Log Space" đổi thành "added to a Static Log Space"; thêm câu về Reload.
+- **Remote Copy**: "added to an Imported Log Space" đổi thành "added to a Static Log Space"; thêm câu về Reload. Quy tắc 25 ("until the user chooses Read again") đổi "Read again" thành "Reload".
 - Thêm **Local Live File**: một file local trong Live Log Space. Nó có Generation như Remote File nhưng không có Live Window, Load more hay Clear. _Avoid_: tailed file, local remote.
 - Các định nghĩa đang nhắc "Imported" hay "Remote Log Space" (Archive Entry, Live Glob, Live Window…) được đổi theo.
 

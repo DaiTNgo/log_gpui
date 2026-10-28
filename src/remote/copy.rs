@@ -85,7 +85,7 @@ pub struct CopyMeta {
     pub path: String,
     /// When it was read, `YYYY-MM-DD HH:MM:SS` in local time.
     pub read_at: String,
-    /// Starting Time and To as typed, for Read again.
+    /// Starting Time and To as typed, for Reload.
     pub start_text: Option<String>,
     pub to_text: Option<String>,
     /// The Full Read Limit the read ran under.

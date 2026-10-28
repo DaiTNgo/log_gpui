@@ -257,9 +257,9 @@ fn file_menu(menu: PopupMenu, file: &FileRef, in_space_menu: bool, cx: &mut App)
             let reveal = file.clone();
             let again = file.clone();
             let menu = if file.is_copy {
-                menu.item(PopupMenuItem::new("Read again").on_click(move |_, _, app| {
+                menu.item(PopupMenuItem::new("Reload").on_click(move |_, _, app| {
                     let id = again.file_id.clone();
-                    again.view.update(app, |this, cx| this.read_again(&id, cx));
+                    again.view.update(app, |this, cx| this.reload_copy(&id, cx));
                 }))
             } else {
                 menu

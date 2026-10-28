@@ -19,7 +19,8 @@ Mỗi task là một commit, và test phải xanh sau mỗi commit. Nhóm 3 cầ
 - [x] 2.4 Marker sau khi đọc lại: giữ Marker còn khớp `line_hash`, bỏ Marker không khớp, kèm notice "N Markers no longer match the file". Dùng chung với `full_read.rs`.
   - Đã làm: mỗi lần một file local đọc qua Line Index xong (`file_read`), Marker của Generation hiện tại được so với text dòng của nó; đúng cả cho file đổi trong lúc app đóng. Marker không có `line_hash` được giữ.
   - Còn lại: chưa gộp với `restore_markers_after_read_again` của `full_read.rs` (Remote Copy đọc từ dòng đang giữ, không qua Line Index); gộp khi làm 2.5.
-- [ ] 2.5 "Reload" cho Remote Copy: chạy lại `full_read` với cùng Starting Time, giữ Marker theo 2.4. Remote Copy không giữ SSH session.
+- [x] 2.5 "Reload" cho Remote Copy: chạy lại `full_read` với cùng Starting Time, giữ Marker theo 2.4. Remote Copy không giữ SSH session.
+  - Đã làm: lệnh "Read again" đã có sẵn và đổi tên thành "Reload" (`reload_copy`). Kiểm tra Marker dùng chung `keep_markers_that_match` với 2.4, nên Reload cũng hiện notice "N Markers no longer match the file". Test: Reload giữ Marker còn khớp, và Remote Copy không đổi khi file trên server có thêm dòng cho tới khi Reload.
 
 ## 3. Dialog `[ Static | Live | Scratch ]`
 

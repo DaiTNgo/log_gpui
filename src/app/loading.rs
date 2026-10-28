@@ -11,7 +11,7 @@ use crate::index::indexing::{IndexOptions, Indexed, Outcome, index_into};
 use crate::index::{DiskSource, HandleBudget, LineSource};
 use crate::live::LiveBuffer;
 use crate::space_view::ParsedFile;
-use crate::workspace::log_space::LogFile;
+use crate::workspace::log_space::{LogFile, StoredMarker};
 use gpui::Context;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -260,12 +260,20 @@ impl AppView {
         let hash_of = |line: usize| {
             line.checked_sub(1).and_then(|n| indexed.line(n)).map(|text| crate::workspace::log_space::line_hash(&text))
         };
+        self.keep_markers_that_match(file_id, |m| m.generations_ago != 0 || hash_of(m.line) == m.line_hash);
+    }
+
+    /// A file was read again (from disk, or a Remote Copy from its Server):
+    /// its Markers stay where `matches` says their line is the same, and the
+    /// others are dropped, with a notice. A Marker saved without the hash of
+    /// its line stays.
+    pub(crate) fn keep_markers_that_match(&mut self, file_id: &str, matches: impl Fn(&StoredMarker) -> bool) {
         let mut dropped = 0;
         if let Some(project) = self.active_project_mut() {
             for space in &mut project.log_spaces {
                 if let Some(f) = space.file_mut(file_id) {
                     let before = f.markers.len();
-                    f.markers.retain(|m| m.generations_ago != 0 || m.line_hash.is_none() || hash_of(m.line) == m.line_hash);
+                    f.markers.retain(|m| m.line_hash.is_none() || matches(m));
                     dropped = dropped.max(before - f.markers.len());
                 }
             }
