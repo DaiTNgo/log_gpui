@@ -3,7 +3,7 @@
 
 use super::{AppView, ConfirmAction};
 use crate::workspace::log_space::{FileOrder, ImportSource, LogSpaceKind, RemoveFileError, scratch_dir_for};
-use crate::workspace::new_space::{self, NewLogSpaceForm};
+use crate::workspace::new_space::{self, NewLogSpaceForm, NewSpaceKind};
 use crate::workspace::scratch_store;
 use crate::workspace::working_set::ViewMode;
 use gpui::{AppContext as _, Context, Entity, Subscription, Window};
@@ -13,6 +13,15 @@ use std::path::{Path, PathBuf};
 /// State of the New Log Space dialog.
 pub struct NewSpaceDialog {
     pub form: NewLogSpaceForm,
+    /// The kind of Log Space Create makes; the other kinds keep their lists.
+    pub kind: NewSpaceKind,
+    /// The path the Local name is suggested from: the first one added while
+    /// the list was empty (a folder gives its own name).
+    pub local_first: Option<String>,
+    /// The name last put in the field by the dialog itself.
+    suggested: Option<String>,
+    /// Tracks the kind switch, so Tab can stop there.
+    pub kind_focus: gpui::FocusHandle,
     /// Created while rendering, where a window is available.
     pub name_input: Option<Entity<InputState>>,
     /// A name to put in the field at the next render: suggested from the
@@ -50,20 +59,90 @@ impl AppView {
     // ── New Log Space dialog ────────────────────────────────────────────────
 
     pub fn open_new_space_dialog(&mut self, cx: &mut Context<Self>) {
+        self.open_new_space_dialog_with(NewLogSpaceForm::new(), NewSpaceKind::Scratch, cx);
+    }
+
+    /// Open the dialog on `kind`, with `form` as its list of local files.
+    fn open_new_space_dialog_with(&mut self, form: NewLogSpaceForm, kind: NewSpaceKind, cx: &mut Context<Self>) {
         self.remote.new_space_files.clear();
         self.remote.new_space_globs.clear();
         self.remote.new_space_commands.clear();
         self.remote.new_space_starts.clear();
+        let local_first = form.files.first().map(|f| match &f.source {
+            new_space::PendingSource::Disk(path) => path.clone(),
+            new_space::PendingSource::Entry { archive, .. } => archive.clone(),
+        });
         self.new_space = Some(NewSpaceDialog {
-            form: NewLogSpaceForm::new(),
+            form,
+            kind,
+            local_first,
+            suggested: None,
+            kind_focus: cx.focus_handle().tab_stop(true),
             name_input: None,
             pending_name: None,
             focus: None,
             start_edit: None,
             _subscription: None,
         });
+        self.refresh_suggested_name();
         self.is_palette_open = false;
         cx.notify();
+    }
+
+    /// Switch the kind of Log Space to create. Only the kind changes: no list
+    /// is emptied, and a name the user typed stays.
+    pub fn new_space_set_kind(&mut self, kind: NewSpaceKind, cx: &mut Context<Self>) {
+        let Some(dialog) = self.new_space.as_mut() else { return };
+        if dialog.kind == kind {
+            return;
+        }
+        dialog.kind = kind;
+        self.refresh_suggested_name();
+        cx.notify();
+    }
+
+    /// Step the kind switch by `delta`, stopping at its ends.
+    pub fn new_space_step_kind(&mut self, delta: isize, cx: &mut Context<Self>) {
+        let Some(dialog) = self.new_space.as_ref() else { return };
+        let next = dialog.kind.index().saturating_add_signed(delta);
+        if let Some(kind) = NewSpaceKind::from_index(next) {
+            self.new_space_set_kind(kind, cx);
+        }
+    }
+
+    /// The first item of the list the dialog shows, for the suggested name.
+    fn first_item_of_shown_list(&self) -> Option<String> {
+        let dialog = self.new_space.as_ref()?;
+        match dialog.kind {
+            NewSpaceKind::Scratch => None,
+            NewSpaceKind::Local => dialog.local_first.clone(),
+            NewSpaceKind::Remote => self
+                .remote
+                .new_space_files
+                .first()
+                .map(|f| f.2.clone())
+                .or_else(|| self.remote.new_space_globs.first().map(|g| g.2.clone())),
+        }
+    }
+
+    /// Put the suggested name for the kind showing in the field, unless the
+    /// user typed one: the field is empty or still holds the last suggestion.
+    pub(crate) fn refresh_suggested_name(&mut self) {
+        let first = self.first_item_of_shown_list();
+        let Some(project) = self.workspace_state.active_project() else { return };
+        let Some(dialog) = self.new_space.as_ref() else { return };
+        let name = dialog.form.name.trim();
+        let untouched = name.is_empty() || dialog.suggested.as_deref() == Some(name);
+        if !untouched {
+            return;
+        }
+        let suggestion = new_space::suggested_name(dialog.kind, first.as_deref(), project);
+        if let Some(dialog) = self.new_space.as_mut() {
+            let text = suggestion.clone().unwrap_or_default();
+            dialog.form.set_name(&text);
+            dialog.pending_name = Some(text);
+            dialog.suggested = suggestion;
+        }
     }
 
     /// Create the name field of a freshly opened dialog and focus it, and
@@ -126,6 +205,9 @@ impl AppView {
                 _ => {}
             },
         );
+        if let Some(name) = dialog.pending_name.take() {
+            input.update(cx, |state, cx| state.set_value(name, window, cx));
+        }
         input.update(cx, |state, cx| state.focus(window, cx));
         dialog.name_input = Some(input);
         dialog.focus = Some(cx.focus_handle());
@@ -141,28 +223,16 @@ impl AppView {
         cx.notify();
     }
 
-    /// Name the New Log Space after `path` while its name field is empty.
-    pub(crate) fn suggest_new_space_name(&mut self, path: &str, style: crate::local_path::PathStyle) {
-        let Some(project) = self.workspace_state.active_project() else { return };
-        let Some(dialog) = self.new_space.as_ref() else { return };
-        if !dialog.form.name.trim().is_empty() {
-            return;
-        }
-        let Some(name) = new_space::suggest_name(path, style) else { return };
-        let name = new_space::unique_name(&name, project);
-        if let Some(dialog) = self.new_space.as_mut() {
-            dialog.form.set_name(&name);
-            dialog.pending_name = Some(name);
-        }
-    }
-
     /// Add dropped or picked paths to the dialog's list.
     pub fn new_space_add_paths(&mut self, paths: Vec<String>, cx: &mut Context<Self>) {
-        if let Some(first) = paths.first() {
-            self.suggest_new_space_name(first, crate::local_path::PathStyle::native());
-        }
         let Some(dialog) = self.new_space.as_mut() else { return };
+        // Files dropped or chosen are local files, whatever list was showing.
+        dialog.kind = NewSpaceKind::Local;
+        if dialog.form.files.is_empty() {
+            dialog.local_first = paths.first().cloned();
+        }
         let archives = dialog.form.begin_paths(&paths);
+        self.refresh_suggested_name();
         cx.notify();
         // An Archive is listed in the background: it may be unpacked whole.
         for (archive, kind) in archives {
@@ -184,13 +254,11 @@ impl AppView {
         }
     }
 
-    /// Files or folders dropped anywhere on the window: they go to the New
-    /// Log Space dialog, opened for them when it is not. Ignored while
-    /// another dialog is open, or while the New Log Space has remote files.
+    /// Files or folders dropped anywhere on the window: with the New Log
+    /// Space dialog open they go to its list of local files; with nothing
+    /// open they make an Imported Log Space at once. Ignored while another
+    /// dialog is open.
     pub fn drop_paths_on_window(&mut self, paths: Vec<String>, cx: &mut Context<Self>) {
-        let remote = self.remote.new_space_files.len()
-            + self.remote.new_space_globs.len()
-            + self.remote.new_space_commands.len();
         let other_dialog = self.confirm.is_some()
             || self.server_dialog.is_some()
             || self.format_editor.is_some()
@@ -203,13 +271,84 @@ impl AppView {
             || self.remote.secret_prompt.is_some()
             || self.remote.sign_in_dialog.is_some()
             || !self.remote.host_prompts.is_empty();
-        if paths.is_empty() || other_dialog || (self.new_space.is_some() && remote > 0) {
+        if paths.is_empty() || other_dialog {
             return;
         }
-        if self.new_space.is_none() {
-            self.open_new_space_dialog(cx);
+        if self.new_space.is_some() {
+            self.new_space_add_paths(paths, cx);
+        } else {
+            self.drop_create_imported(paths, cx);
         }
-        self.new_space_add_paths(paths, cx);
+    }
+
+    /// Make an Imported Log Space of dropped paths, named after the first.
+    /// Archives are read first ("Reading archive…" in the status bar). When
+    /// some item cannot be added, or there is none, nothing is made: the
+    /// dialog opens on Local files with the list and each file's warning.
+    fn drop_create_imported(&mut self, paths: Vec<String>, cx: &mut Context<Self>) {
+        let mut form = NewLogSpaceForm::new();
+        let archives = form.begin_paths(&paths);
+        let first = paths.first().cloned();
+        if archives.is_empty() {
+            self.finish_drop(form, first, cx);
+            return;
+        }
+        self.dropped_archives_reading += 1;
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            let items = cx
+                .background_executor()
+                .spawn(async move {
+                    archives
+                        .into_iter()
+                        .map(|(path, kind)| {
+                            let items = new_space::list_archive(&path, kind);
+                            (path, items)
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .await;
+            this.update(cx, |this, cx| {
+                for (path, items) in items {
+                    form.finish_archive(&path, items);
+                }
+                this.dropped_archives_reading = this.dropped_archives_reading.saturating_sub(1);
+                this.finish_drop(form, first, cx);
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// A drop whose Archives are all read: create, or show what went wrong.
+    fn finish_drop(&mut self, form: NewLogSpaceForm, first: Option<String>, cx: &mut Context<Self>) {
+        let usable = !form.files.is_empty() && form.files.iter().all(|f| f.is_importable());
+        let name = first
+            .and_then(|p| new_space::suggest_name(&p, crate::local_path::PathStyle::native()))
+            .zip(self.workspace_state.active_project())
+            .map(|(name, project)| new_space::unique_name(&name, project));
+        match (usable, name) {
+            (true, Some(name)) if self.new_space.is_none() => {
+                let sources = form.importable_sources();
+                self.create_log_space(&name, LogSpaceKind::Static, &sources, cx);
+            }
+            _ if self.new_space.is_none() => {
+                self.open_new_space_dialog_with(form, NewSpaceKind::Local, cx);
+            }
+            // A dialog opened while the Archive was read: the files go to it.
+            _ => {
+                let paths: Vec<String> = form
+                    .files
+                    .iter()
+                    .map(|f| match &f.source {
+                        new_space::PendingSource::Disk(p) => p.clone(),
+                        new_space::PendingSource::Entry { archive, .. } => archive.clone(),
+                    })
+                    .collect();
+                self.new_space_add_paths(paths, cx);
+            }
+        }
+        cx.notify();
     }
 
     /// Change the Starting Time of the chosen Remote File at `index`.
@@ -249,17 +388,12 @@ impl AppView {
         }
     }
 
-    /// "Remove all": empty the list of local files.
-    pub fn new_space_clear_files(&mut self, cx: &mut Context<Self>) {
-        if let Some(dialog) = self.new_space.as_mut() {
-            dialog.form.clear_files();
-            cx.notify();
-        }
-    }
-
     pub fn new_space_remove_file(&mut self, index: usize, cx: &mut Context<Self>) {
         if let Some(dialog) = self.new_space.as_mut() {
             dialog.form.remove_file(index);
+            if dialog.form.files.is_empty() {
+                dialog.local_first = None;
+            }
             cx.notify();
         }
     }
@@ -282,39 +416,46 @@ impl AppView {
         .detach();
     }
 
-    /// Create the Log Space the dialog describes: Scratch when no file was
-    /// added, Imported otherwise.
+    /// Create the Log Space of the kind the dialog shows, from that kind's
+    /// list only: the lists of the other kinds are dropped.
     pub fn new_space_create(&mut self, cx: &mut Context<Self>) {
         let Some(dialog) = self.new_space.as_ref() else { return };
         let Some(project) = self.active_project() else { return };
-        if !dialog.form.can_create(project) {
+        let remote_items = self.remote.new_space_files.len()
+            + self.remote.new_space_globs.len()
+            + self.remote.new_space_commands.len();
+        let kind = dialog.kind;
+        if !dialog.form.can_create(kind, remote_items, project) {
             return;
         }
         let name = dialog.form.name.clone();
-        if !self.remote.new_space_files.is_empty()
-            || !self.remote.new_space_globs.is_empty()
-            || !self.remote.new_space_commands.is_empty()
-        {
-            let files = std::mem::take(&mut self.remote.new_space_files);
-            let globs = std::mem::take(&mut self.remote.new_space_globs);
-            let commands = std::mem::take(&mut self.remote.new_space_commands);
-            let starts = std::mem::take(&mut self.remote.new_space_starts);
-            self.new_space = None;
-            let space_id = self.create_remote_log_space(&name, files, globs, commands, cx);
-            let space = space_id.and_then(|id| self.active_project_mut()?.log_space_mut(&id));
-            if let Some(space) = space {
-                for ((server_id, path), start) in starts {
-                    if let Some(id) = space.remote_file_id(&server_id, &path) {
-                        space.set_start_time(&id, Some(start));
+        match kind {
+            NewSpaceKind::Remote => {
+                let files = std::mem::take(&mut self.remote.new_space_files);
+                let globs = std::mem::take(&mut self.remote.new_space_globs);
+                let commands = std::mem::take(&mut self.remote.new_space_commands);
+                let starts = std::mem::take(&mut self.remote.new_space_starts);
+                self.new_space = None;
+                let space_id = self.create_remote_log_space(&name, files, globs, commands, cx);
+                let space = space_id.and_then(|id| self.active_project_mut()?.log_space_mut(&id));
+                if let Some(space) = space {
+                    for ((server_id, path), start) in starts {
+                        if let Some(id) = space.remote_file_id(&server_id, &path) {
+                            space.set_start_time(&id, Some(start));
+                        }
                     }
                 }
             }
-            return;
+            NewSpaceKind::Local => {
+                let sources = dialog.form.importable_sources();
+                self.new_space = None;
+                self.create_log_space(&name, LogSpaceKind::Static, &sources, cx);
+            }
+            NewSpaceKind::Scratch => {
+                self.new_space = None;
+                self.create_log_space(&name, LogSpaceKind::Scratch, &[], cx);
+            }
         }
-        let sources = dialog.form.importable_sources();
-        let kind = dialog.form.kind();
-        self.new_space = None;
-        self.create_log_space(&name, kind, &sources, cx);
     }
 
     /// Create a Remote Log Space with files on Servers, given as

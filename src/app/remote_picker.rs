@@ -930,10 +930,6 @@ impl AppView {
         let mut remembered: Vec<(String, String, bool)> = Vec::new();
         match picker.target {
             PickerTarget::NewSpace => {
-                let first = files.first().map(|f| f.2.clone()).or_else(|| globs.first().map(|g| g.2.clone()));
-                if let Some(path) = first {
-                    self.suggest_new_space_name(&path, crate::local_path::PathStyle::Unix);
-                }
                 for file in files {
                     // The Starting Time goes with the files of this Add only;
                     // one chosen again takes the new Starting Time.
@@ -951,6 +947,7 @@ impl AppView {
                         self.remote.new_space_globs.push(glob);
                     }
                 }
+                self.refresh_suggested_name();
             }
             PickerTarget::AddTo(space_id) => {
                 remembered = self.add_remote_items_to_space(&space_id, files, globs, cx);

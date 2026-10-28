@@ -39,7 +39,7 @@ Which Shortcut runs which Command of the Command Palette, changed on the Keymap 
 _Avoid_: Keybindings, hotkeys.
 
 **Imported Log Space**:
-A Log Space whose files were dropped or picked when it was created, or Archive Entries, or Remote Copies. Its files are read-only.
+A Log Space whose files were dropped or picked when it was created, or Archive Entries, or Remote Copies. Its files are read-only. It is made by choosing "Local files" on the New Log Space switch, or by dropping files on the window with no dialog open: it is then created at once and named after the first file.
 _Avoid_: Read-only space.
 
 **Archive**:
@@ -51,7 +51,7 @@ A text file inside an Archive, added to an Imported Log Space and shown as `<arc
 _Avoid_: Extracted file, unpacked file.
 
 **Scratch Log Space**:
-A Log Space created with only a name. Its files (`untitled.log`, `untitled-2.log`, …) start empty in the app's own data folder, and the user types or pastes log text into them.
+A Log Space created by choosing "Scratch" on the New Log Space switch (the one the dialog opens on) with only a name. Its files (`untitled.log`, `untitled-2.log`, …) start empty in the app's own data folder, and the user types or pastes log text into them.
 _Avoid_: Empty space, manual space.
 
 **Remote Log Space**:

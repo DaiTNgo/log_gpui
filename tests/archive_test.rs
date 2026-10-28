@@ -1,6 +1,7 @@
 use log_gpui::archive::{
     ArchiveError, ArchiveKind, FileSource, detect, list, read_entries, read_source,
 };
+use log_gpui::workspace::new_space::NewSpaceKind;
 use log_gpui::workspace::log_space::{ImportSource, LogFile, LogSpace, LogSpaceKind};
 use log_gpui::workspace::new_space::{NewLogSpaceForm, PendingStatus};
 use std::io::Write;
@@ -249,11 +250,11 @@ fn dropping_an_archive_lists_its_entries() {
     assert_eq!(form.files[0].status, PendingStatus::Ok);
     assert_eq!(form.files[1].warning().as_deref(), Some("Not a text file"));
     assert_eq!(form.files[2].warning().as_deref(), Some("Not a text file"));
-    assert_eq!(form.create_label(), "Create with 1 file");
+    assert_eq!(form.create_label(NewSpaceKind::Local, (0, 0, 0)), "Create with 1 file");
 
     // Only entries that cannot be added are left: nothing to create from.
     form.remove_file(0);
-    assert_eq!(form.create_label(), "Create");
+    assert_eq!(form.create_label(NewSpaceKind::Local, (0, 0, 0)), "Create");
     assert!(form.files_message().is_some());
 }
 
@@ -289,7 +290,7 @@ fn broken_archives_are_listed_with_the_reason_and_not_counted() {
     form.add_paths(&[path_str(&secret), path_str(&cut)]);
     assert_eq!(form.files[0].warning().as_deref(), Some("Password-protected archive"));
     assert_eq!(form.files[1].warning().as_deref(), Some("Damaged archive"));
-    assert_eq!(form.create_label(), "Create");
+    assert_eq!(form.create_label(NewSpaceKind::Local, (0, 0, 0)), "Create");
     assert!(form.files_message().is_some(), "Create is off, not an empty Log Space");
 }
 
@@ -309,15 +310,15 @@ fn large_entries_warn_but_stay_and_the_total_is_capped() {
     let (source, status) = entry("big.log", 500 * 1024 * 1024, PendingStatus::LargeFile);
     form.push_source(source, status);
     assert_eq!(form.files[0].warning().as_deref(), Some("Large file: 500 MB unpacked"));
-    assert_eq!(form.create_label(), "Create with 1 file");
-    assert!(form.can_create(&project));
+    assert_eq!(form.create_label(NewSpaceKind::Local, (0, 0, 0)), "Create with 1 file");
+    assert!(form.can_create(NewSpaceKind::Local, 0, &project));
 
     for i in 0..5 {
         let (source, status) = entry(&format!("b{i}.log"), 500 * 1024 * 1024, PendingStatus::LargeFile);
         form.push_source(source, status);
     }
     assert!(form.total_uncompressed() > 2 * 1024 * 1024 * 1024);
-    assert!(!form.can_create(&project));
+    assert!(!form.can_create(NewSpaceKind::Local, 0, &project));
     assert!(form.size_limit_message().is_some());
 }
 

@@ -1,14 +1,67 @@
-//! Headless state of the New Log Space dialog. The kind of the space is not
-//! chosen: no files means Scratch, one or more files means Imported.
+//! Headless state of the New Log Space dialog. The kind of the space is
+//! chosen with the switch at the top of the dialog; each kind keeps its own
+//! list and Create only reads the one that is showing.
 
 use crate::archive::{self, ArchiveError, ArchiveKind, LARGE_ENTRY_BYTES, MAX_UNCOMPRESSED_BYTES};
-use crate::workspace::log_space::{ImportSource, LogFile, LogSpaceKind, SpaceNameError, validate_space_name};
+use crate::workspace::log_space::{ImportSource, LogFile, SpaceNameError, validate_space_name};
 use crate::workspace::project::Project;
 use std::io::Read;
 use std::path::Path;
 
 /// How many leading bytes decide whether a file is text.
 const SNIFF_BYTES: usize = 8 * 1024;
+
+/// The kind of Log Space the dialog is set to create.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum NewSpaceKind {
+    /// Imported: files from this computer.
+    Local,
+    /// Remote Files, Live Globs and Remote Commands.
+    Remote,
+    /// An empty file to type or paste log text into.
+    #[default]
+    Scratch,
+}
+
+impl NewSpaceKind {
+    pub const ALL: [NewSpaceKind; 3] = [NewSpaceKind::Local, NewSpaceKind::Remote, NewSpaceKind::Scratch];
+
+    /// The label on the switch.
+    pub fn label(self) -> &'static str {
+        match self {
+            NewSpaceKind::Local => "Local files",
+            NewSpaceKind::Remote => "Remote",
+            NewSpaceKind::Scratch => "Scratch",
+        }
+    }
+
+    /// The line under the switch.
+    pub fn description(self) -> &'static str {
+        match self {
+            NewSpaceKind::Local => "The Log Space holds copies of files from this computer.",
+            NewSpaceKind::Remote => "The Log Space reads files and commands on your Servers.",
+            NewSpaceKind::Scratch => "The Log Space holds text you type or paste.",
+        }
+    }
+
+    /// Position on the switch.
+    pub fn index(self) -> usize {
+        Self::ALL.iter().position(|k| *k == self).unwrap_or(0)
+    }
+
+    pub fn from_index(index: usize) -> Option<Self> {
+        Self::ALL.get(index).copied()
+    }
+
+    /// What the instruction under an empty list says, if the kind has a list.
+    pub fn empty_hint(self) -> Option<&'static str> {
+        match self {
+            NewSpaceKind::Local => Some("Choose or drop files"),
+            NewSpaceKind::Remote => Some("Add remote files or a command"),
+            NewSpaceKind::Scratch => None,
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PendingStatus {
@@ -208,10 +261,22 @@ pub fn remote_create_label(files: usize, globs: usize, commands: usize) -> Strin
     .flatten()
     .collect();
     match parts.as_slice() {
-        [] => "Create empty".to_string(),
+        [] => "Create".to_string(),
         [one] => format!("Create with {one}"),
         [rest @ .., last] => format!("Create with {} and {last}", rest.join(", ")),
     }
+}
+
+/// The name the dialog suggests while the field is untouched: after the first
+/// item of the list showing (read as a local or a remote path), or "Scratch".
+/// None when a list is empty or its first item gives no name.
+pub fn suggested_name(kind: NewSpaceKind, first: Option<&str>, project: &Project) -> Option<String> {
+    let base = match kind {
+        NewSpaceKind::Scratch => "Scratch".to_string(),
+        NewSpaceKind::Local => suggest_name(first?, crate::local_path::PathStyle::native())?,
+        NewSpaceKind::Remote => suggest_name(first?, crate::local_path::PathStyle::Unix)?,
+    };
+    Some(unique_name(&base, project))
 }
 
 /// `name`, or `name 2`, `name 3`… when the Project already has it.
@@ -319,12 +384,6 @@ impl NewLogSpaceForm {
         true
     }
 
-    /// Empty the list (Archives still being read are dropped too).
-    pub fn clear_files(&mut self) {
-        self.files.clear();
-        self.already_listed = 0;
-    }
-
     pub fn remove_file(&mut self, index: usize) {
         self.already_listed = 0;
         if index < self.files.len() {
@@ -365,17 +424,7 @@ impl NewLogSpaceForm {
             return Some(message);
         }
         let nothing_to_add = !self.files.is_empty() && !self.is_reading() && self.importable_sources().is_empty();
-        nothing_to_add.then(|| {
-            "None of these files can be added. Remove them to create an empty Log Space".to_string()
-        })
-    }
-
-    pub fn kind(&self) -> LogSpaceKind {
-        if self.importable_sources().is_empty() {
-            LogSpaceKind::Scratch
-        } else {
-            LogSpaceKind::Static
-        }
+        nothing_to_add.then(|| "None of these files can be added".to_string())
     }
 
     /// Why the name is refused, if it is.
@@ -392,22 +441,39 @@ impl NewLogSpaceForm {
         }
     }
 
-    pub fn can_create(&self, project: &Project) -> bool {
-        self.name_error(project).is_none() && !self.is_reading() && self.files_message().is_none()
+    /// Whether Create is on for `kind`: a valid name, and something to
+    /// create from in the list showing. `remote_items` counts the Remote
+    /// Files, Live Globs and Remote Commands chosen.
+    pub fn can_create(&self, kind: NewSpaceKind, remote_items: usize, project: &Project) -> bool {
+        if self.name_error(project).is_some() {
+            return false;
+        }
+        match kind {
+            NewSpaceKind::Scratch => true,
+            NewSpaceKind::Local => {
+                !self.is_reading() && self.files_message().is_none() && !self.importable_sources().is_empty()
+            }
+            NewSpaceKind::Remote => remote_items > 0,
+        }
     }
 
-    /// "Create empty" or "Create with N file(s)"; just "Create" while the
-    /// listed files give nothing to add, and "Reading archive…" while an
-    /// Archive is listed (Create is off meanwhile).
-    pub fn create_label(&self) -> String {
-        if self.is_reading() {
-            return "Reading archive…".to_string();
-        }
-        match self.importable_sources().len() {
-            0 if self.files.is_empty() => "Create empty".to_string(),
-            0 => "Create".to_string(),
-            1 => "Create with 1 file".to_string(),
-            n => format!("Create with {n} files"),
+    /// "Create", "Create with N file(s)" or the remote wording; "Reading
+    /// archive…" while an Archive is listed on the Local kind (Create is off
+    /// meanwhile). `remote` is `(files, globs, commands)`.
+    pub fn create_label(&self, kind: NewSpaceKind, remote: (usize, usize, usize)) -> String {
+        match kind {
+            NewSpaceKind::Scratch => "Create".to_string(),
+            NewSpaceKind::Remote => remote_create_label(remote.0, remote.1, remote.2),
+            NewSpaceKind::Local => {
+                if self.is_reading() {
+                    return "Reading archive…".to_string();
+                }
+                match self.importable_sources().len() {
+                    0 => "Create".to_string(),
+                    1 => "Create with 1 file".to_string(),
+                    n => format!("Create with {n} files"),
+                }
+            }
         }
     }
 }

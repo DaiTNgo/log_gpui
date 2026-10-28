@@ -3,7 +3,7 @@
 
 use super::AppView;
 use crate::app::ConfirmAction;
-use crate::workspace::new_space::PendingStatus;
+use crate::workspace::new_space::{NewSpaceKind, PendingStatus};
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
     ExternalPaths, InteractiveElement, IntoElement, ParentElement,
@@ -11,15 +11,11 @@ use gpui::{
 };
 use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::input::Input;
+use gpui_component::tab::{Tab, TabBar};
 use gpui_component::{
     ActiveTheme as _, Disableable as _, Icon, Sizable as _, h_flex, v_flex,
 };
 use gpui_kit::assets::IconName;
-
-/// Why local files cannot be added: the New Log Space has remote members.
-const MIX_HINT_LOCAL: &str = "A Log Space holds local or remote files, not both: remove the remote ones to add local files.";
-/// Why remote files cannot be added: the New Log Space has local files.
-const MIX_HINT_REMOTE: &str = "A Log Space holds local or remote files, not both: remove the local ones to add remote files.";
 
 impl AppView {
     /// The error shown under a form field: an error icon and the message,
@@ -58,7 +54,9 @@ impl AppView {
         let theme = cx.theme();
         let (bg, border, muted, danger, warning) =
             (theme.popover, theme.border, theme.muted_foreground, theme.danger, theme.warning);
-        let can_create = dialog.form.can_create(project);
+        let kind = dialog.kind;
+        let kind_focus = dialog.kind_focus.clone();
+        let view = cx.entity();
         let name_message = dialog.form.name_message(project);
         // Files first, then Live Globs, as `(server, path or glob, Starting Time)`.
         let mut remote_files: Vec<(String, String, Option<String>)> = self
@@ -80,19 +78,20 @@ impl AppView {
         let start_edit = dialog.start_edit.as_ref().map(|e| (e.label.clone(), e.input.clone(), e.error()));
         let remote_commands = self.remote.new_space_commands.clone();
         let remote_count = remote_files.len() + remote_commands.len();
-        let create_label = if remote_count == 0 {
-            dialog.form.create_label()
-        } else {
-            crate::workspace::new_space::remote_create_label(
-                self.remote.new_space_files.len(),
-                self.remote.new_space_globs.len(),
-                remote_commands.len(),
-            )
-        };
+        let can_create = dialog.form.can_create(kind, remote_count, project);
+        let create_label = dialog.form.create_label(
+            kind,
+            (self.remote.new_space_files.len(), self.remote.new_space_globs.len(), remote_commands.len()),
+        );
         let files = dialog.form.files.clone();
         // Create is off for want of a name only once there is something to
         // create from: say so then.
-        let name_hint = dialog.form.name.trim().is_empty() && (!files.is_empty() || remote_count > 0);
+        let has_content = match kind {
+            NewSpaceKind::Scratch => true,
+            NewSpaceKind::Local => !files.is_empty(),
+            NewSpaceKind::Remote => remote_count > 0,
+        };
+        let name_hint = dialog.form.name.trim().is_empty() && has_content;
         let files_message = dialog.form.files_message();
         let already_listed = dialog.form.already_listed_message();
         let name_input = dialog.name_input.clone();
@@ -197,6 +196,39 @@ impl AppView {
                     .shadow_2xl()
                     .child(div().text_base().font_weight(gpui::FontWeight::SEMIBOLD).child("New Log Space"))
                     .child(
+                        div()
+                            .id("new-space-kind-focus")
+                            .debug_selector(|| "new-space-kind".into())
+                            .track_focus(&kind_focus)
+                            .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, _, cx| {
+                                let delta = match event.keystroke.key.as_str() {
+                                    "left" => -1,
+                                    "right" => 1,
+                                    _ => return,
+                                };
+                                this.new_space_step_kind(delta, cx);
+                                cx.stop_propagation();
+                            }))
+                            .child(
+                                TabBar::new("new-space-kind")
+                                    .segmented()
+                                    .selected_index(kind.index())
+                                    .children(NewSpaceKind::ALL.iter().map(|k| Tab::new().label(k.label())))
+                                    .on_click(move |ix, _, app| {
+                                        if let Some(kind) = NewSpaceKind::from_index(*ix) {
+                                            view.update(app, |this, cx| this.new_space_set_kind(kind, cx));
+                                        }
+                                    }),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .debug_selector(|| "new-space-kind-description".into())
+                            .text_xs()
+                            .text_color(muted)
+                            .child(kind.description()),
+                    )
+                    .child(
                         v_flex()
                             .gap_1()
                             .child(div().text_sm().child("Name"))
@@ -217,36 +249,12 @@ impl AppView {
                                 )
                             }),
                     )
-                    .child(
+                    .when(kind == NewSpaceKind::Local, |this| this.child(
                         v_flex()
                             .gap_1()
-                            .child(
-                                h_flex()
-                                    .items_center()
-                                    .child(div().flex_1().text_sm().child("Files"))
-                                    .when(files.len() > 1, |this| {
-                                        this.child(
-                                            div().debug_selector(|| "new-space-clear".into()).child(
-                                                Button::new("new-space-clear")
-                                                    .ghost()
-                                                    .xsmall()
-                                                    .label("Remove all")
-                                                    .on_click(cx.listener(|this, _, _, cx| this.new_space_clear_files(cx))),
-                                            ),
-                                        )
-                                    }),
-                            )
-                            .when(remote_count == 0, |this| this.child(drop_zone))
-                            .when(remote_count > 0, |this| {
-                                this.child(
-                                    div()
-                                        .debug_selector(|| "new-space-local-hint".into())
-                                        .text_xs()
-                                        .text_color(muted)
-                                        .child(MIX_HINT_LOCAL),
-                                )
-                            })
-                            .when(!files.is_empty() && remote_count == 0, |this| this.child(file_list))
+                            .child(div().text_sm().child("Files"))
+                            .child(drop_zone)
+                            .when(!files.is_empty(), |this| this.child(file_list))
                             .when_some(already_listed, |this, message| {
                                 this.child(
                                     div()
@@ -256,6 +264,15 @@ impl AppView {
                                         .child(message),
                                 )
                             })
+                            .when(files.is_empty(), |this| {
+                                this.child(
+                                    div()
+                                        .debug_selector(|| "new-space-empty-hint".into())
+                                        .text_xs()
+                                        .text_color(muted)
+                                        .child("Choose or drop files"),
+                                )
+                            })
                             .when_some(files_message, |this, message| {
                                 // Like the name's error: an icon, not only the color.
                                 this.child(
@@ -263,8 +280,8 @@ impl AppView {
                                         .debug_selector(|| "new-space-files-error".into()),
                                 )
                             }),
-                    )
-                    .child(
+                    ))
+                    .when(kind == NewSpaceKind::Remote, |this| this.child(
                         v_flex()
                             .gap_1()
                             .child(div().text_sm().child("Remote files and commands"))
@@ -352,7 +369,6 @@ impl AppView {
                                 Button::new("new-space-add-remote")
                                     .small()
                                     .label("Add remote files…")
-                                    .disabled(!files.is_empty())
                                     .on_click(cx.listener(|this, _, _, cx| {
                                         this.open_remote_picker(crate::app::remote_picker::PickerTarget::NewSpace, cx)
                                     })),
@@ -361,7 +377,6 @@ impl AppView {
                                 Button::new("new-space-add-command")
                                     .small()
                                     .label("Add remote command…")
-                                    .disabled(!files.is_empty())
                                     .on_click(cx.listener(|this, _, _, cx| {
                                         this.open_remote_command_picker(
                                             crate::app::remote_picker::PickerTarget::NewSpace,
@@ -369,26 +384,16 @@ impl AppView {
                                         )
                                     })),
                             )
-                            .when(!files.is_empty(), |this| {
+                            .when(remote_count == 0, |this| {
                                 this.child(
                                     div()
-                                        .debug_selector(|| "new-space-remote-hint".into())
+                                        .debug_selector(|| "new-space-empty-hint".into())
                                         .text_xs()
                                         .text_color(muted)
-                                        .child(MIX_HINT_REMOTE),
+                                        .child("Add remote files or a command"),
                                 )
                             }),
-                    )
-                    .when(files.is_empty() && remote_count == 0, |this| {
-                        // What "Create empty" makes: a Scratch Log Space.
-                        this.child(
-                            div()
-                                .debug_selector(|| "new-space-scratch-hint".into())
-                                .text_xs()
-                                .text_color(muted)
-                                .child("With no files, the Log Space starts with an empty file to paste or type log text into."),
-                        )
-                    })
+                    ))
                     .child(
                         h_flex()
                             .debug_selector(|| "new-space-footer".into())

@@ -43,6 +43,10 @@ impl AppView {
         true
     }
 
+    fn start_edit_closed(&self) -> bool {
+        self.new_space.as_ref().is_some_and(|d| d.start_edit.is_none()) && self.remote.picker.is_none()
+    }
+
     pub(crate) fn handle_key_down(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         // gpui names the key "escape"; the arms below spell it "Escape".
         let key = match event.keystroke.key.as_str() {
@@ -64,6 +68,18 @@ impl AppView {
         }
         // The New Log Space dialog and the delete confirmation capture keys while open.
         if self.new_space.is_some() {
+            // ⌘1, ⌘2, ⌘3 pick the kind of Log Space, and go no further.
+            if cmd && !alt && !shift && self.start_edit_closed() {
+                let kind = match key {
+                    "1" => Some(crate::workspace::new_space::NewSpaceKind::Local),
+                    "2" => Some(crate::workspace::new_space::NewSpaceKind::Remote),
+                    "3" => Some(crate::workspace::new_space::NewSpaceKind::Scratch),
+                    _ => None,
+                };
+                if let Some(kind) = kind {
+                    self.new_space_set_kind(kind, cx);
+                }
+            }
             return;
         }
         if self.confirm.is_some() {

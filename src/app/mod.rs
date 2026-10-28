@@ -271,6 +271,9 @@ pub struct AppView {
     pub view_mode: ViewMode,
     pub raw: raw::RawViewState,
     pub new_space: Option<spaces::NewSpaceDialog>,
+    /// Archives dropped on the window and still being read, before the
+    /// Imported Log Space they make is created.
+    pub dropped_archives_reading: usize,
     pub confirm: Option<ConfirmAction>,
     /// Load more with a number the user types.
     pub custom_load: Option<live_more::CustomLoad>,
@@ -585,6 +588,7 @@ impl AppView {
             view_mode: ViewMode::Parsed,
             raw: raw::RawViewState::new(),
             new_space: None,
+            dropped_archives_reading: 0,
             confirm: None,
             custom_load: None,
             notice: keymap_error

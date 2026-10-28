@@ -145,6 +145,9 @@ impl AppView {
             let n = self.focus_rows.len();
             labels.push(format!("{} {} in Focus", format_count(n), if n == 1 { "line" } else { "lines" }));
         }
+        if self.dropped_archives_reading > 0 {
+            labels.push("Reading archive…".to_string());
+        }
         labels
     }
 
