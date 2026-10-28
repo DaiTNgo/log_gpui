@@ -26,7 +26,8 @@ Mỗi task là một commit, và test phải xanh sau mỗi commit. Nhóm 3 cầ
 
 - [x] 3.1 `NewSpaceKind { Static, Live, Scratch }`, nhãn và dòng mô tả của từng nấc, ⌘1–3.
   - Đã làm: `Local`/`Remote` đổi thành `Static`/`Live`; nhãn "Static", "Live", "Scratch"; dòng mô tả và hướng dẫn dưới danh sách trống theo spec. ⌘1–3 giữ nguyên thứ tự. Nấc Live vẫn chỉ có danh sách remote, danh sách local làm ở 3.2.
-- [ ] 3.2 Nấc Live có danh sách local riêng (một `NewLogSpaceForm` thứ hai) cạnh danh sách remote. Nhãn Create gộp cả hai, ví dụ "Create with 1 file and 2 remote files". Archive ở nấc Live có cảnh báo và không được thêm.
+- [x] 3.2 Nấc Live có danh sách local riêng (một `NewLogSpaceForm` thứ hai) cạnh danh sách remote. Nhãn Create gộp cả hai, ví dụ "Create with 1 file and 2 remote files". Archive ở nấc Live có cảnh báo và không được thêm.
+  - Đã làm: `NewSpaceDialog::live_form` giữ file local của nấc Live; nấc này có "Choose files…" và danh sách local trên danh sách remote. Create tạo Live Log Space với cả hai qua `create_live_log_space` (`create_remote_log_space` gọi nó với danh sách local rỗng). Nhãn đếm qua `LiveCounts`, Remote File giờ là "remote file(s)". Archive ở nấc Live có `PendingStatus::StaticOnly`, không được đọc và không được đếm. Vùng kéo thả của nấc Live làm ở 3.3.
 - [ ] 3.3 Thả file: ở nấc Live thì vào danh sách của Live, ở nấc khác thì gạt sang Static. Thả vào cửa sổ khi không có dialog nào mở thì tạo Static.
 - [ ] 3.4 Sửa `tests/new_space_dialog_test.rs`, `tests/new_space_test.rs` và `tests/archive_test.rs` theo nấc mới.
 

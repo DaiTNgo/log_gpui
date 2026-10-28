@@ -3,7 +3,7 @@
 
 use super::{AppView, ConfirmAction};
 use crate::workspace::log_space::{FileOrder, ImportSource, LogSpaceKind, RemoveFileError, scratch_dir_for};
-use crate::workspace::new_space::{self, NewLogSpaceForm, NewSpaceKind};
+use crate::workspace::new_space::{self, LiveCounts, NewLogSpaceForm, NewSpaceKind};
 use crate::workspace::scratch_store;
 use crate::workspace::working_set::ViewMode;
 use gpui::{AppContext as _, Context, Entity, Subscription, Window};
@@ -12,7 +12,11 @@ use std::path::{Path, PathBuf};
 
 /// State of the New Log Space dialog.
 pub struct NewSpaceDialog {
+    /// The name, and the list of the Static step.
     pub form: NewLogSpaceForm,
+    /// The local files of the Live step (only its list is used); its
+    /// remote ones are in `RemoteState`.
+    pub live_form: NewLogSpaceForm,
     /// The kind of Log Space Create makes; the other kinds keep their lists.
     pub kind: NewSpaceKind,
     /// The path the Local name is suggested from: the first one added while
@@ -74,6 +78,7 @@ impl AppView {
         });
         self.new_space = Some(NewSpaceDialog {
             form,
+            live_form: NewLogSpaceForm::new(),
             kind,
             local_first,
             suggested: None,
@@ -116,11 +121,16 @@ impl AppView {
         match dialog.kind {
             NewSpaceKind::Scratch => None,
             NewSpaceKind::Static => dialog.local_first.clone(),
-            NewSpaceKind::Live => self
-                .remote
-                .new_space_files
+            // A local file first: it is listed above the remote ones.
+            NewSpaceKind::Live => dialog
+                .live_form
+                .files
                 .first()
-                .map(|f| f.2.clone())
+                .and_then(|f| match &f.source {
+                    new_space::PendingSource::Disk(path) => Some(path.clone()),
+                    new_space::PendingSource::Entry { .. } => None,
+                })
+                .or_else(|| self.remote.new_space_files.first().map(|f| f.2.clone()))
                 .or_else(|| self.remote.new_space_globs.first().map(|g| g.2.clone())),
         }
     }
@@ -388,6 +398,42 @@ impl AppView {
         }
     }
 
+    /// What the Live step lists, counted for Create.
+    pub fn new_space_live_counts(&self) -> LiveCounts {
+        LiveCounts {
+            local: self.new_space.as_ref().map_or(0, |d| d.live_form.importable_sources().len()),
+            files: self.remote.new_space_files.len(),
+            globs: self.remote.new_space_globs.len(),
+            commands: self.remote.new_space_commands.len(),
+        }
+    }
+
+    /// Add dropped or picked paths to the local files of the Live step.
+    pub fn new_space_add_live_paths(&mut self, paths: Vec<String>, cx: &mut Context<Self>) {
+        let Some(dialog) = self.new_space.as_mut() else { return };
+        dialog.live_form.add_live_paths(&paths);
+        self.refresh_suggested_name();
+        cx.notify();
+    }
+
+    pub fn new_space_remove_live_file(&mut self, index: usize, cx: &mut Context<Self>) {
+        if let Some(dialog) = self.new_space.as_mut() {
+            dialog.live_form.remove_file(index);
+            self.refresh_suggested_name();
+            cx.notify();
+        }
+    }
+
+    /// "Choose files…" of the Live step: the files go to its local list.
+    pub fn new_space_browse_live(&mut self, cx: &mut Context<Self>) {
+        cx.spawn(async move |this, cx| {
+            let Some(files) = rfd::AsyncFileDialog::new().pick_files().await else { return };
+            let paths: Vec<String> = files.iter().map(|f| f.path().to_string_lossy().to_string()).collect();
+            this.update(cx, |this, cx| this.new_space_add_live_paths(paths, cx)).ok();
+        })
+        .detach();
+    }
+
     pub fn new_space_remove_file(&mut self, index: usize, cx: &mut Context<Self>) {
         if let Some(dialog) = self.new_space.as_mut() {
             dialog.form.remove_file(index);
@@ -419,13 +465,11 @@ impl AppView {
     /// Create the Log Space of the kind the dialog shows, from that kind's
     /// list only: the lists of the other kinds are dropped.
     pub fn new_space_create(&mut self, cx: &mut Context<Self>) {
+        let live_items = self.new_space_live_counts().total();
         let Some(dialog) = self.new_space.as_ref() else { return };
         let Some(project) = self.active_project() else { return };
-        let remote_items = self.remote.new_space_files.len()
-            + self.remote.new_space_globs.len()
-            + self.remote.new_space_commands.len();
         let kind = dialog.kind;
-        if !dialog.form.can_create(kind, remote_items, project) {
+        if !dialog.form.can_create(kind, live_items, project) {
             return;
         }
         let name = dialog.form.name.clone();
@@ -435,8 +479,9 @@ impl AppView {
                 let globs = std::mem::take(&mut self.remote.new_space_globs);
                 let commands = std::mem::take(&mut self.remote.new_space_commands);
                 let starts = std::mem::take(&mut self.remote.new_space_starts);
+                let local = dialog.live_form.importable_sources();
                 self.new_space = None;
-                let space_id = self.create_remote_log_space(&name, files, globs, commands, cx);
+                let space_id = self.create_live_log_space(&name, &local, files, globs, commands, cx);
                 let space = space_id.and_then(|id| self.active_project_mut()?.log_space_mut(&id));
                 if let Some(space) = space {
                     for ((server_id, path), start) in starts {
@@ -470,6 +515,21 @@ impl AppView {
         commands: Vec<(String, String, String, Option<crate::remote::PresetFields>)>,
         cx: &mut Context<Self>,
     ) -> Option<String> {
+        self.create_live_log_space(name, &[], files, globs, commands, cx)
+    }
+
+    /// Create a Live Log Space with local files (`local`) as well as files,
+    /// Live Globs and Remote Commands on Servers, as `create_remote_log_space`
+    /// takes them, and open it.
+    pub fn create_live_log_space(
+        &mut self,
+        name: &str,
+        local: &[ImportSource],
+        files: Vec<(String, String, String)>,
+        globs: Vec<(String, String, String, String)>,
+        commands: Vec<(String, String, String, Option<crate::remote::PresetFields>)>,
+        cx: &mut Context<Self>,
+    ) -> Option<String> {
         self.persist_active_session();
         let space_id = {
             let project = self.active_project_mut()?;
@@ -486,6 +546,7 @@ impl AppView {
                 let _ = space.add_live_glob(server_id, dir, pattern);
             }
             let _ = space.add_remote_commands(&commands);
+            let _ = space.add_imported_sources(local);
             space.id.clone()
         };
         self.expanded_spaces.insert(space_id.clone());

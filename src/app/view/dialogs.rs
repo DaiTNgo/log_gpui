@@ -78,18 +78,16 @@ impl AppView {
         let start_edit = dialog.start_edit.as_ref().map(|e| (e.label.clone(), e.input.clone(), e.error()));
         let remote_commands = self.remote.new_space_commands.clone();
         let remote_count = remote_files.len() + remote_commands.len();
-        let can_create = dialog.form.can_create(kind, remote_count, project);
-        let create_label = dialog.form.create_label(
-            kind,
-            (self.remote.new_space_files.len(), self.remote.new_space_globs.len(), remote_commands.len()),
-        );
+        let live_counts = self.new_space_live_counts();
+        let can_create = dialog.form.can_create(kind, live_counts.total(), project);
+        let create_label = dialog.form.create_label(kind, live_counts);
         let files = dialog.form.files.clone();
         // Create is off for want of a name only once there is something to
         // create from: say so then.
         let has_content = match kind {
             NewSpaceKind::Scratch => true,
             NewSpaceKind::Static => !files.is_empty(),
-            NewSpaceKind::Live => remote_count > 0,
+            NewSpaceKind::Live => remote_count > 0 || !dialog.live_form.files.is_empty(),
         };
         let name_hint = dialog.form.name.trim().is_empty() && has_content;
         let files_message = dialog.form.files_message();
@@ -97,46 +95,10 @@ impl AppView {
         let name_input = dialog.name_input.clone();
         let dialog_focus = dialog.focus.clone();
 
-        let mut file_list = v_flex().id("new-space-files").gap_1().max_h(px(180.0)).overflow_y_scroll();
-        for (ix, file) in files.iter().enumerate() {
-            let name = file.display_name();
-            // Removing an Archive still being read drops what it would list.
-            let remove_tip = if file.status == PendingStatus::Reading { "Stop reading" } else { "Remove" };
-            file_list = file_list.child(
-                h_flex()
-                    .gap_2()
-                    .items_center()
-                    .px_2()
-                    .py_1()
-                    .rounded_md()
-                    .border_1()
-                    .border_color(border)
-                    .text_sm()
-                    .child(Icon::new(IconName::File).size_4())
-                    .child(div().flex_1().truncate().child(name))
-                    .when_some(file.warning(), |this, warning_text| {
-                        let color = if matches!(
-                            file.status,
-                            PendingStatus::Binary | PendingStatus::Damaged | PendingStatus::Encrypted
-                        ) {
-                            danger
-                        } else {
-                            warning
-                        };
-                        this.child(div().text_xs().text_color(color).child(warning_text))
-                    })
-                    .child(
-                        Button::new(("new-space-remove", ix))
-                            .ghost()
-                            .xsmall()
-                            .icon(IconName::Close)
-                            .tooltip(remove_tip)
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.new_space_remove_file(ix, cx)
-                            })),
-                    ),
-            );
-        }
+        let file_list = Self::pending_file_list("new-space-files", &files, false, border, danger, warning, cx);
+        let live_files = dialog.live_form.files.clone();
+        let live_already_listed = dialog.live_form.already_listed_message();
+        let live_file_list = Self::pending_file_list("new-space-live-files", &live_files, true, border, danger, warning, cx);
 
         let drop_zone = v_flex()
             .id("new-space-drop")
@@ -284,7 +246,23 @@ impl AppView {
                     .when(kind == NewSpaceKind::Live, |this| this.child(
                         v_flex()
                             .gap_1()
-                            .child(div().text_sm().child("Remote files and commands"))
+                            .child(
+                                h_flex()
+                                    .items_center()
+                                    .child(div().flex_1().text_sm().child("Files and commands"))
+                                    .child(
+                                        div().debug_selector(|| "new-space-live-browse".into()).child(
+                                            Button::new("new-space-live-browse")
+                                                .small()
+                                                .label("Choose files…")
+                                                .on_click(cx.listener(|this, _, _, cx| this.new_space_browse_live(cx))),
+                                        ),
+                                    ),
+                            )
+                            .when(!live_files.is_empty(), |this| this.child(live_file_list))
+                            .when_some(live_already_listed, |this, message| {
+                                this.child(div().text_xs().text_color(muted).child(message))
+                            })
                             .child(
                                 // Scrolls like the local list, so Create stays on screen.
                                 v_flex()
@@ -384,7 +362,7 @@ impl AppView {
                                         )
                                     })),
                             )
-                            .when(remote_count == 0, |this| {
+                            .when(remote_count == 0 && live_files.is_empty(), |this| {
                                 this.child(
                                     div()
                                         .debug_selector(|| "new-space-empty-hint".into())
@@ -417,6 +395,62 @@ impl AppView {
                 this.child(Self::render_start_edit(label, input, error, bg, border, muted, danger, cx))
             })
             .into_any_element()
+    }
+
+    /// The files listed on a step of the New Log Space dialog, each with its
+    /// warning and a button to take it out: of the Static step's list, or
+    /// of the Live step's (`live`).
+    #[allow(clippy::too_many_arguments)]
+    fn pending_file_list(
+        id: &'static str,
+        files: &[crate::workspace::new_space::PendingFile],
+        live: bool,
+        border: gpui::Hsla,
+        danger: gpui::Hsla,
+        warning: gpui::Hsla,
+        cx: &mut gpui::Context<Self>,
+    ) -> gpui::Stateful<gpui::Div> {
+        let mut list = v_flex().id(id).debug_selector(move || id.into()).gap_1().max_h(px(180.0)).overflow_y_scroll();
+        for (ix, file) in files.iter().enumerate() {
+            // Removing an Archive still being read drops what it would list.
+            let remove_tip = if file.status == PendingStatus::Reading { "Stop reading" } else { "Remove" };
+            let never_added = matches!(
+                file.status,
+                PendingStatus::Binary | PendingStatus::Damaged | PendingStatus::Encrypted | PendingStatus::StaticOnly
+            );
+            list = list.child(
+                h_flex()
+                    .gap_2()
+                    .items_center()
+                    .px_2()
+                    .py_1()
+                    .rounded_md()
+                    .border_1()
+                    .border_color(border)
+                    .text_sm()
+                    .child(Icon::new(IconName::File).size_4())
+                    .child(div().flex_1().truncate().child(file.display_name()))
+                    .when_some(file.warning(), |this, warning_text| {
+                        let color = if never_added { danger } else { warning };
+                        this.child(div().text_xs().text_color(color).child(warning_text))
+                    })
+                    .child(
+                        Button::new((if live { "new-space-remove-live" } else { "new-space-remove" }, ix))
+                            .ghost()
+                            .xsmall()
+                            .icon(IconName::Close)
+                            .tooltip(remove_tip)
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                if live {
+                                    this.new_space_remove_live_file(ix, cx)
+                                } else {
+                                    this.new_space_remove_file(ix, cx)
+                                }
+                            })),
+                    ),
+            );
+        }
+        list
     }
 
     /// Changing the Starting Time of one chosen Remote File, above the

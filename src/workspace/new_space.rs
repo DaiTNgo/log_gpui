@@ -77,6 +77,9 @@ pub enum PendingStatus {
     Encrypted,
     /// An Archive being listed in the background.
     Reading,
+    /// An Archive on the Live step: its entries cannot be followed, so it
+    /// is never added there.
+    StaticOnly,
 }
 
 /// Where a pending file comes from.
@@ -108,6 +111,7 @@ impl PendingFile {
             },
             PendingStatus::Damaged => "Damaged archive",
             PendingStatus::Encrypted => "Password-protected archive",
+            PendingStatus::StaticOnly => "Archives can only be added to a Static Log Space",
         };
         Some(text.to_string())
     }
@@ -245,18 +249,35 @@ pub fn suggest_name(path: &str, style: crate::local_path::PathStyle) -> Option<S
     (!name.is_empty()).then(|| name.to_string())
 }
 
-/// The Create label of a Remote Log Space: "Create with 2 files, 1 Live
-/// Glob and 1 command", worded like the local one.
-pub fn remote_create_label(files: usize, globs: usize, commands: usize) -> String {
+/// What the Live step lists: local files that can be added, and the Remote
+/// Files, Live Globs and Remote Commands chosen.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct LiveCounts {
+    pub local: usize,
+    pub files: usize,
+    pub globs: usize,
+    pub commands: usize,
+}
+
+impl LiveCounts {
+    pub fn total(&self) -> usize {
+        self.local + self.files + self.globs + self.commands
+    }
+}
+
+/// The Create label of a Live Log Space: "Create with 1 file, 2 remote
+/// files and 1 command", worded like the Static one.
+pub fn live_create_label(counts: LiveCounts) -> String {
     let count = |n: usize, one: &str, many: &str| match n {
         0 => None,
         1 => Some(format!("1 {one}")),
         n => Some(format!("{n} {many}")),
     };
     let parts: Vec<String> = [
-        count(files, "file", "files"),
-        count(globs, "Live Glob", "Live Globs"),
-        count(commands, "command", "commands"),
+        count(counts.local, "file", "files"),
+        count(counts.files, "remote file", "remote files"),
+        count(counts.globs, "Live Glob", "Live Globs"),
+        count(counts.commands, "command", "commands"),
     ]
     .into_iter()
     .flatten()
@@ -335,6 +356,27 @@ impl NewLogSpaceForm {
             self.push(path, status);
         }
         archives
+    }
+
+    /// Add dropped or picked paths to the list of the Live step (folders
+    /// expanded one level): an Archive is listed with its warning and not
+    /// read, since what is in it cannot be followed.
+    pub fn add_live_paths(&mut self, paths: &[String]) {
+        self.already_listed = 0;
+        for path in expand_paths(paths) {
+            if self.files.iter().any(|f| f.source == PendingSource::Disk(path.clone())) {
+                self.already_listed += 1;
+                continue;
+            }
+            let status = if archive::detect(Path::new(&path)).is_some() {
+                PendingStatus::StaticOnly
+            } else if path_is_binary(Path::new(&path)) {
+                PendingStatus::Binary
+            } else {
+                PendingStatus::Ok
+            };
+            self.push(path, status);
+        }
     }
 
     /// "2 files were already in the list", after a drop that added some again.
@@ -443,9 +485,9 @@ impl NewLogSpaceForm {
     }
 
     /// Whether Create is on for `kind`: a valid name, and something to
-    /// create from in the list showing. `remote_items` counts the Remote
-    /// Files, Live Globs and Remote Commands chosen.
-    pub fn can_create(&self, kind: NewSpaceKind, remote_items: usize, project: &Project) -> bool {
+    /// create from in the list showing. `live_items` counts what the Live
+    /// step lists (`LiveCounts::total`).
+    pub fn can_create(&self, kind: NewSpaceKind, live_items: usize, project: &Project) -> bool {
         if self.name_error(project).is_some() {
             return false;
         }
@@ -454,17 +496,17 @@ impl NewLogSpaceForm {
             NewSpaceKind::Static => {
                 !self.is_reading() && self.files_message().is_none() && !self.importable_sources().is_empty()
             }
-            NewSpaceKind::Live => remote_items > 0,
+            NewSpaceKind::Live => live_items > 0,
         }
     }
 
-    /// "Create", "Create with N file(s)" or the remote wording; "Reading
+    /// "Create", "Create with N file(s)" or the Live wording; "Reading
     /// archive…" while an Archive is listed on the Static kind (Create is off
-    /// meanwhile). `remote` is `(files, globs, commands)`.
-    pub fn create_label(&self, kind: NewSpaceKind, remote: (usize, usize, usize)) -> String {
+    /// meanwhile). `live` is what the Live step lists.
+    pub fn create_label(&self, kind: NewSpaceKind, live: LiveCounts) -> String {
         match kind {
             NewSpaceKind::Scratch => "Create".to_string(),
-            NewSpaceKind::Live => remote_create_label(remote.0, remote.1, remote.2),
+            NewSpaceKind::Live => live_create_label(live),
             NewSpaceKind::Static => {
                 if self.is_reading() {
                     return "Reading archive…".to_string();

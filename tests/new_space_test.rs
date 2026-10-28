@@ -1,5 +1,6 @@
 use log_gpui::workspace::log_space::{ImportSource, LogSpaceKind, SpaceNameError};
 use log_gpui::workspace::new_space::{
+    LiveCounts,
     NewLogSpaceForm, NewSpaceKind, PendingStatus, expand_paths, is_binary, path_is_binary,
 };
 use log_gpui::workspace::project::{Project, ProjectColorAccent};
@@ -77,7 +78,7 @@ fn create_depends_on_the_kind_showing_and_its_own_list() {
     assert!(form.can_create(scratch, 0, &p));
     assert!(!form.can_create(local, 0, &p));
     assert!(!form.can_create(remote, 0, &p));
-    assert_eq!(form.create_label(scratch, (0, 0, 0)), "Create");
+    assert_eq!(form.create_label(scratch, LiveCounts::default()), "Create");
     assert_eq!(local.empty_hint(), Some("Choose or drop files"));
     assert_eq!(remote.empty_hint(), Some("Add files to follow, remote files or a command"));
     assert_eq!(scratch.empty_hint(), None);
@@ -87,12 +88,12 @@ fn create_depends_on_the_kind_showing_and_its_own_list() {
     assert!(form.can_create(local, 0, &p));
     assert!(!form.can_create(remote, 0, &p));
     assert!(form.can_create(remote, 2, &p));
-    assert_eq!(form.create_label(remote, (2, 0, 0)), "Create with 2 files");
-    assert_eq!(form.create_label(scratch, (2, 0, 0)), "Create");
-    assert_eq!(form.create_label(local, (0, 0, 0)), "Create with 1 file");
+    assert_eq!(form.create_label(remote, LiveCounts { files: 2, ..LiveCounts::default() }), "Create with 2 remote files");
+    assert_eq!(form.create_label(scratch, LiveCounts { files: 2, ..LiveCounts::default() }), "Create");
+    assert_eq!(form.create_label(local, LiveCounts::default()), "Create with 1 file");
 
     form.push("/b.log".into(), PendingStatus::Ok);
-    assert_eq!(form.create_label(NewSpaceKind::Static, (0, 0, 0)), "Create with 2 files");
+    assert_eq!(form.create_label(NewSpaceKind::Static, LiveCounts::default()), "Create with 2 files");
 }
 
 #[test]
@@ -104,7 +105,7 @@ fn binary_files_are_listed_but_not_counted() {
     assert_eq!(form.files.len(), 2);
     assert_eq!(form.files[1].warning().as_deref(), Some("Not a text file"));
     assert_eq!(form.importable_sources(), vec![ImportSource::Disk("/a.log".to_string())]);
-    assert_eq!(form.create_label(NewSpaceKind::Static, (0, 0, 0)), "Create with 1 file");
+    assert_eq!(form.create_label(NewSpaceKind::Static, LiveCounts::default()), "Create with 1 file");
 }
 
 #[test]
@@ -114,7 +115,7 @@ fn removing_a_file_updates_the_label() {
     form.push("/b.log".into(), PendingStatus::Ok);
     form.remove_file(1);
     assert_eq!(form.files.len(), 1);
-    assert_eq!(form.create_label(NewSpaceKind::Static, (0, 0, 0)), "Create with 1 file");
+    assert_eq!(form.create_label(NewSpaceKind::Static, LiveCounts::default()), "Create with 1 file");
     form.remove_file(0);
     assert!(form.files.is_empty());
 }
@@ -195,7 +196,7 @@ fn only_files_that_cannot_be_added_never_make_an_empty_log_space() {
     form.push("/a.zip".into(), PendingStatus::Damaged);
 
     assert!(!form.can_create(NewSpaceKind::Static, 0, &p), "Create is off: nothing would be added");
-    assert_eq!(form.create_label(NewSpaceKind::Static, (0, 0, 0)), "Create");
+    assert_eq!(form.create_label(NewSpaceKind::Static, LiveCounts::default()), "Create");
     assert_eq!(form.files_message().as_deref(), Some("None of these files can be added"));
 
     // Removing them leaves nothing to create from on Local files.
@@ -248,19 +249,21 @@ fn create_says_it_waits_for_an_archive() {
     form.push("/a.log".into(), PendingStatus::Ok);
     form.push("/logs.zip".into(), PendingStatus::Reading);
     assert!(!form.can_create(NewSpaceKind::Static, 0, &p));
-    assert_eq!(form.create_label(NewSpaceKind::Static, (0, 0, 0)), "Reading archive…");
+    assert_eq!(form.create_label(NewSpaceKind::Static, LiveCounts::default()), "Reading archive…");
     form.finish_archive("/logs.zip", Vec::new());
-    assert_eq!(form.create_label(NewSpaceKind::Static, (0, 0, 0)), "Create with 1 file");
+    assert_eq!(form.create_label(NewSpaceKind::Static, LiveCounts::default()), "Create with 1 file");
 }
 
 #[test]
-fn the_remote_create_label_names_what_it_holds() {
-    use log_gpui::workspace::new_space::remote_create_label;
-    assert_eq!(remote_create_label(1, 0, 0), "Create with 1 file");
-    assert_eq!(remote_create_label(3, 0, 0), "Create with 3 files");
-    assert_eq!(remote_create_label(0, 0, 1), "Create with 1 command");
-    assert_eq!(remote_create_label(2, 0, 1), "Create with 2 files and 1 command");
-    assert_eq!(remote_create_label(2, 1, 2), "Create with 2 files, 1 Live Glob and 2 commands");
+fn the_live_create_label_names_what_it_holds() {
+    use log_gpui::workspace::new_space::live_create_label;
+    let c = |local, files, globs, commands| live_create_label(LiveCounts { local, files, globs, commands });
+    assert_eq!(c(0, 1, 0, 0), "Create with 1 remote file");
+    assert_eq!(c(0, 3, 0, 0), "Create with 3 remote files");
+    assert_eq!(c(0, 0, 0, 1), "Create with 1 command");
+    assert_eq!(c(1, 2, 0, 0), "Create with 1 file and 2 remote files");
+    assert_eq!(c(2, 2, 1, 2), "Create with 2 files, 2 remote files, 1 Live Glob and 2 commands");
+    assert_eq!(c(0, 0, 0, 0), "Create");
 }
 
 #[test]

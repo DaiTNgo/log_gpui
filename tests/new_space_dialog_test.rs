@@ -3,7 +3,7 @@
 
 mod common;
 
-use log_gpui::workspace::new_space::NewSpaceKind;
+use log_gpui::workspace::new_space::{LiveCounts, NewSpaceKind};
 use common::Harness;
 use gpui::TestAppContext;
 use log_gpui::app::remote_picker::{PickerTarget, Staged};
@@ -127,7 +127,7 @@ fn a_folder_can_be_chosen_as_well_as_files(cx: &mut TestAppContext) {
     });
     let (names, label) = h.view.read_with(&h.cx, |app, _| {
         let form = &app.new_space.as_ref().unwrap().form;
-        (form.files.iter().map(|f| f.display_name()).collect::<Vec<_>>(), form.create_label(NewSpaceKind::Static, (0, 0, 0)))
+        (form.files.iter().map(|f| f.display_name()).collect::<Vec<_>>(), form.create_label(NewSpaceKind::Static, LiveCounts::default()))
     });
     assert_eq!(names, ["a.log", "b.log"]);
     assert_eq!(label, "Create with 2 files");
@@ -252,7 +252,7 @@ fn the_dialog_always_opens_on_scratch(cx: &mut TestAppContext) {
         let project = app.workspace_state.active_project().unwrap();
         assert_eq!(form.name, "Scratch");
         assert!(form.can_create(NewSpaceKind::Scratch, 0, project));
-        assert_eq!(form.create_label(NewSpaceKind::Scratch, (0, 0, 0)), "Create");
+        assert_eq!(form.create_label(NewSpaceKind::Scratch, LiveCounts::default()), "Create");
     });
 }
 
@@ -628,7 +628,7 @@ fn removing_an_archive_being_read_drops_its_entries(cx: &mut TestAppContext) {
     h.view.read_with(&h.cx, |app, _| {
         let form = &app.new_space.as_ref().unwrap().form;
         assert!(form.files.is_empty(), "the entries that came later were dropped");
-        assert_eq!(form.create_label(NewSpaceKind::Static, (0, 0, 0)), "Create");
+        assert_eq!(form.create_label(NewSpaceKind::Static, LiveCounts::default()), "Create");
     });
 }
 
@@ -748,4 +748,61 @@ fn the_cursor_reaches_the_kind_switch_and_stays_in_the_dialog(cx: &mut TestAppCo
     h.cx.simulate_keystrokes("shift-tab");
     h.cx.run_until_parked();
     assert!(inside(&mut h), "the cursor does not leave the dialog");
+}
+
+/// The Live step lists local files as well as remote ones, apart from the
+/// Static step's list, and makes one Live Log Space of both.
+#[gpui::test]
+fn the_live_step_makes_one_live_space_of_local_and_remote_files(cx: &mut TestAppContext) {
+    let mut h = common::open_app(cx);
+    let server = add_server(&mut h);
+    open_on(&mut h, NewSpaceKind::Live);
+    let api = h.dir.path().join("api.log");
+    std::fs::write(&api, "2026-09-05 10:00:00 [INFO] one\n").unwrap();
+    let api = api.to_string_lossy().into_owned();
+    h.view.update(&mut h.cx, |app, cx| app.new_space_add_live_paths(vec![api.clone()], cx));
+    add_in_picker(&mut h, &server, &["/app/app.log"], "");
+    h.cx.update(|window, _| window.refresh());
+    h.cx.run_until_parked();
+    assert!(h.cx.debug_bounds("new-space-live-files").is_some(), "the local files are listed");
+    assert!(h.cx.debug_bounds("new-space-live-browse").is_some());
+    assert!(h.cx.debug_bounds("new-space-remote").is_some());
+    h.view.read_with(&h.cx, |app, _| {
+        let dialog = app.new_space.as_ref().unwrap();
+        assert_eq!(dialog.kind, NewSpaceKind::Live);
+        assert!(dialog.form.files.is_empty(), "the Static step's list is untouched");
+        let label = dialog.form.create_label(NewSpaceKind::Live, app.new_space_live_counts());
+        assert_eq!(label, "Create with 1 file and 1 remote file");
+        assert_eq!(dialog.form.name, "api", "named after the local file, listed first");
+    });
+    h.view.update(&mut h.cx, |app, cx| app.new_space_create(cx));
+    h.cx.run_until_parked();
+    h.view.read_with(&h.cx, |app, _| {
+        let project = app.workspace_state.active_project().unwrap();
+        let space = project.log_spaces.last().unwrap();
+        assert_eq!(space.kind, log_gpui::workspace::log_space::LogSpaceKind::Live);
+        assert_eq!(space.files.len(), 2);
+        assert!(space.files.iter().any(|f| f.path.as_deref() == Some(api.as_str()) && f.remote.is_none()));
+        assert!(space.files.iter().any(|f| f.remote.is_some()));
+    });
+}
+
+#[gpui::test]
+fn an_archive_on_the_live_step_is_listed_but_never_added(cx: &mut TestAppContext) {
+    let mut h = common::open_app(cx);
+    open_on(&mut h, NewSpaceKind::Live);
+    let zip = h.dir.path().join("logs.zip");
+    std::fs::write(&zip, b"PK\x03\x04 not read").unwrap();
+    h.view.update(&mut h.cx, |app, cx| app.new_space_add_live_paths(vec![zip.to_string_lossy().into_owned()], cx));
+    h.view.read_with(&h.cx, |app, _| {
+        let dialog = app.new_space.as_ref().unwrap();
+        let file = &dialog.live_form.files[0];
+        assert_eq!(file.warning().as_deref(), Some("Archives can only be added to a Static Log Space"));
+        let counts = app.new_space_live_counts();
+        assert_eq!(counts, LiveCounts::default(), "not counted in the label");
+        assert!(!dialog.form.can_create(NewSpaceKind::Live, counts.total(), app.workspace_state.active_project().unwrap()));
+    });
+    // Taken out again, the list is empty.
+    h.view.update(&mut h.cx, |app, cx| app.new_space_remove_live_file(0, cx));
+    h.view.read_with(&h.cx, |app, _| assert!(app.new_space.as_ref().unwrap().live_form.files.is_empty()));
 }
