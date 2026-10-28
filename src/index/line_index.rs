@@ -116,6 +116,20 @@ impl LineIndex {
         out
     }
 
+    /// The longest line, first of the longest ones: its number and length
+    /// with its line break. Read from the lengths, no line is read.
+    pub fn longest(&self) -> Option<(usize, u64)> {
+        let mut at = 0;
+        let mut best: Option<(usize, u64)> = None;
+        for n in 0..self.lines {
+            let len = read_varint(&self.lens, &mut at);
+            if best.is_none_or(|(_, b)| len > b) {
+                best = Some((n, len));
+            }
+        }
+        best
+    }
+
     /// Drop the last line (a live file's last line was cut off before its
     /// line break and grew since); its length.
     pub fn pop(&mut self) -> Option<u64> {

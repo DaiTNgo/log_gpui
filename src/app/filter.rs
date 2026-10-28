@@ -104,7 +104,7 @@ impl AppView {
                 visible.truncate(rows);
             }
         }
-        self.longest_row = longest(crate::rows::entries(&self.rows()).map(|e| e.payload().len()));
+        self.longest_row = self.find_longest_row();
         // A Field Column shows once a row has a value in it.
         self.sync_view_columns();
         // Rows may be new: a selection of them no longer means the same.
@@ -363,6 +363,34 @@ impl AppView {
 }
 
 /// Position of the largest of `lens` (the first one on a tie), 0 when empty.
+impl AppView {
+    /// The row with the longest text, which sets how wide the list is. A
+    /// file read through its Line Index gives its longest line from the
+    /// index; only held files are walked.
+    pub(crate) fn find_longest_row(&self) -> usize {
+        let rows = self.rows();
+        let mut best: Option<(usize, usize, usize)> = None; // (length, file, position)
+        for file in 0..self.view.files.len() {
+            let found = match rows.file(file) {
+                Some(crate::view_data::FileEntries::Indexed(indexed)) => {
+                    indexed.longest_line().map(|(pos, len)| (len as usize, pos))
+                }
+                Some(crate::view_data::FileEntries::Held(entries)) => {
+                    let pos = longest(entries.iter().map(|e| e.payload().len()));
+                    entries.get(pos).map(|e| (e.payload().len(), pos))
+                }
+                None => None,
+            };
+            if let Some((len, pos)) = found {
+                if best.is_none_or(|(b, _, _)| len > b) {
+                    best = Some((len, file, pos));
+                }
+            }
+        }
+        best.and_then(|(_, file, pos)| self.view.rows.row_of(file, pos)).unwrap_or(0)
+    }
+}
+
 pub(crate) fn longest(lens: impl Iterator<Item = usize>) -> usize {
     let mut best = (0, 0);
     for (pos, len) in lens.enumerate() {

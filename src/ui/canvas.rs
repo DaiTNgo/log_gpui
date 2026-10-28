@@ -320,12 +320,15 @@ impl LogCanvas {
                 );
                 let entries = minimap_view.read(cx).rows();
                 let bar_max = MINIMAP_WIDTH - 10.0;
+                // Like the rows of the list: what is not read yet has no bar
+                // for now, and is read after this frame.
+                let mut missing = Vec::new();
                 for r in 0..rows_fit {
                     let pos = start + r;
-                    let Some((entry_ix, entry)) =
-                        minimap_visible.get(pos).and_then(|&ix| Some((ix, entries.get(ix)?)))
-                    else {
-                        break;
+                    let Some(&entry_ix) = minimap_visible.get(pos) else { break };
+                    let Some(entry) = entries.cached(entry_ix) else {
+                        missing.push(entry_ix);
+                        continue;
                     };
                     let y = bounds.origin.y + px(r as f32 * MINIMAP_ROW_PX);
                     let is_match = minimap_matches.binary_search(&pos).is_ok();
@@ -388,6 +391,10 @@ impl LogCanvas {
                     }
                 }
 
+                if !missing.is_empty() {
+                    let view = minimap_view.clone();
+                    cx.defer(move |cx| view.update(cx, |this, cx| this.read_rows_soon(missing, cx)));
+                }
                 let top = ((first_visible - start as f32) * MINIMAP_ROW_PX).max(0.0);
                 let bottom = ((first_visible + visible_rows - start as f32) * MINIMAP_ROW_PX)
                     .min(f32::from(bounds.size.height));

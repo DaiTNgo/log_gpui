@@ -82,7 +82,7 @@ Lý do: `all_entries` còn là trạng thái được sửa tại chỗ. Filter 
 - [x] 4.2 LRU các dòng đã parse (khoảng 4.096 dòng, khoá `(file, generation, line)`); đọc gom theo khối; canvas vẽ placeholder khi dòng chưa có rồi `cx.notify()` khi có.
   - Đã có `RowCache` (LRU, `missing` cho ra các đoạn cần đọc gom). Còn phần placeholder và `cx.notify()` trong canvas.
   - Đã làm: canvas vẽ từng dòng qua `Rows::cached`, không đọc file trong frame. Dòng chưa có trong cache là placeholder "…"; sau frame, `read_rows_soon` đọc các khối `READ_AROUND` của chúng ở worker thread (mỗi khối một lần) rồi `cx.notify()`, chỉ khi có dòng đọc được. Minimap vẫn đọc entry (4.3 mục 5).
-- [ ] 4.3 Chuyển lần lượt các chỗ đọc `all_entries` sang `ViewRows`, mỗi nhóm một commit, giữ test xanh. Làm cùng lúc với nhóm 5–8, theo từng tính năng:
+- [x] 4.3 Chuyển lần lượt các chỗ đọc `all_entries` sang `ViewRows`, mỗi nhóm một commit, giữ test xanh. Làm cùng lúc với nhóm 5–8, theo từng tính năng:
   1. canvas và Gutter
   2. Focus Pane
   3. Go to
@@ -90,6 +90,8 @@ Lý do: `all_entries` còn là trạng thái được sửa tại chỗ. Filter 
   5. Minimap
   6. độ rộng cột (`max_chars` tính trong lúc Indexing)
   - Đã xong lớp truy cập: trait `Rows` (3981fc7). `ViewData` thay `all_entries`, view không còn copy dòng (867c99b). Mọi chỗ trong danh sách trên đọc qua `Rows`; entry vẫn lấy từ `ParsedFile.entries`. Còn lại: chuyển nguồn entry sang Line Index cộng `RowCache` (cần Indexing được nối vào app), và bỏ các lần duyệt toàn bộ dòng (Search, Highlight, `FilterIndex::build`) theo nhóm 5–7.
+  - Đã làm (2026-10-28): bỏ các lần đọc mọi dòng trong lúc vẽ và refresh. Canvas (4.2) và Minimap chỉ vẽ dòng có trong cache, dòng còn lại được đọc sau frame. Dòng dài nhất (độ rộng của danh sách) lấy từ độ dài dòng trong Line Index (`LineIndex::longest`), không parse: refresh một file 300k dòng từ 614 ms còn 3 ms. Focus Pane không đọc dòng khi không có matcher. Go to và chọn dòng đã đọc `LineMeta` (4b.4); `max_chars` có từ Indexing (4b.3).
+  - Còn lại: Search, Highlight Rule trên MESSAGE và Focus Find vẫn đọc text từng dòng, làm theo nhóm 6–7.
 - 4.4 đã chuyển thành 7.4: chuyển tab không clone chỉ làm được khi Filter, Search, Highlight và Marker không còn đọc hay sửa `all_entries`.
 
 ### 4b. Thay `ParsedFile.entries` của file local bằng Indexing (kế hoạch 2026-10-25)

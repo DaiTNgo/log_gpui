@@ -507,10 +507,10 @@ pub fn compute_focus_rows<R: crate::rows::Rows + ?Sized>(
     if matcher.is_none() && !filter_active {
         return Vec::new();
     }
-    let keep = |ix: usize| match (matcher, entries.get(ix)) {
-        (Some(m), Some(entry)) => m.is_match(&entry.raw_line),
-        (None, Some(_)) => true,
-        (_, None) => false,
+    // Without a matcher no line is read: a row only has to be there.
+    let keep = |ix: usize| match matcher {
+        Some(m) => entries.get(ix).is_some_and(|entry| m.is_match(&entry.raw_line)),
+        None => ix < entries.len(),
     };
     if filter_active {
         filter_pass.iter().copied().filter(|&ix| keep(ix)).map(FocusRow::Entry).collect()

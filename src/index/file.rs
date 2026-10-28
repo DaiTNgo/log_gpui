@@ -243,6 +243,12 @@ impl IndexedFile {
         self.indexed.data.read().unwrap().file.meta.get(n).copied()
     }
 
+    /// The longest line (0-based) and its length in bytes, from the Line
+    /// Index: nothing is read from the file.
+    pub fn longest_line(&self) -> Option<(usize, u64)> {
+        self.indexed.data.read().unwrap().file.lines.longest()
+    }
+
     /// Let go of every entry kept: they are read again when asked for.
     pub fn forget_cached(&self) {
         self.cache.lock().unwrap().forget_file(0);
