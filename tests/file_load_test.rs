@@ -153,14 +153,19 @@ fn a_local_file_of_a_live_space_is_followed_through_its_line_index(cx: &mut Test
     });
 }
 
-/// `a.log` of 20 lines open in a Live Log Space, its source live.
-fn live_a(h: &mut Harness) {
+/// `a.log` of 20 lines open in a Live Log Space, its source live; the
+/// space's id.
+fn live_a(h: &mut Harness) -> String {
     let source = log_file(h, "a.log", 20);
     h.view.update(&mut h.cx, |app, cx| app.create_log_space("A", LogSpaceKind::Live, &[source], cx));
     h.cx.run_until_parked();
     pump_until(h, "the source is live", |app| {
         app.live_file_statuses().iter().all(|(_, s)| *s == log_gpui::live::SourceStatus::Live) && app.view.len() == 20
     });
+    h.view.read_with(&h.cx, |app, _| {
+        let project = app.workspace_state.active_project().unwrap();
+        project.working_set.active_tab().unwrap().target.space_id().unwrap().to_string()
+    })
 }
 
 fn new_lines(n: usize, what: &str) -> String {
@@ -194,10 +199,7 @@ fn a_local_file_rotated_like_logrotate_keeps_its_old_lines_above_a_break(cx: &mu
 fn a_local_file_replaced_with_mv_keeps_its_old_lines_above_a_break(cx: &mut TestAppContext) {
     let mut h = open_app(cx);
     live_a(&mut h);
-    let other = h.dir.path().join("other.log");
-    std::fs::write(&other, new_lines(5, "other")).unwrap();
-    std::fs::rename(&other, h.dir.path().join("a.log")).unwrap();
-    pump_until(&mut h, "the old and the other lines show", |app| app.view.len() == 25);
+    replace_a(&mut h);
     h.view.read_with(&h.cx, |app, _| {
         let rows = app.rows_snapshot();
         assert!(rows[0].raw_line.ends_with("line 0"), "the deleted file's lines stay");
@@ -233,6 +235,60 @@ fn a_deleted_local_file_back_at_its_path_is_a_new_generation_below_a_break(cx: &
     std::fs::write(&path, new_lines(2, "back")).unwrap();
     pump_until(&mut h, "the new file's lines show", |app| app.view.len() == 22);
     h.view.read_with(&h.cx, |app, _| assert_eq!(breaks(app), [(20, log_gpui::live::BreakKind::Replaced)]));
+}
+
+/// `mv other.log a.log` while `a.log` is open in a Live Log Space.
+fn replace_a(h: &mut Harness) {
+    let other = h.dir.path().join("other.log");
+    std::fs::write(&other, new_lines(5, "other")).unwrap();
+    std::fs::rename(&other, h.dir.path().join("a.log")).unwrap();
+    pump_until(h, "the old and the other lines show", |app| app.view.len() == 25);
+}
+
+#[gpui::test]
+fn leaving_the_tab_closes_the_old_generations(cx: &mut TestAppContext) {
+    let mut h = open_app(cx);
+    let budget = log_gpui::index::HandleBudget::new(16);
+    h.view.update(&mut h.cx, |app, _| app.live.handle_budget = budget.clone());
+    let a = live_a(&mut h);
+    assert_eq!(budget.open(), 1);
+    replace_a(&mut h);
+    assert_eq!(budget.open(), 2, "the deleted a.log is held open for its lines");
+
+    let b = log_file(&h, "b.log", 3);
+    h.view.update(&mut h.cx, |app, cx| app.create_log_space("B", LogSpaceKind::Live, &[b], cx));
+    pump_until(&mut h, "b.log shows", |app| app.view.len() == 3);
+    assert_eq!(budget.open(), 1, "the Dormant tab holds no file open, the deleted one neither");
+
+    let first = h.view.read_with(&h.cx, |app, _| {
+        let tabs = app.workspace_state.active_project().unwrap().working_set.tabs();
+        tabs.iter().position(|t| t.target.space_id() == Some(a.as_str())).unwrap()
+    });
+    h.view.update(&mut h.cx, |app, cx| app.switch_to_tab(first, cx));
+    pump_until(&mut h, "a.log is read again", |app| app.view.len() == 5);
+    h.view.read_with(&h.cx, |app, _| {
+        assert!(app.rows_snapshot()[0].raw_line.ends_with("other 0"), "the old Generation does not come back");
+        assert!(breaks(app).is_empty());
+    });
+    assert_eq!(budget.open(), 1);
+}
+
+#[gpui::test]
+fn out_of_handles_the_old_generations_of_the_file_are_closed(cx: &mut TestAppContext) {
+    let mut h = open_app(cx);
+    let budget = log_gpui::index::HandleBudget::new(1);
+    h.view.update(&mut h.cx, |app, _| app.live.handle_budget = budget.clone());
+    live_a(&mut h);
+    let other = h.dir.path().join("other.log");
+    std::fs::write(&other, new_lines(5, "other")).unwrap();
+    std::fs::rename(&other, h.dir.path().join("a.log")).unwrap();
+    pump_until(&mut h, "only the other lines show", |app| app.view.len() == 5);
+    h.view.read_with(&h.cx, |app, _| {
+        assert!(app.rows_snapshot()[0].raw_line.ends_with("other 0"));
+        assert_eq!(breaks(app), [(0, log_gpui::live::BreakKind::Replaced)]);
+        assert_eq!(app.notice.as_deref(), Some("Older lines of a.log were closed: too many files are open"));
+    });
+    assert_eq!(budget.open(), 1);
 }
 
 #[gpui::test]

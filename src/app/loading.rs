@@ -74,9 +74,15 @@ fn read_file(name: &str, path: &str, done: &AtomicU64, total: &AtomicU64, cancel
 
 /// Read the file at `path` through its Line Index: Indexing builds it into
 /// `indexed`, and the file stays open to read its lines again.
-fn index_file(path: &str, options: IndexOptions, indexed: Arc<Indexed>, cancel: &AtomicBool) -> Option<std::io::Result<ParsedFile>> {
+fn index_file(
+    path: &str,
+    options: IndexOptions,
+    indexed: Arc<Indexed>,
+    budget: Arc<HandleBudget>,
+    cancel: &AtomicBool,
+) -> Option<std::io::Result<ParsedFile>> {
     // Read as a chain: a Live Log Space's file can take on a new Generation.
-    let source = match DiskSource::stay_open(path, HandleBudget::shared()) {
+    let source = match DiskSource::stay_open(path, budget) {
         Ok(source) => Arc::new(ChainSource::new(Arc::new(source) as Arc<dyn LineSource>)),
         Err(e) => return Some(Err(e)),
     };
@@ -172,10 +178,11 @@ impl AppView {
             let task = if self.index_local_files {
                 let (format_id, options) = self.index_options_for(&file);
                 let indexed = Arc::new(Indexed::default());
+                let budget = self.live.handle_budget.clone();
                 let load = FileLoad { name: name.clone(), progress: Progress::Indexed(indexed.clone()), cancel: cancel.clone() };
                 self.loads.insert(file.file_id.clone(), load);
                 cx.background_executor().spawn(async move {
-                    let read = index_file(&path, options, indexed, &cancel);
+                    let read = index_file(&path, options, indexed, budget, &cancel);
                     read.map(|r| r.map(|parsed| ParsedFile { format_id, ..parsed }))
                 })
             } else {

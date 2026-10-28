@@ -120,6 +120,9 @@ pub struct LiveRuntime {
     /// The Break above the first line of a local file read again from its
     /// start (it was cut, or written over), until it is read.
     pub first_marks: HashMap<String, std::sync::Arc<crate::live::BreakMark>>,
+    /// The handles the local files read through their Line Index may hold
+    /// open: each Generation of a file kept readable holds one.
+    pub handle_budget: std::sync::Arc<crate::index::HandleBudget>,
     /// A batch of this many lines is read on a worker thread.
     pub preparse_min: usize,
     /// Batches applied since the allocator's cache was last given back.
@@ -154,6 +157,7 @@ impl LiveRuntime {
             static_gone: HashSet::new(),
             local_deleted: HashSet::new(),
             first_marks: HashMap::new(),
+            handle_budget: crate::index::HandleBudget::shared(),
             preparse_min: PREPARE_MIN_LINES,
             batches_since_release: 0,
         }
@@ -901,7 +905,10 @@ impl AppView {
 
     /// A local file of a Live Log Space has another file at its path: the
     /// new file's lines are a new Generation of it, below a Break. False
-    /// when the new file cannot be opened, or the file is not read live.
+    /// when the new file cannot be opened, or the file is not read live:
+    /// it is then read again from its start, its old Generations closed
+    /// (when the app holds as many files open as it may, that is how
+    /// handles come free).
     fn begin_local_generation(
         &mut self,
         file_id: &str,
@@ -911,7 +918,15 @@ impl AppView {
     ) -> bool {
         let Some(file) = self.active_space().and_then(|s| s.file(file_id).cloned()) else { return false };
         let (Some(indexed), Some(path)) = (parsed.indexed.clone(), file.path.as_deref()) else { return false };
-        let Ok(source) = crate::index::DiskSource::stay_open(path, crate::index::HandleBudget::shared()) else { return false };
+        let source = match crate::index::DiskSource::stay_open(path, self.live.handle_budget.clone()) {
+            Ok(source) => source,
+            Err(_) => {
+                if self.live.handle_budget.open() >= self.live.handle_budget.limit() {
+                    self.notice = Some(format!("Older lines of {} were closed: too many files are open", file.display_name));
+                }
+                return false;
+            }
+        };
         let mark = std::sync::Arc::new(crate::live::BreakMark {
             kind,
             label: format!("{} {} {}", file.display_name, kind.label(), now_label()),
