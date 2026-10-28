@@ -52,6 +52,7 @@ Mỗi task là một commit, và test phải xanh sau mỗi commit. Nhóm 3 cầ
 
 ## 5. Tài liệu
 
-- [ ] 5.1 Áp các thay đổi của CONTEXT.md trong design.md quyết định 9. Làm sau khi việc của change `new-space-kind-switch` được commit.
+- [x] 5.1 Áp các thay đổi của CONTEXT.md trong design.md quyết định 9. Làm sau khi việc của change `new-space-kind-switch` được commit.
+  - Đã làm: Static Log Space và Live Log Space thay Imported và Remote Log Space (tên cũ vào _Avoid_), thêm Local Live File; Remote File, Remote Copy (Reload), Archive Entry, Live Glob, Live Window và Generation theo loại mới; quy tắc L3, L7, L10, L13, L14, L15, 24 và 25 cũng được đổi theo.
 - [x] 5.2 Sửa `openspec/changes/line-offset-index`: requirement "File local không có thao tác của Remote" trong `specs/line-index/spec.md` nói về file local của Live Log Space; task 4b.7 và 9.2 trỏ sang change này.
   - Đã làm: requirement "File local không có thao tác của Remote" nói về file local của Live Log Space. Requirement "Dòng thêm vào và rotate của file local" và "File bị sửa khi đang mở" cũng được sửa cho khớp spec `live-log-space` và `static-log-space`: dòng có text không còn trên đĩa bị bỏ thay cho "no longer on disk", file Static bị ghi đè được đọc lại ở nền. Task 9.2 và 9.3 được đánh dấu xong, trỏ sang task của change này.
