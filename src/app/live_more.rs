@@ -33,8 +33,6 @@ pub struct HoldInfo {
     pub load_more_off: Option<&'static str>,
     /// A Remote Command: Clear only; no Load more, no Back to Live Window.
     pub command: bool,
-    /// A local file followed live: Load more and Back to Live Window, no Clear.
-    pub local: bool,
 }
 
 impl HoldInfo {
@@ -129,8 +127,8 @@ impl AppView {
 
     /// What the file holds, for tooltips and the buttons.
     pub fn hold_info(&self, file_id: &str) -> Option<HoldInfo> {
-        let local = self.live.sources.get(file_id).is_some_and(|s| !s.remote);
-        if !self.is_live_remote_file(file_id) && !local {
+        // A local file is read whole from disk: it holds no Live Window.
+        if !self.is_live_remote_file(file_id) {
             return None;
         }
         let parsed = self.parsed_files.get(file_id)?;
@@ -157,7 +155,6 @@ impl AppView {
             remaining: self.live.full_read_limit.saturating_sub(parsed.entries.len()),
             load_more_off,
             command,
-            local,
         })
     }
 

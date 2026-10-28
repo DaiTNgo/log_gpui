@@ -41,6 +41,9 @@ pub struct SpaceRef {
     /// The only file of a Log Space that is not a group; its actions join the
     /// menu of the row.
     pub single_file: Option<Box<FileRef>>,
+    /// The Log Space has a Remote File or a Live Glob: the items of Remote
+    /// Files show.
+    pub has_remote: bool,
     pub active: bool,
     /// Set while this Log Space is being renamed inline.
     pub rename_input: Option<Entity<InputState>>,
@@ -205,18 +208,22 @@ pub fn space_menu(
                 let id = add_command.space_id.clone();
                 add_command.view.update(app, |this, cx| this.add_remote_command_dialog(&id, cx));
             }))
-            .item(PopupMenuItem::new("Open in full…").on_click(move |_, _, app| {
-                let id = full.space_id.clone();
-                full.view.update(app, |this, cx| this.open_in_full_space(&id, cx));
-            }))
-            .item(PopupMenuItem::new("Download all").on_click(move |_, _, app| {
-                let id = download.space_id.clone();
-                download.view.update(app, |this, cx| this.download_space(&id, cx));
-            }))
-            .item(PopupMenuItem::new("Clear all files").on_click(move |_, _, app| {
-                let id = clear_all.space_id.clone();
-                clear_all.view.update(app, |this, cx| this.request_clear_all_files(&id, cx));
-            }))
+            // Local files are read whole from disk: nothing to read in full,
+            // download or clear.
+            .when(space.has_remote, |menu| {
+                menu.item(PopupMenuItem::new("Open in full…").on_click(move |_, _, app| {
+                    let id = full.space_id.clone();
+                    full.view.update(app, |this, cx| this.open_in_full_space(&id, cx));
+                }))
+                .item(PopupMenuItem::new("Download all").on_click(move |_, _, app| {
+                    let id = download.space_id.clone();
+                    download.view.update(app, |this, cx| this.download_space(&id, cx));
+                }))
+                .item(PopupMenuItem::new("Clear all files").on_click(move |_, _, app| {
+                    let id = clear_all.space_id.clone();
+                    clear_all.view.update(app, |this, cx| this.request_clear_all_files(&id, cx));
+                }))
+            })
         }
     };
     let menu = log_format_items(menu, &space.view, &space.project_id, &space.space_id, None, window, cx);
@@ -264,7 +271,6 @@ fn file_menu(menu: PopupMenu, file: &FileRef, in_space_menu: bool, cx: &mut App)
             } else {
                 menu
             };
-            let menu = if in_space_menu { menu } else { local_file_live_items(menu, file, cx) };
             let menu = if in_space_menu {
                 menu
             } else {
@@ -372,40 +378,6 @@ fn file_menu(menu: PopupMenu, file: &FileRef, in_space_menu: bool, cx: &mut App)
             })
         }
     }
-}
-
-/// Load More and Back to Live Window of a local file followed live, with what
-/// the file holds on top. Nothing for a file that is not followed.
-fn local_file_live_items(menu: PopupMenu, file: &FileRef, cx: &App) -> PopupMenu {
-    let (info, step) = {
-        let view = file.view.read(cx);
-        (view.hold_info(&file.file_id).filter(|i| i.local), view.live.load_more_step)
-    };
-    let Some(info) = info else { return menu };
-    let (more, back, custom) = (file.clone(), file.clone(), file.clone());
-    let off = info.load_more_off.is_some() || info.loading;
-    let extended = info.extended;
-    let offers = info.offers_load_more();
-    menu.item(PopupMenuItem::new(info.tooltip()).disabled(true))
-        .when(offers, |menu| {
-            menu.item(
-                PopupMenuItem::new(format!("Load more ({})", info.amount_label(step)))
-                    .disabled(off)
-                    .on_click(move |_, _, app| {
-                        let id = more.file_id.clone();
-                        more.view.update(app, |this, cx| this.load_more(&id, None, cx));
-                    }),
-            )
-            .item(PopupMenuItem::new("Load more (custom number)…").disabled(off).on_click(move |_, window, app| {
-                let id = custom.file_id.clone();
-                custom.view.update(app, |this, cx| this.open_custom_load(&id, window, cx));
-            }))
-        })
-        .item(PopupMenuItem::new("Back to Live Window").disabled(!extended).on_click(move |_, _, app| {
-            let id = back.file_id.clone();
-            back.view.update(app, |this, cx| this.back_to_live_window(&id, cx));
-        }))
-        .item(PopupMenuItem::separator())
 }
 
 /// Clear, Load More and Back to Live Window of a Remote File, with what the

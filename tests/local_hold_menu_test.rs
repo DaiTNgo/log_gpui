@@ -37,7 +37,6 @@ fn info(at_start: bool, command: bool, off: Option<&'static str>) -> log_gpui::a
         remaining: 1_000_000,
         load_more_off: off,
         command,
-        local: true,
     }
 }
 

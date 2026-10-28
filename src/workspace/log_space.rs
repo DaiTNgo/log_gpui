@@ -766,6 +766,12 @@ impl LogSpace {
         self.files.len() >= 2 || !self.globs.is_empty()
     }
 
+    /// Whether the Log Space has a Remote File or a Live Glob: only then
+    /// does it offer Open in full, Download and Clear.
+    pub fn has_remote(&self) -> bool {
+        !self.globs.is_empty() || self.files.iter().any(|f| f.remote.is_some())
+    }
+
     /// The only file of a Log Space that is not shown as a group.
     pub fn single_file(&self) -> Option<&LogFile> {
         if self.shows_group() {

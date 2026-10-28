@@ -106,17 +106,14 @@ impl AppView {
                     .on_click(cx.listener(move |this, _, _window, cx| this.back_to_live_window(&id, cx))),
             );
         }
-        if !info.local {
-            let id = file_id;
-            bar = bar.right(
-                Button::new("status-clear")
-                    .ghost()
-                    .xsmall()
-                    .label("Clear")
-                    .on_click(cx.listener(move |this, _, _window, cx| this.request_clear_file(&id, cx))),
-            );
-        }
-        bar
+        let id = file_id;
+        bar.right(
+            Button::new("status-clear")
+                .ghost()
+                .xsmall()
+                .label("Clear")
+                .on_click(cx.listener(move |this, _, _window, cx| this.request_clear_file(&id, cx))),
+        )
     }
 
     /// The plain labels on the left of the status bar, in order: the

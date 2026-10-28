@@ -182,6 +182,7 @@ impl SidebarView {
                         expanded,
                         grouped,
                         single_file,
+                        has_remote: space.has_remote(),
                         active: space_active,
                         rename_input: space_rename_input(renaming, &project.id, &space.id),
                     },
