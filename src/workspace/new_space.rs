@@ -14,23 +14,24 @@ const SNIFF_BYTES: usize = 8 * 1024;
 /// The kind of Log Space the dialog is set to create.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum NewSpaceKind {
-    /// Imported: files from this computer.
-    Local,
-    /// Remote Files, Live Globs and Remote Commands.
-    Remote,
+    /// Files from this computer, shown as they are on disk.
+    Static,
+    /// Files followed as lines are written: on this computer, and Remote
+    /// Files, Live Globs and Remote Commands on Servers.
+    Live,
     /// An empty file to type or paste log text into.
     #[default]
     Scratch,
 }
 
 impl NewSpaceKind {
-    pub const ALL: [NewSpaceKind; 3] = [NewSpaceKind::Local, NewSpaceKind::Remote, NewSpaceKind::Scratch];
+    pub const ALL: [NewSpaceKind; 3] = [NewSpaceKind::Static, NewSpaceKind::Live, NewSpaceKind::Scratch];
 
     /// The label on the switch.
     pub fn label(self) -> &'static str {
         match self {
-            NewSpaceKind::Local => "Local files",
-            NewSpaceKind::Remote => "Remote",
+            NewSpaceKind::Static => "Static",
+            NewSpaceKind::Live => "Live",
             NewSpaceKind::Scratch => "Scratch",
         }
     }
@@ -38,8 +39,8 @@ impl NewSpaceKind {
     /// The line under the switch.
     pub fn description(self) -> &'static str {
         match self {
-            NewSpaceKind::Local => "The Log Space holds copies of files from this computer.",
-            NewSpaceKind::Remote => "The Log Space reads files and commands on your Servers.",
+            NewSpaceKind::Static => "The Log Space shows files as they are on disk; new lines are not followed.",
+            NewSpaceKind::Live => "The Log Space follows files on this computer and on your Servers as lines are written.",
             NewSpaceKind::Scratch => "The Log Space holds text you type or paste.",
         }
     }
@@ -56,8 +57,8 @@ impl NewSpaceKind {
     /// What the instruction under an empty list says, if the kind has a list.
     pub fn empty_hint(self) -> Option<&'static str> {
         match self {
-            NewSpaceKind::Local => Some("Choose or drop files"),
-            NewSpaceKind::Remote => Some("Add remote files or a command"),
+            NewSpaceKind::Static => Some("Choose or drop files"),
+            NewSpaceKind::Live => Some("Add files to follow, remote files or a command"),
             NewSpaceKind::Scratch => None,
         }
     }
@@ -273,8 +274,8 @@ pub fn remote_create_label(files: usize, globs: usize, commands: usize) -> Strin
 pub fn suggested_name(kind: NewSpaceKind, first: Option<&str>, project: &Project) -> Option<String> {
     let base = match kind {
         NewSpaceKind::Scratch => "Scratch".to_string(),
-        NewSpaceKind::Local => suggest_name(first?, crate::local_path::PathStyle::native())?,
-        NewSpaceKind::Remote => suggest_name(first?, crate::local_path::PathStyle::Unix)?,
+        NewSpaceKind::Static => suggest_name(first?, crate::local_path::PathStyle::native())?,
+        NewSpaceKind::Live => suggest_name(first?, crate::local_path::PathStyle::Unix)?,
     };
     Some(unique_name(&base, project))
 }
@@ -450,21 +451,21 @@ impl NewLogSpaceForm {
         }
         match kind {
             NewSpaceKind::Scratch => true,
-            NewSpaceKind::Local => {
+            NewSpaceKind::Static => {
                 !self.is_reading() && self.files_message().is_none() && !self.importable_sources().is_empty()
             }
-            NewSpaceKind::Remote => remote_items > 0,
+            NewSpaceKind::Live => remote_items > 0,
         }
     }
 
     /// "Create", "Create with N file(s)" or the remote wording; "Reading
-    /// archive…" while an Archive is listed on the Local kind (Create is off
+    /// archive…" while an Archive is listed on the Static kind (Create is off
     /// meanwhile). `remote` is `(files, globs, commands)`.
     pub fn create_label(&self, kind: NewSpaceKind, remote: (usize, usize, usize)) -> String {
         match kind {
             NewSpaceKind::Scratch => "Create".to_string(),
-            NewSpaceKind::Remote => remote_create_label(remote.0, remote.1, remote.2),
-            NewSpaceKind::Local => {
+            NewSpaceKind::Live => remote_create_label(remote.0, remote.1, remote.2),
+            NewSpaceKind::Static => {
                 if self.is_reading() {
                     return "Reading archive…".to_string();
                 }

@@ -52,7 +52,7 @@ fn add_in_picker(h: &mut Harness, server_id: &str, paths: &[&str], start: &str) 
 fn a_starting_time_goes_only_to_the_files_added_with_it(cx: &mut TestAppContext) {
     let mut h = common::open_app(cx);
     let server = add_server(&mut h);
-    open_on(&mut h, NewSpaceKind::Remote);
+    open_on(&mut h, NewSpaceKind::Live);
     add_in_picker(&mut h, &server, &["/var/log/api.log"], "1h");
     add_in_picker(&mut h, &server, &["/var/log/db.log"], "");
 
@@ -84,7 +84,7 @@ fn a_starting_time_goes_only_to_the_files_added_with_it(cx: &mut TestAppContext)
 fn removing_a_chosen_file_forgets_its_starting_time(cx: &mut TestAppContext) {
     let mut h = common::open_app(cx);
     let server = add_server(&mut h);
-    open_on(&mut h, NewSpaceKind::Remote);
+    open_on(&mut h, NewSpaceKind::Live);
     add_in_picker(&mut h, &server, &["/var/log/api.log"], "1h");
     h.view.update(&mut h.cx, |app, cx| app.new_space_remove_remote(0, cx));
     add_in_picker(&mut h, &server, &["/var/log/api.log"], "");
@@ -95,7 +95,7 @@ fn removing_a_chosen_file_forgets_its_starting_time(cx: &mut TestAppContext) {
 fn many_remote_files_scroll_and_create_stays_on_screen(cx: &mut TestAppContext) {
     let mut h = common::open_app(cx);
     let server = add_server(&mut h);
-    open_on(&mut h, NewSpaceKind::Remote);
+    open_on(&mut h, NewSpaceKind::Live);
     let paths: Vec<String> = (1..=40).map(|i| format!("/var/log/app-{i}.log")).collect();
     let paths: Vec<&str> = paths.iter().map(String::as_str).collect();
     add_in_picker(&mut h, &server, &paths, "");
@@ -112,7 +112,7 @@ fn many_remote_files_scroll_and_create_stays_on_screen(cx: &mut TestAppContext) 
 #[gpui::test]
 fn a_folder_can_be_chosen_as_well_as_files(cx: &mut TestAppContext) {
     let mut h = common::open_app(cx);
-    open_on(&mut h, NewSpaceKind::Local);
+    open_on(&mut h, NewSpaceKind::Static);
     // The native picker takes files or folders, never both: a second button
     // opens it on folders.
     assert!(h.cx.debug_bounds("new-space-browse-folder").is_some(), "Choose folder… is drawn");
@@ -127,7 +127,7 @@ fn a_folder_can_be_chosen_as_well_as_files(cx: &mut TestAppContext) {
     });
     let (names, label) = h.view.read_with(&h.cx, |app, _| {
         let form = &app.new_space.as_ref().unwrap().form;
-        (form.files.iter().map(|f| f.display_name()).collect::<Vec<_>>(), form.create_label(NewSpaceKind::Local, (0, 0, 0)))
+        (form.files.iter().map(|f| f.display_name()).collect::<Vec<_>>(), form.create_label(NewSpaceKind::Static, (0, 0, 0)))
     });
     assert_eq!(names, ["a.log", "b.log"]);
     assert_eq!(label, "Create with 2 files");
@@ -137,7 +137,7 @@ fn a_folder_can_be_chosen_as_well_as_files(cx: &mut TestAppContext) {
 fn local_and_remote_lists_do_not_block_each_other(cx: &mut TestAppContext) {
     let mut h = common::open_app(cx);
     let server = add_server(&mut h);
-    open_on(&mut h, NewSpaceKind::Local);
+    open_on(&mut h, NewSpaceKind::Static);
     let log = h.dir.path().join("a.log");
     std::fs::write(&log, "one\n").unwrap();
     h.view.update(&mut h.cx, |app, cx| app.new_space_add_paths(vec![log.to_string_lossy().into_owned()], cx));
@@ -146,20 +146,20 @@ fn local_and_remote_lists_do_not_block_each_other(cx: &mut TestAppContext) {
     assert!(h.cx.debug_bounds("new-space-remote").is_none(), "the Remote list is hidden");
 
     // Switching does not open the picker, and the Remote buttons are on.
-    h.view.update(&mut h.cx, |app, cx| app.new_space_set_kind(NewSpaceKind::Remote, cx));
+    h.view.update(&mut h.cx, |app, cx| app.new_space_set_kind(NewSpaceKind::Live, cx));
     h.cx.run_until_parked();
     h.view.read_with(&h.cx, |app, _| assert!(app.remote.picker.is_none()));
     assert!(h.cx.debug_bounds("new-space-remote").is_some());
     assert!(h.cx.debug_bounds("new-space-drop").is_none());
-    assert!(h.cx.debug_bounds("new-space-empty-hint").is_some(), "Add remote files or a command");
+    assert!(h.cx.debug_bounds("new-space-empty-hint").is_some(), "Add files to follow, remote files or a command");
     h.cx.update(|window, _| window.refresh());
     let text = h.cx.debug_bounds("new-space-already-listed");
     assert!(text.is_none(), "no count of the hidden list");
     add_in_picker(&mut h, &server, &["/var/log/api.log"], "");
 
     // Back and forth keeps both lists.
-    h.view.update(&mut h.cx, |app, cx| app.new_space_set_kind(NewSpaceKind::Local, cx));
-    h.view.update(&mut h.cx, |app, cx| app.new_space_set_kind(NewSpaceKind::Remote, cx));
+    h.view.update(&mut h.cx, |app, cx| app.new_space_set_kind(NewSpaceKind::Static, cx));
+    h.view.update(&mut h.cx, |app, cx| app.new_space_set_kind(NewSpaceKind::Live, cx));
     h.view.read_with(&h.cx, |app, _| {
         assert_eq!(app.new_space.as_ref().unwrap().form.files.len(), 1);
         assert_eq!(app.remote.new_space_files.len(), 1);
@@ -170,11 +170,11 @@ fn local_and_remote_lists_do_not_block_each_other(cx: &mut TestAppContext) {
 fn create_makes_only_what_the_kind_showing_lists(cx: &mut TestAppContext) {
     let mut h = common::open_app(cx);
     let server = add_server(&mut h);
-    open_on(&mut h, NewSpaceKind::Local);
+    open_on(&mut h, NewSpaceKind::Static);
     let log = h.dir.path().join("a.log");
     std::fs::write(&log, "one\n").unwrap();
     h.view.update(&mut h.cx, |app, cx| app.new_space_add_paths(vec![log.to_string_lossy().into_owned()], cx));
-    h.view.update(&mut h.cx, |app, cx| app.new_space_set_kind(NewSpaceKind::Remote, cx));
+    h.view.update(&mut h.cx, |app, cx| app.new_space_set_kind(NewSpaceKind::Live, cx));
     add_in_picker(&mut h, &server, &["/var/log/web.log"], "");
     h.view.update(&mut h.cx, |app, cx| {
         app.new_space.as_mut().unwrap().form.set_name("Checkout");
@@ -231,7 +231,7 @@ fn the_first_file_names_the_log_space_until_a_name_is_typed(cx: &mut TestAppCont
     assert!(h.cx.debug_bounds("new-space-name-hint").is_some());
 
     // A remote file names a fresh dialog too.
-    open_on(&mut h, NewSpaceKind::Remote);
+    open_on(&mut h, NewSpaceKind::Live);
     add_in_picker(&mut h, &server, &["/var/log/nginx/access.log"], "");
     assert_eq!(name(&mut h), "access");
 }
@@ -239,7 +239,7 @@ fn the_first_file_names_the_log_space_until_a_name_is_typed(cx: &mut TestAppCont
 #[gpui::test]
 fn the_dialog_always_opens_on_scratch(cx: &mut TestAppContext) {
     let mut h = common::open_app(cx);
-    open_on(&mut h, NewSpaceKind::Remote);
+    open_on(&mut h, NewSpaceKind::Live);
     h.view.update(&mut h.cx, |app, cx| app.new_space_cancel(cx));
     h.view.update(&mut h.cx, |app, cx| app.open_new_space_dialog(cx));
     h.cx.run_until_parked();
@@ -267,7 +267,7 @@ fn the_name_follows_the_kind_until_one_is_typed(cx: &mut TestAppContext) {
     assert_eq!(name(&mut h), "api");
     h.view.update(&mut h.cx, |app, cx| app.new_space_set_kind(NewSpaceKind::Scratch, cx));
     assert_eq!(name(&mut h), "Scratch");
-    h.view.update(&mut h.cx, |app, cx| app.new_space_set_kind(NewSpaceKind::Local, cx));
+    h.view.update(&mut h.cx, |app, cx| app.new_space_set_kind(NewSpaceKind::Static, cx));
     assert_eq!(name(&mut h), "api");
 
     h.view.update(&mut h.cx, |app, cx| {
@@ -283,14 +283,14 @@ fn keys_pick_the_kind(cx: &mut TestAppContext) {
     h.view.update(&mut h.cx, |app, cx| app.open_new_space_dialog(cx));
     h.cx.run_until_parked();
     h.cx.simulate_keystrokes("cmd-2");
-    assert_eq!(kind_of(&mut h), Some(NewSpaceKind::Remote));
+    assert_eq!(kind_of(&mut h), Some(NewSpaceKind::Live));
     h.cx.simulate_keystrokes("cmd-1");
-    assert_eq!(kind_of(&mut h), Some(NewSpaceKind::Local));
+    assert_eq!(kind_of(&mut h), Some(NewSpaceKind::Static));
     h.cx.simulate_keystrokes("cmd-3");
     assert_eq!(kind_of(&mut h), Some(NewSpaceKind::Scratch));
     let tabs_before = h.view.read_with(&h.cx, |app, _| app.workspace_state.active_project().unwrap().working_set.active_tab_index());
     h.view.update(&mut h.cx, |app, cx| app.new_space_step_kind(-1, cx));
-    assert_eq!(kind_of(&mut h), Some(NewSpaceKind::Remote));
+    assert_eq!(kind_of(&mut h), Some(NewSpaceKind::Live));
     let tabs_after = h.view.read_with(&h.cx, |app, _| app.workspace_state.active_project().unwrap().working_set.active_tab_index());
     assert_eq!(tabs_before, tabs_after);
 
@@ -305,9 +305,9 @@ fn keys_pick_the_kind(cx: &mut TestAppContext) {
     h.cx.simulate_keystrokes("right");
     assert_eq!(kind_of(&mut h), Some(NewSpaceKind::Scratch));
     h.cx.simulate_keystrokes("left left");
-    assert_eq!(kind_of(&mut h), Some(NewSpaceKind::Local));
+    assert_eq!(kind_of(&mut h), Some(NewSpaceKind::Static));
     h.view.update(&mut h.cx, |app, cx| app.new_space_step_kind(-5, cx));
-    assert_eq!(kind_of(&mut h), Some(NewSpaceKind::Local), "the switch stops at its ends");
+    assert_eq!(kind_of(&mut h), Some(NewSpaceKind::Static), "the switch stops at its ends");
 }
 
 #[gpui::test]
@@ -492,7 +492,7 @@ fn a_drop_with_an_unusable_file_opens_the_dialog_on_local_files(cx: &mut TestApp
     std::fs::write(&dump, b"ELF\0\0binary").unwrap();
     drop_files(&mut h, vec![a, dump], 500.0, 300.0);
     assert_eq!(space_files(&mut h, "api"), None, "nothing was made");
-    assert_eq!(kind_of(&mut h), Some(NewSpaceKind::Local));
+    assert_eq!(kind_of(&mut h), Some(NewSpaceKind::Static));
     h.view.read_with(&h.cx, |app, _| {
         let files = &app.new_space.as_ref().unwrap().form.files;
         assert_eq!(files.len(), 2);
@@ -504,12 +504,12 @@ fn a_drop_with_an_unusable_file_opens_the_dialog_on_local_files(cx: &mut TestApp
 fn a_drop_on_the_dialog_switches_to_local_and_keeps_the_remote_list(cx: &mut TestAppContext) {
     let mut h = common::open_app(cx);
     let server = add_server(&mut h);
-    open_on(&mut h, NewSpaceKind::Remote);
+    open_on(&mut h, NewSpaceKind::Live);
     add_in_picker(&mut h, &server, &["/var/log/web.log"], "");
     let a = h.dir.path().join("api.log");
     std::fs::write(&a, "one\n").unwrap();
     drop_files(&mut h, vec![a], 40.0, 40.0);
-    assert_eq!(kind_of(&mut h), Some(NewSpaceKind::Local));
+    assert_eq!(kind_of(&mut h), Some(NewSpaceKind::Static));
     h.view.read_with(&h.cx, |app, _| {
         assert_eq!(app.new_space.as_ref().unwrap().form.files.len(), 1);
         assert_eq!(app.remote.new_space_files.len(), 1);
@@ -584,7 +584,7 @@ fn dropping_files_already_listed_says_so(cx: &mut TestAppContext) {
     let b = h.dir.path().join("db.log");
     std::fs::write(&a, "one\n").unwrap();
     std::fs::write(&b, "two\n").unwrap();
-    open_on(&mut h, NewSpaceKind::Local);
+    open_on(&mut h, NewSpaceKind::Static);
 
     // Dropped on the drop zone: listed once, nothing said.
     let zone = h.cx.debug_bounds("new-space-drop").expect("the drop zone is drawn").center();
@@ -628,7 +628,7 @@ fn removing_an_archive_being_read_drops_its_entries(cx: &mut TestAppContext) {
     h.view.read_with(&h.cx, |app, _| {
         let form = &app.new_space.as_ref().unwrap().form;
         assert!(form.files.is_empty(), "the entries that came later were dropped");
-        assert_eq!(form.create_label(NewSpaceKind::Local, (0, 0, 0)), "Create");
+        assert_eq!(form.create_label(NewSpaceKind::Static, (0, 0, 0)), "Create");
     });
 }
 
@@ -646,7 +646,7 @@ fn a_chosen_command_shows_the_preset_that_wrote_it(cx: &mut TestAppContext) {
 
     h.view.update(&mut h.cx, |app, cx| {
         app.open_new_space_dialog(cx);
-        app.new_space_set_kind(NewSpaceKind::Remote, cx);
+        app.new_space_set_kind(NewSpaceKind::Live, cx);
         app.remote.new_space_commands.push((server.clone(), "web".into(), written, Some(docker.clone())));
         app.remote.new_space_commands.push((server.clone(), "web".into(), edited, Some(docker)));
         cx.notify();
@@ -660,7 +660,7 @@ fn a_chosen_command_shows_the_preset_that_wrote_it(cx: &mut TestAppContext) {
 fn a_chosen_files_starting_time_is_changed_in_the_dialog(cx: &mut TestAppContext) {
     let mut h = common::open_app(cx);
     let server = add_server(&mut h);
-    open_on(&mut h, NewSpaceKind::Remote);
+    open_on(&mut h, NewSpaceKind::Live);
     add_in_picker(&mut h, &server, &["/var/log/api.log"], "1h");
     let key = (server.clone(), "/var/log/api.log".to_string());
     let typed = |h: &mut Harness, text: &str| {

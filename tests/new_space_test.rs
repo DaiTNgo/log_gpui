@@ -22,7 +22,7 @@ fn project_with(names: &[&str]) -> Project {
 #[test]
 fn an_empty_form_cannot_be_created() {
     let form = NewLogSpaceForm::new();
-    assert!(!form.can_create(NewSpaceKind::Local, 0, &project_with(&[])));
+    assert!(!form.can_create(NewSpaceKind::Static, 0, &project_with(&[])));
     assert!(form.files.is_empty());
 }
 
@@ -31,7 +31,7 @@ fn a_name_of_only_spaces_cannot_be_created() {
     let mut form = NewLogSpaceForm::new();
     form.set_name("   ");
     let p = project_with(&[]);
-    assert!(!form.can_create(NewSpaceKind::Local, 0, &p));
+    assert!(!form.can_create(NewSpaceKind::Static, 0, &p));
     assert_eq!(form.name_error(&p), Some(SpaceNameError::Blank));
     // An empty field is not shown as an error yet.
     assert_eq!(form.name_message(&p), None);
@@ -42,7 +42,7 @@ fn a_duplicate_name_in_the_project_is_refused_with_a_message() {
     let p = project_with(&["Payment"]);
     let mut form = NewLogSpaceForm::new();
     form.set_name(" Payment ");
-    assert!(!form.can_create(NewSpaceKind::Local, 0, &p));
+    assert!(!form.can_create(NewSpaceKind::Static, 0, &p));
     assert_eq!(form.name_message(&p), Some("A Log Space with this name already exists"));
 }
 
@@ -57,11 +57,21 @@ fn the_same_name_in_another_project_does_not_block() {
 }
 
 #[test]
+fn the_switch_reads_static_live_scratch_and_says_what_each_makes() {
+    let labels: Vec<&str> = NewSpaceKind::ALL.iter().map(|k| k.label()).collect();
+    assert_eq!(labels, ["Static", "Live", "Scratch"]);
+    assert_eq!(NewSpaceKind::default(), NewSpaceKind::Scratch);
+    assert!(NewSpaceKind::Static.description().contains("as they are on disk"));
+    assert!(NewSpaceKind::Live.description().contains("as lines are written"));
+    assert!(NewSpaceKind::Scratch.description().contains("type or paste"));
+}
+
+#[test]
 fn create_depends_on_the_kind_showing_and_its_own_list() {
     let p = project_with(&[]);
     let mut form = NewLogSpaceForm::new();
     form.set_name("Payment");
-    let (local, remote, scratch) = (NewSpaceKind::Local, NewSpaceKind::Remote, NewSpaceKind::Scratch);
+    let (local, remote, scratch) = (NewSpaceKind::Static, NewSpaceKind::Live, NewSpaceKind::Scratch);
 
     // Nothing listed: only Scratch can be created.
     assert!(form.can_create(scratch, 0, &p));
@@ -69,7 +79,7 @@ fn create_depends_on_the_kind_showing_and_its_own_list() {
     assert!(!form.can_create(remote, 0, &p));
     assert_eq!(form.create_label(scratch, (0, 0, 0)), "Create");
     assert_eq!(local.empty_hint(), Some("Choose or drop files"));
-    assert_eq!(remote.empty_hint(), Some("Add remote files or a command"));
+    assert_eq!(remote.empty_hint(), Some("Add files to follow, remote files or a command"));
     assert_eq!(scratch.empty_hint(), None);
 
     // Local files do not make Remote creatable, and the other way round.
@@ -82,7 +92,7 @@ fn create_depends_on_the_kind_showing_and_its_own_list() {
     assert_eq!(form.create_label(local, (0, 0, 0)), "Create with 1 file");
 
     form.push("/b.log".into(), PendingStatus::Ok);
-    assert_eq!(form.create_label(NewSpaceKind::Local, (0, 0, 0)), "Create with 2 files");
+    assert_eq!(form.create_label(NewSpaceKind::Static, (0, 0, 0)), "Create with 2 files");
 }
 
 #[test]
@@ -94,7 +104,7 @@ fn binary_files_are_listed_but_not_counted() {
     assert_eq!(form.files.len(), 2);
     assert_eq!(form.files[1].warning().as_deref(), Some("Not a text file"));
     assert_eq!(form.importable_sources(), vec![ImportSource::Disk("/a.log".to_string())]);
-    assert_eq!(form.create_label(NewSpaceKind::Local, (0, 0, 0)), "Create with 1 file");
+    assert_eq!(form.create_label(NewSpaceKind::Static, (0, 0, 0)), "Create with 1 file");
 }
 
 #[test]
@@ -104,7 +114,7 @@ fn removing_a_file_updates_the_label() {
     form.push("/b.log".into(), PendingStatus::Ok);
     form.remove_file(1);
     assert_eq!(form.files.len(), 1);
-    assert_eq!(form.create_label(NewSpaceKind::Local, (0, 0, 0)), "Create with 1 file");
+    assert_eq!(form.create_label(NewSpaceKind::Static, (0, 0, 0)), "Create with 1 file");
     form.remove_file(0);
     assert!(form.files.is_empty());
 }
@@ -184,14 +194,14 @@ fn only_files_that_cannot_be_added_never_make_an_empty_log_space() {
     form.push("/core.dump".into(), PendingStatus::Binary);
     form.push("/a.zip".into(), PendingStatus::Damaged);
 
-    assert!(!form.can_create(NewSpaceKind::Local, 0, &p), "Create is off: nothing would be added");
-    assert_eq!(form.create_label(NewSpaceKind::Local, (0, 0, 0)), "Create");
+    assert!(!form.can_create(NewSpaceKind::Static, 0, &p), "Create is off: nothing would be added");
+    assert_eq!(form.create_label(NewSpaceKind::Static, (0, 0, 0)), "Create");
     assert_eq!(form.files_message().as_deref(), Some("None of these files can be added"));
 
     // Removing them leaves nothing to create from on Local files.
     form.remove_file(1);
     form.remove_file(0);
-    assert!(!form.can_create(NewSpaceKind::Local, 0, &p));
+    assert!(!form.can_create(NewSpaceKind::Static, 0, &p));
     assert_eq!(form.files_message(), None);
 }
 
@@ -225,9 +235,9 @@ fn the_suggested_name_follows_the_kind() {
     let p = project_with(&["Scratch"]);
     assert_eq!(suggested_name(NewSpaceKind::Scratch, None, &p).as_deref(), Some("Scratch 2"));
     assert_eq!(suggested_name(NewSpaceKind::Scratch, None, &project_with(&[])).as_deref(), Some("Scratch"));
-    assert_eq!(suggested_name(NewSpaceKind::Remote, Some("/var/log/api.log"), &p).as_deref(), Some("api"));
-    assert_eq!(suggested_name(NewSpaceKind::Local, None, &p), None);
-    assert_eq!(suggested_name(NewSpaceKind::Remote, None, &p), None);
+    assert_eq!(suggested_name(NewSpaceKind::Live, Some("/var/log/api.log"), &p).as_deref(), Some("api"));
+    assert_eq!(suggested_name(NewSpaceKind::Static, None, &p), None);
+    assert_eq!(suggested_name(NewSpaceKind::Live, None, &p), None);
 }
 
 #[test]
@@ -237,10 +247,10 @@ fn create_says_it_waits_for_an_archive() {
     form.set_name("Bundle");
     form.push("/a.log".into(), PendingStatus::Ok);
     form.push("/logs.zip".into(), PendingStatus::Reading);
-    assert!(!form.can_create(NewSpaceKind::Local, 0, &p));
-    assert_eq!(form.create_label(NewSpaceKind::Local, (0, 0, 0)), "Reading archive…");
+    assert!(!form.can_create(NewSpaceKind::Static, 0, &p));
+    assert_eq!(form.create_label(NewSpaceKind::Static, (0, 0, 0)), "Reading archive…");
     form.finish_archive("/logs.zip", Vec::new());
-    assert_eq!(form.create_label(NewSpaceKind::Local, (0, 0, 0)), "Create with 1 file");
+    assert_eq!(form.create_label(NewSpaceKind::Static, (0, 0, 0)), "Create with 1 file");
 }
 
 #[test]

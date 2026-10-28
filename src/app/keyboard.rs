@@ -71,8 +71,8 @@ impl AppView {
             // ⌘1, ⌘2, ⌘3 pick the kind of Log Space, and go no further.
             if cmd && !alt && !shift && self.start_edit_closed() {
                 let kind = match key {
-                    "1" => Some(crate::workspace::new_space::NewSpaceKind::Local),
-                    "2" => Some(crate::workspace::new_space::NewSpaceKind::Remote),
+                    "1" => Some(crate::workspace::new_space::NewSpaceKind::Static),
+                    "2" => Some(crate::workspace::new_space::NewSpaceKind::Live),
                     "3" => Some(crate::workspace::new_space::NewSpaceKind::Scratch),
                     _ => None,
                 };

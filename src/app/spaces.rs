@@ -115,8 +115,8 @@ impl AppView {
         let dialog = self.new_space.as_ref()?;
         match dialog.kind {
             NewSpaceKind::Scratch => None,
-            NewSpaceKind::Local => dialog.local_first.clone(),
-            NewSpaceKind::Remote => self
+            NewSpaceKind::Static => dialog.local_first.clone(),
+            NewSpaceKind::Live => self
                 .remote
                 .new_space_files
                 .first()
@@ -227,7 +227,7 @@ impl AppView {
     pub fn new_space_add_paths(&mut self, paths: Vec<String>, cx: &mut Context<Self>) {
         let Some(dialog) = self.new_space.as_mut() else { return };
         // Files dropped or chosen are local files, whatever list was showing.
-        dialog.kind = NewSpaceKind::Local;
+        dialog.kind = NewSpaceKind::Static;
         if dialog.form.files.is_empty() {
             dialog.local_first = paths.first().cloned();
         }
@@ -284,7 +284,7 @@ impl AppView {
     /// Make an Imported Log Space of dropped paths, named after the first.
     /// Archives are read first ("Reading archive…" in the status bar). When
     /// some item cannot be added, or there is none, nothing is made: the
-    /// dialog opens on Local files with the list and each file's warning.
+    /// dialog opens on Static with the list and each file's warning.
     fn drop_create_imported(&mut self, paths: Vec<String>, cx: &mut Context<Self>) {
         let mut form = NewLogSpaceForm::new();
         let archives = form.begin_paths(&paths);
@@ -333,7 +333,7 @@ impl AppView {
                 self.create_log_space(&name, LogSpaceKind::Static, &sources, cx);
             }
             _ if self.new_space.is_none() => {
-                self.open_new_space_dialog_with(form, NewSpaceKind::Local, cx);
+                self.open_new_space_dialog_with(form, NewSpaceKind::Static, cx);
             }
             // A dialog opened while the Archive was read: the files go to it.
             _ => {
@@ -430,7 +430,7 @@ impl AppView {
         }
         let name = dialog.form.name.clone();
         match kind {
-            NewSpaceKind::Remote => {
+            NewSpaceKind::Live => {
                 let files = std::mem::take(&mut self.remote.new_space_files);
                 let globs = std::mem::take(&mut self.remote.new_space_globs);
                 let commands = std::mem::take(&mut self.remote.new_space_commands);
@@ -446,7 +446,7 @@ impl AppView {
                     }
                 }
             }
-            NewSpaceKind::Local => {
+            NewSpaceKind::Static => {
                 let sources = dialog.form.importable_sources();
                 self.new_space = None;
                 self.create_log_space(&name, LogSpaceKind::Static, &sources, cx);

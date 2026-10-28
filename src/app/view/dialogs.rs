@@ -88,8 +88,8 @@ impl AppView {
         // create from: say so then.
         let has_content = match kind {
             NewSpaceKind::Scratch => true,
-            NewSpaceKind::Local => !files.is_empty(),
-            NewSpaceKind::Remote => remote_count > 0,
+            NewSpaceKind::Static => !files.is_empty(),
+            NewSpaceKind::Live => remote_count > 0,
         };
         let name_hint = dialog.form.name.trim().is_empty() && has_content;
         let files_message = dialog.form.files_message();
@@ -249,7 +249,7 @@ impl AppView {
                                 )
                             }),
                     )
-                    .when(kind == NewSpaceKind::Local, |this| this.child(
+                    .when(kind == NewSpaceKind::Static, |this| this.child(
                         v_flex()
                             .gap_1()
                             .child(div().text_sm().child("Files"))
@@ -270,7 +270,7 @@ impl AppView {
                                         .debug_selector(|| "new-space-empty-hint".into())
                                         .text_xs()
                                         .text_color(muted)
-                                        .child("Choose or drop files"),
+                                        .child(NewSpaceKind::Static.empty_hint().unwrap_or_default()),
                                 )
                             })
                             .when_some(files_message, |this, message| {
@@ -281,7 +281,7 @@ impl AppView {
                                 )
                             }),
                     ))
-                    .when(kind == NewSpaceKind::Remote, |this| this.child(
+                    .when(kind == NewSpaceKind::Live, |this| this.child(
                         v_flex()
                             .gap_1()
                             .child(div().text_sm().child("Remote files and commands"))
@@ -390,7 +390,7 @@ impl AppView {
                                         .debug_selector(|| "new-space-empty-hint".into())
                                         .text_xs()
                                         .text_color(muted)
-                                        .child("Add remote files or a command"),
+                                        .child(NewSpaceKind::Live.empty_hint().unwrap_or_default()),
                                 )
                             }),
                     ))
