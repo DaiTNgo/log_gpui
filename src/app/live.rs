@@ -1326,7 +1326,7 @@ impl AppView {
         // follow it in line order, so they stay under it.
         // Rows that all sort after the last one only add to the view.
         let at_end = from == self.view.len();
-        let tail: Vec<u64> = self.view.rows.split_off(from);
+        let tail: Vec<u64> = self.view.rows.to_mut().split_off(from);
         {
             let bound = self.view.bind(&self.parsed_files);
             self.filter_index.truncate(&bound, &bound.picked(&tail));
@@ -1364,10 +1364,11 @@ impl AppView {
         if std::env::var_os("LOG_GPUI_LIVE_TRACE").is_some() {
             eprintln!("live insert: {} rows from row {grew_from} of {}", merged.len(), grew_from + merged.len());
         }
-        self.view.rows.extend(merged);
+        self.view.rows.to_mut().extend(merged);
         {
+            let added_rows: Vec<u64> = self.view.rows.iter().skip(grew_from).collect();
             let bound = self.view.bind(&self.parsed_files);
-            let added = bound.picked(&self.view.rows[grew_from..]);
+            let added = bound.picked(&added_rows);
             self.filter_index
                 .append_marking_untimed(&added, |r| added.file_id(r).is_some_and(|id| untimed.contains(id)));
         }

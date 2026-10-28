@@ -152,7 +152,7 @@ impl AppView {
                     // Each read goes to the line of its row, file by file.
                     for (at, file) in this.view.files.iter().enumerate() {
                         let Some(parsed) = this.parsed_files.get_mut(&*file.file_id) else { continue };
-                        for (&row, extra) in this.view.rows.iter().zip(&read) {
+                        for (row, extra) in this.view.rows.iter().zip(&read) {
                             let (f, pos) = crate::index::view_rows::unpack(row);
                             if f == at {
                                 if let Some(entry) = parsed.entries.get_mut(pos) {

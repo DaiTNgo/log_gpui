@@ -46,7 +46,7 @@ fn a_stale_selected_position_scans_the_rows_once(cx: &mut TestAppContext) {
     let mut h = open_app_with_lines(cx, &log_lines(60));
     h.view.update(&mut h.cx, |app, _| {
         // Rows moved: neither the selected position nor `line - 1` is the row.
-        app.view.rows.reverse();
+        app.view.rows.to_mut().reverse();
         let line = app.line_ref_of_entry(10).unwrap();
         app.selected_row_pos = Some(3);
         let before = app.entry_scans.get();
@@ -55,7 +55,7 @@ fn a_stale_selected_position_scans_the_rows_once(cx: &mut TestAppContext) {
         }
         assert_eq!(app.entry_scans.get() - before, 1, "later frames reuse the row found");
         // The remembered row is checked: after the rows moved again it is found anew.
-        app.view.rows.reverse();
+        app.view.rows.to_mut().reverse();
         let moved = app.entry_of_line_ref(&line).unwrap();
         assert_ne!(moved, 10);
         assert_eq!(app.line_ref_of_entry(moved), Some(line));

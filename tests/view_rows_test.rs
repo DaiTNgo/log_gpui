@@ -123,6 +123,32 @@ fn view_rows_of_a_file_and_of_a_space() {
 }
 
 #[test]
+fn a_file_view_lists_no_rows_until_they_change() {
+    let mut rows = ViewRows::File { lines: 3 };
+    assert_eq!(rows.packed(1), Some(pack(0, 1)));
+    assert_eq!(rows.iter().collect::<Vec<_>>(), [pack(0, 0), pack(0, 1), pack(0, 2)]);
+    // Live rows arriving write the list out first.
+    rows.to_mut().push(pack(0, 3));
+    assert_eq!(rows, ViewRows::Merged(vec![pack(0, 0), pack(0, 1), pack(0, 2), pack(0, 3)]));
+    assert_eq!(rows.get(3), Some((0, 3)));
+}
+
+/// A File View of a file read through its Line Index holds no row list:
+/// its rows are the file's lines.
+#[test]
+fn a_file_view_of_an_indexed_file_is_its_lines() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("app.log");
+    std::fs::write(&path, (0..1000).map(|i| format!("2026-09-05 10:00:00 [INFO] line {i}\n")).collect::<String>()).unwrap();
+    let source = std::sync::Arc::new(log_gpui::index::DiskSource::stay_open(&path, log_gpui::index::HandleBudget::new(2)).unwrap());
+    let file = log_gpui::index::file::IndexedFile::index_now(source, Default::default()).unwrap();
+    let parsed = log_gpui::space_view::ParsedFile::from_indexed(file);
+    let log = log_gpui::workspace::log_space::LogFile::new("f".to_string(), "app.log".to_string());
+    let built = log_gpui::space_view::build_file_view(&log, &parsed);
+    assert_eq!(built.view.rows, ViewRows::File { lines: 1000 });
+}
+
+#[test]
 fn the_row_cache_keeps_the_rows_last_used() {
     let entries = parse_entries("a\nb\nc\nd\ne\n");
     let mut cache = RowCache::new(4);

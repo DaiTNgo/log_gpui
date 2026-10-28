@@ -4,7 +4,7 @@
 //! files' cache. What the view adds to a line (its Source File, its
 //! Markers) is looked up per row.
 
-use crate::index::view_rows::{pack, unpack};
+use crate::index::view_rows::{ViewRows, pack, unpack};
 use crate::marker::TextMarker;
 use crate::model::LogEntry;
 use crate::rows::{RowRef, Rows};
@@ -61,8 +61,9 @@ impl ViewFile {
 /// The rows of the open view.
 #[derive(Debug, Clone, Default)]
 pub struct ViewData {
-    /// Each row as (file, position in the file's entries), packed.
-    pub rows: Vec<u64>,
+    /// Each row as (file, position in the file's entries): a File View's
+    /// are its file's positions, a Log Space's are packed in a list.
+    pub rows: ViewRows,
     pub files: Vec<ViewFile>,
 }
 
@@ -77,7 +78,7 @@ impl ViewData {
 
     /// The file and position of `row`.
     pub fn get(&self, row: usize) -> Option<(usize, usize)> {
-        self.rows.get(row).map(|&r| unpack(r))
+        self.rows.get(row)
     }
 
     /// The position in `files` of the file `file_id`.
@@ -200,7 +201,7 @@ enum FileText {
 /// each file's lines, shared with the file (nothing is copied), or read
 /// from it.
 pub struct ViewTexts {
-    rows: Vec<u64>,
+    rows: ViewRows,
     lines: Vec<FileText>,
 }
 
@@ -216,7 +217,10 @@ impl ViewTexts {
 
 impl crate::index::scan::ScanTexts for ViewTexts {
     fn read(&self, block: std::ops::Range<usize>, each: &mut dyn FnMut(&[&str])) -> Result<(), String> {
-        let rows = self.rows.get(block).ok_or("the view has fewer rows")?;
+        if block.end > self.rows.len() {
+            return Err("the view has fewer rows".into());
+        }
+        let rows: Vec<u64> = block.filter_map(|r| self.rows.packed(r)).collect();
         // A file's rows in a block are a run of its lines, in order: each
         // file read from disk is read once per block.
         let mut read: HashMap<usize, (usize, Vec<String>)> = HashMap::new();
@@ -325,7 +329,7 @@ impl<'a> BoundRows<'a> {
     }
 
     pub fn get(&self, row: usize) -> Option<RowRef<'a>> {
-        self.entry_of(*self.data.rows.get(row)?)
+        self.entry_of(self.data.rows.packed(row)?)
     }
 
     pub fn file_id(&self, row: usize) -> Option<&'a str> {
@@ -344,7 +348,7 @@ impl<'a> BoundRows<'a> {
         let data: &'a ViewData = self.data;
         let Some((file, _)) = data.get(row) else { return &[] };
         let Some(f) = data.files.get(file) else { return &[] };
-        match self.entry_of(data.rows[row]) {
+        match data.rows.packed(row).and_then(|packed| self.entry_of(packed)) {
             Some(entry) => f.markers_of_line(entry.index, entry.generation),
             None => &[],
         }

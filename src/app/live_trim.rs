@@ -179,8 +179,8 @@ impl AppView {
 
         // The file's rows leave; its other rows now count from its new first
         // line.
-        take_positions(&mut self.view.rows, &dropped);
-        for row in &mut self.view.rows {
+        take_positions(self.view.rows.to_mut(), &dropped);
+        for row in self.view.rows.to_mut().iter_mut() {
             let (file, pos) = unpack(*row);
             if file == view_file {
                 *row = pack(file, pos - trimmed.removed);

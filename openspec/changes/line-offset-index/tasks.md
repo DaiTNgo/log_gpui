@@ -72,12 +72,13 @@ Lý do: `all_entries` còn là trạng thái được sửa tại chỗ. Filter 
 
 ## 4. Lớp ViewRows thay cho all_entries
 
-- [ ] 4.1 `ViewRows`: dòng của view là chỉ số.
+- [x] 4.1 `ViewRows`: dòng của view là chỉ số.
   - File View: `0..line_count`.
   - Log Space: `Vec<u64>` đóng gói `(file, line)` từ k-way merge tăng dần.
   - API: số dòng, `meta(row)`, `entry(row)` qua LRU, dải dòng đang hiện.
   - Test thứ tự gộp theo các scenario của `merged-timeline` (trùng timestamp, stack trace, file không có timestamp).
   - Đã có `index::view_rows` (`ViewRows`, `Merger` gộp tăng dần, `pack`/`unpack`) kèm test: gộp cả file và gộp khi file đang lớn dần đều ra đúng thứ tự của `timeline::merge`. Còn nối vào `AppView`.
+  - Đã làm: `ViewData::rows` là `ViewRows`. File View là `File { lines }`, không còn mảng một phần tử mỗi dòng (24 MB cho file 3M dòng); Log Space là `Merged`. Đường live của Remote File đổi dòng tại chỗ qua `to_mut()`, khi đó dòng của File View được ghi ra mảng. `ViewTexts` của Scan giữ `ViewRows` thay vì copy mảng.
 - [ ] 4.2 LRU các dòng đã parse (khoảng 4.096 dòng, khoá `(file, generation, line)`); đọc gom theo khối; canvas vẽ placeholder khi dòng chưa có rồi `cx.notify()` khi có.
   - Đã có `RowCache` (LRU, `missing` cho ra các đoạn cần đọc gom). Còn phần placeholder và `cx.notify()` trong canvas.
 - [ ] 4.3 Chuyển lần lượt các chỗ đọc `all_entries` sang `ViewRows`, mỗi nhóm một commit, giữ test xanh. Làm cùng lúc với nhóm 5–8, theo từng tính năng:

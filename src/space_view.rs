@@ -269,13 +269,14 @@ pub fn build_space_view(space: &LogSpace, parsed: &HashMap<String, ParsedFile>) 
         (rows, timeline.effective_ts, timeline.no_timestamp_files)
     };
     let mut view = ViewData {
-        rows,
+        rows: crate::index::view_rows::ViewRows::Merged(rows),
         files: files.iter().map(|f| ViewFile::new(&f.file_id, Some(&f.display_name))).collect(),
     };
     view.set_markers(files.iter().copied());
 
     let field_order = union_field_names(&parsed_of);
-    let index = merge_filter_indexes(&files, &parsed_of, &view.rows, &field_order, effective_ts);
+    let rows: Vec<u64> = view.rows.iter().collect();
+    let index = merge_filter_indexes(&files, &parsed_of, &rows, &field_order, effective_ts);
     let max_chars = merged_max_chars(&files, &parsed_of);
     BuiltView {
         view,
@@ -430,7 +431,7 @@ fn merge_by_meta(files: &[&ParsedFile]) -> (Vec<u64>, Vec<f64>, Vec<usize>) {
 /// The rows of a single file (a File View): no Source Column.
 pub fn build_file_view(file: &LogFile, parsed: &ParsedFile) -> BuiltView {
     let mut view = ViewData {
-        rows: ViewData::rows_of(0, 0..parsed.len()).collect(),
+        rows: crate::index::view_rows::ViewRows::File { lines: parsed.len() },
         files: vec![ViewFile::new(&file.file_id, None)],
     };
     view.set_markers([file]);

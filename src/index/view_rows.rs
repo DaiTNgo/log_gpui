@@ -63,6 +63,35 @@ impl ViewRows {
         }
     }
 
+    /// Row `row` packed as (file, line).
+    pub fn packed(&self, row: usize) -> Option<u64> {
+        match self {
+            Self::File { lines } => (row < *lines).then(|| pack(0, row)),
+            Self::Merged(rows) => rows.get(row).copied(),
+        }
+    }
+
+    /// Every row, packed, in order.
+    pub fn iter(&self) -> impl Iterator<Item = u64> + '_ {
+        let (lines, merged) = match self {
+            Self::File { lines } => (*lines, &[][..]),
+            Self::Merged(rows) => (0, rows.as_slice()),
+        };
+        (0..lines).map(|n| pack(0, n)).chain(merged.iter().copied())
+    }
+
+    /// The rows as a list, to change them in place (live rows arriving or
+    /// leaving): a File View's rows are written out first.
+    pub fn to_mut(&mut self) -> &mut Vec<u64> {
+        if let Self::File { lines } = *self {
+            *self = Self::Merged((0..lines).map(|n| pack(0, n)).collect());
+        }
+        match self {
+            Self::Merged(rows) => rows,
+            Self::File { .. } => unreachable!("written out above"),
+        }
+    }
+
     /// The row showing line `line` of file `file`: the inverse of `get`.
     /// O(1) for a File View, a scan for a Log Space.
     pub fn row_of(&self, file: usize, line: usize) -> Option<usize> {
