@@ -887,15 +887,16 @@ impl AppView {
         mut delta: FileDelta,
     ) -> FileDelta {
         if grew && !again {
+            use crate::index::file::Extended;
             let read = parsed.indexed.as_ref().map(|f| f.extend());
             match read {
-                Some(Ok(crate::index::file::Extended::Appended { range, replaced_last })) => {
+                Some(Ok(Extended::Appended { range, replaced_last })) => {
                     delta.shown = true;
                     delta.replaced_last = replaced_last;
                     delta.appended = Some(range);
                 }
-                Some(Ok(crate::index::file::Extended::Same)) => {}
-                Some(Ok(crate::index::file::Extended::Shrunk)) | Some(Err(_)) | None => again = true,
+                Some(Ok(Extended::Same)) => {}
+                Some(Ok(Extended::Shrunk | Extended::Rewritten)) | Some(Err(_)) | None => again = true,
             }
         }
         if again {

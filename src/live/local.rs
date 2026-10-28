@@ -10,8 +10,10 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 /// Follows a local file: checks its metadata every 250 ms and reads from the
-/// byte where it stopped. Detects rotation (another inode), truncation (a
-/// smaller size) and deletion (the file is gone, then waits for it).
+/// byte where it stopped. Detects rotation (another inode, the old one
+/// renamed), replacement (another inode, the old one deleted), truncation (a
+/// smaller size) and deletion (the file is gone, then waits for it). A file
+/// written over in place is told by its Line Index (`Extended::Rewritten`).
 pub struct LocalFileSource {
     path: PathBuf,
     /// Where reading starts: the end of what the app has already loaded.
@@ -100,6 +102,20 @@ pub(crate) fn id_of_path(path: &std::path::Path, meta: &std::fs::Metadata) -> Op
 /// shrinks the file.
 pub(crate) fn is_rotated(open: Option<FileId>, at_path: Option<FileId>) -> bool {
     matches!((open, at_path), (Some(a), Some(b)) if a != b)
+}
+
+/// Whether the open file has no name left on disk (`fstat` says no link):
+/// it was deleted or written over by a rename, not renamed itself.
+#[cfg(unix)]
+pub(crate) fn is_unlinked(file: &File) -> bool {
+    file.metadata().is_ok_and(|m| std::os::unix::fs::MetadataExt::nlink(&m) == 0)
+}
+
+/// Windows tells no link count through std: a new file at the path is
+/// always "rotated".
+#[cfg(windows)]
+pub(crate) fn is_unlinked(_file: &File) -> bool {
+    false
 }
 
 impl LocalFileSource {
@@ -198,10 +214,11 @@ impl LocalFileSource {
                     current.ino = id_of_open(&current.file, &meta);
                 }
                 if is_rotated(current.ino, id_of_path(&self.path, &meta)) {
-                    // Rotated: read the rest of the old file first.
+                    // Rotated or replaced: read the rest of the old file first.
+                    let kind = if is_unlinked(&current.file) { BreakKind::Replaced } else { BreakKind::Rotated };
                     drain(current, splitter, events);
                     splitter.clear();
-                    send(SourceEvent::Break { kind: BreakKind::Rotated });
+                    send(SourceEvent::Break { kind });
                     if let Ok(file) = File::open(&self.path) {
                         *open = Some(Open { ino: id_of_open(&file, &meta), file, offset: 0 });
                         if let Some(current) = open.as_mut() {

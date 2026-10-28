@@ -170,6 +170,25 @@ fn a_rotated_local_file_of_a_live_space_is_read_again(cx: &mut TestAppContext) {
     });
 }
 
+/// `cp bigger.log a.log`: the same inode, longer, other text. The file is
+/// read again: no line cut at the old offsets shows.
+#[gpui::test]
+fn a_local_file_of_a_live_space_written_over_in_place_is_read_again(cx: &mut TestAppContext) {
+    let mut h = open_app(cx);
+    let source = log_file(&h, "a.log", 20);
+    h.view.update(&mut h.cx, |app, cx| app.create_log_space("A", LogSpaceKind::Live, &[source], cx));
+    h.cx.run_until_parked();
+    pump_until(&mut h, "the source is live", |app| {
+        app.live_file_statuses().iter().all(|(_, s)| *s == log_gpui::live::SourceStatus::Live)
+    });
+    let bigger: String = (0..30).map(|i| format!("2026-09-05 12:00:{:02} [WARN] [a.log] bigger {i}\n", i % 60)).collect();
+    std::fs::write(h.dir.path().join("a.log"), bigger).unwrap();
+    pump_until(&mut h, "only the new text shows", |app| {
+        let rows = app.rows_snapshot();
+        rows.len() == 30 && rows.iter().enumerate().all(|(i, e)| e.raw_line.ends_with(&format!("bigger {i}")))
+    });
+}
+
 #[gpui::test]
 fn the_local_files_of_a_live_space_share_one_timeline_and_pause_together(cx: &mut TestAppContext) {
     let mut h = open_app(cx);

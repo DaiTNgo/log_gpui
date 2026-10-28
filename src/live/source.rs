@@ -21,8 +21,14 @@ pub enum RestartKind {
 /// Why the lines of a file stop being continuous.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BreakKind {
+    /// Another file is at the path; the old one is still on disk, renamed.
     Rotated,
+    /// Another file is at the path; the old one was deleted (`mv other.log
+    /// app.log`).
+    Replaced,
     Truncated,
+    /// The same file, written over in place: the lines read are gone.
+    Rewritten,
     Deleted,
     Disconnected,
     Reconnected,
@@ -73,7 +79,9 @@ impl BreakKind {
     pub fn label(self) -> &'static str {
         match self {
             BreakKind::Rotated => "rotated",
+            BreakKind::Replaced => "replaced",
             BreakKind::Truncated => "truncated",
+            BreakKind::Rewritten => "rewritten",
             BreakKind::Deleted => "deleted",
             BreakKind::Disconnected => "disconnected",
             BreakKind::Reconnected => "reconnected",
@@ -102,7 +110,9 @@ impl BreakKind {
         matches!(
             self,
             BreakKind::Rotated
+                | BreakKind::Replaced
                 | BreakKind::Truncated
+                | BreakKind::Rewritten
                 | BreakKind::Deleted
                 | BreakKind::Restarted(_)
                 | BreakKind::CommandChanged

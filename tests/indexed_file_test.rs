@@ -128,6 +128,19 @@ fn lines_written_since_are_indexed_on() {
     assert_eq!(file.extend().unwrap(), Extended::Shrunk);
 }
 
+#[test]
+fn a_file_written_over_in_place_and_longer_is_not_read_on() {
+    use log_gpui::index::file::Extended;
+    use std::io::Write;
+    let old: String = (0..50).map(|i| format!("2026-09-05 10:00:{:02} [INFO] old {i}\n", i % 60)).collect();
+    let (_dir, path, file) = indexed_on_disk(&old);
+    // `cp bigger.log app.log`: the same inode, longer, other text.
+    let bigger: String = (0..80).map(|i| format!("2026-09-05 11:00:{:02} [WARN] new line {i}\n", i % 60)).collect();
+    std::fs::OpenOptions::new().write(true).truncate(false).open(&path).unwrap().write_all(bigger.as_bytes()).unwrap();
+    assert_eq!(file.extend().unwrap(), Extended::Rewritten);
+    assert_eq!(file.len(), 50, "nothing is read at the old offsets");
+}
+
 /// `text` written to `app.log` in a fresh folder, indexed and kept open.
 fn indexed_on_disk(text: &str) -> (tempfile::TempDir, std::path::PathBuf, IndexedFile) {
     let dir = tempfile::tempdir().unwrap();

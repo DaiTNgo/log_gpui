@@ -235,6 +235,23 @@ fn local_source_rotation_is_detected_even_when_the_new_file_is_longer() {
     h.close();
 }
 
+/// `mv other.log app.log`: the old file has no name left, so it was
+/// replaced, not rotated.
+#[test]
+fn local_source_tells_a_replaced_file_from_a_rotated_one() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("app.log");
+    std::fs::write(&path, "a\n").unwrap();
+    let h = source(&path, 2);
+    std::thread::sleep(Duration::from_millis(40));
+    let other = dir.path().join("other.log");
+    std::fs::write(&other, "from-other\n").unwrap();
+    std::fs::rename(&other, &path).unwrap();
+    wait_for(&h, |e| *e == SourceEvent::Break { kind: BreakKind::Replaced });
+    assert_eq!(wait_for(&h, |e| matches!(e, SourceEvent::Append { .. })), appended(&["from-other"]));
+    h.close();
+}
+
 #[test]
 fn local_source_deleted_waits_for_the_file() {
     let dir = tempfile::tempdir().unwrap();

@@ -67,6 +67,9 @@ pub enum Extended {
     Appended { range: std::ops::Range<usize>, replaced_last: bool },
     /// The file is shorter than what was indexed: it was cut or rewritten.
     Shrunk,
+    /// The file is longer, but what was indexed was written over in place:
+    /// the first or last bytes read are not the same any more.
+    Rewritten,
 }
 
 impl std::fmt::Debug for IndexedFile {
@@ -210,6 +213,15 @@ impl IndexedFile {
         }
         if len == end {
             return Ok(Extended::Same);
+        }
+        // Written over (`cp bigger.log app.log`): reading on from `end` would
+        // show lines cut at the old offsets.
+        {
+            let known = self.fingerprint.lock().unwrap();
+            let now = fingerprint_of(&*self.source, end);
+            if now.head != known.head || now.tail != known.tail {
+                return Ok(Extended::Rewritten);
+            }
         }
         // A last line without its line break is read again with what came.
         let count = data.file.len();
