@@ -340,3 +340,23 @@ fn the_local_files_of_a_live_space_share_one_timeline_and_pause_together(cx: &mu
     h.view.update(&mut h.cx, |app, cx| app.toggle_pause(cx));
     pump_until(&mut h, "the paused lines of both come", |app| app.view.len() == 10);
 }
+
+/// A local file that grew by more than a batch at once shows its new lines
+/// over several frames, all of them in the end (task 9.1).
+#[gpui::test]
+fn a_burst_of_lines_is_indexed_a_batch_at_a_time(cx: &mut TestAppContext) {
+    let mut h = open_app(cx);
+    live_a(&mut h);
+    let burst = 10 * log_gpui::index::file::EXTEND_BYTES / new_lines(1, "burst").len();
+    append(&h, "a.log", &new_lines(burst, "burst"));
+    pump_until(&mut h, "a first batch shows", |app| app.view.len() > 20);
+    let first = h.view.read_with(&h.cx, |app, _| app.view.len());
+    assert!(first < 20 + burst, "not all at once: {first}");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while h.view.read_with(&h.cx, |app, _| app.view.len()) < 20 + burst {
+        assert!(std::time::Instant::now() < deadline, "the rest of the burst comes");
+        h.cx.executor().advance_clock(std::time::Duration::from_millis(20));
+        h.cx.run_until_parked();
+    }
+    assert_eq!(h.view.read_with(&h.cx, |app, _| app.view.len()), 20 + burst);
+}

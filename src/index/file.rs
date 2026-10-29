@@ -36,6 +36,9 @@ pub struct IndexedFile {
     chain: Option<Arc<ChainSource>>,
 }
 
+/// Most bytes `IndexedFile::extend` indexes in one call.
+pub const EXTEND_BYTES: usize = 4 << 20;
+
 /// The first line of a Generation of a file, and the Break drawn above it.
 #[derive(Debug, Clone)]
 pub struct GenerationStart {
@@ -79,7 +82,9 @@ pub enum Extended {
     /// New lines at positions `range`. With `replaced_last`, the line before
     /// them was cut off without its line break and is read again, whole,
     /// as the first of them.
-    Appended { range: std::ops::Range<usize>, replaced_last: bool },
+    /// With `more`, the file has more whole lines than one call indexes
+    /// (`EXTEND_BYTES`): the next call goes on.
+    Appended { range: std::ops::Range<usize>, replaced_last: bool, more: bool },
     /// The file is shorter than what was indexed: it was cut or rewritten.
     Shrunk,
     /// The file is longer, but what was indexed was written over in place:
@@ -401,12 +406,24 @@ impl IndexedFile {
             None => None,
         };
         let from = cut_last.map_or(end, |(_, start)| start);
-        let mut bytes = self.source.read_range(from, (len - from) as usize)?;
-        let whole = memchr::memrchr(b'\n', &bytes).map_or(0, |at| at + 1);
+        // A batch at a time (task 9.1): a file that grew a lot is indexed
+        // over several calls, the UI drawn between them.
+        let mut want = ((len - from) as usize).min(EXTEND_BYTES);
+        let mut bytes = self.source.read_range(from, want)?;
+        let mut whole = memchr::memrchr(b'\n', &bytes).map_or(0, |at| at + 1);
+        if whole == 0 && want < (len - from) as usize {
+            // One line longer than a batch: read it whole.
+            want = (len - from) as usize;
+            bytes = self.source.read_range(from, want)?;
+            whole = memchr::memrchr(b'\n', &bytes).map_or(0, |at| at + 1);
+        }
         if whole == 0 {
             return Ok(Extended::Same);
         }
         bytes.truncate(whole);
+        // What is left may be only a line still being written: then the
+        // next call finds nothing new.
+        let more = want < (len - from) as usize;
         if let Some((last, _)) = cut_last {
             let removed = self.read_back(&data, last)?;
             data.file.lines.pop();
@@ -421,7 +438,7 @@ impl IndexedFile {
         *self.fingerprint.lock().unwrap() = fingerprint_of(&*self.source, data.file.lines.end());
         *self.all_lines.lock().unwrap() = None;
         let first = cut_last.map_or(count, |(last, _)| last);
-        Ok(Extended::Appended { range: first..new_len, replaced_last: cut_last.is_some() })
+        Ok(Extended::Appended { range: first..new_len, replaced_last: cut_last.is_some(), more })
     }
 
     /// Line `n` as it was indexed, read again (the file only grew since).

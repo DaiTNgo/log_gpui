@@ -185,8 +185,9 @@ Hiện tại (c8bf40d):
 
 ## 9. Live
 
-- [ ] 9.1 File local live: bytes mới từ `LocalFileSource` được index thành lô nhỏ, rồi thêm vào Line Index, `row_ids`, `ViewRows`, kết quả Scan đang dùng, và paint của Highlight Rule.
+- [x] 9.1 File local live: bytes mới từ `LocalFileSource` được index thành lô nhỏ, rồi thêm vào Line Index, `row_ids`, `ViewRows`, kết quả Scan đang dùng, và paint của Highlight Rule.
   - Bỏ Live Window cho file local.
+  - Đã làm: phần lớn có từ 4b.7 (`IndexedFile::extend`, dòng mới vào Line Index, `row_ids`, view, Filter, Match và paint như dòng live). Thêm: mỗi lần `extend` chỉ index tối đa `EXTEND_BYTES` (4 MiB) dòng trọn vẹn. File lớn thêm hơn một lô thì lô sau được index sau khi UI vẽ (`index_more_soon`, 16 ms), dừng khi Pause và chạy tiếp khi Live lại. Scan đang chạy nhận dòng mới như dòng live: Filter lọc chúng ngay, Search tìm chúng khi Scan xong, paint tô chúng khi thêm vào. Live Window của file local đã bỏ trong change `static-live-log-spaces`.
 - [x] 9.2 Phát hiện rotate và truncate bằng kích thước cộng hash 4 KiB đầu và 4 KiB cuối đã index; Generation mới kèm Break. Làm trong change `static-live-log-spaces` (task 2.1, 4.3 và 4.4).
   - Giữ file handle của Generation cũ; dòng có text không còn trên đĩa (sau truncate hoặc ghi đè) bị bỏ, thay cho "no longer on disk" (quyết định của change `static-live-log-spaces`).
   - Test: đổi tên, xoá, `copytruncate`.

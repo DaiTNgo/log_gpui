@@ -106,7 +106,7 @@ fn lines_written_since_are_indexed_on() {
 
     // Its line break and two more lines (one a stack line).
     out.write_all(b" here\n\tat x.y(Z.java:1)\n2026-09-05 11:00:01 [INFO] [db] next user=3\n").unwrap();
-    assert_eq!(file.extend().unwrap(), Extended::Appended { range: before - 1..before + 2, replaced_last: true });
+    assert_eq!(file.extend().unwrap(), Extended::Appended { range: before - 1..before + 2, replaced_last: true, more: false });
     let all = std::fs::read(&path).unwrap();
     let want = ParsedFile::from_bytes(&all).entries;
     assert_eq!(file.len(), want.len());
@@ -215,4 +215,28 @@ fn a_chain_reads_each_generation_through_its_own_handle() {
     std::fs::OpenOptions::new().append(true).open(&new).unwrap().write_all(b"d\n").unwrap();
     assert_eq!(chain.read_range(4, 100).unwrap(), b"c\nd\n", "the newest one grows");
     assert_eq!(chain.generations(), 2);
+}
+
+/// A file that grew by more than a batch is indexed over several calls
+/// (task 9.1), each a batch of whole lines.
+#[test]
+fn a_file_that_grew_a_lot_is_indexed_a_batch_at_a_time() {
+    use log_gpui::index::file::{EXTEND_BYTES, Extended};
+    let source = Arc::new(BytesSource::new(text().into_bytes()));
+    let file = IndexedFile::index_now(source.clone(), IndexOptions::default()).unwrap();
+    let before = file.len();
+    let line = "2026-09-05 11:00:00 [INFO] [db] a line written in a burst of many lines\n";
+    let lines = EXTEND_BYTES * 5 / 2 / line.len();
+    source.append(line.repeat(lines).as_bytes());
+    let mut calls = 0;
+    loop {
+        calls += 1;
+        match file.extend().unwrap() {
+            Extended::Appended { range, more: true, .. } => assert!(range.len() * line.len() <= EXTEND_BYTES),
+            Extended::Appended { more: false, .. } => break,
+            other => panic!("{other:?}"),
+        }
+    }
+    assert_eq!(calls, 3);
+    assert_eq!(file.len(), before + lines);
 }

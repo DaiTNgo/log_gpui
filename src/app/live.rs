@@ -117,6 +117,10 @@ pub struct LiveRuntime {
     /// the path again, its lines are a new Generation below a Break
     /// "replaced".
     pub local_deleted: HashSet<String>,
+    /// Local files that grew by more than one batch: indexed on soon
+    /// (task 9.1), and whether that is scheduled.
+    pub index_more: HashSet<String>,
+    pub index_more_scheduled: bool,
     /// The Break above the first line of a local file read again from its
     /// start (it was cut, or written over), until it is read.
     pub first_marks: HashMap<String, std::sync::Arc<crate::live::BreakMark>>,
@@ -156,6 +160,8 @@ impl LiveRuntime {
             static_watched: None,
             static_gone: HashSet::new(),
             local_deleted: HashSet::new(),
+            index_more: HashSet::new(),
+            index_more_scheduled: false,
             first_marks: HashMap::new(),
             handle_budget: crate::index::HandleBudget::shared(),
             preparse_min: PREPARE_MIN_LINES,
@@ -488,6 +494,9 @@ impl AppView {
             }
         }
         self.set_copy_reads_paused(&space.id, pause);
+        if !pause {
+            self.index_more_soon(cx);
+        }
         // Paused, a Live Glob adds nothing; resumed, its folder is listed at once.
         self.sync_glob_watchers(cx);
         cx.notify();
@@ -961,7 +970,10 @@ impl AppView {
             use crate::index::file::Extended;
             let read = parsed.indexed.as_ref().map(|f| f.extend());
             match read {
-                Some(Ok(Extended::Appended { range, replaced_last })) => {
+                Some(Ok(Extended::Appended { range, replaced_last, more })) => {
+                    if more {
+                        self.live.index_more.insert(file_id.to_string());
+                    }
                     delta.shown = true;
                     delta.replaced_last = replaced_last;
                     delta.appended = Some(range);
@@ -1071,7 +1083,40 @@ impl AppView {
     }
 
     /// Show a batch in the open view.
+    /// Index the next batch of the local files that grew by more than one,
+    /// after the UI is drawn.
+    fn index_more_soon(&mut self, cx: &mut Context<Self>) {
+        if self.live.index_more.is_empty() || self.live.index_more_scheduled {
+            return;
+        }
+        self.live.index_more_scheduled = true;
+        cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(std::time::Duration::from_millis(16)).await;
+            this.update(cx, |this, cx| {
+                this.live.index_more_scheduled = false;
+                // Paused, the lines wait; resuming goes on.
+                if this.active_space_paused() {
+                    return;
+                }
+                let reads = this.active_file_ids();
+                let files: Vec<String> = this.live.index_more.drain().filter(|id| reads.contains(id)).collect();
+                let mut deltas = Vec::new();
+                for file_id in files {
+                    let Some(parsed) = this.parsed_files.remove(&file_id) else { continue };
+                    let delta = this.index_written_since(&file_id, parsed, true, None, FileDelta::default());
+                    deltas.push((file_id, delta));
+                }
+                if !deltas.is_empty() {
+                    this.apply_deltas(deltas, cx);
+                }
+            })
+            .ok();
+        })
+        .detach();
+    }
+
     pub(crate) fn apply_deltas(&mut self, deltas: Vec<(String, FileDelta)>, cx: &mut Context<Self>) {
+        self.index_more_soon(cx);
         // Numbers that moved: stored Markers and current lines follow them.
         for (file_id, delta) in &deltas {
             if let Some(by) = delta.renumbered {
