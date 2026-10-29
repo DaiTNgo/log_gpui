@@ -2,9 +2,11 @@
 //!
 //! Columns and their values come from the loaded file. Per column the user
 //! ticks values, adds custom values or hides the chosen values; `timestamp`
-//! has its own Time Range.
+//! has its own Time Range. Message has no values to tick: only custom
+//! values, matched against the text of each line's message.
 
 use super::AppView;
+use crate::columns::MESSAGE_KEY;
 use crate::filter_index::{ColumnIndex, MAX_DISTINCT};
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
@@ -26,8 +28,8 @@ const VALUE_LIST_FIXED_FROM: usize = 12;
 
 impl AppView {
     /// The name Filter shows for a column: `fallback`.
-    fn filter_column_name(&self, _key: &str, fallback: &str) -> String {
-        fallback.to_string()
+    fn filter_column_name(&self, key: &str, fallback: &str) -> String {
+        if key == MESSAGE_KEY { "Message".to_string() } else { fallback.to_string() }
     }
 
     /// Keys of the columns shown as cards: those with a condition, plus the
@@ -51,6 +53,9 @@ impl AppView {
             {
                 keys.push(cf.column.clone());
             }
+        }
+        if self.filter_ui.expanded.as_deref() == Some(MESSAGE_KEY) && !keys.iter().any(|k| k == MESSAGE_KEY) {
+            keys.push(MESSAGE_KEY.to_string());
         }
         keys
     }
@@ -93,7 +98,25 @@ impl AppView {
                 row.opacity(0.5).into_any_element()
             });
         }
-        if !any {
+        if any {
+            list = list.child(
+                h_flex()
+                    .id("filter-pick-message")
+                    .debug_selector(|| "filter-pick-message".into())
+                    .w_full()
+                    .px_2()
+                    .py_1()
+                    .gap_2()
+                    .items_center()
+                    .justify_between()
+                    .rounded_md()
+                    .cursor_pointer()
+                    .hover(|s| s.bg(cx.theme().accent))
+                    .child(div().text_xs().child(self.filter_column_name(MESSAGE_KEY, MESSAGE_KEY)))
+                    .child(div().text_xs().text_color(cx.theme().muted_foreground).child("text it contains"))
+                    .on_click(cx.listener(|this, _, _window, cx| this.pick_filter_column(MESSAGE_KEY, cx))),
+            );
+        } else {
             list = list.child(
                 div()
                     .px_2()
@@ -274,6 +297,14 @@ impl AppView {
                             .text_xs()
                             .text_color(cx.theme().muted_foreground)
                             .child(format!("More than {} values: no new conditions.", MAX_DISTINCT)),
+                    );
+                }
+                None if key == MESSAGE_KEY => {
+                    card = card.child(
+                        div()
+                            .text_xs()
+                            .text_color(cx.theme().muted_foreground)
+                            .child("Lines whose message contains the text added."),
                     );
                 }
                 None => {

@@ -30,6 +30,17 @@ Hệ thống SHALL cho phép lọc theo giá trị trên mọi cột có tối �
 - **WHEN** người dùng chọn cột để thêm Filter
 - **THEN** `timestamp` và `message`/payload không có trong danh sách chọn cột giá trị
 
+### Requirement: Thẻ Message
+Hệ thống SHALL có mục Message ở cuối danh sách chọn cột để thêm Filter. Thẻ Message SHALL NOT liệt kê checkbox giá trị; nó SHALL chỉ nhận Custom Value, khớp các dòng có message chứa chuỗi đã nhập theo cùng quy tắc của Add value, và SHALL có Hide Mode như các thẻ khác.
+
+#### Scenario: Thêm điều kiện trên message
+- **WHEN** người dùng chọn Message trong danh sách chọn cột và thêm Custom Value `timeout`
+- **THEN** chỉ các dòng có message chứa `timeout`, không phân biệt hoa thường, được hiển thị
+
+#### Scenario: Thẻ Message không có checkbox
+- **WHEN** người dùng mở thẻ Message
+- **THEN** thẻ chỉ có ô nhập Custom Value, không có danh sách giá trị
+
 ### Requirement: Hiển thị số giá trị riêng biệt khi chọn cột
 Hệ thống SHALL hiển thị số giá trị riêng biệt (Distinct Count) của từng cột trong danh sách chọn cột để thêm Filter.
 

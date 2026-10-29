@@ -330,9 +330,10 @@ impl AppView {
     }
 
     /// Choose a column from the "Add filter" list. Columns above the distinct
-    /// value limit are not available.
+    /// value limit are not available. Message takes only Custom Values.
     pub fn pick_filter_column(&mut self, key: &str, cx: &mut Context<Self>) {
-        let available = self.filter_index.column(key).is_some_and(|c| c.is_filterable());
+        let available = key == crate::columns::MESSAGE_KEY
+            || self.filter_index.column(key).is_some_and(|c| c.is_filterable());
         if available {
             self.filter_ui.expanded = Some(key.to_string());
             self.filter_ui.picker_open = false;

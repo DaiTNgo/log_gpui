@@ -140,7 +140,7 @@ Hiện tại (c8bf40d):
   - Cột còn danh sách giá trị: so trên danh sách đó, không cần text.
   - Cột tràn `MAX_DISTINCT` hoặc cột `message`: chạy Scan (nhóm 6). Focus Pane nhận dòng dần.
   - Đã làm: `FilterState::evaluate_split` tính ngay các điều kiện đọc từ `row_ids` và Time Range, và trả về các điều kiện cần text (`TextCondition`). Dòng của file giữ trong RAM được so ngay. Dòng của file đã index được so bằng Scan ở nền (`scan_blocks`, khối quanh dòng đang xem trước, đọc entry qua `IndexedFile::each_entry_at`, không qua cache). Focus Pane nhận dòng dần, Filter ghi tiến độ. Filter mới huỷ Scan cũ. Dòng live đến trong lúc Scan được lọc ngay như trước.
-  - Còn lại: UI chưa cho thêm Custom Value trên `message`, vì spec chính `log-filter` không đưa `message` vào danh sách cột. Bộ lọc đã chạy được với cột này.
+  - Thẻ Message: mục Message ở cuối danh sách chọn cột, chỉ nhận Custom Value. Spec chính `log-filter` có thêm Requirement "Thẻ Message".
 
 ## 6. Scan
 
