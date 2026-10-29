@@ -196,7 +196,7 @@ impl AppView {
         shift_sorted(&mut pass, &dropped);
         self.filter_pass = Arc::new(pass);
         if self.highlight_paints.len() == rows + dropped.len() {
-            remove_positions(Arc::make_mut(&mut self.highlight_paints), &dropped);
+            remove_positions(Arc::make_mut(&mut self.highlight_paints).rows_mut(), &dropped);
         } else {
             self.recompute_highlight_paints();
         }

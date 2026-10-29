@@ -624,7 +624,7 @@ impl PaneRows {
                     row_markers = entries.markers(ix);
                     row_source = entries.source(ix);
                     let number = e.index;
-                    (e, paints.get(ix).and_then(|p| p.as_deref()), number, row_source.map(str::to_string))
+                    (e, paints.get(ix), number, row_source.map(str::to_string))
                 }
                 (PaneSource::Raw { sections, markers }, FocusRow::Raw { section, line }) => {
                     let s = sections.get(section)?;

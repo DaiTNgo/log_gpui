@@ -304,6 +304,7 @@ impl LogCanvas {
         let minimap_handle = state.scroll_handle.clone();
         let minimap_current = state.search_state.current_match_pos();
         let minimap_matcher = state.search_state.matcher.clone();
+        let minimap_paints = state.paints.clone();
         let minimap_phrase_colors = state.phrase_colors;
         let minimap_fills = minimap_matcher
             .as_ref()
@@ -371,6 +372,10 @@ impl LogCanvas {
                         }]
                     } else if let Some(tick) = match_tick {
                         tick.stripes
+                    } else if let Some(paint) = minimap_paints.get(entry_ix) {
+                        // The row's Highlight Rule, from its byte (task 7.1).
+                        let rgb = paint.color.with_weight(Weight::Cell, colors.tone());
+                        vec![TickStripe { offset: 0.0, width, color: gpui::rgb(rgb).into() }]
                     } else {
                         let color = match entry.level {
                             LogLevel::Fatal | LogLevel::Error | LogLevel::Warn => {
@@ -818,7 +823,7 @@ impl RowEnv {
             return Some(self.placeholder(vis_pos));
         };
         let file_id = entries.file_id(entry_ix);
-        let paint = self.paints.get(entry_ix).and_then(|p| p.as_deref());
+        let paint = self.paints.get(entry_ix);
 
         let level_symbol = if entry.is_continuation() {
             " "

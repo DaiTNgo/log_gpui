@@ -110,8 +110,51 @@ pub struct RowPaint {
     pub column: String,
 }
 
-/// The paint of each row, shared by every row the same rule paints.
-pub type RowPaints = Vec<Option<Arc<RowPaint>>>;
+/// Most rules that paint: a row keeps its rule in one byte.
+pub const MAX_PAINTING_RULES: usize = u8::MAX as usize;
+
+/// The paint of each row: one byte per row, the rule that won (0: none),
+/// and the paints of the rules (task 7.1).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RowPaints {
+    paints: Vec<Arc<RowPaint>>,
+    rows: Vec<u8>,
+}
+
+impl RowPaints {
+    pub fn len(&self) -> usize {
+        self.rows.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.rows.is_empty()
+    }
+
+    /// The paint of `row`, if a rule paints it.
+    pub fn get(&self, row: usize) -> Option<&RowPaint> {
+        let at = *self.rows.get(row)?;
+        at.checked_sub(1).and_then(|i| self.paints.get(i as usize)).map(|p| &**p)
+    }
+
+    /// The paint of each row in order.
+    pub fn iter(&self) -> impl Iterator<Item = Option<&RowPaint>> + '_ {
+        (0..self.rows.len()).map(|row| self.get(row))
+    }
+
+    /// Add the paints of the rows after these, painted by the same rules.
+    pub fn extend(&mut self, more: RowPaints) {
+        if !more.paints.is_empty() {
+            self.paints = more.paints;
+        }
+        self.rows.extend(more.rows);
+    }
+
+    /// The byte of each row, to drop or move rows with.
+    pub fn rows_mut(&mut self) -> &mut Vec<u8> {
+        &mut self.rows
+    }
+}
+
 
 /// A rule with its conditions folded once, to test a whole log against it.
 struct CompiledRule<'a> {
@@ -167,6 +210,7 @@ fn compile<'a>(rules: &'a [HighlightRule], columns: Option<&'a FilterIndex>) -> 
         .iter()
         .enumerate()
         .filter(|(_, r)| r.enabled)
+        .take(MAX_PAINTING_RULES)
         .map(|(i, r)| CompiledRule::new(i, r, columns))
         .collect()
 }
@@ -204,10 +248,14 @@ pub fn paint_rows_with<R: Rows + ?Sized>(
     let columns = columns.filter(|c| c.rows() == entries.len());
     let compiled = compile(rules, columns);
     let count = entries.len().saturating_sub(from);
+    let paints = compiled.iter().map(|rule| rule.paint.clone()).collect();
     if compiled.is_empty() {
-        return vec![None; count];
+        return RowPaints { paints, rows: vec![0; count] };
     }
-    crate::par::map_rows(count, |i| paint_compiled(&compiled, entries, from + i))
+    let rows = crate::par::map_rows(count, |i| {
+        compiled.iter().position(|rule| rule.matches_row(entries, from + i)).map_or(0, |at| at as u8 + 1)
+    });
+    RowPaints { paints, rows }
 }
 
 /// How many of `rows` (positions in `entries`) `rule` matches by its own

@@ -99,7 +99,7 @@ fn a_switched_off_rule_paints_nothing_but_stays_in_the_list() {
     let mut r = rule(1, "module", &["DB"], &[], color(Hue::Orange));
     r.enabled = false;
     let rules = vec![r];
-    assert!(paint_rows(&rules, &es).iter().all(Option::is_none));
+    assert!(paint_rows(&rules, &es).iter().all(|p| p.is_none()));
     assert_eq!(rules.len(), 1);
 }
 
@@ -119,10 +119,10 @@ fn a_stack_trace_is_painted_like_its_parent_line() {
     let es = rows();
     let r = rule(1, "level", &["ERROR"], &[], color(Hue::Red));
     let paints = paint_rows(&[r], &es);
-    assert!(paints[1].is_some());
-    assert!(paints[2].is_some(), "stack trace line 1");
-    assert!(paints[3].is_some(), "stack trace line 2");
-    assert!(paints[4].is_none());
+    assert!(paints.get(1).is_some());
+    assert!(paints.get(2).is_some(), "stack trace line 1");
+    assert!(paints.get(3).is_some(), "stack trace line 2");
+    assert!(paints.get(4).is_none());
 }
 
 #[test]
@@ -144,8 +144,8 @@ fn a_rule_can_use_the_source_column_of_a_log_space() {
     let view = build_space_view(&space, &parsed);
     let r = rule(1, "source", &["worker.log"], &[], color(Hue::Purple));
     let paints = paint_rows(&[r], &view.materialize(&parsed));
-    assert!(paints[0].is_none());
-    assert!(paints[1].is_some());
+    assert!(paints.get(0).is_none());
+    assert!(paints.get(1).is_some());
 }
 
 #[test]
@@ -194,4 +194,28 @@ fn a_rule_paints_the_row_lighter_than_the_cell() {
     assert_ne!(row, cell);
     let lum = |rgb: u32| ((rgb >> 16) & 0xFF) + ((rgb >> 8) & 0xFF) + (rgb & 0xFF);
     assert!(lum(row) > lum(cell), "the row is the lighter shade on the light theme");
+}
+
+// ─── One byte per row (line-offset-index 7.1) ────────────────────────────────
+
+#[test]
+fn the_paints_keep_the_winning_rule_of_each_row() {
+    let es = rows();
+    let rules = vec![rule(1, "module", &["DB"], &[], color(Hue::Orange)), rule(2, "level", &["ERROR"], &[], color(Hue::Red))];
+    let paints = paint_rows(&rules, &es);
+    assert_eq!(paints.len(), es.len());
+    let won: Vec<Option<usize>> = paints.iter().map(|p| p.map(|p| p.rule)).collect();
+    assert_eq!(won, [Some(0), Some(1), Some(1), Some(1), None, Some(0)]);
+    assert_eq!(paints.get(5).unwrap().color, color(Hue::Orange));
+}
+
+#[test]
+fn the_paints_of_rows_added_go_after_the_others() {
+    let es = rows();
+    let rules = vec![rule(1, "level", &["WARN"], &[], color(Hue::Blue))];
+    let mut paints = paint_rows(&rules[..0], &es[..0]);
+    paints.extend(log_gpui::highlight::paint_rows_from(&rules, &es, 0));
+    assert_eq!(paints.len(), es.len());
+    assert_eq!(paints.get(5).unwrap().color, color(Hue::Blue));
+    assert!(paints.get(0).is_none());
 }

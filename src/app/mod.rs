@@ -540,7 +540,7 @@ impl AppView {
             autoscroll_pointer: point(gpui::px(0.0), gpui::px(0.0)),
             autoscroll_running: false,
             canvas_bounds: Rc::new(Cell::new(Bounds::default())),
-            highlight_paints: Arc::new(Vec::new()),
+            highlight_paints: Arc::default(),
             rule_counts: HashMap::new(),
             color_bar: None,
             color_picker,

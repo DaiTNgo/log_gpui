@@ -161,8 +161,9 @@ Hiện tại (c8bf40d):
 
 ## 7. Highlight Rule và Marker
 
-- [ ] 7.1 Paint của Highlight Rule lưu 1 byte mỗi dòng của view (`u8` số thứ tự rule), tính từ `row_ids` cho rule theo Filter Value; Minimap đọc mảng này.
+- [x] 7.1 Paint của Highlight Rule lưu 1 byte mỗi dòng của view (`u8` số thứ tự rule), tính từ `row_ids` cho rule theo Filter Value; Minimap đọc mảng này.
   - Test: chạy lại test của `highlight-rule`.
+  - Đã làm: `RowPaints` giữ danh sách paint của các rule và một `u8` mỗi dòng (0 là không có rule), thay cho `Option<Arc<RowPaint>>` (8 byte). Rule theo Filter Value vẫn được so bằng `row_ids`. Tối đa 255 rule đang bật được tô. Minimap tô dòng có rule bằng màu của rule, sau Marker và Match.
 - [ ] 7.2 Rule có Custom Value: tính cho dòng đang hiện lúc parse vào LRU, phần còn lại lấp bằng Scan.
 - [ ] 7.3 Marker: bảng tra đã sắp xếp `(generation, line) → markers` cho mỗi file; vẽ từ bảng cho dòng đang hiện; kiểm `line_hash` khi dòng được đọc ra; Next/Previous Marker trên bảng.
   - Test: chạy lại test của `text-marker`.

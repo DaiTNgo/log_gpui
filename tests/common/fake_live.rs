@@ -147,7 +147,7 @@ pub fn view(app: &AppView) -> View {
             })
             .collect(),
         pass: app.filter_pass.to_vec(),
-        paints: app.highlight_paints.iter().map(|p| p.as_ref().map(|p| p.rule)).collect(),
+        paints: app.highlight_paints.iter().map(|p| p.map(|p| p.rule)).collect(),
         counts,
         matches: app.focus.search().matched_visible_indices.to_vec(),
         focus: app.focus_rows.to_vec(),

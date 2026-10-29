@@ -56,7 +56,7 @@ fn snapshot(app: &AppView) -> Snapshot {
         pass: app.filter_pass.to_vec(),
         visible: app.visible_indices.to_vec(),
         longest: app.longest_row,
-        paints: app.highlight_paints.iter().map(|p| p.as_ref().map(|p| p.rule)).collect(),
+        paints: app.highlight_paints.iter().map(|p| p.map(|p| p.rule)).collect(),
         counts,
         matches: app.focus.search().matched_visible_indices.to_vec(),
         shared: app.focus.search().matched_visible_indices.to_vec(),
