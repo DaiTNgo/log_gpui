@@ -1151,6 +1151,8 @@ impl AppView {
                 if !self.trim_open_view(file_id, &trimmed) {
                     return false;
                 }
+                // Paints worked out again for the rows left start their Scan.
+                self.start_paint_scan(cx);
                 // The new lines are where they were, less the lines that left.
                 delta.appended = delta
                     .appended

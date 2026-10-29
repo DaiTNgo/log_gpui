@@ -164,7 +164,9 @@ Hiện tại (c8bf40d):
 - [x] 7.1 Paint của Highlight Rule lưu 1 byte mỗi dòng của view (`u8` số thứ tự rule), tính từ `row_ids` cho rule theo Filter Value; Minimap đọc mảng này.
   - Test: chạy lại test của `highlight-rule`.
   - Đã làm: `RowPaints` giữ danh sách paint của các rule và một `u8` mỗi dòng (0 là không có rule), thay cho `Option<Arc<RowPaint>>` (8 byte). Rule theo Filter Value vẫn được so bằng `row_ids`. Tối đa 255 rule đang bật được tô. Minimap tô dòng có rule bằng màu của rule, sau Marker và Match.
-- [ ] 7.2 Rule có Custom Value: tính cho dòng đang hiện lúc parse vào LRU, phần còn lại lấp bằng Scan.
+- [x] 7.2 Rule có Custom Value: tính cho dòng đang hiện lúc parse vào LRU, phần còn lại lấp bằng Scan.
+  - Đã làm: rule nào có cột không có `row_ids` (Custom Value trên `message`, cột quá nhiều giá trị) là rule cần text. `paint_rows_split` tô ngay các dòng của file giữ trong RAM và khoảng 400 dòng quanh dòng trên cùng. Các dòng khác được tô bằng rule theo `row_ids` nếu rule đó đứng trước mọi rule cần text, không thì chờ (byte 0). Scan ở nền (`start_paint_scan`, khối quanh dòng trên cùng trước) đọc các dòng chờ từ đĩa, ghi byte của chúng và cộng số đếm của rule cần text. Đổi rule hoặc dựng lại rows thì Scan cũ bị huỷ; rows dời chỗ trong lúc Scan chạy thì tô lại từ đầu.
+  - Chưa làm: cuộn tới vùng Scan chưa tới thì dòng chưa có màu cho tới khi Scan tới đó.
 - [ ] 7.3 Marker: bảng tra đã sắp xếp `(generation, line) → markers` cho mỗi file; vẽ từ bảng cho dòng đang hiện; kiểm `line_hash` khi dòng được đọc ra; Next/Previous Marker trên bảng.
   - Test: chạy lại test của `text-marker`.
 

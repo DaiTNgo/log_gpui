@@ -209,6 +209,10 @@ pub struct AppView {
     pub(crate) search_scan: Option<search::SearchScan>,
     /// The Scan checking the Filter conditions that need the rows' text.
     pub(crate) filter_scan: Option<filter::FilterScan>,
+    /// The Scan painting the rows a Highlight Rule needs the text of.
+    pub(crate) paint_scan: Option<highlights::PaintScan>,
+    /// The rules needing the text, and the rows left for that Scan.
+    pub(crate) paint_scan_wanted: Option<(Vec<crate::highlight::TextRule>, Vec<(usize, u8)>)>,
     /// How far it is: rows read, of those to read.
     pub filter_scanning: Option<(usize, usize)>,
     /// Local files being read in the background, by `file_id`.
@@ -569,6 +573,8 @@ impl AppView {
             search_generation: 0,
             search_scan: None,
             filter_scan: None,
+            paint_scan: None,
+            paint_scan_wanted: None,
             filter_scanning: None,
             loads: HashMap::new(),
             load_queue: Vec::new(),

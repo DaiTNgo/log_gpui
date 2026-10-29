@@ -118,6 +118,7 @@ impl AppView {
         self.text_selection = None;
         self.selecting = false;
         self.recompute_highlight_paints();
+        self.start_paint_scan(cx);
         self.find_matches(false, cx);
         self.refresh_focus();
         self.clamp_selected_row();
@@ -155,6 +156,7 @@ impl AppView {
         self.selecting = false;
         if !self.extend_highlight_paints(from) {
             self.recompute_highlight_paints();
+            self.start_paint_scan(cx);
         }
         // A scan under way takes the new rows in when it is done.
         if !self.focus.search().pending {

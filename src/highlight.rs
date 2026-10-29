@@ -258,6 +258,91 @@ pub fn paint_rows_with<R: Rows + ?Sized>(
     RowPaints { paints, rows }
 }
 
+/// A rule whose column has no value ids: telling whether it meets a row
+/// takes the text of the row's value (task 7.2).
+#[derive(Debug, Clone)]
+pub struct TextRule {
+    pub id: u64,
+    /// The byte of the rows it paints (its place among the rules, from 1).
+    pub at: u8,
+    pub column: String,
+    values: Vec<Needle>,
+    custom: Vec<Needle>,
+}
+
+impl TextRule {
+    pub fn matches(&self, value: Option<&str>) -> bool {
+        let Some(v) = value else { return false };
+        self.values.iter().any(|n| n.equals(v)) || self.custom.iter().any(|n| n.is_in(v))
+    }
+}
+
+/// The paints of a view whose rows are not all read: the rows `read` says
+/// are painted by every rule; the others by the rules told by value ids,
+/// unless a rule that needs the text comes first (then they wait, at 0).
+pub struct SplitPaints {
+    pub paints: RowPaints,
+    /// The rules that need the text, in order.
+    pub text: Vec<TextRule>,
+    /// The rows not read, ascending, with the byte the rules told by value
+    /// ids give them: a Scan reads them and checks `text` (empty when
+    /// `text` is).
+    pub unread: Vec<(usize, u8)>,
+}
+
+/// `paint_rows_with` for the rows from `from` on, reading only the rows
+/// `read` says (the rows on screen, the rows held in memory).
+pub fn paint_rows_split<R: Rows + ?Sized>(
+    rules: &[HighlightRule],
+    entries: &R,
+    columns: Option<&FilterIndex>,
+    from: usize,
+    read: impl Fn(usize) -> bool + Sync,
+) -> SplitPaints {
+    let columns = columns.filter(|c| c.rows() == entries.len());
+    let compiled = compile(rules, columns);
+    let text: Vec<TextRule> = compiled
+        .iter()
+        .zip(rules.iter().filter(|r| r.enabled))
+        .enumerate()
+        .filter(|(_, (c, _))| c.ids.is_none())
+        .map(|(at, (c, rule))| TextRule {
+            id: rule.id,
+            at: at as u8 + 1,
+            column: rule.column.clone(),
+            values: c.values.clone(),
+            custom: c.custom.clone(),
+        })
+        .collect();
+    let Some(first_text) = text.first().map(|t| t.at) else {
+        return SplitPaints { paints: paint_rows_with(rules, entries, columns, from), text, unread: Vec::new() };
+    };
+    let count = entries.len().saturating_sub(from);
+    let paints: Vec<Arc<RowPaint>> = compiled.iter().map(|rule| rule.paint.clone()).collect();
+    let each: Vec<(u8, bool)> = crate::par::map_rows(count, |i| {
+        let row = from + i;
+        if read(row) {
+            let won = compiled.iter().position(|rule| rule.matches_row(entries, row));
+            return (won.map_or(0, |at| at as u8 + 1), false);
+        }
+        let by_ids = compiled.iter().position(|rule| rule.ids.is_some() && rule.matches_row(entries, row));
+        (by_ids.map_or(0, |at| at as u8 + 1), true)
+    });
+    let mut unread = Vec::new();
+    let rows = each
+        .into_iter()
+        .enumerate()
+        .map(|(i, (byte, waits))| {
+            if !waits {
+                return byte;
+            }
+            unread.push((from + i, byte));
+            if byte != 0 && byte < first_text { byte } else { 0 }
+        })
+        .collect();
+    SplitPaints { paints: RowPaints { paints, rows }, text, unread }
+}
+
 /// How many of `rows` (positions in `entries`) `rule` matches by its own
 /// condition, for the count in the Highlights list. Continuation Lines are
 /// not counted, like Filter counts.
