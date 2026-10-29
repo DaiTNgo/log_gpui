@@ -36,6 +36,9 @@ pub struct FileLoad {
     /// The file's last lines, read before Indexing gets there: for a file
     /// of a Live Log Space.
     tail: Option<Arc<Mutex<Option<Tail>>>>,
+    /// The file is read again (another Log Format or other Detected
+    /// Fields) while the view shows it as read before.
+    again: bool,
     cancel: Arc<AtomicBool>,
 }
 
@@ -164,8 +167,18 @@ impl AppView {
         // shows now (its Filter, its Focus Tabs) goes to the tab first.
         self.persist_active_session();
         for file in &stale {
-            self.parsed_files.remove(&file.file_id);
-            self.queue_file_load(file);
+            // Meanwhile the rows stay, parsed the new way when shown (task
+            // 6.3); Filter's values of a new column come with Indexing.
+            let (format_id, options) = self.index_options_for(file);
+            if let Some(parsed) = self.parsed_files.get_mut(&file.file_id)
+                && let Some(indexed) = parsed.indexed.clone()
+            {
+                parsed.indexed = Some(Arc::new(indexed.read_with(options)));
+                parsed.format_id = format_id;
+            }
+            self.loads.remove(&file.file_id);
+            self.load_queue.retain(|f| f.file_id != file.file_id);
+            self.load_queue.push(file.clone());
         }
         true
     }
@@ -195,6 +208,7 @@ impl AppView {
         for file in queued {
             let Some(path) = file.path.clone() else { continue };
             let cancel = Arc::new(AtomicBool::new(false));
+            let read_cancel = cancel.clone();
             let name = file.display_name.clone();
             let task = if self.index_local_files {
                 let (format_id, options) = self.index_options_for(&file);
@@ -202,22 +216,23 @@ impl AppView {
                 let budget = self.live.handle_budget.clone();
                 let tail = live.then(|| self.read_tail_while_indexing(&path, &options, &cancel, cx));
                 let progress = Progress::Indexed(indexed.clone());
-                let load = FileLoad { name: name.clone(), progress, tail, cancel: cancel.clone() };
+                let again = self.parsed_files.contains_key(&file.file_id);
+                let load = FileLoad { name: name.clone(), progress, tail, again, cancel: cancel.clone() };
                 self.loads.insert(file.file_id.clone(), load);
                 cx.background_executor().spawn(async move {
-                    let read = index_file(&path, options, indexed, budget, &cancel);
+                    let read = index_file(&path, options, indexed, budget, &read_cancel);
                     read.map(|r| r.map(|parsed| ParsedFile { format_id, ..parsed }))
                 })
             } else {
                 let (done, total) = (Arc::new(AtomicU64::new(0)), Arc::new(AtomicU64::new(0)));
                 let progress = Progress::Parsed { done: done.clone(), total: total.clone() };
-                let load = FileLoad { name: name.clone(), progress, tail: None, cancel: cancel.clone() };
+                let load = FileLoad { name: name.clone(), progress, tail: None, again: false, cancel: cancel.clone() };
                 self.loads.insert(file.file_id.clone(), load);
-                cx.background_executor().spawn(async move { read_file(&name, &path, &done, &total, &cancel) })
+                cx.background_executor().spawn(async move { read_file(&name, &path, &done, &total, &read_cancel) })
             };
             cx.spawn(async move |this, cx| {
                 let result = task.await;
-                this.update(cx, |this, cx| this.file_read(&file, result, cx)).ok();
+                this.update(cx, |this, cx| this.file_read(&file, &cancel, result, cx)).ok();
             })
             .detach();
         }
@@ -336,7 +351,11 @@ impl AppView {
     }
 
     /// The read of `file` ended (`None`: it was stopped).
-    fn file_read(&mut self, file: &LogFile, result: Option<std::io::Result<ParsedFile>>, cx: &mut Context<Self>) {
+    fn file_read(&mut self, file: &LogFile, cancel: &Arc<AtomicBool>, result: Option<std::io::Result<ParsedFile>>, cx: &mut Context<Self>) {
+        // Another read of the file took its place meanwhile.
+        if !self.loads.get(&file.file_id).is_some_and(|l| Arc::ptr_eq(&l.cancel, cancel)) {
+            return;
+        }
         if std::env::var_os("LOG_GPUI_LIVE_TRACE").is_some() {
             eprintln!("read {}: {}", file.display_name, if result.is_some() { "done" } else { "stopped" });
         }
@@ -350,13 +369,13 @@ impl AppView {
         if ends_reading {
             self.persist_active_session();
         }
-        if self.loads.remove(&file.file_id).is_none() {
+        let Some(load) = self.loads.remove(&file.file_id) else {
             // Dropped meanwhile: what it read is not wanted.
             return;
-        }
+        };
         let Some(result) = result else { return };
         // The tab left meanwhile: the file is read again when it is chosen.
-        if !self.active_file_ids().contains(&file.file_id) || self.parsed_files.contains_key(&file.file_id) {
+        if !self.active_file_ids().contains(&file.file_id) || (self.parsed_files.contains_key(&file.file_id) && !load.again) {
             return;
         }
         let mut parsed = result.unwrap_or_else(|e| {

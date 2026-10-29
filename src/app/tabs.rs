@@ -132,7 +132,7 @@ impl AppView {
         let focus = self.focus.clone();
         // While its files are read the view has no rows: the row the tab
         // was at stays for when they are.
-        let reading = self.is_reading();
+        let reading = self.is_reading() && self.view.is_empty();
         let mut target = None;
         if let Some(proj) = self.workspace_state.active_project_mut() {
             if let Some(tab) = proj.working_set.active_tab_mut() {

@@ -155,7 +155,9 @@ Hiện tại (c8bf40d):
   - Parsed View chỉ đếm dòng Filter đang hiện; Raw View đếm mọi dòng.
   - Ô Search hiện tổng tạm thời và tiến độ; Next/Previous dùng được trên Match đã tìm thấy.
   - Test: chạy lại toàn bộ test của `log-search`.
-- [ ] 6.3 Bật Detected Field mới và đổi Log Format chạy qua Scan: dựng `row_ids` của cột mới; đổi Log Format thì index lại `LineMeta`. Cột hiện ngay cho dòng đang xem.
+- [x] 6.3 Bật Detected Field mới và đổi Log Format chạy qua Scan: dựng `row_ids` của cột mới; đổi Log Format thì index lại `LineMeta`. Cột hiện ngay cho dòng đang xem.
+  - Đã làm: file được Indexing đọc lại ở nền như trước, nhưng dòng của view ở lại. `IndexedFile::read_with` giữ Line Index cũ và đọc dòng đang xem theo Log Format và Detected Field mới (cache mới), nên cột hiện ngay. Khi Indexing xong, view dựng lại với `row_ids` và `LineMeta` mới, giữ vị trí. Đọc lại lần nữa trong lúc đang đọc thì lần trước bị huỷ (`FileLoad.again`, `file_read` so token).
+  - Không dùng Scan riêng: Indexing lại cả file đã dựng `row_ids` và `LineMeta` cùng lúc, ở nền.
 
 ## 7. Highlight Rule và Marker
 

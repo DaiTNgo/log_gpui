@@ -119,6 +119,23 @@ impl IndexedFile {
         Self { chain: Some(chain.clone()), ..Self::new(chain, indexed, options) }
     }
 
+    /// The same file, read from now on with `options` (another Log Format
+    /// or other Detected Fields): its Line Index stays, its rows are parsed
+    /// again when asked for. For the rows on screen while Indexing reads
+    /// the file again with `options` (task 6.3).
+    pub fn read_with(&self, options: IndexOptions) -> Self {
+        Self {
+            source: self.source.clone(),
+            indexed: self.indexed.clone(),
+            options,
+            cache: Mutex::new(RowCache::new(ROW_CACHE)),
+            all_lines: Mutex::default(),
+            fingerprint: Mutex::new(self.fingerprint.lock().unwrap().clone()),
+            generations: Mutex::new(self.generations.lock().unwrap().clone()),
+            chain: self.chain.clone(),
+        }
+    }
+
     /// The number of the Generation the file's lines start with, and the
     /// Break above its first line (a file read again after it was cut).
     pub fn set_first_generation(&self, generation: u32, mark: Option<Arc<crate::live::BreakMark>>) {
