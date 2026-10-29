@@ -252,6 +252,19 @@ pub fn scan_in_steps(
     matcher: &Matcher,
     workers: usize,
     cancel: &AtomicBool,
+    on_step: impl FnMut(Found),
+) -> Found {
+    scan_blocks(lines, around, workers, cancel, |block| read_block(texts, block, matcher), on_step)
+}
+
+/// `scan_in_steps` with `look` finding what matches in a block of `lines`
+/// (positions in `lines`, ascending), however it reads them.
+pub fn scan_blocks(
+    lines: Range<usize>,
+    around: usize,
+    workers: usize,
+    cancel: &AtomicBool,
+    look: impl Fn(&Range<usize>) -> Result<Vec<u32>, String> + Sync,
     mut on_step: impl FnMut(Found),
 ) -> Found {
     let order = block_order(lines.clone(), around);
@@ -259,15 +272,16 @@ pub fn scan_in_steps(
     let mut found = Found { total: lines.len(), ..Found::default() };
     let mut published = None::<Instant>;
     let workers = workers.max(1);
+    let look = &look;
     for round in order.chunks(workers) {
         if cancel.load(Ordering::Acquire) {
             break;
         }
         let results: Vec<Result<Vec<u32>, String>> = if round.len() == 1 {
-            vec![read_block(texts, &round[0], matcher)]
+            vec![look(&round[0])]
         } else {
             std::thread::scope(|s| {
-                let handles: Vec<_> = round.iter().map(|block| s.spawn(move || read_block(texts, block, matcher))).collect();
+                let handles: Vec<_> = round.iter().map(|block| s.spawn(move || look(block))).collect();
                 handles.into_iter().map(|h| h.join().expect("a scan block panicked")).collect()
             })
         };

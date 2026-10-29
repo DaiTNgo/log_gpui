@@ -208,23 +208,34 @@ impl FilterState {
     /// come from `index`; `rows` reads the text of a value the index does
     /// not keep (a column with too many values, rows it does not cover).
     pub fn evaluate_from<R: Rows + ?Sized>(&self, index: &FilterIndex, rows: &R, start: usize) -> Vec<usize> {
-        let len = rows.len();
+        let (mut visible, text) = self.evaluate_split(index, rows.len(), start);
+        if !text.is_empty() {
+            visible.retain(|&row| text.iter().all(|c| c.passes_row(rows, row)));
+        }
+        visible
+    }
+
+    /// The Filter in two steps (task 5.3). The rows from `start` on (of
+    /// `len`) that pass the conditions read from `index` alone (value ids,
+    /// the Time Range), and the conditions that need the text of a row's
+    /// value, for those rows to pass as well: a Scan reads it for lines
+    /// read from disk.
+    pub fn evaluate_split(&self, index: &FilterIndex, len: usize, start: usize) -> (Vec<usize>, Vec<TextCondition>) {
         let mut visible = Vec::with_capacity(len.saturating_sub(start));
         let stale = index.rows() != len;
-        let active: Vec<(&ColumnFilter, CompiledColumn)> = self
-            .columns
-            .iter()
-            .filter(|c| c.is_active())
-            .map(|c| (c, CompiledColumn::compile(c, index.column(&c.column), stale)))
-            .collect();
+        let mut by_ids: Vec<(&ColumnFilter, CompiledColumn)> = Vec::new();
+        let mut text = Vec::new();
+        for cf in self.columns.iter().filter(|c| c.is_active()) {
+            match CompiledColumn::compile(cf, index.column(&cf.column), stale) {
+                Some(compiled) => by_ids.push((cf, compiled)),
+                None => text.push(TextCondition::new(cf)),
+            }
+        }
         let (from, to) = self.time_range.bounds(index.anchor_day());
         let time_active = (from.is_some() || to.is_some()) && !stale;
 
         for row in start..len {
-            let columns_ok = active.iter().all(|(cf, compiled)| {
-                let matched = compiled.matches(row, rows, &cf.column);
-                matched != cf.hide
-            });
+            let columns_ok = by_ids.iter().all(|(cf, compiled)| compiled.matches(row) != cf.hide);
             let time_ok = !time_active
                 || match index.effective_timestamp(row) {
                     None => true,
@@ -234,58 +245,70 @@ impl FilterState {
                 visible.push(row);
             }
         }
-        visible
+        (visible, text)
     }
 }
 
-/// A column's condition prepared for fast evaluation. With value ids available
-/// it is a lookup table over the (at most 500) values; otherwise it compares
-/// the row's text directly.
-struct CompiledColumn<'a> {
-    /// Set only when the column has value ids that match the entries.
-    ids: Option<&'a ColumnIndex>,
-    table: Vec<bool>,
+/// A column's condition that needs the text of a row's value: the Filter
+/// has no value ids for the column (too many values, or rows it does not
+/// cover).
+#[derive(Debug, Clone)]
+pub struct TextCondition {
+    pub column: String,
     values: Vec<Needle>,
     custom: Vec<Needle>,
+    hide: bool,
+}
+
+impl TextCondition {
+    fn new(cf: &ColumnFilter) -> Self {
+        Self {
+            column: cf.column.clone(),
+            values: cf.values.iter().map(|v| Needle::new(v)).collect(),
+            custom: cf.custom.iter().map(|c| Needle::new(c)).collect(),
+            hide: cf.hide,
+        }
+    }
+
+    /// Whether a row whose value in the column is `value` passes.
+    pub fn passes(&self, value: Option<&str>) -> bool {
+        let matched =
+            value.is_some_and(|v| self.values.iter().any(|n| n.equals(v)) || self.custom.iter().any(|n| n.is_in(v)));
+        matched != self.hide
+    }
+
+    /// Whether the row `row` of `rows` passes.
+    pub fn passes_row<R: Rows + ?Sized>(&self, rows: &R, row: usize) -> bool {
+        with_value_of(rows, row, &self.column, |v| self.passes(v))
+    }
+}
+
+/// A column's condition read from the column's value ids: a lookup table
+/// over its (at most 500) values.
+struct CompiledColumn<'a> {
+    col: &'a ColumnIndex,
+    table: Vec<bool>,
 }
 
 impl<'a> CompiledColumn<'a> {
-    fn compile(cf: &ColumnFilter, col: Option<&'a ColumnIndex>, stale: bool) -> Self {
-        let values: Vec<Needle> = cf.values.iter().map(|v| Needle::new(v)).collect();
+    /// `None` when the column has no value ids for the rows: the condition
+    /// then needs their text.
+    fn compile(cf: &ColumnFilter, col: Option<&'a ColumnIndex>, stale: bool) -> Option<Self> {
+        let col = col.filter(|c| !stale && c.has_row_ids())?;
         let custom: Vec<Needle> = cf.custom.iter().map(|c| Needle::new(c)).collect();
-        let mut ids = None;
-        let mut table = Vec::new();
-        if let (Some(col), false) = (col, stale)
-            && col.has_row_ids()
-        {
-            let ticked: HashSet<&str> = cf.values.iter().map(String::as_str).collect();
-            table = col
-                .values
-                .iter()
-                .map(|v| {
-                    ticked.contains(v.folded.as_str()) || custom.iter().any(|n| n.is_in(&v.display))
-                })
-                .collect();
-            ids = Some(col);
-        }
-        Self { ids, table, values, custom }
+        let ticked: HashSet<&str> = cf.values.iter().map(String::as_str).collect();
+        let table = col
+            .values
+            .iter()
+            .map(|v| ticked.contains(v.folded.as_str()) || custom.iter().any(|n| n.is_in(&v.display)))
+            .collect();
+        Some(Self { col, table })
     }
 
-    fn matches<R: Rows + ?Sized>(&self, row: usize, rows: &R, key: &str) -> bool {
-        if let Some(col) = self.ids {
-            return match col.id_of_row(row) {
-                Some(MISSING) => false,
-                Some(id) => self.table.get(id as usize).copied().unwrap_or(false),
-                None => self.matches_text(rows, row, key),
-            };
+    fn matches(&self, row: usize) -> bool {
+        match self.col.id_of_row(row) {
+            Some(MISSING) | None => false,
+            Some(id) => self.table.get(id as usize).copied().unwrap_or(false),
         }
-        self.matches_text(rows, row, key)
-    }
-
-    fn matches_text<R: Rows + ?Sized>(&self, rows: &R, row: usize, key: &str) -> bool {
-        with_value_of(rows, row, key, |v| match v {
-            None => false,
-            Some(v) => self.values.iter().any(|n| n.equals(v)) || self.custom.iter().any(|n| n.is_in(v)),
-        })
     }
 }

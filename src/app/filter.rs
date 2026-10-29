@@ -2,8 +2,15 @@
 //! state of the Filter section's inputs.
 
 use super::AppView;
-use crate::filter::parse_time_bound;
+use crate::filter::{TextCondition, parse_time_bound};
+use crate::filter_index::column_value;
+use crate::index::file::IndexedFile;
+use crate::index::scan::{Found, scan_blocks};
+use crate::index::view_rows::unpack;
+use crate::view_data::FileEntries;
 use gpui::{AppContext as _, Context, Entity, SharedString, Subscription, Window};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use gpui_component::input::{InputEvent, InputState};
 
 /// UI-only state of the Filter section in the context sidebar.
@@ -91,7 +98,7 @@ impl AppView {
         // The Matches are found again below: a scan under way is stale.
         self.rows_epoch += 1;
         self.supersede_search_scan();
-        self.evaluate_filter_pass();
+        self.evaluate_filter_pass(cx);
         if self.visible_indices.len() != self.view.len() {
             // Always every row in order: grow or cut the list where it is, not
             // a new one of the size of the file for every batch of live lines.
@@ -166,7 +173,7 @@ impl AppView {
     /// matches the whole view, ADR 0012), so they stay as they are.
     pub fn apply_filter_change(&mut self, cx: &mut Context<Self>) {
         self.refreshes.filter += 1;
-        self.evaluate_filter_pass();
+        self.evaluate_filter_pass(cx);
         self.text_selection = None;
         self.selecting = false;
         self.refresh_focus();
@@ -175,11 +182,121 @@ impl AppView {
         cx.notify();
     }
 
-    fn evaluate_filter_pass(&mut self) {
-        let pass = self
-            .filter_state
-            .evaluate(&self.filter_index, &self.view.bind(&self.parsed_files));
-        self.filter_pass = std::sync::Arc::new(pass);
+    /// Evaluate the Filter on the rows. The conditions read from the value
+    /// ids apply at once; one that needs the text of a row's value (task
+    /// 5.3) is checked here on the rows of files held in memory, and by a
+    /// Scan on those of files read from disk: their rows join the Focus
+    /// Pane as it finds them.
+    fn evaluate_filter_pass(&mut self, cx: &mut Context<Self>) {
+        // A Scan of the Filter before is stale.
+        self.filter_scan = None;
+        self.filter_scanning = None;
+        let rows = self.view.bind(&self.parsed_files);
+        let (pass, text) = self.filter_state.evaluate_split(&self.filter_index, rows.len(), 0);
+        if text.is_empty() {
+            self.filter_pass = Arc::new(pass);
+            return;
+        }
+        let mut held = Vec::new();
+        let mut on_disk = Vec::new();
+        for row in pass {
+            let file = self.view.rows.packed(row).map(|p| unpack(p).0).and_then(|f| rows.file(f));
+            if matches!(file, Some(FileEntries::Indexed(_))) {
+                on_disk.push(row);
+            } else if text.iter().all(|c| c.passes_row(&rows, row)) {
+                held.push(row);
+            }
+        }
+        self.filter_pass = Arc::new(held.clone());
+        if !on_disk.is_empty() {
+            self.start_filter_scan(held, on_disk, text, cx);
+        }
+    }
+
+    /// Check `text` on the rows `rows` (of files read from disk) with a
+    /// Scan, the rows around the one shown first. `held` are the rows that
+    /// passed already.
+    fn start_filter_scan(&mut self, held: Vec<usize>, rows: Vec<usize>, text: Vec<TextCondition>, cx: &mut Context<Self>) {
+        let packed: Vec<u64> = rows.iter().map(|&r| self.view.rows.packed(r).unwrap_or(u64::MAX)).collect();
+        let files: Vec<Option<(Arc<IndexedFile>, Option<Arc<str>>)>> = self
+            .view
+            .files
+            .iter()
+            .map(|f| {
+                let indexed = self.parsed_files.get(&*f.file_id).and_then(|p| p.indexed.clone());
+                indexed.map(|i| (i, f.source.clone()))
+            })
+            .collect();
+        let top = self.top_row_anchor().map_or(0, |a| a.row);
+        let around = rows.partition_point(|&r| r < top).min(rows.len().saturating_sub(1));
+        let cancel = Arc::new(AtomicBool::new(false));
+        let generation = SCANS.fetch_add(1, Ordering::Relaxed);
+        let scan = FilterScan { generation, cancel: cancel.clone(), held, rows: Arc::new(rows), scanned_rows: self.view.len() };
+        let total = scan.rows.len();
+        self.filter_scan = Some(scan);
+        self.filter_scanning = Some((0, total));
+        let (tx, updates) = async_channel::unbounded::<Found>();
+        cx.background_executor()
+            .spawn(async move {
+                let workers = std::thread::available_parallelism().map_or(1, |n| n.get());
+                let look = |block: &std::ops::Range<usize>| passing_in(block, &packed, &files, &text);
+                let end = scan_blocks(0..total, around, workers, &cancel, look, |f| {
+                    let _ = tx.try_send(f);
+                });
+                if !cancel.load(Ordering::Acquire) {
+                    let _ = tx.try_send(end);
+                }
+            })
+            .detach();
+        cx.spawn(async move |this, cx| {
+            while let Ok(found) = updates.recv().await {
+                let done = found.done || found.error.is_some();
+                let go_on = this.update(cx, |this, cx| this.filter_scan_found(generation, found, cx)).unwrap_or(false);
+                if done || !go_on {
+                    break;
+                }
+            }
+        })
+        .detach();
+    }
+
+    /// What the Filter's Scan `generation` found so far; whether to go on
+    /// listening.
+    fn filter_scan_found(&mut self, generation: u64, found: Found, cx: &mut Context<Self>) -> bool {
+        let Some(scan) = self.filter_scan.as_ref().filter(|s| s.generation == generation) else {
+            return false;
+        };
+        if let Some(_error) = &found.error {
+            // The lines could not be read: the Filter reads them here.
+            self.filter_scan = None;
+            self.filter_scanning = None;
+            self.filter_pass = Arc::new(self.filter_state.evaluate(&self.filter_index, &self.view.bind(&self.parsed_files)));
+            self.refresh_focus();
+            self.clamp_selected_row();
+            cx.notify();
+            return false;
+        }
+        let found_rows: Vec<usize> = found.lines.iter().map(|&i| scan.rows[i as usize]).collect();
+        let mut pass = merge_sorted(&scan.held, &found_rows);
+        // Rows appended since passed the Filter as they came.
+        let after = scan.scanned_rows;
+        pass.extend(self.filter_pass.iter().copied().filter(|&r| r >= after));
+        self.filter_pass = Arc::new(pass);
+        if found.done {
+            self.filter_scan = None;
+            self.filter_scanning = None;
+        } else {
+            self.filter_scanning = Some((found.scanned, found.total));
+        }
+        self.refresh_focus();
+        self.clamp_selected_row();
+        cx.notify();
+        !found.done
+    }
+
+    /// Whether a Scan is checking the Filter.
+    pub fn filter_is_scanning(&self) -> bool {
+        self.filter_scan.is_some()
     }
 
     fn clamp_selected_row(&mut self) {
@@ -399,4 +516,88 @@ pub(crate) fn longest(lens: impl Iterator<Item = usize>) -> usize {
         }
     }
     best.0
+}
+
+/// Filter Scans started: each one's number.
+static SCANS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// A Scan checking the Filter conditions that need the rows' text; dropping
+/// it stops the Scan.
+pub(crate) struct FilterScan {
+    generation: u64,
+    cancel: Arc<AtomicBool>,
+    /// The rows that passed without it (of files held in memory).
+    held: Vec<usize>,
+    /// The rows it checks, ascending.
+    rows: Arc<Vec<usize>>,
+    /// Rows the view had when it started.
+    scanned_rows: usize,
+}
+
+impl Drop for FilterScan {
+    fn drop(&mut self) {
+        self.cancel.store(true, Ordering::Release);
+    }
+}
+
+/// Which of the rows `block` (positions in `packed`, the rows checked)
+/// pass every condition of `text`, their lines read from their files.
+fn passing_in(
+    block: &std::ops::Range<usize>,
+    packed: &[u64],
+    files: &[Option<(Arc<IndexedFile>, Option<Arc<str>>)>],
+    text: &[TextCondition],
+) -> Result<Vec<u32>, String> {
+    let mut by_file: std::collections::BTreeMap<usize, Vec<(usize, u32)>> = Default::default();
+    for i in block.clone() {
+        let (file, pos) = unpack(packed[i]);
+        by_file.entry(file).or_default().push((pos, i as u32));
+    }
+    let mut passing = Vec::new();
+    for (file, mut lines) in by_file {
+        let Some((indexed, source)) = files.get(file).and_then(|f| f.as_ref()) else {
+            return Err("the file is no longer read".into());
+        };
+        lines.sort_unstable();
+        let positions: Vec<usize> = lines.iter().map(|&(pos, _)| pos).collect();
+        let mut next = 0;
+        indexed
+            .each_entry_at(&positions, |line, entry, parent| {
+                while lines[next].0 != line {
+                    next += 1;
+                }
+                let passes = text.iter().all(|c| {
+                    let value = match c.column.as_str() {
+                        "source" => source.as_deref().filter(|s| !s.is_empty()),
+                        "stream" => column_value(entry, "stream"),
+                        key => column_value(parent, key),
+                    };
+                    c.passes(value)
+                });
+                if passes {
+                    passing.push(lines[next].1);
+                }
+            })
+            .map_err(|e| e.to_string())?;
+    }
+    passing.sort_unstable();
+    Ok(passing)
+}
+
+/// The rows of two ascending lists, ascending.
+fn merge_sorted(a: &[usize], b: &[usize]) -> Vec<usize> {
+    let mut out = Vec::with_capacity(a.len() + b.len());
+    let (mut i, mut j) = (0, 0);
+    while i < a.len() && j < b.len() {
+        if a[i] <= b[j] {
+            out.push(a[i]);
+            i += 1;
+        } else {
+            out.push(b[j]);
+            j += 1;
+        }
+    }
+    out.extend_from_slice(&a[i..]);
+    out.extend_from_slice(&b[j..]);
+    out
 }

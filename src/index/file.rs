@@ -291,6 +291,46 @@ impl IndexedFile {
         found
     }
 
+    /// Hand `each` every line at `lines` (0-based, ascending) with its entry
+    /// and that of its Parent Line (its own when it is not a Continuation
+    /// Line), read from the file without the cache: for a Scan. Lines near
+    /// each other are read together.
+    pub fn each_entry_at(&self, lines: &[usize], mut each: impl FnMut(usize, &LogEntry, &LogEntry)) -> std::io::Result<()> {
+        let mut parser = LineParser::new();
+        parser.set_config(self.options.config.clone());
+        parser.set_format(self.options.format.clone());
+        let mut i = 0;
+        while i < lines.len() {
+            let mut j = i + 1;
+            while j < lines.len() && lines[j] - lines[j - 1] < READ_AROUND {
+                j += 1;
+            }
+            let (first, last) = (lines[i], lines[j - 1]);
+            let (start, entries) = {
+                let data = self.indexed.data.read().unwrap();
+                if last >= data.file.len() {
+                    return Err(std::io::Error::other("the file no longer has these lines"));
+                }
+                // From the Parent Line of the first, for its value.
+                let start = data.file.meta.get(first).and_then(|m| m.parent_of(first)).unwrap_or(first);
+                (start, read_entries(&*self.source, &data.file, start..last + 1, &mut parser)?)
+            };
+            let mut parent = 0;
+            let mut next = i;
+            for (at, entry) in entries.iter().enumerate() {
+                if entry.parent.is_none() {
+                    parent = at;
+                }
+                if next < j && start + at == lines[next] {
+                    each(lines[next], entry, &entries[parent]);
+                    next += 1;
+                }
+            }
+            i = j;
+        }
+        Ok(())
+    }
+
     /// The text of every line, read from the file the first time and then
     /// kept with the file (empty when the file no longer has them).
     pub fn all_lines(&self) -> Arc<Vec<gpui::SharedString>> {

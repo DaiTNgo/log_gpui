@@ -207,6 +207,10 @@ pub struct AppView {
     /// The texts of the rows the Search scan reads, kept between scans.
     /// The Scan looking for the Matches of the Search Expression typed last.
     pub(crate) search_scan: Option<search::SearchScan>,
+    /// The Scan checking the Filter conditions that need the rows' text.
+    pub(crate) filter_scan: Option<filter::FilterScan>,
+    /// How far it is: rows read, of those to read.
+    pub filter_scanning: Option<(usize, usize)>,
     /// Local files being read in the background, by `file_id`.
     pub loads: HashMap<String, loading::FileLoad>,
     /// Files to read in the background, once there is a context to.
@@ -564,6 +568,8 @@ impl AppView {
             entry_found: std::cell::Cell::new(None),
             search_generation: 0,
             search_scan: None,
+            filter_scan: None,
+            filter_scanning: None,
             loads: HashMap::new(),
             load_queue: Vec::new(),
             read_progress_shown: false,

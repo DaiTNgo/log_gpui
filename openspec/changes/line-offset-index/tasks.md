@@ -136,9 +136,11 @@ Hiện tại (c8bf40d):
   - Trong lúc file của tab còn đang index và view chưa có dòng, Filter lấy giá trị và số đếm từ phần đã index (`FilterIndex::values_so_far`, không chép `row_ids`). Danh sách được cập nhật theo nhịp tiến độ đọc. Log Space nhiều file thì cộng giá trị các file theo thứ tự file; cột Source là tên file.
   - Filter ghi "Still reading (N%): values and counts so far." cho tới khi đọc xong.
   - Giá trị tick trong lúc đọc được lưu vào tab trước khi dựng view, nên lọc ngay khi file đọc xong; picker đang mở vẫn mở.
-- [ ] 5.3 Custom Value:
+- [x] 5.3 Custom Value:
   - Cột còn danh sách giá trị: so trên danh sách đó, không cần text.
   - Cột tràn `MAX_DISTINCT` hoặc cột `message`: chạy Scan (nhóm 6). Focus Pane nhận dòng dần.
+  - Đã làm: `FilterState::evaluate_split` tính ngay các điều kiện đọc từ `row_ids` và Time Range, và trả về các điều kiện cần text (`TextCondition`). Dòng của file giữ trong RAM được so ngay. Dòng của file đã index được so bằng Scan ở nền (`scan_blocks`, khối quanh dòng đang xem trước, đọc entry qua `IndexedFile::each_entry_at`, không qua cache). Focus Pane nhận dòng dần, Filter ghi tiến độ. Filter mới huỷ Scan cũ. Dòng live đến trong lúc Scan được lọc ngay như trước.
+  - Còn lại: UI chưa cho thêm Custom Value trên `message`, vì spec chính `log-filter` không đưa `message` vào danh sách cột. Bộ lọc đã chạy được với cột này.
 
 ## 6. Scan
 

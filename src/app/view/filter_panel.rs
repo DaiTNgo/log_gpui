@@ -382,6 +382,18 @@ impl AppView {
             );
         }
 
+        if let Some((scanned, total)) = self.filter_scanning {
+            let percent = (scanned * 100).checked_div(total).unwrap_or(0);
+            root = root.child(
+                div()
+                    .id("filter-scanning")
+                    .debug_selector(|| "filter-scanning".into())
+                    .text_xs()
+                    .text_color(cx.theme().muted_foreground)
+                    .child(format!("Reading the lines ({percent}%): the lines found so far show.")),
+            );
+        }
+
         if self.filter_ui.picker_open {
             root = root.child(self.render_column_picker(cx));
         }
