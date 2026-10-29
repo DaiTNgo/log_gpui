@@ -11,7 +11,7 @@ use crate::rows::{RowRef, Rows};
 use crate::index::file::IndexedFile;
 use crate::space_view::ParsedFile;
 use crate::workspace::log_space::LogFile;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
 /// A file of the view.
@@ -20,8 +20,8 @@ pub struct ViewFile {
     pub file_id: Arc<str>,
     /// The name the Source Column shows (Log Space rows only).
     pub source: Option<Arc<str>>,
-    /// The stored Markers, by (line, Generations ago).
-    markers: HashMap<(usize, u32), Vec<TextMarker>>,
+    /// The stored Markers, sorted by (Generations ago, line) (task 7.3).
+    markers: BTreeMap<(u32, usize), Vec<TextMarker>>,
     /// The file's Generation when the Markers were looked up.
     generation: u32,
 }
@@ -37,7 +37,7 @@ impl ViewFile {
         self.markers.clear();
         for m in &file.markers {
             self.markers
-                .entry((m.line, m.generations_ago))
+                .entry((m.generations_ago, m.line))
                 .or_default()
                 .push(TextMarker { range: m.range.clone(), color: m.color.clone() });
         }
@@ -54,7 +54,17 @@ impl ViewFile {
             return &[];
         }
         let ago = self.generation.saturating_sub(generation);
-        self.markers.get(&(line, ago)).map_or(&[], Vec::as_slice)
+        self.markers.get(&(ago, line)).map_or(&[], Vec::as_slice)
+    }
+
+    /// Whether the file has Markers.
+    pub fn has_markers(&self) -> bool {
+        !self.markers.is_empty()
+    }
+
+    /// The lines with Markers, as (line, Generation).
+    pub fn marked_lines(&self) -> impl Iterator<Item = (usize, u32)> + '_ {
+        self.markers.keys().filter(|(ago, _)| *ago <= self.generation).map(|&(ago, line)| (line, self.generation - ago))
     }
 }
 
@@ -160,6 +170,20 @@ impl<'a> FileEntries<'a> {
         match self {
             FileEntries::Held(entries) => entries.get(pos).map(|e| (e.index, e.generation)),
             FileEntries::Indexed(file) => file.line_number(pos),
+        }
+    }
+
+    /// The position of line `line` (from 1) of Generation `generation`.
+    pub fn position_of(&self, line: usize, generation: u32) -> Option<usize> {
+        match self {
+            FileEntries::Held(entries) => entries.iter().position(|e| e.index == line && e.generation == generation),
+            FileEntries::Indexed(file) => {
+                let generations = file.generations();
+                let at = generations.iter().position(|g| g.generation == generation)?;
+                let end = generations.get(at + 1).map_or(file.len(), |g| g.pos);
+                let pos = (generations[at].pos + line).checked_sub(1)?;
+                (pos < end).then_some(pos)
+            }
         }
     }
 
@@ -362,10 +386,36 @@ impl<'a> BoundRows<'a> {
         let data: &'a ViewData = self.data;
         let Some((file, _)) = data.get(row) else { return &[] };
         let Some(f) = data.files.get(file) else { return &[] };
-        match data.rows.packed(row).and_then(|packed| self.entry_of(packed)) {
-            Some(entry) => f.markers_of_line(entry.index, entry.generation),
+        if !f.has_markers() {
+            return &[];
+        }
+        // From the line's number: nothing is read.
+        match self.line_number(row) {
+            Some((line, generation)) => f.markers_of_line(line, generation),
             None => &[],
         }
+    }
+
+    /// The rows with Markers, ascending: from the Markers' table, with no
+    /// line read.
+    pub fn marked_rows(&self) -> Vec<usize> {
+        let data: &'a ViewData = self.data;
+        // Per file, the positions of its marked lines.
+        let wanted: Vec<std::collections::HashSet<usize>> = data
+            .files
+            .iter()
+            .enumerate()
+            .map(|(at, f)| match self.file(at) {
+                Some(entries) if f.has_markers() => f.marked_lines().filter_map(|(line, g)| entries.position_of(line, g)).collect(),
+                _ => Default::default(),
+            })
+            .collect();
+        if wanted.iter().all(|w| w.is_empty()) {
+            return Vec::new();
+        }
+        (0..data.len())
+            .filter(|&row| data.get(row).is_some_and(|(file, pos)| wanted.get(file).is_some_and(|w| w.contains(&pos))))
+            .collect()
     }
 
     /// The rows `rows` (packed) of this view, read the same way.
@@ -433,8 +483,12 @@ impl Rows for PickedRows<'_, '_> {
         let Some(&packed) = self.rows.get(row) else { return &[] };
         let (file, _) = unpack(packed);
         let Some(f) = self.bound.data.files.get(file) else { return &[] };
-        match self.bound.entry_of(packed) {
-            Some(entry) => f.markers_of_line(entry.index, entry.generation),
+        if !f.has_markers() {
+            return &[];
+        }
+        let (file, pos) = unpack(packed);
+        match self.bound.file(file).and_then(|entries| entries.line_number(pos)) {
+            Some((line, generation)) => f.markers_of_line(line, generation),
             None => &[],
         }
     }

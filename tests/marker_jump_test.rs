@@ -54,3 +54,20 @@ fn marker_jumps_have_shortcuts() {
     assert_eq!(keymap.command_for(&Shortcut::parse("cmd-alt-down").unwrap()), Some(Command::GoNextMarker));
     assert_eq!(keymap.command_for(&Shortcut::parse("cmd-alt-up").unwrap()), Some(Command::GoPrevMarker));
 }
+
+/// The Markers are looked up by line number, from their table (openspec
+/// change `line-offset-index`, task 7.3): no line is read to find them.
+#[gpui::test]
+fn jumping_to_a_marker_reads_no_line(cx: &mut TestAppContext) {
+    let mut h = marked(cx, &[3, 20]);
+    h.view.update(&mut h.cx, |app, cx| {
+        let file_id = app.view.files[0].file_id.to_string();
+        let indexed = app.parsed_files[&file_id].indexed.clone().expect("read through its Line Index");
+        indexed.forget_cached();
+        assert_eq!(app.rows().marked_rows(), [3, 20]);
+        app.jump_to_next_marker(cx);
+        assert_eq!(app.selected_row_pos, Some(3));
+        assert!(app.rows().markers(20).len() == 1);
+        assert!(indexed.cached_entry(20).is_none(), "line 21 was not read to find its Marker");
+    });
+}

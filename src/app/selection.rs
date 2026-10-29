@@ -85,8 +85,9 @@ impl AppView {
 
     fn jump_to_marker(&mut self, forward: bool, cx: &mut Context<Self>) {
         let total = self.visible_indices.len();
-        let rows = self.rows();
-        let marked = |pos: usize| self.visible_indices.get(pos).is_some_and(|&ix| !rows.markers(ix).is_empty());
+        // From the Markers' table: no line is read (task 7.3).
+        let marked_rows = self.rows().marked_rows();
+        let marked = |pos: usize| self.visible_indices.get(pos).is_some_and(|ix| marked_rows.binary_search(ix).is_ok());
         // With nothing selected the search starts just before the first row
         // (or after the last), so that row counts too.
         let found = (1..=total).find_map(|offset| {

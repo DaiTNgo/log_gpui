@@ -167,8 +167,10 @@ Hiện tại (c8bf40d):
 - [x] 7.2 Rule có Custom Value: tính cho dòng đang hiện lúc parse vào LRU, phần còn lại lấp bằng Scan.
   - Đã làm: rule nào có cột không có `row_ids` (Custom Value trên `message`, cột quá nhiều giá trị) là rule cần text. `paint_rows_split` tô ngay các dòng của file giữ trong RAM và khoảng 400 dòng quanh dòng trên cùng. Các dòng khác được tô bằng rule theo `row_ids` nếu rule đó đứng trước mọi rule cần text, không thì chờ (byte 0). Scan ở nền (`start_paint_scan`, khối quanh dòng trên cùng trước) đọc các dòng chờ từ đĩa, ghi byte của chúng và cộng số đếm của rule cần text. Đổi rule hoặc dựng lại rows thì Scan cũ bị huỷ; rows dời chỗ trong lúc Scan chạy thì tô lại từ đầu.
   - Chưa làm: cuộn tới vùng Scan chưa tới thì dòng chưa có màu cho tới khi Scan tới đó.
-- [ ] 7.3 Marker: bảng tra đã sắp xếp `(generation, line) → markers` cho mỗi file; vẽ từ bảng cho dòng đang hiện; kiểm `line_hash` khi dòng được đọc ra; Next/Previous Marker trên bảng.
+- [x] 7.3 Marker: bảng tra đã sắp xếp `(generation, line) → markers` cho mỗi file; vẽ từ bảng cho dòng đang hiện; kiểm `line_hash` khi dòng được đọc ra; Next/Previous Marker trên bảng.
   - Test: chạy lại test của `text-marker`.
+  - Đã làm: `ViewFile` giữ Marker trong `BTreeMap<(Generations ago, line)>`. `markers(row)` tra bằng số dòng và Generation từ `LineMeta`, không đọc dòng. Next/Previous Marker dùng `BoundRows::marked_rows`: vị trí của các dòng có Marker tính từ bảng (`FileEntries::position_of`), rồi đi qua rows của view một lượt, không đọc dòng nào.
+  - `line_hash` vẫn được kiểm khi file được đọc xong (`drop_markers_that_no_longer_match`, đọc đúng các dòng có Marker), không kiểm lại mỗi lần dòng vào cache.
 
 - [ ] 7.4 (trước là 4.4) Chuyển tab trỏ view vào Line Index và `ViewRows` đã có trong cache, không clone và không dựng lại `FilterIndex`.
   - Đo bằng `perf_probe`: chuyển tab giữa hai file 3.000.000 dòng dưới 50ms.
