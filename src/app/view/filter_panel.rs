@@ -371,6 +371,17 @@ impl AppView {
                 }),
         );
 
+        if let Some(percent) = self.filter_read_so_far() {
+            root = root.child(
+                div()
+                    .id("filter-read-so-far")
+                    .debug_selector(|| "filter-read-so-far".into())
+                    .text_xs()
+                    .text_color(cx.theme().muted_foreground)
+                    .child(format!("Still reading ({percent}%): values and counts so far.")),
+            );
+        }
+
         if self.filter_ui.picker_open {
             root = root.child(self.render_column_picker(cx));
         }

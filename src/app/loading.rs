@@ -6,6 +6,7 @@
 //! it was being read is dropped.
 
 use super::AppView;
+use crate::filter_index::{FilterIndex, MergeFile};
 use crate::index::file::IndexedFile;
 use crate::index::indexing::{IndexOptions, Indexed, Outcome, index_into};
 use crate::index::{ChainSource, DiskSource, HandleBudget, LineSource};
@@ -47,6 +48,15 @@ impl FileLoad {
             return 0;
         }
         (done.min(total) * 100 / total) as u8
+    }
+
+    /// What Indexing has built so far, for a file read through its Line
+    /// Index.
+    pub fn indexed(&self) -> Option<&Arc<Indexed>> {
+        match &self.progress {
+            Progress::Indexed(indexed) => Some(indexed),
+            Progress::Parsed { .. } => None,
+        }
     }
 }
 
@@ -217,6 +227,7 @@ impl AppView {
                             eprintln!("reading: {:?}", this.loads.values().map(|l| (&l.name, l.percent())).collect::<Vec<_>>());
                         }
                         if reading {
+                            this.show_values_read_so_far();
                             cx.notify();
                         } else {
                             this.read_progress_shown = false;
@@ -236,6 +247,16 @@ impl AppView {
     fn file_read(&mut self, file: &LogFile, result: Option<std::io::Result<ParsedFile>>, cx: &mut Context<Self>) {
         if std::env::var_os("LOG_GPUI_LIVE_TRACE").is_some() {
             eprintln!("read {}: {}", file.display_name, if result.is_some() { "done" } else { "stopped" });
+        }
+        // The last file of the open tab is read: what was set on its
+        // Filter meanwhile goes to the tab before its view is built. It
+        // goes while the tab still reads, so the row it was at stays.
+        let ends_reading = result.is_some()
+            && self.loads.contains_key(&file.file_id)
+            && self.active_file_ids().contains(&file.file_id)
+            && self.reading().len() == 1;
+        if ends_reading {
+            self.persist_active_session();
         }
         if self.loads.remove(&file.file_id).is_none() {
             // Dropped meanwhile: what it read is not wanted.
@@ -264,9 +285,56 @@ impl AppView {
         self.parsed_files.insert(file.file_id.clone(), parsed);
         self.drop_markers_that_no_longer_match(&file.file_id);
         if !self.is_reading() {
-            // Every file of the tab is read: its view, as the tab keeps it.
+            // Every file of the tab is read: its view, as the tab keeps it,
+            // with the picker left open on it.
+            let picker = (self.filter_ui.picker_open, self.filter_ui.expanded.clone());
             self.restore_active_session(cx);
+            (self.filter_ui.picker_open, self.filter_ui.expanded) = picker;
+        } else {
+            self.show_values_read_so_far();
         }
+    }
+
+    /// While the open tab shows no rows because its files are being read,
+    /// its Filter offers the values of the lines read so far (task 5.2):
+    /// they grow as Indexing reads on.
+    pub fn show_values_read_so_far(&mut self) {
+        if !self.view.is_empty() || !self.is_reading() {
+            return;
+        }
+        let Some(space) = self.active_space() else { return };
+        let shown = self.active_file_ids();
+        // In file order: values first seen in the first file come first.
+        let files: Vec<&LogFile> = space.files.iter().filter(|f| shown.contains(&f.file_id)).collect();
+        let several = files.len() > 1;
+        let mut parts: Vec<(Option<String>, Arc<Indexed>)> = Vec::new();
+        for file in files {
+            let indexed = match self.loads.get(&file.file_id) {
+                Some(load) => load.indexed().cloned(),
+                None => self.parsed_files.get(&file.file_id).and_then(|p| p.indexed.as_ref()).map(|f| f.indexed.clone()),
+            };
+            let Some(indexed) = indexed else { continue };
+            parts.push((several.then(|| file.display_name.clone()), indexed));
+        }
+        let data: Vec<_> = parts.iter().map(|(_, indexed)| indexed.data.read().unwrap()).collect();
+        let files: Vec<MergeFile> = parts
+            .iter()
+            .zip(&data)
+            .map(|((name, _), data)| MergeFile { index: &data.filter, source: name.as_deref() })
+            .collect();
+        let so_far = FilterIndex::values_so_far(&files);
+        drop(files);
+        drop(data);
+        self.filter_index = so_far;
+    }
+
+    /// How far the open tab's files are read while its Filter shows the
+    /// values read so far: `None` once they are read.
+    pub fn filter_read_so_far(&self) -> Option<u8> {
+        if !self.view.is_empty() {
+            return None;
+        }
+        self.reading().into_iter().map(|(_, percent)| percent).min()
     }
 
     /// A file read from disk may have changed since its Markers were set: it

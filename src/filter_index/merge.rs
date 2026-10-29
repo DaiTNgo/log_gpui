@@ -209,3 +209,111 @@ fn merge_column(source: Source, files: &[MergeFile], rows: &[u64], row_of: &[Vec
     col.finalize_display();
     col
 }
+
+impl FilterIndex {
+    /// The Filter values of `files` while they are indexed (task 5.2): each
+    /// column's values and counts in the lines read so far, the files'
+    /// values added together in file order. It holds no value id per row,
+    /// so it filters nothing: it is what the picker shows until the files
+    /// are read.
+    pub fn values_so_far(files: &[MergeFile]) -> Self {
+        let mut index = FilterIndex::default();
+        let mut sources: Vec<Source> = Vec::new();
+        for file in files {
+            index.rows += file.index.rows;
+            index.parent_lines += file.index.parent_lines;
+            index.timed_lines += file.index.timed_lines;
+            for col in &file.index.columns {
+                if !sources.contains(&col.source) {
+                    sources.push(col.source.clone());
+                }
+            }
+        }
+        for source in sources {
+            if let Source::Field(key) = source {
+                index.field_cols.insert(key);
+            }
+            let column = if source == Source::SourceFile {
+                names_so_far(files)
+            } else {
+                column_so_far(source, files)
+            };
+            index.columns.push(column);
+        }
+        index
+    }
+}
+
+/// The Source column so far: each file's name, on its lines read so far.
+fn names_so_far(files: &[MergeFile]) -> ColumnIndex {
+    let mut col = ColumnIndex::new(Source::SourceFile, 0);
+    for file in files {
+        col.rows += file.index.rows;
+        let Some(name) = file.source.filter(|s| !s.is_empty()) else { continue };
+        let lines = file.index.parent_lines;
+        col.covered += lines;
+        let folded = unicode_text::fold(name);
+        let id = match col.folded_ids.get(&folded) {
+            Some(&id) => id,
+            None => {
+                let id = col.values.len() as u16;
+                col.values.push(ColumnValue { display: name.to_string(), folded: folded.clone(), count: 0 });
+                col.folded_ids.insert(folded, id);
+                id
+            }
+        };
+        col.values[id as usize].count += lines;
+        col.spellings.entry(name.to_string()).or_insert((id, 0)).1 += lines;
+    }
+    if col.values.len() > MAX_DISTINCT {
+        col.mark_overflow();
+    } else {
+        col.finalize_display();
+    }
+    col
+}
+
+/// A column of the files' own so far: their values by folded form, counts
+/// and spellings added up.
+fn column_so_far(source: Source, files: &[MergeFile]) -> ColumnIndex {
+    let mut col = ColumnIndex::new(source.clone(), 0);
+    let mut overflow = false;
+    for file in files {
+        col.rows += file.index.rows;
+        let Some(own) = file.index.columns.iter().find(|c| c.source == source) else { continue };
+        col.covered += own.covered;
+        if overflow || own.overflow {
+            overflow = true;
+            continue;
+        }
+        let mut remap = vec![MISSING; own.values.len()];
+        for (id, value) in own.values.iter().enumerate() {
+            let merged = match col.folded_ids.get(&value.folded) {
+                Some(&m) => m,
+                None => {
+                    if col.values.len() >= MAX_DISTINCT {
+                        overflow = true;
+                        break;
+                    }
+                    let m = col.values.len() as u16;
+                    col.values.push(ColumnValue { display: value.display.clone(), folded: value.folded.clone(), count: 0 });
+                    col.folded_ids.insert(value.folded.clone(), m);
+                    m
+                }
+            };
+            col.values[merged as usize].count += value.count;
+            remap[id] = merged;
+        }
+        for (raw, (id, n)) in &own.spellings {
+            if let Some(&merged) = remap.get(*id as usize).filter(|&&m| m != MISSING) {
+                col.spellings.entry(raw.clone()).or_insert((merged, 0)).1 += n;
+            }
+        }
+    }
+    if overflow {
+        col.mark_overflow();
+    } else {
+        col.finalize_display();
+    }
+    col
+}

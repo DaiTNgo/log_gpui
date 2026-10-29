@@ -132,7 +132,10 @@ Hiện tại (c8bf40d):
 - [x] 5.1 `FilterState::evaluate` chạy trên `row_ids` và `LineMeta` (Filter Value, Time Range, dòng thiếu giá trị, Hide Mode, Continuation Line theo Parent Line).
   - Test: chạy lại toàn bộ test hiện có của `log-filter`.
   - `evaluate` không còn sửa entry. Trường `delta_time_ms` đã bỏ, vì UI không hiện nó (chỉ `ui/table_view.rs` đọc, mà file này không được biên dịch). Text chỉ đọc qua `RowValues` cho cột không có `row_ids` (cột tràn, sẽ thành Scan ở 5.3).
-- [ ] 5.2 Picker hiện giá trị và số đếm tăng dần trong lúc Indexing, kèm dấu "chưa đọc hết" (spec `log-filter`, scenario "Giá trị trong lúc Indexing").
+- [x] 5.2 Picker hiện giá trị và số đếm tăng dần trong lúc Indexing, kèm dấu "chưa đọc hết" (spec `log-filter`, scenario "Giá trị trong lúc Indexing").
+  - Trong lúc file của tab còn đang index và view chưa có dòng, Filter lấy giá trị và số đếm từ phần đã index (`FilterIndex::values_so_far`, không chép `row_ids`). Danh sách được cập nhật theo nhịp tiến độ đọc. Log Space nhiều file thì cộng giá trị các file theo thứ tự file; cột Source là tên file.
+  - Filter ghi "Still reading (N%): values and counts so far." cho tới khi đọc xong.
+  - Giá trị tick trong lúc đọc được lưu vào tab trước khi dựng view, nên lọc ngay khi file đọc xong; picker đang mở vẫn mở.
 - [ ] 5.3 Custom Value:
   - Cột còn danh sách giá trị: so trên danh sách đó, không cần text.
   - Cột tràn `MAX_DISTINCT` hoặc cột `message`: chạy Scan (nhóm 6). Focus Pane nhận dòng dần.
