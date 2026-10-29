@@ -12,6 +12,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 /// A Scan for the Matches under way; dropping it stops it.
 pub(crate) struct SearchScan {
     cancel: Arc<AtomicBool>,
+    /// Go to the current Match once it is done (Search, not a refresh).
+    jump: bool,
 }
 
 impl Drop for SearchScan {
@@ -34,6 +36,29 @@ impl AppView {
             };
             crate::index::scan::scan_all(&texts, 0..rows, &find).lines.into_iter().map(|r| r as usize).collect()
         });
+    }
+
+    /// Find the Matches of the open tab's Search Expression again: here and
+    /// now when every file of the view is held in memory, else by a Scan
+    /// of the lines read from disk (task 6.2), the rows around the one
+    /// shown first. `jump`: go to the current Match once they are found.
+    pub(crate) fn find_matches(&mut self, jump: bool, cx: &mut Context<Self>) {
+        let on_disk = self.view.files.iter().any(|f| self.parsed_files.get(&*f.file_id).is_some_and(|p| p.indexed.is_some()));
+        let search = self.focus.search_mut();
+        if search.reparse() {
+            search.current_match_idx = 0;
+        }
+        search.pending = false;
+        if !on_disk || search.matcher.is_none() {
+            self.find_matches_now();
+            if jump && let Some(entry_ix) = self.focus.search().current_match_pos() {
+                self.goto_entry(entry_ix, Origin::Jump, cx);
+            }
+            return;
+        }
+        self.supersede_search_scan();
+        let generation = self.search_generation;
+        self.start_search_scan(generation, jump, cx);
     }
 
     /// Focus the search field and make sure the active query is surfaced
@@ -75,11 +100,8 @@ impl AppView {
             self.run_raw_search(cx);
             return;
         }
-        self.find_matches_now();
+        self.find_matches(true, cx);
         self.refresh_focus();
-        if let Some(entry_ix) = self.focus.search().current_match_pos() {
-            self.goto_entry(entry_ix, Origin::Jump, cx);
-        }
         self.schedule_session_save(cx);
         cx.notify();
     }
@@ -165,7 +187,7 @@ impl AppView {
                 if generation == this.search_generation {
                     this.record_search_history(cx);
                 }
-                this.start_search_scan(generation, cx)
+                this.start_search_scan(generation, true, cx)
             })
             .ok();
         })
@@ -185,7 +207,7 @@ impl AppView {
     /// the rows around the one shown first. The Matches found so far show as
     /// they come, with how far the Scan is; Next and Previous go through
     /// them. Live lines can go on arriving meanwhile.
-    fn start_search_scan(&mut self, generation: u64, cx: &mut Context<Self>) {
+    fn start_search_scan(&mut self, generation: u64, jump: bool, cx: &mut Context<Self>) {
         if generation != self.search_generation {
             return;
         }
@@ -198,7 +220,7 @@ impl AppView {
             lines.iter().enumerate().filter(|(_, l)| matcher.is_match(l)).map(|(i, _)| (first + i) as u32).collect()
         });
         let cancel = Arc::new(AtomicBool::new(false));
-        self.search_scan = Some(SearchScan { cancel: cancel.clone() });
+        self.search_scan = Some(SearchScan { cancel: cancel.clone(), jump });
         self.focus.search_mut().scanning = Some((0, rows));
         self.refreshes.scans += 1;
         let (tx, updates) = async_channel::unbounded::<Found>();
@@ -240,8 +262,8 @@ impl AppView {
         }
         if epoch != self.rows_epoch {
             // Rows left or moved while it ran: look again.
-            self.search_scan = None;
-            self.start_search_scan(generation, cx);
+            let jump = self.search_scan.take().is_some_and(|s| s.jump);
+            self.start_search_scan(generation, jump, cx);
             return false;
         }
         let matches: Vec<usize> = found.lines.iter().map(|&r| r as usize).collect();
@@ -257,17 +279,22 @@ impl AppView {
                 return true;
             }
             // The rows could not all be read: they are searched here.
-            self.search_scan = None;
+            let jump = self.search_scan.take().is_some_and(|s| s.jump);
             self.focus.search_mut().scanning = None;
-            self.run_search(cx);
+            self.find_matches_now();
+            if jump && let Some(entry_ix) = self.focus.search().current_match_pos() {
+                self.goto_entry(entry_ix, Origin::Jump, cx);
+            }
+            self.refresh_focus();
+            cx.notify();
             return false;
         }
-        self.search_scan = None;
+        let jump = self.search_scan.take().is_some_and(|s| s.jump);
         self.focus.search_mut().scanning = None;
         // Rows that arrived after the Scan started are searched here.
         self.focus.search_mut().set_scanned_matches(matches, &self.view.bind(&self.parsed_files), rows);
         self.refresh_focus();
-        if let Some(entry_ix) = self.focus.search().current_match_pos() {
+        if jump && let Some(entry_ix) = self.focus.search().current_match_pos() {
             self.goto_entry(entry_ix, Origin::Jump, cx);
         }
         self.schedule_session_save(cx);

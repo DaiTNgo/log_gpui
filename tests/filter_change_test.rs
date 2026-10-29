@@ -26,6 +26,8 @@ fn matches_and_highlights_survive_a_filter_change(cx: &mut TestAppContext) {
         app.add_highlight_rule("level", &["warn".to_string()], &[], color, cx).unwrap();
         app.trigger_search_query("user=3", cx);
     });
+    // The Matches are found by a Scan of the lines on disk.
+    h.cx.run_until_parked();
     let (matches, paints, counts, total) = h.view.read_with(&h.cx, |app, _| {
         (
             app.focus.search().matched_visible_indices.clone(),

@@ -150,8 +150,8 @@ Hiện tại (c8bf40d):
   - Kết quả là tập dòng đã sắp xếp; có tổng tạm thời và tiến độ.
   - Scan mới huỷ Scan cũ; dòng live chỉ quét phần mới.
   - Test cho từng hành vi trong spec `progressive-scan`.
-- [ ] 6.2 Search chạy qua Scan, dùng lại `search_expr` và so khớp Unicode hiện có.
-  - Đã làm: khi gõ Search, Match được tìm bằng `scan_in_steps` qua `ViewData::texts`. Các khối quanh dòng đang xem được quét trước. Match hiện dần, ô đếm có tiến độ (`3/120 · 30%`), và query mới bỏ Scan cũ. `SearchLines` (bản sao text của mọi dòng) đã bỏ. Text vẫn lấy từ `ParsedFile.lines`, chưa đọc từ Line Index trên đĩa (chờ nối Indexing). `run_search` (Enter, đổi Filter) vẫn tìm ngay trên UI thread.
+- [x] 6.2 Search chạy qua Scan, dùng lại `search_expr` và so khớp Unicode hiện có.
+  - Đã làm: khi gõ Search, Match được tìm bằng `scan_in_steps` qua `ViewData::texts`. Các khối quanh dòng đang xem được quét trước. Match hiện dần, ô đếm có tiến độ (`3/120 · 30%`), và query mới bỏ Scan cũ. `SearchLines` (bản sao text của mọi dòng) đã bỏ. Text của file đã index đọc từ đĩa qua `FileTexts`. `run_search` (Enter), dựng lại rows, và đổi Focus Tab cũng tìm bằng Scan (`find_matches`) khi view có file đã index; chỉ Enter đi tới Match khi Scan xong. View chỉ có file giữ trong RAM thì vẫn tìm ngay. Đổi Filter không tìm lại Match (Match tính trên mọi dòng, Focus Pane lọc theo Filter).
   - Parsed View chỉ đếm dòng Filter đang hiện; Raw View đếm mọi dòng.
   - Ô Search hiện tổng tạm thời và tiến độ; Next/Previous dùng được trên Match đã tìm thấy.
   - Test: chạy lại toàn bộ test của `log-search`.
