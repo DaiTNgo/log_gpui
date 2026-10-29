@@ -3,29 +3,39 @@
 //! and the tab, so choosing a tab with a large file never freezes the
 //! window. When the tab's files are all read its view is built, with the
 //! position, Filter and Focus Tabs it keeps. A file whose tab was left while
-//! it was being read is dropped.
+//! it was being read is dropped. While a file of a Live Log Space is
+//! indexed, its last lines show first (L3): they are read on their own.
 
 use super::AppView;
 use crate::filter_index::{FilterIndex, MergeFile};
 use crate::index::file::IndexedFile;
 use crate::index::indexing::{IndexOptions, Indexed, Outcome, index_into};
+use crate::index::tail::{TAIL_BYTES, Tail, read_tail};
 use crate::index::{ChainSource, DiskSource, HandleBudget, LineSource};
 use crate::live::LiveBuffer;
+use crate::model::LogEntry;
 use crate::space_view::ParsedFile;
 use crate::workspace::log_space::{LogFile, StoredMarker};
 use gpui::Context;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Duration;
 
 /// How often the progress of a read is shown again.
 const PROGRESS_EVERY: Duration = Duration::from_millis(100);
+/// How often the last lines of a file being indexed are read again.
+const TAIL_EVERY: Duration = Duration::from_millis(500);
+/// Most last lines shown while the files are indexed.
+pub const TAIL_ROWS: usize = 500;
 
 /// A file being read; dropping it stops the read.
 pub struct FileLoad {
     pub name: String,
     /// What is read so far: bytes read and parsed, and the file's size.
     progress: Progress,
+    /// The file's last lines, read before Indexing gets there: for a file
+    /// of a Live Log Space.
+    tail: Option<Arc<Mutex<Option<Tail>>>>,
     cancel: Arc<AtomicBool>,
 }
 
@@ -181,6 +191,7 @@ impl AppView {
         if queued.is_empty() {
             return;
         }
+        let live = self.active_space_is_live();
         for file in queued {
             let Some(path) = file.path.clone() else { continue };
             let cancel = Arc::new(AtomicBool::new(false));
@@ -189,7 +200,9 @@ impl AppView {
                 let (format_id, options) = self.index_options_for(&file);
                 let indexed = Arc::new(Indexed::default());
                 let budget = self.live.handle_budget.clone();
-                let load = FileLoad { name: name.clone(), progress: Progress::Indexed(indexed.clone()), cancel: cancel.clone() };
+                let tail = live.then(|| self.read_tail_while_indexing(&path, &options, &cancel, cx));
+                let progress = Progress::Indexed(indexed.clone());
+                let load = FileLoad { name: name.clone(), progress, tail, cancel: cancel.clone() };
                 self.loads.insert(file.file_id.clone(), load);
                 cx.background_executor().spawn(async move {
                     let read = index_file(&path, options, indexed, budget, &cancel);
@@ -198,7 +211,8 @@ impl AppView {
             } else {
                 let (done, total) = (Arc::new(AtomicU64::new(0)), Arc::new(AtomicU64::new(0)));
                 let progress = Progress::Parsed { done: done.clone(), total: total.clone() };
-                self.loads.insert(file.file_id.clone(), FileLoad { name: name.clone(), progress, cancel: cancel.clone() });
+                let load = FileLoad { name: name.clone(), progress, tail: None, cancel: cancel.clone() };
+                self.loads.insert(file.file_id.clone(), load);
                 cx.background_executor().spawn(async move { read_file(&name, &path, &done, &total, &cancel) })
             };
             cx.spawn(async move |this, cx| {
@@ -209,6 +223,84 @@ impl AppView {
         }
         self.show_read_progress(cx);
         cx.notify();
+    }
+
+    /// Read the last lines of the file at `path` now and again until the
+    /// read is stopped or done (`cancel`): a live file grows meanwhile.
+    fn read_tail_while_indexing(
+        &self,
+        path: &str,
+        options: &IndexOptions,
+        cancel: &Arc<AtomicBool>,
+        cx: &mut Context<Self>,
+    ) -> Arc<Mutex<Option<Tail>>> {
+        let (cancel, budget) = (cancel.clone(), self.live.handle_budget.clone());
+        // Opened for each read and closed after it: the handle the file
+        // is indexed through is the one it keeps.
+        let path = path.to_string();
+        let open = move || DiskSource::on_demand(&path, budget.clone());
+        let mut parser = crate::parser::text::LineParser::new();
+        parser.set_format(options.format.clone());
+        parser.set_config(options.config.clone());
+        // The first read is here: 64 KiB, for a first screen at once.
+        let first = read_tail(&open(), TAIL_BYTES, &mut parser).ok();
+        let mut read_to = first.as_ref().map(|t| t.end);
+        let tail = Arc::new(Mutex::new(first));
+        let out = tail.clone();
+        let executor = cx.background_executor().clone();
+        executor
+            .clone()
+            .spawn(async move {
+                loop {
+                    executor.timer(TAIL_EVERY).await;
+                    if cancel.load(Ordering::Acquire) {
+                        break;
+                    }
+                    let source = open();
+                    let len = source.len().ok();
+                    if len.is_some() && len != read_to {
+                        if let Ok(read) = read_tail(&source, TAIL_BYTES, &mut parser) {
+                            read_to = Some(read.end);
+                            *out.lock().unwrap() = Some(read);
+                        }
+                    }
+                }
+            })
+            .detach();
+        tail
+    }
+
+    /// The last lines of the open tab's files while they are indexed, by
+    /// time, oldest first; their line numbers are not known yet. Empty
+    /// once a file of the tab is read (its rows show) or for a Static Log
+    /// Space.
+    pub fn reading_tail(&self) -> Vec<LogEntry> {
+        if !self.view.is_empty() {
+            return Vec::new();
+        }
+        let reads = self.active_file_ids();
+        let mut ids: Vec<&String> = self.loads.keys().filter(|id| reads.contains(*id)).collect();
+        ids.sort();
+        // Each line by the time of the nearest timed line at or above it.
+        let mut lines: Vec<(f64, LogEntry)> = Vec::new();
+        for id in ids {
+            let Some(tail) = self.loads[id].tail.as_ref() else { continue };
+            let Some(tail) = tail.lock().unwrap().as_ref().map(|t| t.lines.clone()) else { continue };
+            let source: Option<Arc<str>> = (reads.len() > 1).then(|| self.loads[id].name.as_str().into());
+            let mut at = f64::NEG_INFINITY;
+            for mut entry in tail {
+                if !entry.is_continuation() {
+                    at = entry.timestamp;
+                }
+                if source.is_some() {
+                    entry.source = source.clone();
+                }
+                lines.push((at, entry));
+            }
+        }
+        lines.sort_by(|a, b| a.0.total_cmp(&b.0));
+        let skip = lines.len().saturating_sub(TAIL_ROWS);
+        lines.into_iter().skip(skip).map(|(_, entry)| entry).collect()
     }
 
     /// Draw the progress of the reads again now and then while they run.

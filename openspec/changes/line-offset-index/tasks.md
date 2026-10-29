@@ -66,9 +66,10 @@ Lý do: `all_entries` còn là trạng thái được sửa tại chỗ. Filter 
   - Test: `LineMeta` có khoá khớp từng dòng với không khoá, kể cả file trộn hai định dạng thời gian và file có dòng rác xen giữa.
 - [x] 3.2 Dựng `ColumnIndex::row_ids`, danh sách giá trị, số đếm và Coverage dần theo lô, giữ `MAX_DISTINCT`. Dựng cho mọi cột (a), hay chỉ cho các cột có sẵn trong mọi dòng (b), theo kết quả spike. Với (b), Detected Field được dựng bằng Scan khi người dùng mở picker hoặc Highlight Rule của cột lần đầu, hoặc khi Filter đã lưu có điều kiện trên cột đó.
   - Test: so `FilterIndex` dựng theo lô với `FilterIndex::build` trên cùng file.
-- [ ] 3.3 File live: hiện các dòng cuối trước trong lúc Indexing chạy từ đầu; số dòng đúng khi Indexing xong (L3).
+- [x] 3.3 File live: hiện các dòng cuối trước trong lúc Indexing chạy từ đầu; số dòng đúng khi Indexing xong (L3).
   - Nếu spike cho thấy Indexing đủ nhanh, ghi lại trong design và bỏ bước đọc ngược.
   - Indexing không khoá mất 2,28 s trên 376MB, nên vẫn cần bước này. Đã có `index::tail::read_tail` (đọc 64 KiB cuối) kèm test. Còn phải nối vào view, ở nhóm 4 và nhóm 9.
+  - Đã làm: khi file của Live Log Space được index, `FileLoad` đọc 64 KiB cuối ngay lúc bắt đầu, rồi đọc lại mỗi 500 ms nếu file lớn lên. Canvas hiện tối đa 500 dòng cuối (nhiều file thì xếp theo thời gian, kèm tên file), dòng mới nhất ở dưới, không có số dòng, với dòng ghi "Reading … (N%)". Khi đọc xong, view mở ở cuối với Follow bật và số dòng đúng. Static Log Space không đọc trước dòng cuối.
 
 ## 4. Lớp ViewRows thay cho all_entries
 

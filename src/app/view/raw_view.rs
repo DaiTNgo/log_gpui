@@ -310,6 +310,49 @@ impl AppView {
             .into_any_element()
     }
 
+    /// A Live Log Space whose files are indexed: their last lines, newest at
+    /// the bottom, with no line numbers until Indexing gets there (L3).
+    fn render_reading_tail(
+        &self,
+        files: &[(String, u8)],
+        tail: Vec<crate::model::LogEntry>,
+        cx: &mut Context<Self>,
+    ) -> gpui::AnyElement {
+        let theme = cx.theme();
+        let percent = files.iter().map(|(_, p)| *p).min().unwrap_or(0);
+        let names: Vec<&str> = files.iter().map(|(name, _)| name.as_str()).collect();
+        let mut lines = v_flex().w_full().justify_end().font_family(theme.mono_font_family.clone()).text_xs();
+        for entry in &tail {
+            let text = match &entry.source {
+                Some(source) => format!("{source}  {}", entry.raw_line),
+                None => entry.raw_line.to_string(),
+            };
+            lines = lines.child(div().px_2().whitespace_nowrap().overflow_hidden().child(text));
+        }
+        v_flex()
+            .flex_1()
+            .h_full()
+            .min_h(px(0.0))
+            .child(
+                div()
+                    .id("reading-tail")
+                    .debug_selector(|| "reading-tail".into())
+                    .w_full()
+                    .px_3()
+                    .py_1()
+                    .text_xs()
+                    .text_color(theme.muted_foreground)
+                    .border_b_1()
+                    .border_color(theme.border)
+                    .child(format!(
+                        "Reading {} ({percent}%): the last lines show; line numbers come once it is read.",
+                        names.join(", ")
+                    )),
+            )
+            .child(v_flex().flex_1().min_h(px(0.0)).overflow_hidden().justify_end().child(lines))
+            .into_any_element()
+    }
+
     /// Shown when no tab is open or the open Log Space has no files.
     pub(super) fn render_empty_state(&mut self, cx: &mut Context<Self>) -> gpui::AnyElement {
         use crate::space_view::EmptyCanvas;
@@ -317,6 +360,12 @@ impl AppView {
         use gpui_component::{Icon, Sizable as _};
         use gpui_kit::assets::IconName;
         let state = self.empty_canvas().unwrap_or(EmptyCanvas::NoLogSpace);
+        if let EmptyCanvas::Reading { files } = &state {
+            let tail = self.reading_tail();
+            if !tail.is_empty() {
+                return self.render_reading_tail(files, tail, cx);
+            }
+        }
         let theme = cx.theme();
         let (muted, danger) = (theme.muted_foreground, theme.danger);
         let (icon, icon_color) = match state {
