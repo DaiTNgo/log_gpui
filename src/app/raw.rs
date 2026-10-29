@@ -486,9 +486,14 @@ impl AppView {
     pub(crate) fn reparse_edited_scratch_files(&mut self) {
         let edited: Vec<String> = self.raw.edited.drain().collect();
         for file_id in edited {
-            if let Some(text) = self.raw.texts.get(&file_id) {
-                self.parsed_files.insert(file_id, ParsedFile::from_text(text));
-            }
+            let Some(text) = self.raw.texts.get(&file_id).cloned() else { continue };
+            let file = self.workspace_state.projects.iter().flat_map(|p| p.log_spaces.iter()).find_map(|s| s.file(&file_id)).cloned();
+            let parsed = match file {
+                // Indexed again, the edited text in memory (task 8.2).
+                Some(file) => self.scratch_parsed(&file, text.into_bytes()),
+                None => ParsedFile::from_text(&text),
+            };
+            self.parsed_files.insert(file_id, parsed);
         }
     }
 

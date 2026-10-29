@@ -179,8 +179,9 @@ Hiện tại (c8bf40d):
 
 - [ ] 8.1 Raw View đọc dòng qua `ViewRows` và LRU, bỏ `ParsedFile::lines`.
   - Test: chạy lại test của `raw-view` (File Section, Search, Marker).
-- [ ] 8.2 Scratch: Line Index dựng trên bytes của `raw.texts` (`LineSource` trong memory); sửa thì index lại file đó.
+- [x] 8.2 Scratch: Line Index dựng trên bytes của `raw.texts` (`LineSource` trong memory); sửa thì index lại file đó.
   - Test: gõ, dán, xoá dòng giữ đúng Marker và số dòng.
+  - Đã làm: file Scratch được đọc bằng `IndexedFile::index_now` trên `BytesSource` (`ensure_scratch_loaded`, `scratch_parsed`), với Log Format và Detected Field của nó. Sửa thì `reparse_edited_scratch_files` index lại text trong memory. Raw View của Scratch vẫn sửa trên `raw.texts`. Marker vẫn theo `line_hash` như trước: dòng đổi text thì Marker bị bỏ khi lưu, Marker không dời theo dòng được dán thêm.
 
 ## 9. Live
 

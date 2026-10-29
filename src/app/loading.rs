@@ -131,7 +131,7 @@ impl AppView {
 
     /// How `file` is read: the id of its Log Format, and the options with
     /// that format and the Detected Fields turned on.
-    fn index_options_for(&mut self, file: &LogFile) -> (Option<String>, IndexOptions) {
+    pub(crate) fn index_options_for(&mut self, file: &LogFile) -> (Option<String>, IndexOptions) {
         let format_id = self
             .active_space()
             .cloned()

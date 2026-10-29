@@ -165,13 +165,15 @@ impl AppView {
 
     /// Make sure the file is parsed and cached. A file that cannot be read
     /// counts as empty and leaves a notice.
-    pub(crate) fn ensure_file_loaded(&mut self, file: &LogFile) {
+    /// Read a Scratch file: through a Line Index on its bytes in memory
+    /// (task 8.2), as a file on disk is.
+    pub(crate) fn ensure_scratch_loaded(&mut self, file: &LogFile) {
         if self.parsed_files.contains_key(&file.file_id) {
             return;
         }
         let parsed = match file.source() {
-            Some(source) => match ParsedFile::from_source(source) {
-                Ok(parsed) => parsed,
+            Some(source) => match read_source(source) {
+                Ok(bytes) => self.scratch_parsed(file, bytes),
                 Err(e) => {
                     let error = read_failure(file, &e);
                     self.notice = Some(error.clone());
@@ -181,6 +183,17 @@ impl AppView {
             None => ParsedFile::empty(),
         };
         self.parsed_files.insert(file.file_id.clone(), parsed);
+    }
+
+    /// A Scratch file's text read through a Line Index on its bytes, with
+    /// its Log Format and the Detected Fields turned on.
+    pub(crate) fn scratch_parsed(&mut self, file: &LogFile, bytes: Vec<u8>) -> ParsedFile {
+        let (format_id, options) = self.index_options_for(file);
+        let source = std::sync::Arc::new(crate::index::BytesSource::new(bytes));
+        match crate::index::file::IndexedFile::index_now(source, options) {
+            Ok(indexed) => ParsedFile { format_id, ..ParsedFile::from_indexed(indexed) },
+            Err(error) => ParsedFile::failed(error),
+        }
     }
 
     /// Load a file that is read live: what is on disk now, and the state the
@@ -376,7 +389,7 @@ impl AppView {
                 continue;
             }
             match space.kind {
-                LogSpaceKind::Scratch => self.ensure_file_loaded(file),
+                LogSpaceKind::Scratch => self.ensure_scratch_loaded(file),
                 LogSpaceKind::Live if file.remote.is_some() => {
                     self.ensure_remote_file_loaded(&file.file_id, &file.display_name, file.is_remote_command())
                 }
@@ -685,7 +698,7 @@ impl AppView {
                 let empty = space.files.iter().all(|f| {
                     self.parsed_files
                         .get(&f.file_id)
-                        .is_none_or(|p| p.lines.is_empty())
+                        .is_none_or(|p| p.len() == 0)
                 });
                 if empty { ViewMode::Raw } else { space.last_mode }
             }
