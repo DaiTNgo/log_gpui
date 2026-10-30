@@ -23,10 +23,11 @@
 
 ## 3. Source: Checkpoint và Resume
 
-- [ ] 3.1 `RemoteFileSource`:
+- [x] 3.1 `RemoteFileSource`:
   - Giữ 4 KiB byte gốc cuối cùng đã đọc, và hash 4 KiB đầu của mỗi Generation.
   - Gửi `SourceEvent::Checkpoint { generation, inode, server_end, head_hash, tail_hash }` sau mỗi lượt đọc làm offset tăng (tối đa mỗi 2 s), và khi đóng.
   - Test với sshd thử (`scripts/ssh-test-env.sh`): hash bằng FNV-1a của đúng các byte đó trên Server.
+  - Đã làm: thay vì giữ 4 KiB cuối trong `Memory`, Checkpoint đọc lại hai khối 4 KiB qua SFTP (`read_exactly`) khi offset đã đổi và đã qua 2 s. `server_end` không tính dòng đang viết dở. Khi đóng source thì chưa gửi Checkpoint; Checkpoint 2 s gần nhất được dùng.
 - [ ] 3.2 `SourceCommand`/tham số `Resume`: thay vì `open_tail`, source `stat` file và đọc hai khối 4 KiB qua `open_sftp_random`, rồi:
   - khớp thì đọc tiếp từ `server_end`;
   - không khớp thì gửi `Break` "rotated", "replaced" hoặc "truncated", rồi `open_tail` file mới (decision 5).

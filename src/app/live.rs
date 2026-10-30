@@ -844,6 +844,8 @@ impl AppView {
                 }
                 SourceEvent::Problem(message) => self.notice = Some(message),
                 SourceEvent::Run { .. } => {}
+                // Kept by the Remote Cache (remote-local-cache, task 4.6).
+                SourceEvent::Checkpoint { .. } => {}
                 SourceEvent::Status(status) => {
                     if std::env::var_os("LOG_GPUI_LIVE_TRACE").is_some() {
                         eprintln!("live status: {file_id}: {}", status.label());

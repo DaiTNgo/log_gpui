@@ -203,6 +203,59 @@ struct Memory {
     stop_before: Option<f64>,
     /// The app was told the lines since the Starting Time do not fit.
     overflow_told: bool,
+    /// The offset of the last Checkpoint sent, and when.
+    checkpointed: Option<(u64, Instant)>,
+}
+
+/// How often at most a Checkpoint is sent while the file grows.
+const CHECKPOINT_EVERY: Duration = Duration::from_secs(2);
+
+/// Bytes hashed at the start and before the end of what was read.
+pub const CHECKPOINT_BYTES: u64 = 4096;
+
+/// Tell the app where the file stands, when it moved on since the last
+/// Checkpoint and none was sent for `CHECKPOINT_EVERY`: two reads of 4 KiB.
+async fn checkpoint(
+    file: &mut russh_sftp::client::fs::File,
+    mem: &mut Memory,
+    events: &Sender<SourceEvent>,
+) -> Result<(), Kind> {
+    let server_end = mem.offset - mem.splitter.pending_len() as u64;
+    let due = match mem.checkpointed {
+        Some((at, when)) => at != server_end && when.elapsed() >= CHECKPOINT_EVERY,
+        None => server_end > 0,
+    };
+    if !due {
+        return Ok(());
+    }
+    let len = CHECKPOINT_BYTES.min(server_end);
+    let head = read_exactly(file, 0, len).await?;
+    let tail = read_exactly(file, server_end - len, len).await?;
+    mem.checkpointed = Some((server_end, Instant::now()));
+    let _ = events.try_send(SourceEvent::Checkpoint {
+        generation: mem.generation,
+        inode: mem.ino,
+        server_end,
+        head_hash: crate::remote::cache::fnv64(&head),
+        tail_hash: crate::remote::cache::fnv64(&tail),
+    });
+    Ok(())
+}
+
+/// `len` bytes of `file` from `offset` (fewer only at its end).
+async fn read_exactly(file: &mut russh_sftp::client::fs::File, offset: u64, len: u64) -> Result<Vec<u8>, Kind> {
+    file.seek(std::io::SeekFrom::Start(offset)).await.map_err(|_| Kind::Lost)?;
+    let mut out = vec![0u8; len as usize];
+    let mut got = 0;
+    while got < out.len() {
+        let n = file.read(&mut out[got..]).await.map_err(|_| Kind::Lost)?;
+        if n == 0 {
+            break;
+        }
+        got += n;
+    }
+    out.truncate(got);
+    Ok(out)
 }
 
 fn classify(e: &SftpError) -> Kind {
@@ -668,6 +721,9 @@ impl RemoteFileSource {
                         }
                         Err(_) => {}
                     }
+                }
+                if let Err(Kind::Lost) = checkpoint(handle, mem, events).await {
+                    return Served::Lost;
                 }
             }
 

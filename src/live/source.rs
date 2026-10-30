@@ -349,6 +349,13 @@ pub enum SourceEvent {
     OlderUnavailable,
     /// The inode of the file the lines now come from.
     Inode(Option<u64>),
+    /// Where the file being read stands on the Server, to tell next time
+    /// whether it is the same file (openspec change `remote-local-cache`,
+    /// decision 5): `server_end` is the offset after its last complete line,
+    /// `head_hash` the FNV-1a of its first `min(4096, server_end)` bytes and
+    /// `tail_hash` that of the `min(4096, server_end)` bytes before
+    /// `server_end`, all as they are on the Server.
+    Checkpoint { generation: u32, inode: Option<u64>, server_end: u64, head_hash: u64, tail_hash: u64 },
     /// The real number of complete lines before the first `Append`, once known
     /// (`None` when it could not be counted).
     TotalLines(Option<usize>),

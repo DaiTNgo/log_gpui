@@ -563,3 +563,37 @@ fn a_rotation_to_a_bigger_file_is_found_by_the_slower_inode_check() {
     assert_eq!(lines.first().map(String::as_str), Some("line 100"));
     h.close();
 }
+
+/// Where the file stands, with the hash of its own bytes (openspec change
+/// `remote-local-cache`, task 3.1): what the cache keeps to tell next time
+/// whether it is the same file.
+#[test]
+fn a_checkpoint_hashes_the_first_and_last_bytes_read() {
+    use log_gpui::remote::cache::fnv64;
+    let Some(env) = env() else { return };
+    let path = env.dir.path().join("cp.log");
+    let text = numbered(1..=2_000);
+    std::fs::write(&path, &text).unwrap();
+    let (h, _) = env.source("cp.log", 100_000);
+    let SourceEvent::Checkpoint { server_end, head_hash, tail_hash, generation, .. } =
+        next(&h, |e| matches!(e, SourceEvent::Checkpoint { .. }))
+    else {
+        unreachable!()
+    };
+    let bytes = text.as_bytes();
+    assert_eq!((generation, server_end), (0, bytes.len() as u64));
+    assert_eq!(head_hash, fnv64(&bytes[..4096]));
+    assert_eq!(tail_hash, fnv64(&bytes[bytes.len() - 4096..]));
+
+    // A half-written line is not part of it.
+    let mut f = std::fs::OpenOptions::new().append(true).open(&path).unwrap();
+    f.write_all(b"line 2001\nline 20").unwrap();
+    let SourceEvent::Checkpoint { server_end, tail_hash, .. } = next(&h, |e| matches!(e, SourceEvent::Checkpoint { .. })) else {
+        unreachable!()
+    };
+    let all = std::fs::read(&path).unwrap();
+    let end = all.len() - "line 20".len();
+    assert_eq!(server_end, end as u64);
+    assert_eq!(tail_hash, fnv64(&all[end - 4096..end]));
+    h.close();
+}
