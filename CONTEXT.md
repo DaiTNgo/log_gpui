@@ -55,7 +55,7 @@ A Log Space created by choosing "Scratch" on the New Log Space switch (the one t
 _Avoid_: Empty space, manual space.
 
 **Live Log Space**:
-A Log Space that follows files as they are written: Local Live Files and Remote Files on Servers reached over SSH, on one timeline. Its files are read-only and keep receiving new lines while it is open. It is made by choosing "Live" on the New Log Space switch.
+A Log Space that follows files as they are written: Local Live Files and Remote Files on Servers reached over SSH, on one timeline. Its files are read-only and keep receiving new lines while one of its tabs is the open tab; leaving the tab stops them but keeps the connection to the Server. It is made by choosing "Live" on the New Log Space switch.
 _Avoid_: Remote Log Space, remote space, tail space, SSH space, server space, remote tab.
 
 **Local Live File**:
@@ -141,6 +141,22 @@ The most lines one Open in full reads, one value for the whole app.
 _Avoid_: Max lines, cap.
 
 ### Views
+
+**Line Index**:
+What the app keeps of a file instead of its text: where each line starts and, per line, its timestamp, level, Parent Line, Generation and the values of its filterable columns. A line's text is read again from the file when it is shown.
+_Avoid_: Cache, buffer, preload.
+
+**Indexing**:
+Reading a file for the first time to build its Line Index, in the background with progress and able to be stopped; the lines indexed so far can already be used.
+_Avoid_: Loading, parsing, import.
+
+**Scan**:
+Reading the text of every line again in the background for something that needs it (Search, a Custom Value, a new Detected Field, another Log Format), with progress and results that show as they are found.
+_Avoid_: Search job, background search.
+
+**Dormant Tab**:
+A tab whose lines are not read: not yet since the app opened, or let go when the user left it. It keeps its Filter, Focus Tabs, Search Expression, place and Markers, and is read again when chosen.
+_Avoid_: Unloaded tab, sleeping tab, lazy tab.
 
 **Raw View**:
 Each file's text shown line by line exactly as stored, with line numbers and no columns, one collapsible File Section per file. It always shows every line, ignoring Filter; only Search and Markers apply. Editable only in a Scratch Log Space.
@@ -339,7 +355,7 @@ _Avoid_: Column manager, view panel.
 **Live**
 
 L1. **Pause Is Per Log Space**: Pause stops every file of the Log Space at once; there is no per-file pause. Resuming takes in every line written while paused, so nothing is skipped.
-L2. **Follow Tracks The Scroll**: Scrolling away from the newest line turns Follow off; scrolling back to it turns Follow on. In the Raw View, Follow keeps every File Section at its last line; scrolling up in it turns Follow off, and the Follow switch or End turns it back on.
+L2. **Follow Tracks The Scroll**: Scrolling away from the newest line turns Follow off; scrolling back to it turns Follow on. In the Raw View, Follow keeps the view at its last line; scrolling up in it turns Follow off, and the Follow switch or End turns it back on.
 L3. **Live Starts Fresh**: A Live Log Space always opens following and not paused, at its newest lines in the Parsed and the Raw View alike; Follow and Pause are not remembered. A Static or Scratch Log Space has neither. A Static Log Space made by Open in full opens at the first line read.
 L4. **Remote Opens At The End**: A Remote File first shows its last lines at once, or the lines from its Starting Time when the user chose one, then fills its Live Window with older lines in the background while it stays readable and live, until the Live Window is full, the Starting Time is reached or the file ends. When there is room left, the newest Rotated File is read on if it is not compressed (L24); other Rotated Files are read only when the user chooses. Every load stays inside the Live Window. Line numbers are always the line's real number in its Generation on its Server.
 L5. **Rotation Keeps History**: When a file is rotated, truncated or deleted, the lines already read stay, a Break is drawn, and reading continues in the new file as a new Generation, waiting for it to appear if needed. A Marker belongs to one line of one Generation.
@@ -384,7 +400,7 @@ L26. **Full Read Never Cuts Silently**: Open in full reads no more than the Full
 12. **Invalid Expression Keeps Last Matches**: While the typed Search Expression is incomplete or invalid, the Matches from the last valid expression stay shown and an error indicator appears beside the field.
 13. **Filter Combination**: Within one column, Filter Values and Custom Values combine with OR; across columns, and with the Time Range, they combine with AND.
 14. **Filter Has No Regex**: Filter matches by equality (Filter Value) or contains (Custom Value) only.
-15. **Filter Counts Ignore Other Filters**: A column's Filter Values and their row counts never change because other filters are applied. They count the lines the view holds: computed when the file is loaded, new values appended unticked and counts grown as lines arrive, and counts shrunk as lines leave a Live Window. A column that grows past 500 distinct values keeps the conditions already set but accepts no new ones.
+15. **Filter Counts Ignore Other Filters**: A column's Filter Values and their row counts never change because other filters are applied. They count the lines the view holds: counted as the file is read (the values read so far show while Indexing goes on), new values appended unticked and counts grown as lines arrive, and counts shrunk as lines leave a Live Window. A column that grows past 500 distinct values keeps the conditions already set but accepts no new ones.
 16. **Search Counts Only Filtered Lines**: In the Parsed View, only lines that pass Filter count as Matches. The Match count, next/previous, the overview ruler, the highlights in the view and the Focus Pane all use this one set. In the Raw View, Filter is ignored.
 17. **Quick Settings Only**: There is no View panel. Column pinning stays on the Column Header and column width stays adjustable by drag and Auto-fit. Quick Settings holds only display switches (density). Showing and hiding the Focus Pane's columns lives in the Columns section, and Log Formats are edited from "Log Format…"; the Canvas has no switch for its columns.
 18. **Missing Value Never Matches**: A row with no value in a column never matches any Filter Value or Custom Value of that column. It is hidden when the column shows only the chosen values, and stays visible in Hide Mode. There is no "(empty)" value.
@@ -411,3 +427,6 @@ L26. **Full Read Never Cuts Silently**: Open in full reads no more than the Full
 39. **Unmatched Lines Lose Nothing**: A line that a Log Format does not match is still one row, keeps its text in MESSAGE, and only leaves empty the cells that could not be read.
 40. **Invalid Patterns Keep Last Preview**: While the template of a Log Format is invalid, the Preview keeps the result of the last valid one. The error shows only once the user stops typing or leaves the field.
 41. **A Jump Never Narrows**: Go to Line, next/previous Match and next/previous error only move the current line. They never change Search, Filter, the Time Range or which lines the view and the Focus Pane show, and what is typed in the Go to bar is not remembered.
+42. **Reading Never Blocks**: Opening a file, Search, a Filter or Highlight Rule Custom Value, a new Detected Field and another Log Format all run in the background with progress; results show as they come, and the view can always be read and scrolled.
+43. **Text Stays On Disk**: The app never holds the text of every line in memory: only the lines shown and a small set around them. A Remote File's Live Window is the exception (L10).
+44. **Only The Open Tab Reads**: When the app opens only the chosen tab is read; every other tab is a Dormant Tab. Leaving a tab lets its lines go, and choosing it again reads its files again.

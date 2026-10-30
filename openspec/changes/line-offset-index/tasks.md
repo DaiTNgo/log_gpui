@@ -234,4 +234,5 @@ Hiện tại (c8bf40d):
 - [ ] 12.4 Viết proposal cho change tiếp theo: "Remote ghi ra cache local".
   - Nội dung: Remote File và Remote Command ghi vào `<app data>/remote-cache/`, rồi được index như file local; Dormant Tab Remote mở lại từ cache.
   - Hai câu hỏi mở cần trả lời: quy tắc dọn cache, và cách đồng bộ theo hash khối qua SFTP.
-- [ ] 12.5 Cập nhật CONTEXT.md theo mục "Domain changes" của proposal: thêm Line Index, Indexing, Scan và Dormant Tab; sửa Remote Log Space và Live Window; thêm các quy tắc mới.
+- [x] 12.5 Cập nhật CONTEXT.md theo mục "Domain changes" của proposal: thêm Line Index, Indexing, Scan và Dormant Tab; sửa Remote Log Space và Live Window; thêm các quy tắc mới.
+  - Đã làm: bốn thuật ngữ mới ở nhóm Views. Remote Log Space đã thành Live Log Space (change `static-live-log-spaces`): nó nhận dòng khi một tab của nó đang mở, rời tab thì dừng nhưng giữ kết nối. Live Window vốn đã ghi Local Live File không có. Quy tắc mới 42–44 (Reading Never Blocks, Text Stays On Disk, Only The Open Tab Reads). Sửa quy tắc 15 (giá trị hiện dần trong lúc Indexing) và L2 (Raw View là một danh sách, Follow giữ nó ở dòng cuối).
