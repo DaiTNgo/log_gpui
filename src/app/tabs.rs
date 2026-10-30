@@ -297,6 +297,11 @@ impl AppView {
         if self.parsed_files.contains_key(file_id) {
             return;
         }
+        // Kept from last time: shown at once, read on from where it ended.
+        if !is_command && let Some(parsed) = self.remote_file_from_cache(file_id, name) {
+            self.parsed_files.insert(file_id.to_string(), parsed);
+            return;
+        }
         let mut parsed = ParsedFile::empty();
         parsed.live = Some(if is_command { LiveBuffer::command(name) } else { LiveBuffer::remote(name) });
         self.parsed_files.insert(file_id.to_string(), parsed);

@@ -127,6 +127,8 @@ impl AppView {
             for source in this.live.sources.values() {
                 source.handle.close();
             }
+            // What the Remote Files hold is kept for the next time.
+            this.snapshot_all_remote_files();
             let hub = quit_hub.clone();
             let executor = cx.background_executor().clone();
             async move {
@@ -457,6 +459,7 @@ impl AppView {
         name: &str,
         from_glob: Option<&str>,
         start_time: Option<String>,
+        resume: Option<crate::live::remote::ResumeFrom>,
         cx: &mut Context<Self>,
     ) -> Option<crate::live::SourceHandle> {
         self.remote.servers.get(server_id)?;
@@ -472,7 +475,7 @@ impl AppView {
                 window: self.live.window,
                 start_time,
                 glob_inodes,
-                resume: None,
+                resume,
             }
             .spawn(),
         )

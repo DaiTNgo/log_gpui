@@ -36,6 +36,16 @@
 
 ## 4. App: Remote File đi qua cache
 
+- [x] 4.0 Giai đoạn 1 (mirror, theo Migration Plan): khi tab đang mở, Remote File vẫn giữ dòng trong RAM như cũ. Khi rời tab hoặc thoát app, các dòng đó, tính tới Checkpoint cuối, được ghi ra cache. Chọn lại tab hoặc mở app thì dòng hiện ngay từ cache, rồi source đọc tiếp bằng `Resume`.
+  - Đã làm:
+    - `app::remote_cache`: `snapshot_remote_file` ghi lúc `sync_live_sources` và `drop_dormant_files` bỏ file, `snapshot_all_remote_files` ghi lúc thoát app, `remote_file_from_cache` nạp lại trong `ensure_remote_file_loaded`.
+    - `LiveBuffer::lines_after` bỏ các dòng sau Checkpoint, để chúng được đọc lại thay vì trùng. `LiveBuffer::restore` dựng lại buffer với số dòng thật, Generation, offset và inode.
+    - Độ dài byte gốc của từng dòng được lưu trong `seg-<k>.lens`, nên Load more vẫn tính đúng offset trên Server.
+    - Marker không bị reset khi file được nạp lại từ cache.
+    - Chỉ cho Remote File, chưa cho Remote Command.
+  - Test với sshd thử: `remote_cache_app_test` (rời tab, Server ghi thêm 5 dòng, chọn lại tab: 3.000 dòng hiện ngay với số dòng thật, rồi chỉ 5 dòng mới được đọc, không trùng, không thiếu).
+  - 7 test có sshd hỏng (`remote_command_source_test` ×6, `remote_edit_test::narrowing_a_live_glob…`). Chúng hỏng y hệt khi chưa có thay đổi này.
+  - Text vẫn nằm trong RAM khi tab mở; phần đó là các task 4.1–4.7 (giai đoạn 2).
 - [ ] 4.1 Cờ `remote_cache_enabled` trên `AppView` (mặc định tắt cho tới nhóm 9). Khi bật, `ensure_remote_file_loaded` mở `RemoteCache` và một `IndexedFile` trên chain của nó thay cho `LiveBuffer` giữ dòng.
 - [ ] 4.2 `Tail` và `Append` ghi vào cache rồi `IndexedFile::extend`, như `apply_indexed_events` của file local.
   - Test: view, Filter, Search, Highlight và Marker giống hệt đường RAM với cùng chuỗi event.

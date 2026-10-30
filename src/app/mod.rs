@@ -35,6 +35,7 @@ pub mod server_dialog;
 pub mod ssh_import;
 pub mod raw;
 pub mod raw_list;
+mod remote_cache;
 mod panels;
 mod projects;
 pub mod rename;
@@ -225,6 +226,9 @@ pub struct AppView {
     /// Local files are read through their Line Index (off only in tests of
     /// the held path, which Remote files still take).
     pub index_local_files: bool,
+    /// Remote Files keep their lines in a Remote Cache when their tab is
+    /// left (openspec change `remote-local-cache`).
+    pub remote_cache_enabled: bool,
     /// Bumped whenever rows left or moved in the open view (not when rows
     /// were only added at the end): a scan of the rows before that is stale.
     pub rows_epoch: u64,
@@ -581,6 +585,7 @@ impl AppView {
             load_queue: Vec::new(),
             read_progress_shown: false,
             index_local_files: true,
+            remote_cache_enabled: true,
             rows_epoch: 0,
             time_range_generation: 0,
             remote,

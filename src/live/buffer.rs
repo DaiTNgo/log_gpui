@@ -339,6 +339,68 @@ impl LiveBuffer {
         }
     }
 
+    /// A Remote File as its Remote Cache kept it: `generations` oldest
+    /// first, each `(number of its first line, lines, their lengths on the
+    /// Server)`. The newest is Generation `generation`, its last line ending
+    /// at `next_offset` in the file on the Server.
+    pub fn restore(
+        name: impl Into<String>,
+        parsed: &mut ParsedFile,
+        generations: &[(usize, Vec<String>, Vec<u32>)],
+        generation: u32,
+        next_offset: u64,
+        inode: Option<u64>,
+        extended: bool,
+    ) -> Self {
+        let mut buf = Self::loaded(name, 0);
+        let count = generations.len().max(1) as u32;
+        buf.generation = generation.saturating_sub(count - 1);
+        for (i, (first, lines, lens)) in generations.iter().enumerate() {
+            if i > 0 {
+                buf.begin_generation_state();
+                let label = format!("{} rotated", buf.name);
+                buf.add_pending(BreakMark { kind: BreakKind::Rotated, label });
+            }
+            buf.first_index = *first;
+            buf.next_index = *first;
+            buf.push_lines(parsed, lines, lens, None);
+        }
+        buf.next_offset = next_offset;
+        buf.inodes.push((buf.generation, inode));
+        buf.hold = if extended { HoldMode::Extended } else { HoldMode::Window };
+        buf
+    }
+
+    /// How many of the newest lines held are past `server_end` in the file
+    /// on the Server, when `generation` is the current Generation: what a
+    /// Checkpoint taken a moment ago does not cover yet. `None` when the
+    /// lengths do not add up to it.
+    pub fn lines_after(&self, parsed: &ParsedFile, generation: u32, server_end: u64) -> Option<usize> {
+        if generation != self.generation {
+            return None;
+        }
+        let mut extra = self.next_offset.checked_sub(server_end)?;
+        let mut n = 0;
+        for (i, entry) in parsed.entries.iter().enumerate().rev() {
+            if extra == 0 {
+                break;
+            }
+            let len = u64::from(*self.byte_lens.lens.get(i)?);
+            if entry.generation != self.generation || len == 0 || len > extra {
+                return None;
+            }
+            extra -= len;
+            n += 1;
+        }
+        (extra == 0).then_some(n)
+    }
+
+    /// Length on the Server of held line `i`, line end included (0: not
+    /// known).
+    pub fn byte_len(&self, i: usize) -> u32 {
+        self.byte_lens.lens.get(i).copied().unwrap_or(0)
+    }
+
     /// Whether the next appended line replaces the last loaded one.
     /// Read new lines with the Log Format `format` (`None`: Auto-detect).
     pub fn set_format(&mut self, format: Option<std::sync::Arc<crate::log_format::CompiledFormat>>) {

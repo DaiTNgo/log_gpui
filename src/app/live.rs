@@ -117,6 +117,12 @@ pub struct LiveRuntime {
     /// the path again, its lines are a new Generation below a Break
     /// "replaced".
     pub local_deleted: HashSet<String>,
+    /// The last Checkpoint of each Remote File: how far its lines line up
+    /// with the file on the Server.
+    pub checkpoints: HashMap<String, crate::live::remote::ResumeFrom>,
+    /// Where a Remote File restored from its cache reads on from, until its
+    /// source starts.
+    pub resume_from: HashMap<String, crate::live::remote::ResumeFrom>,
     /// Local files that grew by more than one batch: indexed on soon
     /// (task 9.1), and whether that is scheduled.
     pub index_more: HashSet<String>,
@@ -160,6 +166,8 @@ impl LiveRuntime {
             static_watched: None,
             static_gone: HashSet::new(),
             local_deleted: HashSet::new(),
+            checkpoints: HashMap::new(),
+            resume_from: HashMap::new(),
             index_more: HashSet::new(),
             index_more_scheduled: false,
             first_marks: HashMap::new(),
@@ -281,6 +289,11 @@ impl AppView {
             return;
         }
         self.flush_scratch_saves();
+        let left: Vec<String> = self.parsed_files.keys().filter(|id| !keep.contains(*id)).cloned().collect();
+        for id in &left {
+            self.snapshot_remote_file(id);
+            self.live.checkpoints.remove(id);
+        }
         self.parsed_files.retain(|id, _| keep.contains(id));
     }
 
@@ -340,7 +353,9 @@ impl AppView {
             if let Some(source) = self.live.sources.remove(&file_id) {
                 source.handle.close();
             }
-            // What was received is not kept after the Log Space closes.
+            // What was received goes to the Remote Cache, for next time.
+            self.snapshot_remote_file(&file_id);
+            self.live.checkpoints.remove(&file_id);
             self.parsed_files.remove(&file_id);
         }
         // A Dormant Tab's space stays paused for when it is chosen again.
@@ -368,14 +383,18 @@ impl AppView {
             let handle = match (&file.remote, &file.path) {
                 (Some(remote), _) => {
                     let spawned = match &remote.target {
-                        RemoteTarget::File { path } => self.spawn_remote_source(
-                            &remote.server_id,
-                            path,
-                            &file.name,
-                            file.from_glob.as_deref(),
-                            remote.start_time.clone(),
-                            cx,
-                        ),
+                        RemoteTarget::File { path } => {
+                            let resume = self.live.resume_from.get(&file_id).cloned();
+                            self.spawn_remote_source(
+                                &remote.server_id,
+                                path,
+                                &file.name,
+                                file.from_glob.as_deref(),
+                                remote.start_time.clone(),
+                                resume,
+                                cx,
+                            )
+                        }
                         RemoteTarget::Command { .. } => {
                             self.spawn_command_source(&remote.server_id, &remote.target, &file.name, cx)
                         }
@@ -388,8 +407,10 @@ impl AppView {
                 (None, Some(path)) => LocalFileSource::new(path, local_offset).spawn(),
                 _ => continue,
             };
-            // A source starts a new run: Markers of older Generations are gone.
-            if let Some(project) = self.active_project_mut() {
+            // A source starts a new run: Markers of older Generations are
+            // gone, unless the file was kept in its Remote Cache.
+            let resumed = self.live.resume_from.remove(&file_id).is_some();
+            if !resumed && let Some(project) = self.active_project_mut() {
                 for space in &mut project.log_spaces {
                     if let Some(f) = space.file_mut(&file_id) {
                         f.markers.retain(|m| m.generations_ago == 0);
@@ -844,8 +865,11 @@ impl AppView {
                 }
                 SourceEvent::Problem(message) => self.notice = Some(message),
                 SourceEvent::Run { .. } => {}
-                // Kept by the Remote Cache (remote-local-cache, task 4.6).
-                SourceEvent::Checkpoint { .. } => {}
+                // Kept for the Remote Cache, written when the tab is left.
+                SourceEvent::Checkpoint { generation, inode, server_end, head_hash, tail_hash } => {
+                    let from = crate::live::remote::ResumeFrom { generation, inode, server_end, head_hash, tail_hash };
+                    self.live.checkpoints.insert(file_id.to_string(), from);
+                }
                 SourceEvent::Status(status) => {
                     if std::env::var_os("LOG_GPUI_LIVE_TRACE").is_some() {
                         eprintln!("live status: {file_id}: {}", status.label());
