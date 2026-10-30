@@ -1,6 +1,7 @@
 //! Needs a local sshd (see `remote_hub_test.rs`): `SSH_TEST_DIR`, `SSH_TEST_PORT`.
 
 use log_gpui::live::{BreakKind, LineSource, RemoteFileSource, SourceCommand, SourceEvent, SourceHandle};
+use log_gpui::live::remote::ResumeFrom;
 use log_gpui::remote::*;
 use std::io::Write;
 use std::sync::{Arc, Mutex};
@@ -32,9 +33,14 @@ fn env() -> Option<Env> {
 
 impl Env {
     fn source(&self, name: &str, window: usize) -> (SourceHandle, String) {
+        self.source_from(name, window, None)
+    }
+
+    fn source_from(&self, name: &str, window: usize, resume: Option<ResumeFrom>) -> (SourceHandle, String) {
         let path = self.dir.path().join(name).to_string_lossy().to_string();
         let handle = RemoteFileSource {
             glob_inodes: None,
+            resume,
             hub: self.hub.clone(),
             servers: Arc::new(Mutex::new(self.store.clone())),
             server_id: self.server_id.clone(),
@@ -595,5 +601,70 @@ fn a_checkpoint_hashes_the_first_and_last_bytes_read() {
     let end = all.len() - "line 20".len();
     assert_eq!(server_end, end as u64);
     assert_eq!(tail_hash, fnv64(&all[end - 4096..end]));
+    h.close();
+}
+
+/// The Checkpoint of `cp.log` once it holds `text`, as the cache keeps it.
+fn checkpoint_of(env: &Env, name: &str) -> ResumeFrom {
+    let (h, _) = env.source(name, 100_000);
+    let SourceEvent::Checkpoint { generation, inode, server_end, head_hash, tail_hash } =
+        next(&h, |e| matches!(e, SourceEvent::Checkpoint { .. }))
+    else {
+        unreachable!()
+    };
+    h.close();
+    ResumeFrom { generation, inode, server_end, head_hash, tail_hash }
+}
+
+/// Read on from a Checkpoint (task 3.2): only what was written since comes.
+#[test]
+fn resuming_the_same_file_reads_only_what_was_written_since() {
+    let Some(env) = env() else { return };
+    let path = env.dir.path().join("re.log");
+    std::fs::write(&path, numbered(1..=3_000)).unwrap();
+    let from = checkpoint_of(&env, "re.log");
+    std::fs::OpenOptions::new().append(true).open(&path).unwrap().write_all(numbered(3_001..=3_005).as_bytes()).unwrap();
+    let (h, _) = env.source_from("re.log", 100_000, Some(from));
+    let first = next(&h, |e| matches!(e, SourceEvent::Append { .. } | SourceEvent::Tail { .. } | SourceEvent::Break { .. }));
+    let SourceEvent::Append { lines, .. } = first else { panic!("no Tail, no Break: {first:?}") };
+    assert_eq!(lines, (3_001..=3_005).map(|i| format!("line {i}")).collect::<Vec<_>>());
+    std::thread::sleep(Duration::from_millis(800));
+    while let Ok(e) = h.events.try_recv() {
+        assert!(!matches!(e, SourceEvent::Backfill { .. } | SourceEvent::Tail { .. }), "nothing read again: {e:?}");
+    }
+    h.close();
+}
+
+/// Another file at the path, or the same one written over: the kept lines
+/// stay above a Break and the file is read as a new one.
+#[test]
+fn resuming_another_file_is_a_break_then_its_tail() {
+    let Some(env) = env() else { return };
+    let path = env.dir.path().join("rot.log");
+    std::fs::write(&path, numbered(1..=3_000)).unwrap();
+    let from = checkpoint_of(&env, "rot.log");
+
+    // Rotated: a new file (new inode) at the path.
+    std::fs::rename(&path, env.dir.path().join("rot.log.1")).unwrap();
+    std::fs::write(&path, numbered(1..=10)).unwrap();
+    let (h, _) = env.source_from("rot.log", 100_000, Some(from.clone()));
+    let e = next(&h, |e| matches!(e, SourceEvent::Break { .. } | SourceEvent::Tail { .. } | SourceEvent::Append { .. }));
+    assert!(matches!(e, SourceEvent::Break { kind: BreakKind::Rotated }), "{e:?}");
+    let SourceEvent::Tail { lines, .. } = next(&h, |e| matches!(e, SourceEvent::Tail { .. })) else { unreachable!() };
+    assert_eq!(lines.len(), 10);
+    h.close();
+
+    // Written over in place, as long: the same inode, other bytes.
+    let path = env.dir.path().join("over.log");
+    std::fs::write(&path, numbered(1..=3_000)).unwrap();
+    let from = checkpoint_of(&env, "over.log");
+    let text = numbered(1..=3_000).replace("line 1\n", "LINE 1\n");
+    let mut f = std::fs::OpenOptions::new().write(true).open(&path).unwrap();
+    f.write_all(text.as_bytes()).unwrap();
+    drop(f);
+    let (h, _) = env.source_from("over.log", 100_000, Some(from));
+    let e = next(&h, |e| matches!(e, SourceEvent::Break { .. } | SourceEvent::Tail { .. } | SourceEvent::Append { .. }));
+    assert!(matches!(e, SourceEvent::Break { kind: BreakKind::Truncated }), "{e:?}");
+    next(&h, |e| matches!(e, SourceEvent::Tail { .. }));
     h.close();
 }

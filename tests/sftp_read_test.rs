@@ -148,6 +148,7 @@ fn a_live_tail_and_backfill_transfer_about_the_lines_they_show() {
     let (path, size) = big_file(&env, 180_000);
     let h = RemoteFileSource {
         glob_inodes: None,
+        resume: None,
         hub: env.hub.clone(),
         servers: Arc::new(Mutex::new(env.store.clone())),
         server_id: env.server_id.clone(),

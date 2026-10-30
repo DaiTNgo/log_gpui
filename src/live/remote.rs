@@ -66,6 +66,20 @@ pub struct RemoteFileSource {
     /// file goes Gone when it is deleted, and when its path comes to hold a
     /// file the glob already read under another name.
     pub glob_inodes: Option<GlobInodes>,
+    /// Where the lines the app keeps in its Remote Cache end: the file is
+    /// read on from there if it is still the same file, else read as a new
+    /// one below a Break (openspec change `remote-local-cache`, decision 5).
+    pub resume: Option<ResumeFrom>,
+}
+
+/// The last Checkpoint of the lines the app keeps of a file.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResumeFrom {
+    pub generation: u32,
+    pub inode: Option<u64>,
+    pub server_end: u64,
+    pub head_hash: u64,
+    pub tail_hash: u64,
 }
 
 /// The inodes a Live Glob has read, each with the path it was read at.
@@ -205,6 +219,25 @@ struct Memory {
     overflow_told: bool,
     /// The offset of the last Checkpoint sent, and when.
     checkpointed: Option<(u64, Instant)>,
+    /// Where to read on from, until the file is first opened.
+    resume: Option<ResumeFrom>,
+}
+
+impl RemoteFileSource {
+    /// The file at the path, open, if it is still the one `from` was taken
+    /// of: as long at least, the same inode when both are known, and the
+    /// same bytes at its start and before `from.server_end`.
+    async fn check_resume(&self, sftp: &SftpSession, stat: FileStat, from: &ResumeFrom) -> Result<Option<russh_sftp::client::fs::File>, Kind> {
+        if stat.size < from.server_end || matches!((from.inode, stat.ino), (Some(a), Some(b)) if a != b) {
+            return Ok(None);
+        }
+        let mut file = sftp.open(self.path.clone()).await.map_err(|e| classify(&e))?;
+        let len = CHECKPOINT_BYTES.min(from.server_end);
+        let head = read_exactly(&mut file, 0, len).await?;
+        let tail = read_exactly(&mut file, from.server_end - len, len).await?;
+        let same = crate::remote::cache::fnv64(&head) == from.head_hash && crate::remote::cache::fnv64(&tail) == from.tail_hash;
+        Ok(same.then_some(file))
+    }
 }
 
 /// How often at most a Checkpoint is sent while the file grows.
@@ -279,7 +312,7 @@ enum Kind {
 
 impl RemoteFileSource {
     async fn run(self, events: Sender<SourceEvent>, commands: Receiver<SourceCommand>) {
-        let mut mem = Memory::default();
+        let mut mem = Memory { resume: self.resume.clone(), ..Memory::default() };
         let mut ctl = Ctl::new(self.window);
         let mut backoff = Duration::from_secs(1);
         let mut failing_since: Option<Instant> = None;
@@ -628,6 +661,35 @@ impl RemoteFileSource {
                 }
             }
             mem.gone_ino = None;
+
+            // Kept by the app: read on from there when it is the same file.
+            if !mem.opened && let Some(from) = mem.resume.take() {
+                match self.check_resume(&sftp, stat, &from).await {
+                    Ok(Some(handle)) => {
+                        mem.offset = from.server_end;
+                        mem.generation = from.generation;
+                        mem.ino = stat.ino;
+                        mem.opened = true;
+                        // What the app keeps is what it had: no backfill.
+                        mem.loaded = usize::MAX / 2;
+                        mem.checkpointed = Some((from.server_end, Instant::now()));
+                        self.remember_inode(stat.ino);
+                        let _ = events.try_send(SourceEvent::Inode(stat.ino));
+                        file = Some(handle);
+                    }
+                    Ok(None) => {
+                        // Another file now: the kept lines are a Generation
+                        // above the new one.
+                        let rotated = matches!((from.inode, stat.ino), (Some(a), Some(b)) if a != b);
+                        let kind = if rotated { BreakKind::Rotated } else { BreakKind::Truncated };
+                        let _ = events.try_send(SourceEvent::Break { kind });
+                        mem.generation = from.generation + 1;
+                        mem.earlier_next += 1;
+                    }
+                    Err(Kind::Lost) => return Served::Lost,
+                    Err(_) => {}
+                }
+            }
 
             // First sight of the file in this run: show its end at once.
             if !mem.opened {

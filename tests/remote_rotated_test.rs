@@ -37,6 +37,7 @@ impl Env {
         let path = self.dir.path().join(name).to_string_lossy().to_string();
         let handle = RemoteFileSource {
             glob_inodes: None,
+            resume: None,
             hub: self.hub.clone(),
             servers: Arc::new(Mutex::new(self.store.clone())),
             server_id: self.server_id.clone(),
@@ -251,6 +252,7 @@ fn a_starting_time_stops_the_backward_read_and_the_rotated_file() {
     let path = d.join("app.log").to_string_lossy().to_string();
     let handle = RemoteFileSource {
         glob_inodes: None,
+        resume: None,
         hub: env.hub.clone(),
         servers: Arc::new(Mutex::new(env.store.clone())),
         server_id: env.server_id.clone(),
@@ -292,6 +294,7 @@ fn lines_since_the_starting_time_that_do_not_fit_the_window_are_counted() {
     let spawn = |start: &str| {
         RemoteFileSource {
             glob_inodes: None,
+            resume: None,
             hub: env.hub.clone(),
             servers: Arc::new(Mutex::new(env.store.clone())),
             server_id: env.server_id.clone(),

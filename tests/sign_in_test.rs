@@ -463,6 +463,7 @@ fn a_source_waits_for_connect_instead_of_asking_and_asks_only_after_it() {
     let (store, id) = store_with(server);
     let handle = RemoteFileSource {
         glob_inodes: None,
+        resume: None,
         hub: rig.hub.clone(),
         servers: Arc::new(Mutex::new(store)),
         server_id: id,

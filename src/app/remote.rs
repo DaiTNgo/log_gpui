@@ -472,6 +472,7 @@ impl AppView {
                 window: self.live.window,
                 start_time,
                 glob_inodes,
+                resume: None,
             }
             .spawn(),
         )

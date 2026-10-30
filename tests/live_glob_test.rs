@@ -119,6 +119,7 @@ impl Harness {
                     window: 100_000,
                     start_time: None,
                     glob_inodes: Some(self.inodes.clone()),
+                    resume: None,
                 }
                 .spawn();
                 self.files.push((path.clone(), handle));
