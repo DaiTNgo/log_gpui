@@ -231,6 +231,36 @@ impl RemoteCache {
             .collect()
     }
 
+    /// The lines held as one source, top to bottom, for a Line Index: the
+    /// segments end to end, each read through `budget`, and where each
+    /// Generation starts in it (its first line's position and number).
+    pub fn chain(
+        &self,
+        budget: std::sync::Arc<crate::index::HandleBudget>,
+    ) -> io::Result<(crate::index::ChainSource, Vec<(usize, u64)>)> {
+        use crate::index::{ChainSource, DiskSource, LineSource};
+        use std::sync::Arc;
+        let mut starts = Vec::new();
+        let mut at = 0;
+        let mut chain: Option<ChainSource> = None;
+        for generation in &self.meta.generations {
+            starts.push((at, generation.first_line_no));
+            at += generation.lines();
+            let gen_dir = self.dir.join(gen_name(generation.id));
+            for seg in &generation.segments {
+                let source: Arc<dyn LineSource> = Arc::new(DiskSource::on_demand(gen_dir.join(seg_name(seg.id)), budget.clone()));
+                match &chain {
+                    Some(c) => {
+                        c.push(source)?;
+                    }
+                    None => chain = Some(ChainSource::new(source)),
+                }
+            }
+        }
+        let chain = chain.unwrap_or_else(|| ChainSource::new(Arc::new(crate::index::BytesSource::new(Vec::new()))));
+        Ok((chain, starts))
+    }
+
     /// Write `meta.json`, whole and renamed, so a crash leaves the old one.
     pub fn save(&self) -> io::Result<()> {
         let json = serde_json::to_vec_pretty(&self.meta).map_err(io::Error::other)?;

@@ -137,3 +137,25 @@ fn files_and_commands_have_their_own_folders() {
     assert!(b.file_name().unwrap().to_string_lossy().starts_with("cmd-"));
     assert_eq!(a.parent().unwrap().file_name().unwrap(), "srv_1");
 }
+
+/// The segments read as one source by a Line Index (task 1.2).
+#[test]
+fn a_line_index_reads_the_segments_end_to_end() {
+    use log_gpui::index::file::IndexedFile;
+    use log_gpui::index::{HandleBudget, LineSource};
+    use std::sync::Arc;
+    let root = tempfile::tempdir().unwrap();
+    let dir = dir_for(root.path(), "srv-1", &target());
+    let mut cache = RemoteCache::open(&dir, "srv-1", target(), 7).unwrap();
+    let text: Vec<String> = (0..40).map(|i| format!("2026-09-05 10:00:{:02} [INFO] [api] line {i}", i % 60)).collect();
+    cache.begin_generation(101).unwrap();
+    cache.append(&refs(&text[20..])).unwrap();
+    cache.prepend(0, &refs(&text[..20])).unwrap();
+    let (chain, starts) = cache.chain(HandleBudget::new(8)).unwrap();
+    assert_eq!(starts, [(0, 81)]);
+    let file = IndexedFile::index_now(Arc::new(chain) as Arc<dyn LineSource>, Default::default()).unwrap();
+    assert_eq!(file.len(), 40);
+    for (i, want) in text.iter().enumerate() {
+        assert_eq!(file.line(i).unwrap().as_ref(), want.as_str());
+    }
+}

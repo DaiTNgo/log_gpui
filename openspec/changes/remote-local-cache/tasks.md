@@ -9,8 +9,9 @@
   - Lock file theo pid: tiến trình thứ hai không dùng cache.
   - Test: ghi, chèn, cắt và Clear cho đúng các dòng, theo đúng thứ tự, sau khi mở lại thư mục.
   - Đã làm: `RemoteCache::open`, `append`, `prepend`, `add_earlier_generation`, `begin_generation`, `trim_to`, `clear` và `set_checkpoint`. Segment ghi sau lần lưu cuối được đếm lại khi mở (`recover`). Test ở `tests/remote_cache_test.rs`. Chưa nối vào app.
-- [ ] 1.2 `ChainSource` của các segment theo thứ tự (dùng `index::ChainSource` có sẵn), để Line Index đọc cache như một file.
+- [x] 1.2 `ChainSource` của các segment theo thứ tự (dùng `index::ChainSource` có sẵn), để Line Index đọc cache như một file.
   - Test: `IndexedFile` trên chain cho cùng entries với việc parse cả text nối lại.
+  - Đã làm: `RemoteCache::chain` trả chain các segment và nơi bắt đầu của từng Generation (vị trí, số dòng đầu). Chỉ segment cuối còn lớn lên. Khi `append` mở segment mới, app phải `push` segment đó vào chain (nhóm 4).
 
 ## 2. Line Index cho cache
 
