@@ -534,7 +534,9 @@ impl AppView {
         self.sync_stream_column();
         self.sync_pane_columns();
         if fresh {
-            self.column_layout.update_from_entries(&self.view.bind(&self.parsed_files), self.text_scale());
+            // Fitted to the widest values the view's files have, known from
+            // reading them: no line is read again.
+            self.column_layout.recompute_widths(self.text_scale());
         }
         self.file_name = name;
     }

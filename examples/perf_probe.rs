@@ -88,6 +88,7 @@ fn main() {
 
     drop((parsed, entries, index, text));
     app_probe(n);
+    tab_switch_probe(n);
 }
 
 fn live_line(i: usize) -> String {
@@ -233,4 +234,29 @@ fn app_probe(n: usize) {
         h.view.update(&mut h.cx, |app, cx| app.pump_live(cx));
     });
     state(&mut h, "Live Window trim (~100k lines)");
+}
+
+/// Two Log Spaces of `n` lines each, open in two tabs: switching between
+/// them (task 7.4).
+fn tab_switch_probe(n: usize) {
+    use log_gpui::workspace::log_space::{ImportSource, LogSpaceKind};
+
+    let mut cx = gpui::TestAppContext::single();
+    let mut h = common::open_app(&mut cx);
+    for name in ["a", "b"] {
+        let path = h.dir.path().join(format!("{name}.log"));
+        let text: String = (0..n).map(|i| live_line(i) + "\n").collect();
+        std::fs::write(&path, &text).unwrap();
+        let source = ImportSource::Disk(path.to_string_lossy().into_owned());
+        h.view.update(&mut h.cx, |app, cx| app.create_log_space(name, LogSpaceKind::Static, &[source], cx));
+        h.cx.run_until_parked();
+    }
+    let tabs = h.view.read_with(&h.cx, |app, _| app.workspace_state.active_project().map_or(0, |p| p.working_set.tab_count()));
+    println!("  tabs {tabs}");
+    for i in 0..4 {
+        time(&format!("app switch tab ({i})"), || {
+            h.view.update(&mut h.cx, |app, cx| app.next_tab(cx));
+            h.cx.run_until_parked();
+        });
+    }
 }

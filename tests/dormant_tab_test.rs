@@ -149,3 +149,23 @@ fn the_tab_strip_tells_dormant_tabs(cx: &mut TestAppContext) {
         assert!(!app.is_dormant_tab(active));
     });
 }
+
+/// Choosing a Dormant Tab again fits its columns to the widest values
+/// Indexing found, without reading every line again (task 7.4).
+#[gpui::test]
+fn a_dormant_tab_chosen_again_fits_its_columns_without_reading_its_lines(cx: &mut TestAppContext) {
+    let mut h = open_app(cx);
+    let (a, b) = (log_file(&h, "a.log", 3000), log_file(&h, "b.log", 5));
+    let first = new_space(&mut h, "First", &[a]);
+    new_space(&mut h, "Second", &[b]);
+    let at = tab_of(&h, &first);
+    h.view.update(&mut h.cx, |app, cx| app.switch_to_tab(at, cx));
+    h.cx.run_until_parked();
+    h.view.read_with(&h.cx, |app, _| {
+        let file = app.parsed_files.values().next().and_then(|p| p.indexed.clone()).expect("read through its Line Index");
+        assert!(file.cached_entry(1500).is_none(), "the lines far from the top were not read");
+        let every_line = log_gpui::column::FieldMaxChars::scan_entries(&app.rows_snapshot());
+        let have = &app.column_layout.max_chars;
+        assert_eq!((have.level, have.module), (every_line.level, every_line.module));
+    });
+}

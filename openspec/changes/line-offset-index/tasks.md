@@ -172,8 +172,9 @@ Hiện tại (c8bf40d):
   - Đã làm: `ViewFile` giữ Marker trong `BTreeMap<(Generations ago, line)>`. `markers(row)` tra bằng số dòng và Generation từ `LineMeta`, không đọc dòng. Next/Previous Marker dùng `BoundRows::marked_rows`: vị trí của các dòng có Marker tính từ bảng (`FileEntries::position_of`), rồi đi qua rows của view một lượt, không đọc dòng nào.
   - `line_hash` vẫn được kiểm khi file được đọc xong (`drop_markers_that_no_longer_match`, đọc đúng các dòng có Marker), không kiểm lại mỗi lần dòng vào cache.
 
-- [ ] 7.4 (trước là 4.4) Chuyển tab trỏ view vào Line Index và `ViewRows` đã có trong cache, không clone và không dựng lại `FilterIndex`.
-  - Đo bằng `perf_probe`: chuyển tab giữa hai file 3.000.000 dòng dưới 50ms.
+- [x] 7.4 (trước là 4.4) Chọn lại một Dormant Tab đọc lại file của nó nhanh nhất có thể. Không giữ Line Index của tab đã rời trong cache: quyết định 13 vẫn giữ (rời tab thì bỏ), người dùng chốt 2026-10-30. Mục tiêu cũ "chuyển tab dưới 50 ms nhờ cache" bỏ.
+  - Đo bằng `perf_probe` (bản release, hai Log Space, mỗi cái một file 3.000.000 dòng): chuyển tab trước 7,1 s (Indexing 0,6 s, dựng view 6,45 s).
+  - Đã làm: lúc dựng view, độ rộng cột lấy từ `max_chars` mà Indexing đã có (`recompute_widths`). Trước đó `update_from_entries` đọc lại mọi dòng từ đĩa. Sau: chuyển tab 0,69 s, gần hết là Indexing. Mở Log Space mới từ 5,15 s còn 0,71 s; dựng lại view đang mở từ 1,10 s còn 58 ms.
 
 ## 8. Raw View và Scratch
 
