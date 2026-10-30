@@ -1,6 +1,10 @@
-//! Memory and time of parsing a log file: `mem_probe <file> [--live]`.
+//! Memory and time of reading a log file: `mem_probe <file> [--parsed | --live]`.
 //!
-//! Without `--live` the file is parsed in one go (`ParsedFile::from_bytes`).
+//! By default the file is read as the app reads a local file: Indexing
+//! builds its Line Index from disk (`IndexedFile::index_now`), and what it
+//! costs is the index, not the text. `--parsed` parses it in one go into
+//! entries held in memory (`ParsedFile::from_bytes`), as a file held whole
+//! is.
 //! With `--live` it is parsed line by line the way a live source delivers it,
 //! and the rows are copied into a second list as the merged view does, so the
 //! figure is what a row costs while it is open: the cached entry, the Raw
@@ -16,9 +20,45 @@ fn rss_mb() -> f64 {
     String::from_utf8_lossy(&out.stdout).trim().parse::<f64>().unwrap_or(0.0) / 1024.0
 }
 
+/// Peak RSS of this process so far, in MB.
+fn max_rss_mb() -> f64 {
+    let mut usage = std::mem::MaybeUninit::<libc::rusage>::uninit();
+    // SAFETY: getrusage fills the struct it is given.
+    let usage = unsafe {
+        libc::getrusage(libc::RUSAGE_SELF, usage.as_mut_ptr());
+        usage.assume_init()
+    };
+    // Bytes on macOS, KiB on Linux.
+    let bytes = if cfg!(target_os = "macos") { usage.ru_maxrss as f64 } else { usage.ru_maxrss as f64 * 1024.0 };
+    bytes / 1e6
+}
+
+fn indexed(path: &str) {
+    use log_gpui::index::file::IndexedFile;
+    use log_gpui::index::{DiskSource, HandleBudget, LineSource};
+    let len = std::fs::metadata(path).unwrap().len();
+    let before = rss_mb();
+    let t = std::time::Instant::now();
+    let source: std::sync::Arc<dyn LineSource> = std::sync::Arc::new(DiskSource::on_demand(path, HandleBudget::new(16)));
+    let file = IndexedFile::index_now(source, Default::default()).unwrap();
+    let took = t.elapsed();
+    let n = file.len();
+    println!(
+        "{n} lines, {:.1} MB file, Indexing {took:?}, +{:.0} MB ({:.0} bytes/line, index {:.0} bytes/line), max RSS {:.0} MB",
+        len as f64 / 1e6,
+        rss_mb() - before,
+        (rss_mb() - before) * 1e6 / n as f64,
+        file.heap_bytes() as f64 / n as f64,
+        max_rss_mb()
+    );
+}
+
 fn main() {
     let path = std::env::args().nth(1).expect("file");
     let live = std::env::args().any(|a| a == "--live");
+    if !live && !std::env::args().any(|a| a == "--parsed") {
+        return indexed(&path);
+    }
     let bytes = std::fs::read(&path).unwrap();
     let before = rss_mb();
     let t = std::time::Instant::now();
@@ -46,11 +86,12 @@ fn main() {
         (parsed.entries.len(), Box::new(parsed) as Box<dyn std::any::Any>)
     };
     println!(
-        "{n} lines, {:.1} MB file, parse {:?}, +{:.0} MB ({:.0} bytes/line), sizeof LogEntry {}",
+        "{n} lines, {:.1} MB file, parse {:?}, +{:.0} MB ({:.0} bytes/line), max RSS {:.0} MB, sizeof LogEntry {}",
         bytes.len() as f64 / 1e6,
         t.elapsed(),
         rss_mb() - before,
         (rss_mb() - before) * 1e6 / n as f64,
+        max_rss_mb(),
         std::mem::size_of::<log_gpui::model::LogEntry>()
     );
 }

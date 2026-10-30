@@ -224,12 +224,13 @@ Hiện tại (c8bf40d):
 ## 12. Dọn đường cũ và đo lại
 
 - [ ] 12.1 Xoá `ParsedFile::entries`, `ParsedFile::lines`, `AppView::all_entries` và các đường dựng view cũ (`build_space_view`, `build_file_view`, `timeline::materialize` nếu không còn dùng).
-- [ ] 12.2 Cập nhật `examples/mem_probe.rs` và `examples/perf_probe.rs` sang đường mới. Ghi số trước và sau vào design.md:
+- [x] 12.2 Cập nhật `examples/mem_probe.rs` và `examples/perf_probe.rs` sang đường mới. Ghi số trước và sau vào design.md:
   - thời gian mở
   - byte/dòng
   - RSS
   - chuyển tab
   - Search
+  - Đã làm: `mem_probe` mặc định đọc bằng Indexing (`--parsed` là đường cũ) và in RSS tối đa. `perf_probe` đo thêm Search khi Enter và chuyển tab. Số trước và sau ở mục "Số đo cuối" của design.md.
 - [ ] 12.3 Chạy toàn bộ `cargo test`, rồi kiểm tra bằng tay trên app thật: mở file 376MB, Search, Filter, Marker, Highlight, rotate, chuyển tab, mở lại app với nhiều tab.
 - [ ] 12.4 Viết proposal cho change tiếp theo: "Remote ghi ra cache local".
   - Nội dung: Remote File và Remote Command ghi vào `<app data>/remote-cache/`, rồi được index như file local; Dormant Tab Remote mở lại từ cache.

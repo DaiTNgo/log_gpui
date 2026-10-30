@@ -132,9 +132,15 @@ fn app_probe(n: usize) {
             let color = log_gpui::palette::next_rule_color(i);
             let _ = app.add_highlight_rule("level", &[v.to_string()], &[], color, cx);
         }
-        app.trigger_search_query("user=42", cx);
     });
     h.cx.run_until_parked();
+    // Enter in the Search field: a Scan of every line, read from disk.
+    time("app Search (Enter, every line)", || {
+        h.view.update(&mut h.cx, |app, cx| app.trigger_search_query("user=42", cx));
+        h.cx.run_until_parked();
+    });
+    let matches = h.view.read_with(&h.cx, |app, _| app.focus.search().matched_visible_indices.len());
+    println!("  matches {matches}");
 
     // A source that stands for a Remote File: the probe sends its events.
     let file_id = h.view.read_with(&h.cx, |app, _| app.parsed_files.keys().next().unwrap().clone());

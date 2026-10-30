@@ -352,6 +352,37 @@ Số đo bằng `perf_probe 1000000` (release, mở một Log Space 1.000.000 d�
 
 Kết quả của Search, Filter và trim giống hệt nhau. Thời gian dựng lại view gần như không đổi vì `FilterIndex::build` chiếm phần lớn. Mở file vẫn mất ~2,3 s, vì vẫn parse toàn bộ vào `ParsedFile`; phần này chỉ hết khi app đọc file qua Indexing.
 
+#### Số đo cuối (task 12.2, 2026-10-30)
+
+Bản release, máy 12 lõi, page cache nóng.
+
+`mem_probe` trên file 376 MB / 3.000.000 dòng (`index_probe --gen`). Mặc định giờ đọc như app đọc file local (`IndexedFile::index_now`); `--parsed` là đường cũ.
+
+| | Trước (số đo nền) | Đường cũ đo lại (`--parsed`) | Sau (Indexing) |
+|---|---|---|---|
+| Thời gian mở | 7,5 s | 2,68 s | 0,21–0,25 s |
+| RAM tăng | +1,4 GB, cộng +1,1 GB bản copy của view | +1.578 MB (526 B/dòng) | +226–244 MB (75–81 B/dòng) |
+| Line Index | | | 29 B/dòng |
+| RSS tối đa | 3,1 GB | 2.041 MB | 247–266 MB |
+
+Phần RAM tăng ngoài Line Index là bộ đệm đọc và allocator chưa trả lại.
+
+`perf_probe 3000000` (app thật trong harness GPUI, file 245 MB / 3.000.000 dòng):
+
+| | Sau |
+|---|---|
+| Mở Log Space (Indexing và dựng view) | 0,72 s, RSS +345 MB |
+| Dựng lại view đang mở | 58 ms |
+| Chuyển tab (Dormant Tab đọc lại) | 0,69–0,72 s |
+| Search, Enter (Scan mọi dòng từ đĩa) | 78 ms |
+| Search khi gõ: UI thread / Match sau khi dừng gõ | 2 ms / 77–94 ms |
+| Tick một Filter Value | 9,6 ms |
+| Đổi Time Range | 10,9 ms |
+
+Trước change này, chuyển tab đọc lại cả file như lúc mở (7,5 s với file 376 MB). Hai chỗ chậm tìm thấy khi đo và đã sửa:
+- Dựng view đọc lại mọi dòng để tính độ rộng cột (7.4): chuyển tab 7,1 s → 0,69 s.
+- Focus Pane đọc text của mọi dòng nó liệt kê: Filter Value 2,39 s → 9 ms, Search 3,39 s → 107 ms.
+
 ## Risks / Trade-offs
 
 - **Thay đổi lõi rất lớn**: `all_entries` được dùng ở rất nhiều nơi (Filter, Search, Focus Pane, Highlight, Minimap, Marker, Go to, Live trim, test). → Làm theo từng giai đoạn trong tasks.md, mỗi giai đoạn giữ test xanh. Dựng một lớp truy vấn (`ViewRows`) trước, chuyển dần các chỗ dùng sang đó, rồi mới bỏ `all_entries`.
