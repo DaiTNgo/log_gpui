@@ -1,6 +1,6 @@
 ## 1. Kho cache trên đĩa
 
-- [ ] 1.1 `src/remote/cache.rs`: `RemoteCache` cho một Remote File hoặc Remote Command (decision 1, 2).
+- [x] 1.1 `src/remote/cache.rs`: `RemoteCache` cho một Remote File hoặc Remote Command (decision 1, 2).
   - Thư mục `<app data>/remote-cache/<server id>/<fnv64 của path>/` (hoặc `cmd-<fnv64 của command>`), quyền 0700.
   - `meta.json` ghi atomic. Thiếu hoặc hỏng thì coi như chưa có cache.
   - `gen-<n>/seg-<k>.log`. Ghi nối thêm vào segment cuối, mở segment mới mỗi khoảng `window / 10` dòng.
@@ -8,6 +8,7 @@
   - Bỏ nguyên segment cũ nhất khi vẫn còn đủ `window` dòng; Clear.
   - Lock file theo pid: tiến trình thứ hai không dùng cache.
   - Test: ghi, chèn, cắt và Clear cho đúng các dòng, theo đúng thứ tự, sau khi mở lại thư mục.
+  - Đã làm: `RemoteCache::open`, `append`, `prepend`, `add_earlier_generation`, `begin_generation`, `trim_to`, `clear` và `set_checkpoint`. Segment ghi sau lần lưu cuối được đếm lại khi mở (`recover`). Test ở `tests/remote_cache_test.rs`. Chưa nối vào app.
 - [ ] 1.2 `ChainSource` của các segment theo thứ tự (dùng `index::ChainSource` có sẵn), để Line Index đọc cache như một file.
   - Test: `IndexedFile` trên chain cho cùng entries với việc parse cả text nối lại.
 

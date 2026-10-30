@@ -1,6 +1,7 @@
 //! Remote files over SSH: Servers, host keys, secrets, and the connections.
 
 pub mod browse;
+pub mod cache;
 pub mod command;
 pub mod compress;
 pub mod copy;
