@@ -3,6 +3,7 @@
 
 pub mod backward;
 pub mod buffer;
+pub mod cached;
 pub mod command;
 pub mod health;
 pub mod line_time;

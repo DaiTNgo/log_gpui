@@ -130,6 +130,33 @@ impl LineSource for DiskSource {
     }
 }
 
+/// A source read from `start` on: the lines of a Remote Cache segment
+/// after those that left the Live Window.
+pub struct OffsetSource {
+    inner: Arc<dyn LineSource>,
+    start: u64,
+}
+
+impl OffsetSource {
+    pub fn new(inner: Arc<dyn LineSource>, start: u64) -> Self {
+        Self { inner, start }
+    }
+}
+
+impl LineSource for OffsetSource {
+    fn len(&self) -> io::Result<u64> {
+        Ok(self.inner.len()?.saturating_sub(self.start))
+    }
+
+    fn read_at(&self, offset: u64, buf: &mut [u8]) -> io::Result<usize> {
+        self.inner.read_at(self.start + offset, buf)
+    }
+
+    fn release(&self) {
+        self.inner.release();
+    }
+}
+
 /// The Generations of a local file read live, end to end: each one read
 /// through its own handle, so the lines of a file rotated or replaced away
 /// stay readable. An older Generation keeps the length it had when the next

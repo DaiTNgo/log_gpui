@@ -46,6 +46,10 @@
   - Test với sshd thử: `remote_cache_app_test` (rời tab, Server ghi thêm 5 dòng, chọn lại tab: 3.000 dòng hiện ngay với số dòng thật, rồi chỉ 5 dòng mới được đọc, không trùng, không thiếu).
   - 7 test có sshd hỏng (`remote_command_source_test` ×6, `remote_edit_test::narrowing_a_live_glob…`). Chúng hỏng y hệt khi chưa có thay đổi này.
   - Text vẫn nằm trong RAM khi tab mở; phần đó là các task 4.1–4.7 (giai đoạn 2).
+- [x] 4.0b `CachedFile` (`src/live/cached.rs`): giữ những gì `LiveBuffer` giữ của một Remote File, nhưng ghi dòng vào `RemoteCache` và đọc qua `IndexedFile` (decision 3, 4).
+  - Gồm: số dòng tạm cho tới `TotalLines`, Break giữa các dòng (`IndexedFile::set_marks`), Generation, cắt Live Window chính xác tới từng dòng (segment được đọc từ sau các dòng đã rời, `OffsetSource`), Load more, Rotated File, Clear, `held_start` (từ `seg-<k>.lens`).
+  - Test `cached_file_test`: cùng chuỗi event cho `LiveBuffer` và `CachedFile` thì ra cùng số dòng, Generation, text và Break, cùng `held_start`.
+  - Cũng sửa: `parent` của Continuation Line trong Generation có `first_number` khác 1.
 - [ ] 4.1 Cờ `remote_cache_enabled` trên `AppView` (mặc định tắt cho tới nhóm 9). Khi bật, `ensure_remote_file_loaded` mở `RemoteCache` và một `IndexedFile` trên chain của nó thay cho `LiveBuffer` giữ dòng.
 - [ ] 4.2 `Tail` và `Append` ghi vào cache rồi `IndexedFile::extend`, như `apply_indexed_events` của file local.
   - Test: view, Filter, Search, Highlight và Marker giống hệt đường RAM với cùng chuỗi event.

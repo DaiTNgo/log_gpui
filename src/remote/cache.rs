@@ -57,8 +57,16 @@ fn sanitize(id: &str) -> String {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SegmentMeta {
     pub id: u32,
+    /// Lines held: the lines of its file after the skipped ones.
     pub lines: usize,
+    /// Bytes of its file.
     pub bytes: u64,
+    /// Lines at the start of its file that left the Live Window, and the
+    /// bytes they take: the segment is read from after them.
+    #[serde(default)]
+    pub skip_lines: usize,
+    #[serde(default)]
+    pub skip_bytes: u64,
 }
 
 /// Where the Server's file stood when the lines of a Generation were last
@@ -195,7 +203,7 @@ impl RemoteCache {
                 if len != seg.bytes {
                     match std::fs::read(&path) {
                         Ok(bytes) => {
-                            seg.lines = memchr::memchr_iter(b'\n', &bytes).count();
+                            seg.lines = memchr::memchr_iter(b'\n', &bytes).count().saturating_sub(seg.skip_lines);
                             seg.bytes = len;
                         }
                         Err(_) => return false,
@@ -251,7 +259,11 @@ impl RemoteCache {
             at += generation.lines();
             let gen_dir = self.dir.join(gen_name(generation.id));
             for seg in &generation.segments {
-                let source: Arc<dyn LineSource> = Arc::new(DiskSource::on_demand(gen_dir.join(seg_name(seg.id)), budget.clone()));
+                let disk = DiskSource::on_demand(gen_dir.join(seg_name(seg.id)), budget.clone());
+                let source: Arc<dyn LineSource> = match seg.skip_bytes {
+                    0 => Arc::new(disk),
+                    skip => Arc::new(crate::index::source::OffsetSource::new(Arc::new(disk), skip)),
+                };
                 match &chain {
                     Some(c) => {
                         c.push(source)?;
@@ -291,6 +303,11 @@ impl RemoteCache {
     /// An earlier Generation above all the others, read from the Rotated
     /// File `name`, its first line numbered `first_line_no`.
     pub fn add_earlier_generation(&mut self, name: &str, first_line_no: u64, lines: &[&str]) -> io::Result<()> {
+        self.add_earlier_generation_with(name, first_line_no, lines, &[])
+    }
+
+    /// `add_earlier_generation`, with the length of each line on the Server.
+    pub fn add_earlier_generation_with(&mut self, name: &str, first_line_no: u64, lines: &[&str], lens: &[u32]) -> io::Result<()> {
         let id = self.meta.generations.iter().map(|g| g.id + 1).max().unwrap_or(0);
         std::fs::create_dir_all(self.dir.join(gen_name(id)))?;
         self.meta.generations.insert(
@@ -303,11 +320,20 @@ impl RemoteCache {
                 rotated_name: Some(name.to_string()),
             },
         );
-        self.prepend(0, lines)
+        // Its lines' numbers are given: not moved by the prepend.
+        self.prepend_with(0, lines, lens)?;
+        self.meta.generations[0].first_line_no = first_line_no;
+        self.save()
     }
 
     /// Add `lines` after the last line of the newest Generation.
     pub fn append(&mut self, lines: &[&str]) -> io::Result<()> {
+        self.append_with(lines, &[])
+    }
+
+    /// `append`, with the length of each line on the Server (kept to find
+    /// where lines are in the file there; empty: not known).
+    pub fn append_with(&mut self, lines: &[&str], lens: &[u32]) -> io::Result<()> {
         if lines.is_empty() {
             return Ok(());
         }
@@ -317,16 +343,19 @@ impl RemoteCache {
         let mut rest = lines;
         while !rest.is_empty() {
             let generation = self.meta.generations.last_mut().expect("a Generation");
-            let full = generation.segments.last().is_none_or(|s| s.lines >= self.segment_lines);
+            let full = generation.segments.last().is_none_or(|s| s.lines + s.skip_lines >= self.segment_lines);
             if full {
                 let id = generation.segments.iter().map(|s| s.id + 1).max().unwrap_or(0);
-                generation.segments.push(SegmentMeta { id, lines: 0, bytes: 0 });
+                generation.segments.push(SegmentMeta { id, lines: 0, bytes: 0, skip_lines: 0, skip_bytes: 0 });
             }
             let generation = self.meta.generations.last_mut().expect("a Generation");
             let seg = generation.segments.last_mut().expect("a segment");
-            let take = (self.segment_lines - seg.lines.min(self.segment_lines)).max(1).min(rest.len());
-            let path = self.dir.join(gen_name(generation.id)).join(seg_name(seg.id));
-            seg.bytes += write_lines(&path, &rest[..take], true)?;
+            let used = seg.lines + seg.skip_lines;
+            let take = (self.segment_lines - used.min(self.segment_lines)).max(1).min(rest.len());
+            let gen_dir = self.dir.join(gen_name(generation.id));
+            seg.bytes += write_lines(&gen_dir.join(seg_name(seg.id)), &rest[..take], true)?;
+            let done = lines.len() - rest.len();
+            write_lens(&gen_dir.join(lens_name(seg.id)), lens.get(done..done + take).unwrap_or(&[]), take, true)?;
             seg.lines += take;
             rest = &rest[take..];
         }
@@ -337,6 +366,11 @@ impl RemoteCache {
     /// index): older lines read from the Server. Its first line number
     /// moves up by as many.
     pub fn prepend(&mut self, generation: usize, lines: &[&str]) -> io::Result<()> {
+        self.prepend_with(generation, lines, &[])
+    }
+
+    /// `prepend`, with the length of each line on the Server.
+    pub fn prepend_with(&mut self, generation: usize, lines: &[&str], lens: &[u32]) -> io::Result<()> {
         if lines.is_empty() {
             return Ok(());
         }
@@ -344,21 +378,36 @@ impl RemoteCache {
             return Err(io::Error::new(io::ErrorKind::NotFound, "no such Generation"));
         };
         let id = g.segments.iter().map(|s| s.id + 1).max().unwrap_or(0);
-        let path = self.dir.join(gen_name(g.id)).join(seg_name(id));
-        let bytes = write_lines(&path, lines, false)?;
-        g.segments.insert(0, SegmentMeta { id, lines: lines.len(), bytes });
+        let gen_dir = self.dir.join(gen_name(g.id));
+        let bytes = write_lines(&gen_dir.join(seg_name(id)), lines, false)?;
+        write_lens(&gen_dir.join(lens_name(id)), lens, lines.len(), false)?;
+        g.segments.insert(0, SegmentMeta { id, lines: lines.len(), bytes, skip_lines: 0, skip_bytes: 0 });
         g.first_line_no = g.first_line_no.saturating_sub(lines.len() as u64).max(1);
         self.save()
     }
 
-    /// Drop the oldest segments while `keep` lines or more stay: the Live
-    /// Window. An emptied earlier Generation goes too. Returns the lines
-    /// dropped.
-    pub fn trim_to(&mut self, keep: usize) -> io::Result<usize> {
-        let mut total = self.lines();
-        let mut dropped = 0;
-        while let Some(first) = self.meta.generations.first() {
-            let Some(seg) = first.segments.first() else {
+    /// The length on the Server of each line held of Generation
+    /// `generation` (its index), top to bottom (0 where not known).
+    pub fn lens_of(&self, generation: usize) -> Vec<u32> {
+        let Some(g) = self.meta.generations.get(generation) else { return Vec::new() };
+        let gen_dir = self.dir.join(gen_name(g.id));
+        let mut out = Vec::with_capacity(g.lines());
+        for seg in &g.segments {
+            let raw = std::fs::read(gen_dir.join(lens_name(seg.id))).unwrap_or_default();
+            let mut lens: Vec<u32> = raw.chunks_exact(4).map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]])).collect();
+            lens.resize(seg.lines + seg.skip_lines, 0);
+            out.extend_from_slice(&lens[seg.skip_lines..]);
+        }
+        out
+    }
+
+    /// Drop the oldest `count` lines held: the Live Window. A segment whose
+    /// lines all left goes; one with some left is read from after them. An
+    /// emptied earlier Generation goes too.
+    pub fn drop_top(&mut self, mut count: usize) -> io::Result<()> {
+        while count > 0 {
+            let Some(g) = self.meta.generations.first_mut() else { break };
+            let Some(seg) = g.segments.first_mut() else {
                 if self.meta.generations.len() == 1 {
                     break;
                 }
@@ -366,19 +415,42 @@ impl RemoteCache {
                 let _ = std::fs::remove_dir_all(self.dir.join(gen_name(g.id)));
                 continue;
             };
-            if total - seg.lines < keep {
-                break;
+            let gen_dir = self.dir.join(gen_name(g.id));
+            if seg.lines <= count {
+                count -= seg.lines;
+                g.first_line_no += seg.lines as u64;
+                let id = seg.id;
+                g.segments.remove(0);
+                let _ = std::fs::remove_file(gen_dir.join(seg_name(id)));
+                let _ = std::fs::remove_file(gen_dir.join(lens_name(id)));
+                continue;
             }
-            let (gen_id, seg) = (first.id, seg.clone());
-            let _ = std::fs::remove_file(self.dir.join(gen_name(gen_id)).join(seg_name(seg.id)));
-            let g = &mut self.meta.generations[0];
-            g.segments.remove(0);
-            g.first_line_no += seg.lines as u64;
-            total -= seg.lines;
-            dropped += seg.lines;
+            // Some of its lines stay: find where the first of them starts.
+            let text = std::fs::read(gen_dir.join(seg_name(seg.id)))?;
+            let mut at = seg.skip_bytes as usize;
+            for _ in 0..count {
+                at = memchr::memchr(b'\n', &text[at..]).map_or(text.len(), |i| at + i + 1);
+            }
+            seg.skip_bytes = at as u64;
+            seg.skip_lines += count;
+            seg.lines -= count;
+            g.first_line_no += count as u64;
+            count = 0;
         }
+        // An earlier Generation left empty goes.
+        while self.meta.generations.len() > 1 && self.meta.generations[0].lines() == 0 {
+            let g = self.meta.generations.remove(0);
+            let _ = std::fs::remove_dir_all(self.dir.join(gen_name(g.id)));
+        }
+        self.save()
+    }
+
+    /// Keep at most `keep` lines: the oldest go (`drop_top`). Returns the
+    /// lines dropped.
+    pub fn trim_to(&mut self, keep: usize) -> io::Result<usize> {
+        let dropped = self.lines().saturating_sub(keep);
         if dropped > 0 {
-            self.save()?;
+            self.drop_top(dropped)?;
         }
         Ok(dropped)
     }
@@ -397,6 +469,15 @@ impl RemoteCache {
             }
         }
         self.meta.extended = false;
+        self.save()
+    }
+
+    /// The number of the first line of Generation `generation` (its
+    /// index): known now, or the first line of an empty one.
+    pub fn set_first_line_no(&mut self, generation: usize, first_line_no: u64) -> io::Result<()> {
+        if let Some(g) = self.meta.generations.get_mut(generation) {
+            g.first_line_no = first_line_no;
+        }
         self.save()
     }
 
@@ -426,7 +507,7 @@ impl RemoteCache {
             self.meta.generations.push(GenerationMeta {
                 id,
                 first_line_no: snap.first_line_no,
-                segments: vec![SegmentMeta { id: 0, lines: snap.lines.len(), bytes }],
+                segments: vec![SegmentMeta { id: 0, lines: snap.lines.len(), bytes, skip_lines: 0, skip_bytes: 0 }],
                 checkpoint: snap.checkpoint.clone(),
                 rotated_name: None,
             });
@@ -444,9 +525,10 @@ impl RemoteCache {
             let (mut lines, mut lens) = (Vec::new(), Vec::new());
             for seg in &generation.segments {
                 let text = std::fs::read(gen_dir.join(seg_name(seg.id)))?;
-                lines.extend(String::from_utf8_lossy(&text).lines().map(str::to_string));
+                let held = &text[(seg.skip_bytes as usize).min(text.len())..];
+                lines.extend(String::from_utf8_lossy(held).lines().map(str::to_string));
                 if let Ok(raw) = std::fs::read(gen_dir.join(lens_name(seg.id))) {
-                    lens.extend(raw.chunks_exact(4).map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]])));
+                    lens.extend(raw.chunks_exact(4).map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]])).skip(seg.skip_lines));
                 }
             }
             if lens.len() != lines.len() {
@@ -507,6 +589,14 @@ fn write_lines(path: &Path, lines: &[&str], append: bool) -> io::Result<u64> {
     let mut file = std::fs::OpenOptions::new().create(true).append(append).write(true).truncate(!append).open(path)?;
     file.write_all(out.as_bytes())?;
     Ok(out.len() as u64)
+}
+
+/// Write the lengths of `count` lines to `path` (zeros past `lens`):
+/// added at its end, or as a new file.
+fn write_lens(path: &Path, lens: &[u32], count: usize, append: bool) -> io::Result<()> {
+    let bytes: Vec<u8> = (0..count).flat_map(|i| lens.get(i).copied().unwrap_or(0).to_le_bytes()).collect();
+    let mut file = std::fs::OpenOptions::new().create(true).append(append).write(true).truncate(!append).open(path)?;
+    file.write_all(&bytes)
 }
 
 pub fn read_meta(dir: &Path) -> io::Result<CacheMeta> {

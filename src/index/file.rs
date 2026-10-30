@@ -32,6 +32,8 @@ pub struct IndexedFile {
     generations: Mutex<Vec<GenerationStart>>,
     /// The source of a local file read live: its Generations end to end.
     chain: Option<Arc<ChainSource>>,
+    /// Breaks above lines inside a Generation, by position.
+    marks: Mutex<std::collections::BTreeMap<usize, Arc<crate::live::BreakMark>>>,
 }
 
 /// Most bytes `IndexedFile::extend` indexes in one call.
@@ -115,6 +117,7 @@ impl IndexedFile {
             fingerprint,
             generations,
             chain: None,
+            marks: Mutex::default(),
         }
     }
 
@@ -137,6 +140,7 @@ impl IndexedFile {
             fingerprint: Mutex::new(self.fingerprint.lock().unwrap().clone()),
             generations: Mutex::new(self.generations.lock().unwrap().clone()),
             chain: self.chain.clone(),
+            marks: Mutex::new(self.marks.lock().unwrap().clone()),
         }
     }
 
@@ -205,10 +209,21 @@ impl IndexedFile {
         entry.index = start.first_number + n - start.pos;
         entry.generation = start.generation;
         // The line above a Generation is no parent of its lines.
-        entry.parent = entry.parent.and_then(|p| (p > start.pos).then(|| p - start.pos));
+        entry.parent = entry.parent.and_then(|p| (p > start.pos).then(|| p - start.pos + start.first_number - 1));
         if n == start.pos {
             entry.break_before = start.mark;
         }
+        if let Some(mark) = self.marks.lock().unwrap().get(&n) {
+            entry.break_before = Some(mark.clone());
+        }
+    }
+
+    /// The Breaks drawn above lines that do not start a Generation, by
+    /// position: those of a Remote File (disconnected, older lines left the
+    /// Live Window, …).
+    pub fn set_marks(&self, marks: std::collections::BTreeMap<usize, Arc<crate::live::BreakMark>>) {
+        *self.marks.lock().unwrap() = marks;
+        self.cache.lock().unwrap().forget_file(0);
     }
 
     /// What the indexed part of the file was.

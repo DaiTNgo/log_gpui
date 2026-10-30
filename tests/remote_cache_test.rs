@@ -23,6 +23,7 @@ fn held(cache: &RemoteCache) -> Vec<String> {
         .segment_paths()
         .iter()
         .flat_map(|(_, p)| std::fs::read_to_string(p).unwrap().lines().map(str::to_string).collect::<Vec<_>>())
+        .skip(cache.meta().generations.first().and_then(|g| g.segments.first()).map_or(0, |s| s.skip_lines))
         .collect()
 }
 
@@ -70,10 +71,18 @@ fn the_live_window_drops_whole_segments_from_the_top() {
     let mut cache = RemoteCache::open(&dir, "srv-1", target(), 10).unwrap();
     cache.append(&refs(&lines(0..55))).unwrap();
     let dropped = cache.trim_to(30).unwrap();
-    assert_eq!(dropped, 20, "two whole segments; 35 lines stay, at least the window");
-    assert_eq!(held(&cache), lines(20..55));
-    assert_eq!(cache.meta().generations[0].first_line_no, 21);
-    assert_eq!(cache.trim_to(30).unwrap(), 0, "dropping one more would leave fewer than the window");
+    assert_eq!(dropped, 25, "two whole segments, and five lines of the third");
+    assert_eq!(cache.segment_paths().len(), 4);
+    assert_eq!(cache.meta().generations[0].first_line_no, 26);
+    assert_eq!(cache.trim_to(30).unwrap(), 0);
+    // Read from after the lines that left, as one source too.
+    let (chain, _) = cache.chain(log_gpui::index::HandleBudget::new(8)).unwrap();
+    use log_gpui::index::LineSource as _;
+    let text = String::from_utf8(chain.read_range(0, chain.len().unwrap() as usize).unwrap()).unwrap();
+    assert_eq!(text.lines().map(str::to_string).collect::<Vec<_>>(), lines(25..55));
+    drop(cache);
+    let cache = RemoteCache::open(&dir, "srv-1", target(), 10).unwrap();
+    assert_eq!(cache.lines(), 30, "opened again");
 }
 
 #[test]
