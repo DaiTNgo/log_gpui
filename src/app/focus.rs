@@ -146,10 +146,21 @@ impl AppView {
         let sections = self.sections_if_raw();
         let rows = self.apply_find_filter(rows, &sections);
         self.focus_rows = Arc::new(rows);
-        let texts: Vec<gpui::SharedString> =
-            Self::focus_row_texts(self.view.bind(&self.parsed_files), &sections, &self.focus_rows).collect();
-        self.focus_longest = super::filter::longest(texts.iter().map(|t| t.len()));
-        self.focus.find_mut().compute_hits(texts.iter().map(|t| t.as_str()), false);
+        if self.focus.find().is_active() {
+            let texts: Vec<gpui::SharedString> =
+                Self::focus_row_texts(self.view.bind(&self.parsed_files), &sections, &self.focus_rows).collect();
+            self.focus_longest = super::filter::longest(texts.iter().map(|t| t.len()));
+            self.focus.find_mut().compute_hits(texts.iter().map(|t| t.as_str()), false);
+        } else {
+            // Nothing to find: the longest row from the Line Index, no line
+            // read.
+            let entries = self.view.bind(&self.parsed_files);
+            self.focus_longest = super::filter::longest(self.focus_rows.iter().map(|row| match *row {
+                FocusRow::Entry(ix) => entries.line_len(ix).unwrap_or(0),
+                FocusRow::Raw { section, line } => sections.get(section).and_then(|s| s.lines.line_len(line)).unwrap_or(0),
+            }));
+            self.focus.find_mut().compute_hits(std::iter::empty(), false);
+        }
         self.pane_selection = None;
     }
 

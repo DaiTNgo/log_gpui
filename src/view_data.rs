@@ -154,6 +154,14 @@ impl<'a> FileEntries<'a> {
         }
     }
 
+    /// How long the line at `pos` is, in bytes: nothing is read.
+    pub fn line_len(&self, pos: usize) -> Option<usize> {
+        match self {
+            FileEntries::Held(entries) => entries.get(pos).map(|e| e.raw_line.len()),
+            FileEntries::Indexed(file) => file.line_len(pos),
+        }
+    }
+
     /// The entry at `pos` if nothing has to be read for it.
     pub fn cached(&self, pos: usize) -> Option<RowRef<'a>> {
         match self {
@@ -362,6 +370,12 @@ impl<'a> BoundRows<'a> {
 
     pub fn get(&self, row: usize) -> Option<RowRef<'a>> {
         self.entry_of(self.data.rows.packed(row)?)
+    }
+
+    /// How long `row`'s line is, in bytes: nothing is read.
+    pub fn line_len(&self, row: usize) -> Option<usize> {
+        let (file, pos) = self.data.get(row)?;
+        self.file(file)?.line_len(pos)
     }
 
     /// The entry of `row` if nothing has to be read for it.

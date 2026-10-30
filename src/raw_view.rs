@@ -186,7 +186,15 @@ impl RawLines {
         }
     }
 
-    /// Every line: what is held, or read from the file once and kept.
+    /// How long line `i` is, in bytes: nothing is read.
+    pub fn line_len(&self, i: usize) -> Option<usize> {
+        match self {
+            Self::Held(lines) => lines.get(i).map(|l| l.len()),
+            Self::Indexed(file) => file.line_len(i),
+        }
+    }
+
+    /// Every line: what is held, or read from the file now.
     pub fn all(&self) -> std::sync::Arc<Vec<gpui::SharedString>> {
         match self {
             Self::Held(lines) => lines.clone(),

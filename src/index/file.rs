@@ -357,6 +357,12 @@ impl IndexedFile {
         Arc::new(lines.into_iter().map(gpui::SharedString::from).collect())
     }
 
+    /// The length in bytes of line `n`, line break included, from the Line
+    /// Index: nothing is read.
+    pub fn line_len(&self, n: usize) -> Option<usize> {
+        self.indexed.data.read().unwrap().file.lines.span(n).map(|(_, len)| len as usize)
+    }
+
     /// The text of line `n`, through the cache of the rows last read.
     pub fn line(&self, n: usize) -> Option<gpui::SharedString> {
         self.entry(n).map(|e| e.raw_line.clone())

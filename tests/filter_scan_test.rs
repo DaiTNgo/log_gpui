@@ -115,3 +115,20 @@ fn each_entry_at_gives_a_continuation_line_its_parent() {
     assert_eq!(seen[2].1, text_of(900));
     assert_eq!(seen[3].1, text_of(file.len() - 1));
 }
+
+/// The Focus Pane lists what passes the Filter without reading those lines:
+/// with nothing to find, its widest row comes from the Line Index.
+#[gpui::test]
+fn the_focus_pane_reads_no_line_to_list_what_passes(cx: &mut TestAppContext) {
+    let mut h = open_app_with_lines(cx, &lines());
+    h.view.update(&mut h.cx, |app, cx| {
+        let file = app.parsed_files.values().next().and_then(|p| p.indexed.clone()).expect("read through its Line Index");
+        file.forget_cached();
+        app.filter_toggle_value("module", "api", cx);
+        assert!(app.focus_rows.len() > 3000);
+        assert!(file.cached_entry(2000).is_none(), "no line far down was read");
+        let longest = app.rows().get(app.focus_longest).map(|e| e.raw_line.len()).unwrap();
+        let widest = (0..app.view.len()).filter_map(|r| app.rows().get(r).map(|e| e.raw_line.len())).max().unwrap();
+        assert_eq!(longest, widest);
+    });
+}
