@@ -232,8 +232,12 @@ Hiện tại (c8bf40d):
   - Search
   - Đã làm: `mem_probe` mặc định đọc bằng Indexing (`--parsed` là đường cũ) và in RSS tối đa. `perf_probe` đo thêm Search khi Enter và chuyển tab. Số trước và sau ở mục "Số đo cuối" của design.md.
 - [ ] 12.3 Chạy toàn bộ `cargo test`, rồi kiểm tra bằng tay trên app thật: mở file 376MB, Search, Filter, Marker, Highlight, rotate, chuyển tab, mở lại app với nhiều tab.
-- [ ] 12.4 Viết proposal cho change tiếp theo: "Remote ghi ra cache local".
+- [x] 12.4 Viết proposal cho change tiếp theo: "Remote ghi ra cache local".
   - Nội dung: Remote File và Remote Command ghi vào `<app data>/remote-cache/`, rồi được index như file local; Dormant Tab Remote mở lại từ cache.
   - Hai câu hỏi mở cần trả lời: quy tắc dọn cache, và cách đồng bộ theo hash khối qua SFTP.
+  - Đã làm: change `remote-local-cache`, mới có proposal.md (đề xuất, chờ người dùng duyệt). Proposal đề xuất câu trả lời cho hai câu hỏi:
+    - Dọn cache: khi file rời Log Space; quét lúc khởi động; giới hạn 2 GB, bỏ file lâu nhất chưa được mở; bỏ sau 14 ngày không mở.
+    - Đồng bộ: so hash 4 KiB đầu và 4 KiB trước kích thước cache qua SFTP, khớp thì chỉ tải phần mới, không thì mở Generation mới.
+  - Change đó thay task 9.4.
 - [x] 12.5 Cập nhật CONTEXT.md theo mục "Domain changes" của proposal: thêm Line Index, Indexing, Scan và Dormant Tab; sửa Remote Log Space và Live Window; thêm các quy tắc mới.
   - Đã làm: bốn thuật ngữ mới ở nhóm Views. Remote Log Space đã thành Live Log Space (change `static-live-log-spaces`): nó nhận dòng khi một tab của nó đang mở, rời tab thì dừng nhưng giữ kết nối. Live Window vốn đã ghi Local Live File không có. Quy tắc mới 42–44 (Reading Never Blocks, Text Stays On Disk, Only The Open Tab Reads). Sửa quy tắc 15 (giá trị hiện dần trong lúc Indexing) và L2 (Raw View là một danh sách, Follow giữ nó ở dòng cuối).
