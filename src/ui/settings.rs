@@ -618,7 +618,7 @@ fn rows_of(section: SettingsSection, view: &Entity<AppView>, v: &Values, cx: &Ap
             let view = view.clone();
             vec![Row {
                 title: "Wrap long lines",
-                description: "Wrap lines longer than the window in the Raw View instead of scrolling sideways.",
+                description: "Wrap lines longer than the window while editing a scratch file in the Raw View, instead of scrolling sideways. Read-only files always scroll sideways.",
                 control: Switch::new("raw-soft-wrap")
                     .checked(v.wrap)
                     .on_click(move |checked: &bool, window, app| {

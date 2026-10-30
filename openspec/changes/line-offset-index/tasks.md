@@ -178,8 +178,11 @@ Hiện tại (c8bf40d):
 
 ## 8. Raw View và Scratch
 
-- [ ] 8.1 Raw View đọc dòng qua `ViewRows` và LRU, bỏ `ParsedFile::lines`.
+- [x] 8.1 Raw View đọc dòng qua `ViewRows` và LRU, bỏ `ParsedFile::lines`.
   - Test: chạy lại test của `raw-view` (File Section, Search, Marker).
+  - Đã làm (người dùng chọn virtual list, 2026-10-30): section chỉ đọc (Static, Live, Scratch xem ở Log Space) là một `uniform_list` chung (`app::raw_list`). Hàng gồm header (khi có nhiều section), hàng thao tác của Remote File, Break nằm giữa các dòng, và dòng có số dòng. Bảng hàng tính bằng số học, không giữ danh sách. Dòng đọc qua `IndexedFile::line` (LRU) khi được vẽ, không có bản sao text nào: `IndexedFile` bỏ cache `all_lines`. Chọn text bằng chuột trong một section để ⌘C hoặc đặt Marker. Click chọn dòng hiện tại, click trên Marker mở bar đổi màu. Match và Marker tô trên dòng đang vẽ. Search trong Raw View đọc file bằng `scan_all`, chưa chạy ở nền. Nháy dòng khi nhảy tới, Follow giữ list ở dòng cuối cả khi cửa sổ đổi cỡ. Scratch mở như File View vẫn là Editor.
+  - Đo trong app (bản release, file 80 MB, 1.000.000 dòng, Search khớp mọi dòng): mở Raw View hiện ngay, RSS 394 MB. Bản trước sau 20 giây vẫn đang dựng Editor, RSS 669 MB.
+  - Thay đổi hành vi: section chỉ đọc không còn Soft wrap và không có con trỏ bàn phím của Editor. `ParsedFile::lines` của file giữ trong RAM (Remote) vẫn còn, bỏ ở 12.1.
 - [x] 8.2 Scratch: Line Index dựng trên bytes của `raw.texts` (`LineSource` trong memory); sửa thì index lại file đó.
   - Test: gõ, dán, xoá dòng giữ đúng Marker và số dòng.
   - Đã làm: file Scratch được đọc bằng `IndexedFile::index_now` trên `BytesSource` (`ensure_scratch_loaded`, `scratch_parsed`), với Log Format và Detected Field của nó. Sửa thì `reparse_edited_scratch_files` index lại text trong memory. Raw View của Scratch vẫn sửa trên `raw.texts`. Marker vẫn theo `line_hash` như trước: dòng đổi text thì Marker bị bỏ khi lưu, Marker không dời theo dòng được dán thêm.

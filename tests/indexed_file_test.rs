@@ -81,7 +81,7 @@ fn the_raw_view_reads_an_indexed_file_s_lines() {
     assert_eq!(lines.get(7), held.get(7).cloned(), "one line, read from the file");
     let all = lines.all();
     assert_eq!(*all, *held, "every line");
-    assert!(Arc::ptr_eq(&all, &lines.all()), "read once, then kept");
+    assert!(!Arc::ptr_eq(&all, &lines.all()), "read again each time: the file keeps no copy of its text");
     assert_eq!(lines.get(9), held.get(9).cloned());
 }
 

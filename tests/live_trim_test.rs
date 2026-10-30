@@ -69,15 +69,15 @@ fn sync_raw(f: &mut Files) {
     f.h.cx.update(|window, cx| view.update(cx, |app, cx| app.sync_raw_editors(window, cx)));
 }
 
-fn editor_texts(f: &mut Files) -> Vec<(String, String, String)> {
-    f.h.view.read_with(&f.h.cx, |app, cx| {
-        app.raw
-            .editors
+/// Each File Section of the Raw View: the lines it shows and those held.
+fn section_texts(f: &mut Files) -> Vec<(String, String, String)> {
+    f.h.view.read_with(&f.h.cx, |app, _| {
+        app.raw_sections()
             .iter()
-            .map(|(id, e)| {
-                let shown = e.state.read(cx).value().to_string();
-                let held = app.parsed_files[id].lines.join("\n");
-                (id.clone(), shown, held)
+            .map(|s| {
+                let shown: Vec<String> = (0..s.lines.len()).filter_map(|i| s.lines.get(i)).map(|l| l.to_string()).collect();
+                let held = app.parsed_files[&s.file_id].lines.join("\n");
+                (s.file_id.clone(), shown.join("\n"), held)
             })
             .collect()
     })
@@ -88,19 +88,16 @@ fn the_raw_view_cuts_the_oldest_lines_from_its_text(cx: &mut TestAppContext) {
     let mut f = open(cx, &[("alpha", 0), ("beta", 1)], 100, 130);
     f.h.view.update(&mut f.h.cx, |app, _| app.view_mode = log_gpui::workspace::working_set::ViewMode::Raw);
     sync_raw(&mut f);
-    assert_eq!(editor_texts(&mut f).len(), 2, "an editor per file");
+    assert_eq!(section_texts(&mut f).len(), 2, "a section per file");
+    assert!(f.h.view.read_with(&f.h.cx, |app, _| app.raw.editors.is_empty()), "read-only sections are the list");
     for n in 0..3 {
         let start = 100 + n * 40;
         f.send("alpha", lines("alpha", start..start + 40, 0));
         f.send("beta", lines("beta", start..start + 3, 1));
         f.pump();
-        assert!(
-            f.h.view.read_with(&f.h.cx, |app, _| app.raw.stale.is_empty()),
-            "batch {n}: no editor is built again"
-        );
         sync_raw(&mut f);
-        for (id, shown, held) in editor_texts(&mut f) {
-            assert_eq!(shown, held, "batch {n}: the editor of {id} shows the lines held");
+        for (id, shown, held) in section_texts(&mut f) {
+            assert_eq!(shown, held, "batch {n}: the section of {id} shows the lines held");
         }
     }
 }

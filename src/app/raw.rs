@@ -1,6 +1,7 @@
 //! Logic: Raw View. Each file of the open Log Space is a collapsible File
-//! Section showing its text line by line. Imported files are read-only; a
-//! scratch file is edited in an editor and saved by itself after a pause.
+//! Section showing its text line by line. Read-only files are one
+//! virtualized list (`raw_list`); a scratch file opened as a File View is
+//! edited in an editor and saved by itself after a pause.
 //!
 //! Raw View ignores Filter, so Search here looks at every line of every
 //! section, only highlights, and never hides anything.
@@ -74,7 +75,7 @@ pub struct RawViewState {
     save_gen: HashMap<String, u64>,
     pub matches: Vec<RawMatch>,
     pub current: usize,
-    /// Whether long lines wrap in the editors.
+    /// Whether long lines wrap in the editors (a scratch file being edited).
     pub soft_wrap: bool,
     /// A Match to bring into view on the next render: `(file_id, 0-based line)`.
     pending_reveal: Option<(String, usize)>,
@@ -99,6 +100,14 @@ pub struct RawViewState {
     pub stale: HashSet<String>,
     /// Follow wants every File Section at its last line on the next render.
     pub scroll_to_end: bool,
+    /// Where the list of read-only sections is drawn (task 8.1).
+    pub list_bounds: std::rc::Rc<std::cell::Cell<gpui::Bounds<gpui::Pixels>>>,
+    /// Text selected in that list, and whether the mouse is dragging it.
+    pub list_selection: Option<crate::app::raw_list::RawSelection>,
+    pub list_selecting: bool,
+    /// The line a jump last landed on in the list, flashed: `(file_id,
+    /// 0-based line, when)`.
+    pub list_flash: Option<(String, usize, std::time::Instant)>,
 }
 
 impl RawViewState {
@@ -124,6 +133,10 @@ impl RawViewState {
             pending_appends: HashMap::new(),
             pending_trims: HashMap::new(),
             stale: HashSet::new(),
+            list_bounds: Default::default(),
+            list_selection: None,
+            list_selecting: false,
+            list_flash: None,
         }
     }
 
@@ -295,7 +308,9 @@ impl AppView {
         if appended && search_focused {
             self.search_input.update(cx, |state, cx| state.focus(window, cx));
         }
-        for section in self.raw_sections() {
+        // Read-only sections are the list (task 8.1): only a section edited
+        // here has an editor.
+        for section in self.raw_sections().into_iter().filter(|s| s.editable) {
             if self.raw.editors.contains_key(&section.file_id) {
                 continue;
             }
@@ -367,7 +382,16 @@ impl AppView {
         }
         // Follow: every File Section shows its last line. The offset past the
         // end is clamped to the bottom once the editor is laid out.
+        // The list stays at its last line while it follows, also when the
+        // window grows.
+        let list_off_end = self.raw.editors.is_empty() && self.raw.scroll.is_scrolled_to_end() == Some(false);
+        if self.live.follow && self.active_space_is_live() && list_off_end {
+            self.raw.scroll_to_end = true;
+        }
         if std::mem::take(&mut self.raw.scroll_to_end) && self.live.follow {
+            if self.raw.editors.is_empty() {
+                self.raw_list_to_end();
+            }
             for editor in self.raw.editors.values() {
                 editor.state.update(cx, |state, cx| {
                     let x = state.scroll_offset().x;
@@ -514,6 +538,10 @@ impl AppView {
 
     /// ⌘C in the Raw View: copy the selected imported line.
     pub fn copy_selected_raw_line(&mut self, cx: &mut Context<Self>) {
+        if let Some(text) = self.raw_selected_text() {
+            cx.write_to_clipboard(gpui::ClipboardItem::new_string(text));
+            return;
+        }
         let Some((file_id, line)) = self.raw.selected.clone() else { return };
         let text = self
             .raw_sections()
@@ -594,6 +622,7 @@ impl AppView {
 
     /// Collapse the selection of every Raw View editor.
     fn clear_raw_selections(&mut self, cx: &mut Context<Self>) {
+        self.raw.list_selection = None;
         for editor in self.raw.editors.values() {
             editor.state.update(cx, |state, cx| {
                 let at = state.cursor();
@@ -619,6 +648,10 @@ impl AppView {
         }
         // A bar opened for something else (a rule's palette) stays as it is.
         if self.color_bar.is_some() && !raw_open {
+            return;
+        }
+        // The list opens its bar itself, when a drag or a click ends.
+        if self.raw.editors.is_empty() {
             return;
         }
         let pos = point(
@@ -706,18 +739,13 @@ impl AppView {
     fn compute_raw_matches(&mut self, reset: bool) {
         let sections = self.raw_sections();
         self.raw.matches = match &self.focus.search().matcher {
-            Some(matcher) => {
-                let all: Vec<Arc<Vec<gpui::SharedString>>> = sections.iter().map(|s| s.lines.all()).collect();
-                let lists: Vec<&[gpui::SharedString]> = all.iter().map(|l| l.as_slice()).collect();
-                raw_view::search_sections(matcher, &lists)
-                    .into_iter()
-                    .map(|m| RawMatch {
-                        // Keep file identity through section index.
-                        section: m.section,
-                        line: m.line,
-                    })
-                    .collect()
-            }
+            Some(matcher) => sections
+                .iter()
+                .enumerate()
+                .flat_map(|(section, s)| {
+                    raw_view::search_lines(matcher, &s.lines).into_iter().map(move |line| RawMatch { section, line })
+                })
+                .collect(),
             None => Vec::new(),
         };
         if reset || self.raw.current >= self.raw.matches.len() {
@@ -762,6 +790,10 @@ impl AppView {
         if self.is_section_collapsed(&section.file_id) {
             self.set_section_collapsed(&section.file_id, false, cx);
         }
+        if !sections.iter().any(|s| s.editable) {
+            self.reveal_raw_list_line(section_ix, line);
+            return;
+        }
         let single = sections.len() == 1;
         // Stacked editors: scroll the column to the line.
         let mut offset = 0.0;
@@ -783,6 +815,9 @@ impl AppView {
     pub(crate) fn flash_raw_line(&mut self, file_id: &str, line: usize, cx: &mut Context<Self>) {
         if let Some(old) = self.raw.flash.take() {
             old.dispose(cx);
+        }
+        if self.raw.editors.is_empty() {
+            return self.flash_raw_list_line(file_id, line, cx);
         }
         let sections = self.raw_sections();
         let Some((si, section)) = sections.iter().enumerate().find(|(_, s)| *s.file_id == *file_id) else { return };

@@ -34,6 +34,7 @@ pub mod quick_connect;
 pub mod server_dialog;
 pub mod ssh_import;
 pub mod raw;
+pub mod raw_list;
 mod panels;
 mod projects;
 pub mod rename;

@@ -6,8 +6,8 @@ use gpui::TestAppContext;
 use log_gpui::workspace::log_space::{ImportSource, LogSpaceKind};
 
 fn paint(h: &mut common::Harness) {
-    // A resize lays the window out; the editors apply their scroll on the
-    // layout after the one that made them.
+    // A resize lays the window out; the list applies its scroll on the
+    // layout after the one that asked for it.
     for i in 0..3 {
         h.cx.simulate_resize(gpui::size(gpui::px(1200.0 + i as f32), gpui::px(800.0)));
         h.cx.run_until_parked();
@@ -32,31 +32,29 @@ fn open_raw(cx: &mut TestAppContext, files: &[&str]) -> common::Harness {
     h
 }
 
-/// How far each File Section's editor is scrolled down, in pixels.
-fn scrolled(h: &common::Harness) -> Vec<f32> {
-    h.view.read_with(&h.cx, |app, cx| {
-        app.raw_sections()
-            .iter()
-            .filter_map(|s| app.raw.editors.get(&s.file_id))
-            .map(|e| -f32::from(e.state.read(cx).scroll_offset().y))
-            .collect()
+/// How far the Raw View's list is scrolled down, in pixels, and how far
+/// it can be.
+fn scrolled(h: &common::Harness) -> (f32, f32) {
+    h.view.read_with(&h.cx, |app, _| {
+        let handle = app.raw.scroll.0.borrow();
+        let base = &handle.base_handle;
+        (-f32::from(base.offset().y), f32::from(base.max_offset().y))
     })
 }
 
 #[gpui::test]
 fn a_followed_raw_view_opens_at_the_last_lines(cx: &mut TestAppContext) {
     let h = open_raw(cx, &["one.log"]);
-    let offsets = scrolled(&h);
-    assert_eq!(offsets.len(), 1);
-    assert!(offsets[0] > 1000.0, "scrolled to the end: {offsets:?}");
+    let (y, max) = scrolled(&h);
+    assert!(max > 1000.0 && y >= max - 1.0, "scrolled to the end: {y} of {max}");
 }
 
 #[gpui::test]
 fn every_file_section_follows(cx: &mut TestAppContext) {
+    // One list holds both sections: the last line of the last one shows.
     let h = open_raw(cx, &["one.log", "two.log"]);
-    let offsets = scrolled(&h);
-    assert_eq!(offsets.len(), 2);
-    assert!(offsets.iter().all(|y| *y > 1000.0), "{offsets:?}");
+    let (y, max) = scrolled(&h);
+    assert!(max > 1000.0 && y >= max - 1.0, "scrolled to the end: {y} of {max}");
 }
 
 #[gpui::test]
@@ -73,7 +71,7 @@ fn with_follow_off_the_raw_view_stays_at_the_top(cx: &mut TestAppContext) {
         app.set_follow(false, cx);
     });
     paint(&mut h);
-    assert_eq!(scrolled(&h), vec![0.0]);
+    assert_eq!(scrolled(&h).0, 0.0);
 }
 
 #[gpui::test]

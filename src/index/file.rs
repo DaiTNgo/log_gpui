@@ -26,8 +26,6 @@ pub struct IndexedFile {
     pub indexed: Arc<Indexed>,
     options: IndexOptions,
     cache: Mutex<RowCache>,
-    /// Every line's text, once something needed all of them (the Raw View).
-    all_lines: Mutex<Option<Arc<Vec<gpui::SharedString>>>>,
     fingerprint: Mutex<Fingerprint>,
     /// Where each Generation starts, oldest first: a file not read live has
     /// one.
@@ -111,7 +109,6 @@ impl IndexedFile {
             indexed,
             options,
             cache: Mutex::new(RowCache::new(ROW_CACHE)),
-            all_lines: Mutex::default(),
             fingerprint,
             generations,
             chain: None,
@@ -134,7 +131,6 @@ impl IndexedFile {
             indexed: self.indexed.clone(),
             options,
             cache: Mutex::new(RowCache::new(ROW_CACHE)),
-            all_lines: Mutex::default(),
             fingerprint: Mutex::new(self.fingerprint.lock().unwrap().clone()),
             generations: Mutex::new(self.generations.lock().unwrap().clone()),
             chain: self.chain.clone(),
@@ -353,25 +349,17 @@ impl IndexedFile {
         Ok(())
     }
 
-    /// The text of every line, read from the file the first time and then
-    /// kept with the file (empty when the file no longer has them).
+    /// The text of every line, read from the file now: nothing keeps it
+    /// (empty when the file no longer has them).
     pub fn all_lines(&self) -> Arc<Vec<gpui::SharedString>> {
-        let mut all = self.all_lines.lock().unwrap();
-        all.get_or_insert_with(|| {
-            let data = self.indexed.data.read().unwrap();
-            let lines = super::read_lines(&*self.source, &data.file.lines, 0..data.file.len()).unwrap_or_default();
-            Arc::new(lines.into_iter().map(gpui::SharedString::from).collect())
-        })
-        .clone()
+        let data = self.indexed.data.read().unwrap();
+        let lines = super::read_lines(&*self.source, &data.file.lines, 0..data.file.len()).unwrap_or_default();
+        Arc::new(lines.into_iter().map(gpui::SharedString::from).collect())
     }
 
-    /// The text of line `n`.
+    /// The text of line `n`, through the cache of the rows last read.
     pub fn line(&self, n: usize) -> Option<gpui::SharedString> {
-        let all = self.all_lines.lock().unwrap().clone();
-        match all {
-            Some(lines) => lines.get(n).cloned(),
-            None => self.entry(n).map(|e| e.raw_line.clone()),
-        }
+        self.entry(n).map(|e| e.raw_line.clone())
     }
 
     /// Index what was written to the file since: its whole new lines, and
@@ -436,7 +424,6 @@ impl IndexedFile {
         super::indexing::index_more(&mut data, bytes, &self.options, locked);
         let new_len = data.file.len();
         *self.fingerprint.lock().unwrap() = fingerprint_of(&*self.source, data.file.lines.end());
-        *self.all_lines.lock().unwrap() = None;
         let first = cut_last.map_or(count, |(last, _)| last);
         Ok(Extended::Appended { range: first..new_len, replaced_last: cut_last.is_some(), more })
     }

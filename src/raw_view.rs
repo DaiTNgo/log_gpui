@@ -25,6 +25,22 @@ pub fn search_sections<S: AsRef<str>>(matcher: &Matcher, sections: &[&[S]]) -> V
     matches
 }
 
+/// The lines (0-based) of `lines` that match, read as a Scan reads them:
+/// a file through its Line Index, on every core, with no copy of its text.
+pub fn search_lines(matcher: &Matcher, lines: &RawLines) -> Vec<usize> {
+    match lines {
+        RawLines::Held(held) => held.iter().enumerate().filter(|(_, t)| matcher.is_match(t)).map(|(i, _)| i).collect(),
+        RawLines::Indexed(file) => {
+            let texts = file.texts();
+            let m = matcher.clone();
+            let find = move |first: usize, lines: &[&str]| -> Vec<u32> {
+                lines.iter().enumerate().filter(|(_, l)| m.is_match(l)).map(|(i, _)| (first + i) as u32).collect()
+            };
+            crate::index::scan::scan_all(&texts, 0..file.len(), &find).lines.into_iter().map(|l| l as usize).collect()
+        }
+    }
+}
+
 /// Rows of the flat list that shows the sections: one header per section,
 /// then its lines unless it is collapsed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
