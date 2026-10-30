@@ -123,6 +123,8 @@ pub struct LiveRuntime {
     /// Where a Remote File restored from its cache reads on from, until its
     /// source starts.
     pub resume_from: HashMap<String, crate::live::remote::ResumeFrom>,
+    /// Remote Files read through their Remote Cache (stage 2).
+    pub cached: HashMap<String, crate::live::cached::CachedFile>,
     /// Local files that grew by more than one batch: indexed on soon
     /// (task 9.1), and whether that is scheduled.
     pub index_more: HashSet<String>,
@@ -168,6 +170,7 @@ impl LiveRuntime {
             local_deleted: HashSet::new(),
             checkpoints: HashMap::new(),
             resume_from: HashMap::new(),
+            cached: HashMap::new(),
             index_more: HashSet::new(),
             index_more_scheduled: false,
             first_marks: HashMap::new(),
@@ -292,6 +295,7 @@ impl AppView {
         let left: Vec<String> = self.parsed_files.keys().filter(|id| !keep.contains(*id)).cloned().collect();
         for id in &left {
             self.snapshot_remote_file(id);
+            self.close_cached(id);
             self.live.checkpoints.remove(id);
         }
         self.parsed_files.retain(|id, _| keep.contains(id));
@@ -355,6 +359,7 @@ impl AppView {
             }
             // What was received goes to the Remote Cache, for next time.
             self.snapshot_remote_file(&file_id);
+            self.close_cached(&file_id);
             self.live.checkpoints.remove(&file_id);
             self.parsed_files.remove(&file_id);
         }
@@ -540,6 +545,15 @@ impl AppView {
             .cloned()
             .collect();
         for file_id in remote_ids {
+            if let Some(cached) = self.live.cached.get_mut(&file_id) {
+                let limit = cached.limit(window, self.live.full_read_limit);
+                if let Ok(Some(trimmed)) = cached.trim_to_window(limit) {
+                    self.refresh_cached_parsed(&file_id);
+                    self.drop_markers_for(&file_id, &trimmed);
+                    trimmed_any = true;
+                }
+                continue;
+            }
             if let Some(parsed) = self.parsed_files.get_mut(&file_id) {
                 if let Some(mut buffer) = parsed.live.take() {
                     // A smaller window drops at once, not after 10% more.
@@ -748,6 +762,9 @@ impl AppView {
         let mut delta = FileDelta::default();
         let window = self.live.window;
         let time = now_label();
+        if self.live.cached.contains_key(file_id) {
+            return self.apply_cached_events(file_id, events);
+        }
         let Some(mut parsed) = self.parsed_files.remove(file_id) else { return delta };
         if parsed.indexed.is_some() {
             return self.apply_indexed_events(file_id, parsed, events);
@@ -893,6 +910,158 @@ impl AppView {
         if let Some(trimmed) = delta.trimmed.clone() {
             self.drop_markers_for(file_id, &trimmed);
         }
+        delta
+    }
+
+    /// Events of a Remote File read through its Remote Cache (stage 2 of
+    /// `remote-local-cache`): as `LiveBuffer` takes them, the lines written
+    /// to the cache and read through its Line Index.
+    fn apply_cached_events(&mut self, file_id: &str, events: Vec<SourceEvent>) -> FileDelta {
+        let mut delta = FileDelta::default();
+        let window = self.live.window;
+        let full_read_limit = self.live.full_read_limit;
+        let time = now_label();
+        let mut failed = None;
+        for event in events {
+            if let Some(source) = self.live.sources.get_mut(file_id) {
+                source.health.observe(&event, std::time::SystemTime::now());
+            }
+            if !matches!(event, SourceEvent::Inode(_) | SourceEvent::Checkpoint { .. }) {
+                delta.shown = true;
+            }
+            let Some(cached) = self.live.cached.get_mut(file_id) else { break };
+            let applied = match event {
+                SourceEvent::Tail { lines, bytes, end_offset, .. } => cached.apply_tail(&lines, &bytes, end_offset),
+                SourceEvent::Backfill { lines, bytes, .. } => cached.apply_backfill(&lines, &bytes),
+                SourceEvent::Older { lines, bytes, reached_start, before_start_time, .. } => {
+                    self.live.loading_more.remove(file_id);
+                    cached.apply_older(&lines, &bytes, reached_start, before_start_time)
+                }
+                SourceEvent::Earlier { start, lines, bytes, last_line_no, reached_start } => {
+                    if reached_start || start.is_none() && lines.is_empty() {
+                        self.live.loading_earlier.remove(file_id);
+                    }
+                    let applied = cached.apply_earlier(start.as_ref(), &lines, &bytes, last_line_no);
+                    if cached.len() > window {
+                        cached.hold = crate::live::HoldMode::Extended;
+                    }
+                    applied
+                }
+                SourceEvent::EarlierAvailable(file) => {
+                    self.live.loading_earlier.remove(file_id);
+                    let full = cached.len() >= full_read_limit;
+                    let set = cached.set_earlier_available(file.as_ref(), full);
+                    match file {
+                        Some(file) => self.live.earlier.insert(file_id.to_string(), file),
+                        None => self.live.earlier.remove(file_id),
+                    };
+                    set.map(|_| crate::live::cached::Applied { structural: true, ..Default::default() })
+                }
+                SourceEvent::StartTimeOverflow { lines, since } => {
+                    cached.set_start_overflow(lines, &since);
+                    Ok(crate::live::cached::Applied { structural: true, ..Default::default() })
+                }
+                SourceEvent::Progress(progress) => {
+                    match progress {
+                        Some(p) => self.live.progress.insert(file_id.to_string(), p),
+                        None => self.live.progress.remove(file_id),
+                    };
+                    Ok(Default::default())
+                }
+                SourceEvent::OlderUnavailable => {
+                    self.live.loading_more.remove(file_id);
+                    cached.mark_changed();
+                    Ok(crate::live::cached::Applied { structural: true, ..Default::default() })
+                }
+                SourceEvent::Inode(inode) => {
+                    cached.set_inode(inode);
+                    Ok(Default::default())
+                }
+                SourceEvent::Append { lines, bytes, .. } => cached.apply_append(&lines, &bytes),
+                SourceEvent::TotalLines(total) => {
+                    if total.is_none()
+                        && let Some(source) = self.live.sources.get_mut(file_id)
+                    {
+                        source.numbers_unavailable = true;
+                    }
+                    let generation = cached.generation;
+                    cached.apply_total(total).map(|moved| {
+                        if moved.is_some() {
+                            delta.renumbered = moved;
+                            delta.generation = generation;
+                        }
+                        crate::live::cached::Applied { structural: moved.is_some(), ..Default::default() }
+                    })
+                }
+                SourceEvent::Break { kind } => {
+                    let applied = cached.apply_break(kind, &time).map(|_| crate::live::cached::Applied {
+                        structural: kind.starts_generation(),
+                        ..Default::default()
+                    });
+                    if kind.starts_generation() {
+                        self.begin_generation_for(file_id);
+                    }
+                    applied
+                }
+                SourceEvent::Checkpoint { generation, inode, server_end, head_hash, tail_hash } => {
+                    let checkpoint = crate::remote::cache::Checkpoint {
+                        generation,
+                        inode,
+                        server_end,
+                        head_hash: Some(head_hash),
+                        tail_hash: Some(tail_hash),
+                    };
+                    cached.set_checkpoint(checkpoint).map(|_| Default::default())
+                }
+                SourceEvent::Problem(message) => {
+                    self.notice = Some(message);
+                    Ok(Default::default())
+                }
+                SourceEvent::Status(status) => {
+                    if let Some(source) = self.live.sources.get_mut(file_id) {
+                        source.status = status;
+                    }
+                    Ok(Default::default())
+                }
+                // A Remote File has no Runs and no edits of a command.
+                SourceEvent::Run { .. } | SourceEvent::CommandChanged { .. } => Ok(Default::default()),
+            };
+            match applied {
+                Ok(applied) => {
+                    if applied.generations_moved {
+                        self.shift_generations_for(file_id);
+                    }
+                    delta.structural |= applied.structural;
+                    if let Some(range) = applied.appended {
+                        delta.appended = Some(match delta.appended.take() {
+                            Some(old) => old.start..range.end,
+                            None => range,
+                        });
+                    }
+                }
+                Err(e) => failed = Some(e),
+            }
+        }
+        if let Some(cached) = self.live.cached.get_mut(file_id) {
+            let limit = cached.limit(window, full_read_limit);
+            match cached.trim_to_window(limit) {
+                Ok(Some(trimmed)) => {
+                    delta.structural = true;
+                    self.drop_markers_for(file_id, &trimmed);
+                }
+                Ok(None) => {}
+                Err(e) => failed = Some(e),
+            }
+        }
+        if let Some(e) = failed {
+            self.notice = Some(format!("Could not keep the lines of {file_id}: {e}"));
+        }
+        // Rows were inserted above or dropped: the appended range means
+        // nothing then, the view is built again.
+        if delta.structural {
+            delta.appended = None;
+        }
+        self.refresh_cached_parsed(file_id);
         delta
     }
 

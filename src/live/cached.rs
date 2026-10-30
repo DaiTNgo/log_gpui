@@ -96,6 +96,97 @@ impl CachedFile {
         })
     }
 
+    /// A Remote File as its cache kept it when its tab was left: its lines,
+    /// numbered as on the Server, and where its source reads on from.
+    /// `None` when the cache holds nothing it can read on from.
+    pub fn restore(
+        name: impl Into<String>,
+        cache: RemoteCache,
+        options: IndexOptions,
+        budget: Arc<HandleBudget>,
+    ) -> io::Result<Option<(Self, super::remote::ResumeFrom)>> {
+        let name = name.into();
+        let meta = cache.meta();
+        let Some(newest) = meta.generations.last() else { return Ok(None) };
+        let cp = newest.checkpoint.clone();
+        let (Some(head_hash), Some(tail_hash)) = (cp.head_hash, cp.tail_hash) else { return Ok(None) };
+        if cache.lines() == 0 || meta.generations.iter().any(|g| !super::buffer::is_real_line_number(g.first_line_no as usize)) {
+            return Ok(None);
+        }
+        let next_index = (newest.first_line_no + newest.lines() as u64) as usize;
+        let extended = meta.extended;
+        let (chain, file, segments) = Self::index(&cache, &options, &budget, cp.generation, &BTreeMap::new())?;
+        let mut restored = Self {
+            name,
+            cache,
+            budget,
+            options,
+            chain,
+            file,
+            segments,
+            generation: cp.generation,
+            next_index,
+            numbers_known: true,
+            tail_last_index: None,
+            next_offset: cp.server_end,
+            pending: None,
+            disconnected_at: None,
+            hold: if extended { HoldMode::Extended } else { HoldMode::Window },
+            clear_mark: None,
+            inodes: vec![(cp.generation, cp.inode)],
+            marks: BTreeMap::new(),
+        };
+        // A Break "rotated" between the Generations kept.
+        let gens = restored.cache.meta().generations.clone();
+        for (i, g) in gens.iter().enumerate().skip(1) {
+            if g.lines() > 0 {
+                let label = format!("{} rotated", restored.name);
+                restored.marks.insert((restored.number_of(i), g.first_line_no as usize), Arc::new(BreakMark { kind: BreakKind::Rotated, label }));
+            }
+        }
+        restored.place_marks();
+        let from = super::remote::ResumeFrom { generation: cp.generation, inode: cp.inode, server_end: cp.server_end, head_hash, tail_hash };
+        Ok(Some((restored, from)))
+    }
+
+    /// The tab is left: the lines received after the last Checkpoint go
+    /// (the source sends them again next time), so the cache ends where
+    /// the Checkpoint says. When they do not line up, the cache is left
+    /// with no Checkpoint and is read anew next time.
+    pub fn close(mut self) -> io::Result<()> {
+        let newest = self.newest();
+        let cp = self.cache.meta().generations[newest].checkpoint.clone();
+        let lens = self.cache.lens_of(newest);
+        let lined_up = cp.generation == self.generation && cp.head_hash.is_some() && {
+            let mut extra = self.next_offset.checked_sub(cp.server_end);
+            let mut count = 0;
+            for len in lens.iter().rev() {
+                match extra {
+                    Some(0) | None => break,
+                    Some(e) if u64::from(*len) <= e && *len > 0 => {
+                        extra = Some(e - u64::from(*len));
+                        count += 1;
+                    }
+                    _ => {
+                        extra = None;
+                        break;
+                    }
+                }
+            }
+            match extra {
+                Some(0) => {
+                    self.cache.drop_bottom(count)?;
+                    true
+                }
+                _ => false,
+            }
+        };
+        if !lined_up {
+            self.cache.set_checkpoint(crate::remote::cache::Checkpoint::default())?;
+        }
+        self.cache.set_extended(self.hold == HoldMode::Extended)
+    }
+
     /// The lines as a Line Index reads them.
     pub fn file(&self) -> Arc<IndexedFile> {
         self.file.clone()

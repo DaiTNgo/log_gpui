@@ -50,17 +50,26 @@
   - Gồm: số dòng tạm cho tới `TotalLines`, Break giữa các dòng (`IndexedFile::set_marks`), Generation, cắt Live Window chính xác tới từng dòng (segment được đọc từ sau các dòng đã rời, `OffsetSource`), Load more, Rotated File, Clear, `held_start` (từ `seg-<k>.lens`).
   - Test `cached_file_test`: cùng chuỗi event cho `LiveBuffer` và `CachedFile` thì ra cùng số dòng, Generation, text và Break, cùng `held_start`.
   - Cũng sửa: `parent` của Continuation Line trong Generation có `first_number` khác 1.
-- [ ] 4.1 Cờ `remote_cache_enabled` trên `AppView` (mặc định tắt cho tới nhóm 9). Khi bật, `ensure_remote_file_loaded` mở `RemoteCache` và một `IndexedFile` trên chain của nó thay cho `LiveBuffer` giữ dòng.
-- [ ] 4.2 `Tail` và `Append` ghi vào cache rồi `IndexedFile::extend`, như `apply_indexed_events` của file local.
+- [x] 4.1 Cờ `remote_cache_enabled` trên `AppView` (mặc định tắt cho tới nhóm 9). Khi bật, `ensure_remote_file_loaded` mở `RemoteCache` và một `IndexedFile` trên chain của nó thay cho `LiveBuffer` giữ dòng.
+- [x] 4.2 `Tail` và `Append` ghi vào cache rồi `IndexedFile::extend`, như `apply_indexed_events` của file local.
   - Test: view, Filter, Search, Highlight và Marker giống hệt đường RAM với cùng chuỗi event.
-- [ ] 4.3 `Backfill`, `Older` (Load more), `Earlier` (Rotated File): chèn segment hoặc Generation lên trên, index lại ở nền, view dựng lại và giữ vị trí (decision 3). Breaks `StartOfLoaded`, `BeforeStartTime`, `EarlierAvailable` và `LeftWindow` giữ nguyên.
-- [ ] 4.4 Cắt Live Window, Back to Live Window và Clear đổi thành thao tác trên cache, rồi index lại.
+- [x] 4.3 `Backfill`, `Older` (Load more), `Earlier` (Rotated File): chèn segment hoặc Generation lên trên, index lại ở nền, view dựng lại và giữ vị trí (decision 3). Breaks `StartOfLoaded`, `BeforeStartTime`, `EarlierAvailable` và `LeftWindow` giữ nguyên.
+- [x] 4.4 Cắt Live Window, Back to Live Window và Clear đổi thành thao tác trên cache, rồi index lại.
   - Marker của dòng rời cache bị bỏ, như L12.
   - `hold_info` lấy từ `LiveBuffer` chỉ còn trạng thái (decision 4).
   - Test: so với `trimming_one_file_equals_building_the_view_again`.
-- [ ] 4.5 Break của source (Rotated, Truncated, Disconnected, Reconnected) mở Generation mới trong cache đúng như `begin_generation_state` hiện tại.
-- [ ] 4.6 `Checkpoint` được ghi vào `meta.json`; `last_opened` được cập nhật khi tab được chọn.
+- [x] 4.5 Break của source (Rotated, Truncated, Disconnected, Reconnected) mở Generation mới trong cache đúng như `begin_generation_state` hiện tại.
+- [x] 4.6 `Checkpoint` được ghi vào `meta.json`; `last_opened` được cập nhật khi tab được chọn.
+  - Đã làm 4.1–4.6 cùng lúc vì chúng dùng chung một nhánh event (`apply_cached_events`), nên chỉ có một commit:
+    - Cờ `remote_cache_index`. `ensure_remote_file_loaded` mở `CachedFile`, nạp lại từ cache nếu có Checkpoint (`CachedFile::restore`), không thì tạo mới. `ParsedFile` chỉ có `indexed`, không có `entries` và `lines`.
+    - Mọi event của Remote File đi qua `CachedFile`. Cắt Live Window và cấu trúc đổi thì view dựng lại.
+    - `hold_info`, Clear, Load more, Rotated File, Back to Live Window và đổi Live Window đều chạy với `CachedFile`.
+    - Rời tab thì `CachedFile::close` bỏ các dòng sau Checkpoint cuối (`RemoteCache::drop_bottom`).
+  - Test:
+    - `cached_remote_app_test`: không cần sshd. Cùng chuỗi event thì view (rows, Break, Filter, Match, `hold_info`) giống đường RAM, và không có text trong memory.
+    - `remote_cache_app_test` (sshd thử): với cờ bật, quay lại tab chỉ đọc 5 dòng mới.
 - [ ] 4.7 Ghi cache lỗi (đĩa đầy) thì báo một lần, và file đó quay về giữ dòng trong `BytesSource` cho tới khi đóng tab.
+  - Hiện tại: lỗi ghi chỉ hiện thành notice. Chưa có đường quay về giữ dòng trong memory.
 
 ## 5. Mở lại từ cache
 

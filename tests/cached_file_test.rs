@@ -214,3 +214,34 @@ fn clear_is_alike() {
     f.append(&lines(60..70));
     f.same("after clear");
 }
+
+/// Leaving the tab keeps the lines up to the last Checkpoint; opening it
+/// again shows them, numbered as on the Server, and reads on from there.
+#[test]
+fn closed_and_restored_the_lines_end_at_the_checkpoint() {
+    use log_gpui::remote::cache::Checkpoint;
+    let dir = tempfile::tempdir().unwrap();
+    let target = CacheTarget::File { path: "/var/log/app.log".into() };
+    let at = dir_for(dir.path(), "srv", &target);
+    let cache = RemoteCache::open(&at, "srv", target.clone(), 20).unwrap();
+    let mut f = CachedFile::new("web1:app.log", cache, Default::default(), HandleBudget::new(64)).unwrap();
+    let first = lines(0..100);
+    let end: u64 = bytes(&first).iter().map(|b| u64::from(*b)).sum();
+    f.apply_tail(&first, &bytes(&first), end).unwrap();
+    f.apply_total(Some(first.len() + 500)).unwrap();
+    f.set_checkpoint(Checkpoint { generation: 0, inode: Some(7), server_end: end, head_hash: Some(1), tail_hash: Some(2) }).unwrap();
+    // Received after the Checkpoint: sent again next time.
+    let later = lines(100..120);
+    f.apply_append(&later, &bytes(&later)).unwrap();
+    let want: Vec<String> = (0..first.len()).map(|i| f.file().line(i).unwrap().to_string()).collect();
+    f.close().unwrap();
+
+    let cache = RemoteCache::open(&at, "srv", target, 20).unwrap();
+    let (f, from) = CachedFile::restore("web1:app.log", cache, Default::default(), HandleBudget::new(64)).unwrap().unwrap();
+    assert_eq!(f.len(), first.len());
+    let file = f.file();
+    assert_eq!(file.entry(0).unwrap().index, 501, "numbered as on the Server");
+    assert_eq!((0..f.len()).map(|i| file.line(i).unwrap().to_string()).collect::<Vec<_>>(), want);
+    assert_eq!((from.server_end, from.inode, from.head_hash, from.tail_hash), (end, Some(7), 1, 2));
+    assert_eq!(f.held_start().offset, Some(0), "the oldest line is at the start of the file");
+}

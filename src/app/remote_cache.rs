@@ -141,3 +141,87 @@ impl AppView {
         Some(parsed)
     }
 }
+
+// ── Stage 2: Remote Files read through their Remote Cache ───────────────────
+
+impl AppView {
+    /// Lines a segment of a Remote File's cache takes: a tenth of the Live
+    /// Window, so the window's cut drops whole segments most of the time.
+    fn cache_segment_lines(&self) -> usize {
+        (self.live.window / 10).max(1_000)
+    }
+
+    /// The Remote File `file_id` read through its Remote Cache, as it was
+    /// kept or new; `None` when the cache cannot be used (stage 2 off,
+    /// another app window holds it): it then holds its lines in memory.
+    pub(crate) fn open_cached_remote_file(&mut self, file_id: &str, name: &str) -> Option<ParsedFile> {
+        if !self.remote_cache_enabled || !self.remote_cache_index {
+            return None;
+        }
+        let (dir, server_id, target) = self.remote_cache_dir(file_id)?;
+        let file = self.workspace_state.projects.iter().flat_map(|p| p.log_spaces.iter()).find_map(|s| s.file(file_id)).cloned()?;
+        let (_, options) = self.index_options_for(&file);
+        let budget = self.live.handle_budget.clone();
+        let lines = self.cache_segment_lines();
+        let cache = RemoteCache::open(&dir, &server_id, target.clone(), lines).ok()?;
+        let cached = match crate::live::cached::CachedFile::restore(name, cache, options.clone(), budget.clone()) {
+            Ok(Some((cached, from))) => {
+                self.live.resume_from.insert(file_id.to_string(), from);
+                let generation = cached.generation;
+                if let Some(project) = self.active_project_mut() {
+                    for space in &mut project.log_spaces {
+                        if let Some(f) = space.file_mut(file_id) {
+                            f.generation = generation;
+                        }
+                    }
+                }
+                cached
+            }
+            Ok(None) => {
+                let cache = RemoteCache::open(&dir, &server_id, target, lines).ok()?;
+                crate::live::cached::CachedFile::new(name, cache, options, budget).ok()?
+            }
+            Err(_) => return None,
+        };
+        let parsed = cached_parsed(&cached);
+        self.live.cached.insert(file_id.to_string(), cached);
+        Some(parsed)
+    }
+
+    /// The Remote File's lines as the view reads them now.
+    pub(crate) fn refresh_cached_parsed(&mut self, file_id: &str) {
+        let Some(cached) = self.live.cached.get(file_id) else { return };
+        let parsed = cached_parsed(cached);
+        let format_id = self.parsed_files.get(file_id).and_then(|p| p.format_id.clone());
+        self.parsed_files.insert(file_id.to_string(), ParsedFile { format_id, ..parsed });
+    }
+
+    /// The tab of the Remote File is left: its cache ends at its last
+    /// Checkpoint, for next time.
+    pub(crate) fn close_cached(&mut self, file_id: &str) {
+        if let Some(cached) = self.live.cached.remove(file_id)
+            && let Err(e) = cached.close()
+        {
+            self.notice = Some(format!("Could not keep the lines of {file_id}: {e}"));
+        }
+    }
+
+    pub(crate) fn close_all_cached(&mut self) {
+        let ids: Vec<String> = self.live.cached.keys().cloned().collect();
+        for id in ids {
+            self.close_cached(&id);
+        }
+    }
+}
+
+/// A `ParsedFile` reading the lines of `cached` through its Line Index.
+fn cached_parsed(cached: &crate::live::cached::CachedFile) -> ParsedFile {
+    let file = cached.file();
+    let max_chars = file.indexed.data.read().unwrap().max_chars.clone();
+    ParsedFile {
+        max_chars,
+        raw_breaks: std::sync::Arc::new(cached.marks_by_position()),
+        indexed: Some(file),
+        ..ParsedFile::empty()
+    }
+}

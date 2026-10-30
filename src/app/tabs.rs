@@ -297,6 +297,11 @@ impl AppView {
         if self.parsed_files.contains_key(file_id) {
             return;
         }
+        // Read through its Remote Cache: kept from last time, or new.
+        if !is_command && let Some(parsed) = self.open_cached_remote_file(file_id, name) {
+            self.parsed_files.insert(file_id.to_string(), parsed);
+            return;
+        }
         // Kept from last time: shown at once, read on from where it ended.
         if !is_command && let Some(parsed) = self.remote_file_from_cache(file_id, name) {
             self.parsed_files.insert(file_id.to_string(), parsed);

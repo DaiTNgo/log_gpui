@@ -229,6 +229,9 @@ pub struct AppView {
     /// Remote Files keep their lines in a Remote Cache when their tab is
     /// left (openspec change `remote-local-cache`).
     pub remote_cache_enabled: bool,
+    /// Remote Files read their lines through their Remote Cache while their
+    /// tab is open, instead of holding them in memory (stage 2).
+    pub remote_cache_index: bool,
     /// Bumped whenever rows left or moved in the open view (not when rows
     /// were only added at the end): a scan of the rows before that is stale.
     pub rows_epoch: u64,
@@ -586,6 +589,7 @@ impl AppView {
             read_progress_shown: false,
             index_local_files: true,
             remote_cache_enabled: true,
+            remote_cache_index: false,
             rows_epoch: 0,
             time_range_generation: 0,
             remote,

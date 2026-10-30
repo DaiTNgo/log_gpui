@@ -445,6 +445,41 @@ impl RemoteCache {
         self.save()
     }
 
+    /// Drop the newest `count` lines: lines received after the last
+    /// Checkpoint, which the source sends again when it reads on from it.
+    pub fn drop_bottom(&mut self, mut count: usize) -> io::Result<()> {
+        while count > 0 {
+            let Some(g) = self.meta.generations.last_mut() else { break };
+            let gen_dir = self.dir.join(gen_name(g.id));
+            let Some(seg) = g.segments.last_mut() else { break };
+            if seg.lines <= count {
+                count -= seg.lines;
+                let id = seg.id;
+                g.segments.pop();
+                let _ = std::fs::remove_file(gen_dir.join(seg_name(id)));
+                let _ = std::fs::remove_file(gen_dir.join(lens_name(id)));
+                continue;
+            }
+            let path = gen_dir.join(seg_name(seg.id));
+            let text = std::fs::read(&path)?;
+            // The start of the first of the last `count` lines.
+            let mut end = text.len();
+            for _ in 0..count {
+                end = memchr::memrchr(b'\n', &text[..end.saturating_sub(1)]).map_or(0, |i| i + 1);
+            }
+            std::fs::OpenOptions::new().write(true).open(&path)?.set_len(end as u64)?;
+            let lens = gen_dir.join(lens_name(seg.id));
+            let kept = (seg.skip_lines + seg.lines - count) as u64 * 4;
+            if let Ok(file) = std::fs::OpenOptions::new().write(true).open(&lens) {
+                file.set_len(kept)?;
+            }
+            seg.lines -= count;
+            seg.bytes = end as u64;
+            count = 0;
+        }
+        self.save()
+    }
+
     /// Keep at most `keep` lines: the oldest go (`drop_top`). Returns the
     /// lines dropped.
     pub fn trim_to(&mut self, keep: usize) -> io::Result<usize> {

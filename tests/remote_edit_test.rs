@@ -80,8 +80,13 @@ fn space<'a>(app: &'a AppView, id: &str) -> &'a LogSpace {
     app.workspace_state.active_project().unwrap().log_space(id).unwrap()
 }
 
+/// The lines a file holds: in memory, or read through its Remote Cache.
 fn lines(app: &AppView, file_id: &str) -> Vec<String> {
-    app.parsed_files.get(file_id).map(|p| p.lines.iter().map(|l| l.to_string()).collect()).unwrap_or_default()
+    let Some(p) = app.parsed_files.get(file_id) else { return Vec::new() };
+    match &p.indexed {
+        Some(file) => (0..file.len()).filter_map(|i| file.line(i)).map(|l| l.to_string()).collect(),
+        None => p.lines.iter().map(|l| l.to_string()).collect(),
+    }
 }
 
 fn names(app: &AppView, id: &str) -> Vec<String> {

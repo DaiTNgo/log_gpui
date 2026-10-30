@@ -131,9 +131,15 @@ impl AppView {
         if !self.is_live_remote_file(file_id) {
             return None;
         }
-        let parsed = self.parsed_files.get(file_id)?;
-        let buffer = parsed.live.as_ref()?;
-        let at_start = buffer.at_generation_start(parsed);
+        // Read through its Remote Cache, or held in memory.
+        let (held, extended, at_start) = match self.live.cached.get(file_id) {
+            Some(cached) => (cached.len(), cached.hold == HoldMode::Extended, cached.at_generation_start()),
+            None => {
+                let parsed = self.parsed_files.get(file_id)?;
+                let buffer = parsed.live.as_ref()?;
+                (parsed.entries.len(), buffer.hold == HoldMode::Extended, buffer.at_generation_start(parsed))
+            }
+        };
         let status = self.live.sources.get(file_id).map(|s| &s.status);
         let command = self.live.sources.get(file_id).is_some_and(|s| s.command);
         let load_more_off = if command {
@@ -142,17 +148,17 @@ impl AppView {
             Some("Already at the first line")
         } else if !matches!(status, Some(SourceStatus::Live)) {
             Some("Disconnected")
-        } else if parsed.entries.len() >= self.live.full_read_limit {
+        } else if held >= self.live.full_read_limit {
             Some(AT_FULL_READ_LIMIT)
         } else {
             None
         };
         Some(HoldInfo {
-            lines: parsed.entries.len(),
-            extended: buffer.hold == HoldMode::Extended,
+            lines: held,
+            extended,
             at_start,
             loading: self.live.loading_more.contains(file_id),
-            remaining: self.live.full_read_limit.saturating_sub(parsed.entries.len()),
+            remaining: self.live.full_read_limit.saturating_sub(held),
             load_more_off,
             command,
         })
@@ -214,6 +220,22 @@ impl AppView {
         let time = now_label();
         let mut cleared: HashSet<String> = HashSet::new();
         for file_id in file_ids {
+            if let Some(cached) = self.live.cached.get_mut(file_id) {
+                match cached.clear(&time) {
+                    Ok(trimmed) => self.drop_markers_for(file_id, &trimmed),
+                    Err(e) => self.notice = Some(format!("Could not clear {file_id}: {e}")),
+                }
+                self.refresh_cached_parsed(file_id);
+                if let Some(source) = self.live.sources.get(file_id) {
+                    source.handle.send(SourceCommand::Clear);
+                }
+                self.live.loading_more.remove(file_id);
+                if self.raw.selected.as_ref().is_some_and(|(f, _)| f == file_id) {
+                    self.raw.selected = None;
+                }
+                cleared.insert(file_id.clone());
+                continue;
+            }
             let Some(mut parsed) = self.parsed_files.remove(file_id) else { continue };
             let Some(mut buffer) = parsed.live.take() else {
                 self.parsed_files.insert(file_id.clone(), parsed);
@@ -270,28 +292,49 @@ impl AppView {
             cx.notify();
             return;
         }
-        let Some(parsed) = self.parsed_files.get(file_id) else { return };
-        let Some(buffer) = parsed.live.as_ref() else { return };
-        let start = buffer.held_start(parsed);
+        let (start, held_bytes, first_line_no, inode, held, first_hash) = match self.live.cached.get(file_id) {
+            Some(cached) => {
+                let start = cached.held_start();
+                let first = cached.file().entry(0);
+                let first_hash = first
+                    .as_ref()
+                    .filter(|e| e.generation == start.generation)
+                    .map(|e| line_hash(&e.raw_line));
+                (
+                    start.clone(),
+                    cached.top_generation_bytes(),
+                    first.map(|e| e.index).filter(|n| crate::live::is_real_line_number(*n)),
+                    cached.inode_of(start.generation),
+                    cached.len(),
+                    first_hash,
+                )
+            }
+            None => {
+                let Some(parsed) = self.parsed_files.get(file_id) else { return };
+                let Some(buffer) = parsed.live.as_ref() else { return };
+                let start = buffer.held_start(parsed);
+                // The line the batch has to end just above: a different one
+                // means the file changed.
+                let first_hash = match (parsed.entries.first(), parsed.lines.first()) {
+                    (Some(entry), Some(text)) if entry.generation == start.generation => Some(line_hash(text)),
+                    _ => None,
+                };
+                (
+                    start.clone(),
+                    buffer.top_generation_bytes(parsed),
+                    parsed.entries.first().map(|e| e.index).filter(|n| crate::live::is_real_line_number(*n)),
+                    buffer.inode_of(start.generation),
+                    parsed.entries.len(),
+                    first_hash,
+                )
+            }
+        };
         // Where the oldest held line starts in the file being read; for a
         // Rotated File the source works from how many bytes are held.
         let end_offset = start.offset.unwrap_or(0);
-        let held_bytes = buffer.top_generation_bytes(parsed);
-        let first_line_no = parsed
-            .entries
-            .first()
-            .map(|e| e.index)
-            .filter(|n| crate::live::is_real_line_number(*n));
-        let inode = buffer.inode_of(start.generation);
-        let remaining = self.live.full_read_limit.saturating_sub(parsed.entries.len());
+        let remaining = self.live.full_read_limit.saturating_sub(held);
         let wanted = lines.unwrap_or(self.live.load_more_step).max(1);
         let n = wanted.min(remaining).max(1);
-        // The line the batch has to end just above: a different one means the
-        // file changed.
-        let first_hash = match (parsed.entries.first(), parsed.lines.first()) {
-            (Some(entry), Some(text)) if entry.generation == start.generation => Some(line_hash(text)),
-            _ => None,
-        };
         let Some(source) = self.live.sources.get(file_id) else { return };
         source.handle.send(SourceCommand::LoadMore {
             generation: start.generation,
@@ -346,12 +389,16 @@ impl AppView {
         if self.live.loading_earlier.contains(file_id) {
             return;
         }
-        let Some(parsed) = self.parsed_files.get(file_id) else { return };
         // The Live Window's room first; a file with none (or one that
         // already holds more) takes a Load More Step, up to the Full Read
         // Limit, and holds it from then on.
-        let held = parsed.entries.len();
-        let extended = parsed.live.as_ref().is_some_and(|b| b.hold == HoldMode::Extended);
+        let (held, extended) = match self.live.cached.get(file_id) {
+            Some(cached) => (cached.len(), cached.hold == HoldMode::Extended),
+            None => {
+                let Some(parsed) = self.parsed_files.get(file_id) else { return };
+                (parsed.entries.len(), parsed.live.as_ref().is_some_and(|b| b.hold == HoldMode::Extended))
+            }
+        };
         let window_room = if extended { 0 } else { self.live.window.saturating_sub(held) };
         let room = if window_room > 0 {
             window_room
@@ -422,6 +469,17 @@ impl AppView {
     /// Cut the file down to the Live Window at once and give the memory back.
     pub fn back_to_live_window(&mut self, file_id: &str, cx: &mut Context<Self>) {
         let window = self.live.window;
+        if let Some(cached) = self.live.cached.get_mut(file_id) {
+            let trimmed = cached.back_to_window(window);
+            self.refresh_cached_parsed(file_id);
+            if let Ok(Some(trimmed)) = trimmed {
+                self.drop_markers_for(file_id, &trimmed);
+                self.rebuild_open_view_keeping_position(cx);
+                self.move_current_lines_off_dropped(file_id, &trimmed);
+            }
+            cx.notify();
+            return;
+        }
         let Some(mut parsed) = self.parsed_files.remove(file_id) else { return };
         let Some(mut buffer) = parsed.live.take() else {
             self.parsed_files.insert(file_id.to_string(), parsed);
