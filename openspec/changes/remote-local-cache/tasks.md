@@ -103,7 +103,8 @@
 ## 9. Bật mặc định và dọn đường RAM
 
 - [ ] 9.1 Live Window mặc định 1.000.000 dòng. Session đã chọn số khác 100.000 thì giữ số đó (decision 8).
-- [ ] 9.2 Bật `remote_cache_enabled` mặc định. Chạy lại toàn bộ test, kể cả test cần sshd (`SSH_TEST_DIR`/`SSH_TEST_PORT`).
+- [x] 9.2 Bật `remote_cache_enabled` mặc định. Chạy lại toàn bộ test, kể cả test cần sshd (`SSH_TEST_DIR`/`SSH_TEST_PORT`).
+  - Đã làm: `remote_cache_index` (giai đoạn 2) bật mặc định. Toàn bộ test có sshd thử: 1351 qua, 5 hỏng. Cả 5 thuộc nhóm đã hỏng trước thay đổi này (`remote_command_source_test` ×4, `remote_edit_test::narrowing_a_live_glob…`). Remote Command vẫn giữ dòng trong memory (nhóm 6).
 - [ ] 9.3 Xoá đường RAM của Remote:
   - `LiveBuffer` không còn giữ dòng;
   - `trim_open_view` cho file giữ trong RAM;

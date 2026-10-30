@@ -589,7 +589,7 @@ impl AppView {
             read_progress_shown: false,
             index_local_files: true,
             remote_cache_enabled: true,
-            remote_cache_index: false,
+            remote_cache_index: true,
             rows_epoch: 0,
             time_range_generation: 0,
             remote,
