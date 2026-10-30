@@ -189,7 +189,7 @@ impl<'a> FileEntries<'a> {
                 let generations = file.generations();
                 let at = generations.iter().position(|g| g.generation == generation)?;
                 let end = generations.get(at + 1).map_or(file.len(), |g| g.pos);
-                let pos = (generations[at].pos + line).checked_sub(1)?;
+                let pos = (generations[at].pos + line).checked_sub(generations[at].first_number)?;
                 (pos < end).then_some(pos)
             }
         }

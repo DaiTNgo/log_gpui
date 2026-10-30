@@ -42,6 +42,9 @@ pub const EXTEND_BYTES: usize = 4 << 20;
 pub struct GenerationStart {
     /// Its position in the file's lines.
     pub pos: usize,
+    /// The number of its first line: 1, unless only the end of the file is
+    /// held (a Remote Cache).
+    pub first_number: usize,
     /// Its number, as the file's Markers count Generations.
     pub generation: u32,
     pub mark: Option<Arc<crate::live::BreakMark>>,
@@ -103,7 +106,7 @@ impl IndexedFile {
             let end = indexed.data.read().unwrap().file.lines.end();
             Mutex::new(fingerprint_of(&*source, end))
         };
-        let generations = Mutex::new(vec![GenerationStart { pos: 0, generation: 0, mark: None }]);
+        let generations = Mutex::new(vec![GenerationStart { pos: 0, first_number: 1, generation: 0, mark: None }]);
         Self {
             source,
             indexed,
@@ -146,6 +149,15 @@ impl IndexedFile {
         self.cache.lock().unwrap().forget_file(0);
     }
 
+    /// Where each Generation starts and how its lines are numbered, oldest
+    /// first: the Generations of a Remote Cache. The first starts at 0.
+    pub fn set_generations(&self, starts: Vec<GenerationStart>) {
+        if starts.first().is_some_and(|g| g.pos == 0) {
+            *self.generations.lock().unwrap() = starts;
+            self.cache.lock().unwrap().forget_file(0);
+        }
+    }
+
     /// Where each Generation starts, oldest first.
     pub fn generations(&self) -> Vec<GenerationStart> {
         self.generations.lock().unwrap().clone()
@@ -167,7 +179,7 @@ impl IndexedFile {
             self.extend()?;
             let pos = self.len();
             chain.push(source)?;
-            self.generations.lock().unwrap().push(GenerationStart { pos, generation, mark: Some(mark) });
+            self.generations.lock().unwrap().push(GenerationStart { pos, first_number: 1, generation, mark: Some(mark) });
             self.extend()
         })();
         Some(begun)
@@ -179,7 +191,7 @@ impl IndexedFile {
             return None;
         }
         let start = self.generation_of(&self.generations.lock().unwrap(), n);
-        Some((n - start.pos + 1, start.generation))
+        Some((start.first_number + n - start.pos, start.generation))
     }
 
     fn generation_of(&self, generations: &[GenerationStart], n: usize) -> GenerationStart {
@@ -190,7 +202,7 @@ impl IndexedFile {
     /// line of a Generation its Break.
     fn place(&self, generations: &[GenerationStart], n: usize, entry: &mut LogEntry) {
         let start = self.generation_of(generations, n);
-        entry.index = n - start.pos + 1;
+        entry.index = start.first_number + n - start.pos;
         entry.generation = start.generation;
         // The line above a Generation is no parent of its lines.
         entry.parent = entry.parent.and_then(|p| (p > start.pos).then(|| p - start.pos));

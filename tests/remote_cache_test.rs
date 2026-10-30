@@ -159,3 +159,37 @@ fn a_line_index_reads_the_segments_end_to_end() {
         assert_eq!(file.line(i).unwrap().as_ref(), want.as_str());
     }
 }
+
+/// Lines held from the middle of a file on the Server keep their numbers
+/// there (task 2.1).
+#[test]
+fn a_generation_held_from_its_middle_numbers_its_lines_as_on_the_server() {
+    use log_gpui::index::file::{GenerationStart, IndexedFile};
+    use log_gpui::index::{HandleBudget, LineSource};
+    use log_gpui::view_data::FileEntries;
+    use std::sync::Arc;
+    let root = tempfile::tempdir().unwrap();
+    let dir = dir_for(root.path(), "srv-1", &target());
+    let mut cache = RemoteCache::open(&dir, "srv-1", target(), 50).unwrap();
+    let line = |i: usize| format!("2026-09-05 10:00:00 [INFO] [api] line {i}");
+    cache.begin_generation(4001).unwrap();
+    cache.append(&refs(&(4001..4011).map(line).collect::<Vec<_>>())).unwrap();
+    cache.begin_generation(1).unwrap();
+    cache.append(&refs(&(1..4).map(line).collect::<Vec<_>>())).unwrap();
+    let (chain, starts) = cache.chain(HandleBudget::new(8)).unwrap();
+    let file = IndexedFile::index_now(Arc::new(chain) as Arc<dyn LineSource>, Default::default()).unwrap();
+    file.set_generations(
+        starts
+            .iter()
+            .enumerate()
+            .map(|(g, &(pos, first))| GenerationStart { pos, first_number: first as usize, generation: g as u32, mark: None })
+            .collect(),
+    );
+    assert_eq!(file.entry(0).unwrap().index, 4001);
+    assert_eq!(file.line_number(9), Some((4010, 0)));
+    assert_eq!(file.line_number(10), Some((1, 1)), "the next Generation starts at 1");
+    let entries = FileEntries::Indexed(&file);
+    assert_eq!(entries.position_of(4005, 0), Some(4));
+    assert_eq!(entries.position_of(2, 1), Some(11));
+    assert_eq!(entries.position_of(4000, 0), None, "not held");
+}
