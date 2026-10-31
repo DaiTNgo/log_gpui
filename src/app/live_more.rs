@@ -1,69 +1,26 @@
-//! Logic: Clear, Load More and Back to Live Window of a Remote File.
-//!
-//! Clear drops every line a file holds while it keeps being read; Load More
-//! reads older lines from the Server and makes the file hold a longer window
-//! than the Live Window (`HoldMode::Extended`) until Back to Live Window.
+//! Logic: Clear of a Remote File, and what the UI says about the lines it
+//! holds. A Remote File holds at most its Live Window (decision 10 of
+//! `remote-local-cache`): Open in full reads more.
 
 use super::AppView;
 use super::live::now_label;
 use crate::app::ConfirmAction;
-use crate::live::{HoldMode, SourceCommand, SourceStatus};
-use crate::workspace::log_space::line_hash;
-use gpui::{AppContext as _, Context};
+use crate::live::SourceCommand;
+use gpui::Context;
 use std::collections::HashSet;
-
-/// Why Load more is off when the file holds as much as it may.
-pub const AT_FULL_READ_LIMIT: &str = "At the Full Read Limit";
-
-/// Bytes of memory one held line takes, as measured.
-pub const BYTES_PER_LINE: usize = 1_320;
 
 /// What the UI says about the lines a Remote File holds.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HoldInfo {
     pub lines: usize,
-    pub extended: bool,
-    /// The file holds up to the first line of its Generation.
-    pub at_start: bool,
-    /// A Load More is being read.
-    pub loading: bool,
-    /// Lines the file can still take before the Full Read Limit.
-    pub remaining: usize,
-    /// Why Load More is off, when it is.
-    pub load_more_off: Option<&'static str>,
-    /// A Remote Command: Clear only; no Load more, no Back to Live Window.
+    /// A Remote Command.
     pub command: bool,
 }
 
 impl HoldInfo {
-    /// Estimated memory of the held lines, in MB.
-    pub fn approx_mb(&self) -> usize {
-        (self.lines * BYTES_PER_LINE).div_ceil(1 << 20)
-    }
-
-    /// "10,000", or "10,000, up to 4,000" when the Full Read Limit is near.
-    pub fn amount_label(&self, lines: usize) -> String {
-        if lines > self.remaining {
-            format!("{}, up to {}", group_digits(lines), group_digits(self.remaining))
-        } else {
-            group_digits(lines)
-        }
-    }
-
-    /// Whether Load more is shown at all: only while older lines are left to
-    /// read. A file held from its first line, or a Remote Command, has none;
-    /// a disabled button would only say something is missing.
-    pub fn offers_load_more(&self) -> bool {
-        !self.command && !self.at_start
-    }
-
-    /// "120,000 lines held (≈160 MB) · Extended".
+    /// "120,000 lines held".
     pub fn tooltip(&self) -> String {
-        let mut text = format!("{} lines held (≈{} MB)", group_digits(self.lines), self.approx_mb());
-        if self.extended {
-            text.push_str(" · Extended");
-        }
-        text
+        format!("{} lines held", group_digits(self.lines))
     }
 }
 
@@ -79,12 +36,6 @@ pub fn next_surviving_row<'a>(
     let survives = |ix: &usize| file_of(*ix).is_none_or(|f| !gone.contains(f));
     let after = (row.saturating_add(1)..len).find(survives);
     after.or_else(|| (0..row.min(len)).rev().find(survives))
-}
-
-/// The "Load more" window the user is typing a number in.
-pub struct CustomLoad {
-    pub file_id: String,
-    pub input: gpui::Entity<gpui_component::input::InputState>,
 }
 
 pub use crate::count::format_count as group_digits;
@@ -133,29 +84,8 @@ impl AppView {
         }
         // Read through its Remote Cache.
         let cached = self.live.cached.get(file_id)?;
-        let (held, extended, at_start) = (cached.len(), cached.hold == HoldMode::Extended, cached.at_generation_start());
-        let status = self.live.sources.get(file_id).map(|s| &s.status);
         let command = self.live.sources.get(file_id).is_some_and(|s| s.command);
-        let load_more_off = if command {
-            Some("A Remote Command's output cannot be read again")
-        } else if at_start {
-            Some("Already at the first line")
-        } else if !matches!(status, Some(SourceStatus::Live)) {
-            Some("Disconnected")
-        } else if held >= self.live.full_read_limit {
-            Some(AT_FULL_READ_LIMIT)
-        } else {
-            None
-        };
-        Some(HoldInfo {
-            lines: held,
-            extended,
-            at_start,
-            loading: self.live.loading_more.contains(file_id),
-            remaining: self.live.full_read_limit.saturating_sub(held),
-            load_more_off,
-            command,
-        })
+        Some(HoldInfo { lines: cached.len(), command })
     }
 
     // ── Clear ───────────────────────────────────────────────────────────────
@@ -223,7 +153,6 @@ impl AppView {
                 if let Some(source) = self.live.sources.get(file_id) {
                     source.handle.send(SourceCommand::Clear);
                 }
-                self.live.loading_more.remove(file_id);
                 if self.raw.selected.as_ref().is_some_and(|(f, _)| f == file_id) {
                     self.raw.selected = None;
                 }
@@ -242,120 +171,15 @@ impl AppView {
         cx.notify();
     }
 
-    // ── Load More ───────────────────────────────────────────────────────────
-
-    /// Read `lines` older lines (the Load More Step when `None`) above the
-    /// oldest line the file holds.
-    pub fn load_more(&mut self, file_id: &str, lines: Option<usize>, cx: &mut Context<Self>) {
-        if self.live.sources.get(file_id).is_some_and(|s| !s.remote) {
-            self.load_more_local(file_id, lines, cx);
-            return;
-        }
-        let Some(info) = self.hold_info(file_id) else { return };
-        if info.loading {
-            return;
-        }
-        if info.load_more_off == Some(AT_FULL_READ_LIMIT) {
-            // Nothing more fits: the way on is the whole file.
-            self.request_open_in_full(file_id, cx);
-            return;
-        }
-        if let Some(reason) = info.load_more_off {
-            self.notice = Some(format!("Load more: {reason}"));
-            cx.notify();
-            return;
-        }
-        let (start, held_bytes, first_line_no, inode, held, first_hash) = match self.live.cached.get(file_id) {
-            Some(cached) => {
-                let start = cached.held_start();
-                let first = cached.file().entry(0);
-                let first_hash = first
-                    .as_ref()
-                    .filter(|e| e.generation == start.generation)
-                    .map(|e| line_hash(&e.raw_line));
-                (
-                    start.clone(),
-                    cached.top_generation_bytes(),
-                    first.map(|e| e.index).filter(|n| crate::live::is_real_line_number(*n)),
-                    cached.inode_of(start.generation),
-                    cached.len(),
-                    first_hash,
-                )
-            }
-            // Only a file read through its Remote Cache loads more.
-            None => return,
-        };
-        // Where the oldest held line starts in the file being read; for a
-        // Rotated File the source works from how many bytes are held.
-        let end_offset = start.offset.unwrap_or(0);
-        let remaining = self.live.full_read_limit.saturating_sub(held);
-        let wanted = lines.unwrap_or(self.live.load_more_step).max(1);
-        let n = wanted.min(remaining).max(1);
-        let Some(source) = self.live.sources.get(file_id) else { return };
-        source.handle.send(SourceCommand::LoadMore {
-            generation: start.generation,
-            end_offset,
-            lines: n,
-            first_hash,
-            held_bytes,
-            first_line_no,
-            inode,
-        });
-        self.live.loading_more.insert(file_id.to_string());
-        cx.notify();
-    }
-
-    /// Load More of a local file: the source finds the lines above the oldest
-    /// one held by its number in the file.
-    fn load_more_local(&mut self, file_id: &str, lines: Option<usize>, cx: &mut Context<Self>) {
-        if self.live.loading_more.contains(file_id) {
-            return;
-        }
-        let Some(parsed) = self.parsed_files.get(file_id) else { return };
-        let Some(first) = parsed.entry(0) else { return };
-        if first.index <= 1 || !crate::live::is_real_line_number(first.index) {
-            return;
-        }
-        let remaining = self.live.full_read_limit.saturating_sub(parsed.len());
-        if remaining == 0 {
-            self.notice = Some(format!("Load more: {AT_FULL_READ_LIMIT}"));
-            cx.notify();
-            return;
-        }
-        let n = lines.unwrap_or(self.live.load_more_step).max(1).min(remaining);
-        let first_hash = parsed.line(0).map(|t| line_hash(&t));
-        let first_line_no = Some(first.index);
-        let Some(source) = self.live.sources.get(file_id) else { return };
-        source.handle.send(SourceCommand::LoadMore {
-            generation: first.generation,
-            end_offset: 0,
-            lines: n,
-            first_hash,
-            held_bytes: 0,
-            first_line_no,
-            inode: None,
-        });
-        self.live.loading_more.insert(file_id.to_string());
-        cx.notify();
-    }
-
     /// Load the next Rotated File above the lines the file holds, as many
     /// lines as the Live Window has room for.
     pub fn load_earlier(&mut self, file_id: &str, cx: &mut Context<Self>) {
         if self.live.loading_earlier.contains(file_id) {
             return;
         }
-        // The Live Window's room first; a file with none (or one that
-        // already holds more) takes a Load More Step, up to the Full Read
-        // Limit, and holds it from then on.
+        // Only what the Live Window has room for.
         let Some(cached) = self.live.cached.get(file_id) else { return };
-        let (held, extended) = (cached.len(), cached.hold == HoldMode::Extended);
-        let window_room = if extended { 0 } else { self.live.window.saturating_sub(held) };
-        let room = if window_room > 0 {
-            window_room
-        } else {
-            self.live.load_more_step.min(self.live.full_read_limit.saturating_sub(held))
-        };
+        let room = self.live.window.saturating_sub(cached.len());
         if room == 0 {
             self.request_open_in_full(file_id, cx);
             return;
@@ -366,90 +190,11 @@ impl AppView {
         cx.notify();
     }
 
-    /// Drop a Load More that has not started reading.
-    pub fn cancel_load_more(&mut self, file_id: &str) {
-        if let Some(source) = self.live.sources.get(file_id) {
-            source.handle.send(SourceCommand::CancelLoadMore);
-        }
-    }
-
-    /// Ask for a number of lines to load.
-    pub fn open_custom_load(&mut self, file_id: &str, window: &mut gpui::Window, cx: &mut Context<Self>) {
-        let remaining = self.hold_info(file_id).map_or(self.live.full_read_limit, |i| i.remaining);
-        let input = cx.new(|cx| {
-            gpui_component::input::InputState::new(window, cx)
-                .placeholder(format!("1 – {}", group_digits(remaining)))
-        });
-        input.update(cx, |state, cx| state.focus(window, cx));
-        self.custom_load = Some(CustomLoad { file_id: file_id.to_string(), input });
-        cx.notify();
-    }
-
-    pub fn cancel_custom_load(&mut self, cx: &mut Context<Self>) {
-        self.custom_load = None;
-        cx.notify();
-    }
-
-    /// Load the number of lines typed (commas and spaces allowed).
-    pub fn accept_custom_load(&mut self, cx: &mut Context<Self>) {
-        let Some(custom) = self.custom_load.as_ref() else { return };
-        let text = custom.input.read(cx).value().to_string();
-        let digits: String = text.chars().filter(|c| c.is_ascii_digit()).collect();
-        let file_id = custom.file_id.clone();
-        match digits.parse::<usize>() {
-            Ok(n) if n >= 1 => {
-                self.custom_load = None;
-                self.load_more(&file_id, Some(n.min(self.live.full_read_limit)), cx);
-            }
-            _ => {
-                self.notice = Some("Type a number of lines, 1 or more".to_string());
-                cx.notify();
-            }
-        }
-    }
-
-    /// Load More of the file of the selected line.
-    pub fn load_more_current_file(&mut self, cx: &mut Context<Self>) {
-        if let Some(file_id) = self.current_remote_file() {
-            self.load_more(&file_id, None, cx);
-        }
-    }
-
-    // ── Back to Live Window ─────────────────────────────────────────────────
-
-    /// Cut the file down to the Live Window at once and give the memory back.
-    pub fn back_to_live_window(&mut self, file_id: &str, cx: &mut Context<Self>) {
-        let window = self.live.window;
-        let Some(cached) = self.live.cached.get_mut(file_id) else { return };
-        let trimmed = cached.back_to_window(window);
-        self.refresh_cached_parsed(file_id);
-        if let Ok(Some(trimmed)) = trimmed {
-            self.drop_markers_for(file_id, &trimmed);
-            self.rebuild_open_view_keeping_position(cx);
-            self.move_current_lines_off_dropped(file_id, &trimmed);
-        }
-        cx.notify();
-    }
-
-    /// Back to Live Window for the file of the selected line.
-    pub fn back_to_live_window_current_file(&mut self, cx: &mut Context<Self>) {
-        if let Some(file_id) = self.current_remote_file() {
-            self.back_to_live_window(&file_id, cx);
-        }
-    }
-
     // ── Settings ────────────────────────────────────────────────────────────
 
     pub fn set_full_read_limit(&mut self, lines: usize, cx: &mut Context<Self>) {
         self.live.full_read_limit = lines.clamp(10_000, 20_000_000);
         self.workspace_state.full_read_limit_lines = self.live.full_read_limit;
-        self.schedule_session_save(cx);
-        cx.notify();
-    }
-
-    pub fn set_load_more_step(&mut self, step: usize, cx: &mut Context<Self>) {
-        self.live.load_more_step = step.clamp(1_000, 1_000_000);
-        self.workspace_state.load_more_step = self.live.load_more_step;
         self.schedule_session_save(cx);
         cx.notify();
     }

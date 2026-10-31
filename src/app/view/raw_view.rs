@@ -307,14 +307,12 @@ impl AppView {
             .into_any_element()
     }
 
-    /// What a Remote File holds and what the user can do about it: Clear,
-    /// Load more, Back to Live Window. A file that holds no line says it
-    /// waits for new ones.
+    /// What a Remote File holds and what the user can do about it: Clear.
+    /// A file that holds no line says it waits for new ones.
     fn live_actions_row(&self, section: &RawSection, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
         use gpui_component::button::{Button, ButtonVariants as _};
-        use gpui_component::{Disableable as _, Sizable as _};
+        use gpui_component::Sizable as _;
         let info = self.hold_info(&section.file_id)?;
-        let step = self.live.load_more_step;
         let (warning, muted) = (cx.theme().warning, cx.theme().muted_foreground);
         let cleared = self
             .live
@@ -324,19 +322,8 @@ impl AppView {
             .filter(|_| section.lines.is_empty())
             .map(|mark| format!("{} cleared {}", section.display_name, mark.time));
         let id = |name: &str| SharedString::from(format!("raw-{name}-{}", section.file_id));
-        let (clear_file, more_file, back_file) =
-            (section.file_id.clone(), section.file_id.clone(), section.file_id.clone());
-        let at_limit = info.load_more_off == Some(crate::app::live_more::AT_FULL_READ_LIMIT);
-        let load_label = if info.loading {
-            "Loading…".to_string()
-        } else if at_limit {
-            "Open in full…".to_string()
-        } else {
-            format!("Load more ({})", info.amount_label(step))
-        };
-        let cancel_file = section.file_id.clone();
-        let command = info.command;
-        let mut row = h_flex()
+        let clear_file = section.file_id.clone();
+        let row = h_flex()
             .px_2()
             .gap_2()
             .items_center()
@@ -349,37 +336,8 @@ impl AppView {
                     .label("Clear")
                     .on_click(cx.listener(move |this, _, _, cx| this.request_clear_file(&clear_file, cx))),
             );
-        if command {
-            return Some(self.live_row_with_waiting(row, cleared, "Waiting for output", warning, muted));
-        }
-        row = row.when(info.offers_load_more(), |row| row.child(
-                Button::new(id("more"))
-                    .ghost()
-                    .xsmall()
-                    .label(load_label)
-                    .disabled(info.loading || (info.load_more_off.is_some() && !at_limit))
-                    .tooltip(info.load_more_off.unwrap_or("Read older lines from the Server"))
-                    .on_click(cx.listener(move |this, _, _, cx| this.load_more(&more_file, None, cx))),
-            ));
-        if info.loading {
-            row = row.child(
-                Button::new(id("cancel"))
-                    .ghost()
-                    .xsmall()
-                    .label("Cancel")
-                    .on_click(cx.listener(move |this, _, _, _| this.cancel_load_more(&cancel_file))),
-            );
-        }
-        if info.extended {
-            row = row.child(
-                Button::new(id("back"))
-                    .ghost()
-                    .xsmall()
-                    .label("Back to Live Window")
-                    .on_click(cx.listener(move |this, _, _, cx| this.back_to_live_window(&back_file, cx))),
-            );
-        }
-        Some(self.live_row_with_waiting(row, cleared, "Waiting for new lines", warning, muted))
+        let waiting = if info.command { "Waiting for output" } else { "Waiting for new lines" };
+        Some(self.live_row_with_waiting(row, cleared, waiting, warning, muted))
     }
 
     /// The actions row, and under it the "cleared" line of a file that holds

@@ -52,10 +52,6 @@ pub enum BreakKind {
     Skipped(u32),
     /// The user cleared the file.
     Cleared,
-    /// The first line held is not the first line of its Generation.
-    StartOfLoaded,
-    /// Load More found the file on the Server changed under the held lines.
-    Changed,
     /// An earlier Generation, a Rotated File, can be loaded above the oldest
     /// line held. Drawn at the top of the lines of the file, with a button.
     EarlierAvailable,
@@ -72,8 +68,6 @@ pub enum BreakKind {
     ReadRotated,
     /// Older lines of a Remote Copy were left out to fit the Full Read Limit.
     OlderNotRead,
-    /// Load More read lines from before the Starting Time.
-    BeforeStartTime,
     /// The Remote Command was edited: the lines after the Break are the new
     /// command's, a new Generation. The Break names both commands.
     CommandChanged,
@@ -99,15 +93,12 @@ impl BreakKind {
             BreakKind::ClockWentBack => "server clock went back, lines may be repeated",
             BreakKind::Skipped(_) => "older lines left the window",
             BreakKind::Cleared => "cleared",
-            BreakKind::StartOfLoaded => "start of loaded lines",
-            BreakKind::Changed => "earlier lines of this generation are no longer on the Server",
             BreakKind::EarlierAvailable | BreakKind::EarlierWindowFull => "earlier generation",
             BreakKind::StartTimeOverflow => "lines since the Starting Time do not fit the Live Window",
             BreakKind::ReadCancelled => "read cancelled",
             BreakKind::ReadLimit => "stopped at Full Read Limit",
             BreakKind::ReadRotated => "file rotated while reading",
             BreakKind::OlderNotRead => "older lines were not read",
-            BreakKind::BeforeStartTime => "lines before the Starting Time loaded",
             BreakKind::CommandChanged => "command changed",
             BreakKind::PreviousRun => "previous run",
         }
@@ -346,15 +337,6 @@ pub enum SourceEvent {
     /// says which output each line came from (`streams` is as long as
     /// `lines`; a file has none) and has no `bytes`.
     Append { lines: Vec<String>, bytes: Vec<u32>, streams: Option<StreamMask> },
-    /// Lines older than what is held, read because the user asked for more
-    /// (`LoadMore`), to go above the oldest held line, whose number is
-    /// `first_line_no`.
-    /// `before_start_time`: the lines are from before the Starting Time the
-    /// file was opened with.
-    Older { generation: u32, lines: Vec<String>, bytes: Vec<u32>, reached_start: bool, before_start_time: bool },
-    /// Load More could not read the lines above (the file changed, or the
-    /// Generation is not the one being read).
-    OlderUnavailable,
     /// The inode of the file the lines now come from.
     Inode(Option<u64>),
     /// Where the file being read stands on the Server, to tell next time
@@ -389,29 +371,9 @@ pub enum SourceCommand {
     SetWindow(usize),
     /// Stop reading older lines and never refill: the app dropped what it held.
     Clear,
-    /// Read `lines` lines above `end_offset` of `generation`. `first_hash` is
-    /// the hash of the line that starts at `end_offset` (`None` when no line
-    /// is held there).
-    ///
-    /// For a Generation older than the one being read (a Rotated File):
-    /// `held_bytes` is how many bytes of it the app holds (from its end),
-    /// `first_line_no` the number of its oldest held line and `inode` the
-    /// inode it was read with, to find the Rotated File it became.
-    LoadMore {
-        generation: u32,
-        end_offset: u64,
-        lines: usize,
-        first_hash: Option<u64>,
-        held_bytes: u64,
-        first_line_no: Option<usize>,
-        inode: Option<u64>,
-    },
     /// Load the lines of the next Rotated File above the oldest line held:
     /// at most `room` lines (what the Live Window has left).
     LoadEarlier { room: usize },
-    /// Drop a Load More that was not started yet (a batch being read is
-    /// kept: it arrives as `Older`).
-    CancelLoadMore,
     /// Try again now (after Disconnected or an error the user has fixed).
     Reconnect,
     /// Run a Remote Command again from its start, ending the Run in progress.

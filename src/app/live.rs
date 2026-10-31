@@ -31,8 +31,8 @@ pub const LINES_PER_FILE_PER_PUMP: usize = 8_000;
 /// Default Live Window: the newest lines kept for each Remote File.
 pub const DEFAULT_LIVE_WINDOW: usize = 1_000_000;
 
-/// The most lines a Remote File holds once Load More made its window longer
-/// (the Full Read Limit; `remote-full-read` will make it a setting).
+/// The most lines one Open in full reads by default (the Full Read Limit, a
+/// setting).
 pub const FULL_READ_LIMIT: usize = 2_000_000;
 
 /// A running source and what it last said.
@@ -68,10 +68,7 @@ pub struct LiveRuntime {
     pub unseen: usize,
     /// Live Window: newest lines kept per Remote File.
     pub window: usize,
-    /// Lines one Load More reads when the user gives no number.
-    pub load_more_step: usize,
-    /// Most lines one Open in full reads, and the most a Remote File holds
-    /// once Load More made its window longer.
+    /// Most lines one Open in full reads.
     pub full_read_limit: usize,
     /// Most files one Live Glob reads at once.
     pub glob_limit: usize,
@@ -82,8 +79,6 @@ pub struct LiveRuntime {
     /// A Remote Command that was edited onto another Server: the Server it
     /// left, whose connection closes when its old Run has ended.
     pub release_after_replace: HashMap<String, String>,
-    /// Files with a Load More being read.
-    pub loading_more: HashSet<String>,
     /// The next Rotated File each file could load above its lines.
     pub earlier: HashMap<String, crate::live::source::EarlierFile>,
     /// Files with a Rotated File being loaded.
@@ -140,13 +135,11 @@ impl LiveRuntime {
             follow: true,
             unseen: 0,
             window: DEFAULT_LIVE_WINDOW,
-            load_more_step: 10_000,
             full_read_limit: FULL_READ_LIMIT,
             glob_limit: 50,
             glob_interval: 5,
             next_source_seq: 0,
             release_after_replace: HashMap::new(),
-            loading_more: HashSet::new(),
             earlier: HashMap::new(),
             loading_earlier: HashSet::new(),
             progress: HashMap::new(),
@@ -528,7 +521,7 @@ impl AppView {
             .collect();
         for file_id in remote_ids {
             if let Some(cached) = self.live.cached.get_mut(&file_id) {
-                let limit = cached.limit(window, self.live.full_read_limit);
+                let limit = window;
                 if let Ok(Some(trimmed)) = cached.trim_to_window(limit) {
                     self.refresh_cached_parsed(&file_id);
                     self.drop_markers_for(&file_id, &trimmed);
@@ -620,7 +613,6 @@ impl AppView {
             taken += match &event {
                 SourceEvent::Tail { lines, .. }
                 | SourceEvent::Backfill { lines, .. }
-                | SourceEvent::Older { lines, .. }
                 | SourceEvent::Earlier { lines, .. }
                 | SourceEvent::Append { lines, .. } => lines.len().max(1),
                 _ => 1,
@@ -687,19 +679,11 @@ impl AppView {
             let applied = match event {
                 SourceEvent::Tail { lines, bytes, end_offset, .. } => cached.apply_tail(&lines, &bytes, end_offset),
                 SourceEvent::Backfill { lines, bytes, .. } => cached.apply_backfill(&lines, &bytes),
-                SourceEvent::Older { lines, bytes, reached_start, before_start_time, .. } => {
-                    self.live.loading_more.remove(file_id);
-                    cached.apply_older(&lines, &bytes, reached_start, before_start_time)
-                }
                 SourceEvent::Earlier { start, lines, bytes, last_line_no, reached_start } => {
                     if reached_start || start.is_none() && lines.is_empty() {
                         self.live.loading_earlier.remove(file_id);
                     }
-                    let applied = cached.apply_earlier(start.as_ref(), &lines, &bytes, last_line_no);
-                    if cached.len() > window {
-                        cached.hold = crate::live::HoldMode::Extended;
-                    }
-                    applied
+                    cached.apply_earlier(start.as_ref(), &lines, &bytes, last_line_no)
                 }
                 SourceEvent::EarlierAvailable(file) => {
                     self.live.loading_earlier.remove(file_id);
@@ -721,11 +705,6 @@ impl AppView {
                         None => self.live.progress.remove(file_id),
                     };
                     Ok(Default::default())
-                }
-                SourceEvent::OlderUnavailable => {
-                    self.live.loading_more.remove(file_id);
-                    cached.mark_changed();
-                    Ok(crate::live::cached::Applied { structural: true, ..Default::default() })
                 }
                 SourceEvent::Inode(inode) => {
                     cached.set_inode(inode);
@@ -807,7 +786,7 @@ impl AppView {
             }
         }
         if let Some(cached) = self.live.cached.get_mut(file_id) {
-            let limit = cached.limit(window, full_read_limit);
+            let limit = window;
             match cached.trim_to_window(limit) {
                 Ok(Some(trimmed)) => {
                     delta.structural = true;
@@ -1463,23 +1442,6 @@ impl AppView {
         if let Some((f, line)) = self.raw.selected.as_mut() {
             if f == file_id {
                 *line = shift(*line + 1).saturating_sub(1);
-            }
-        }
-    }
-
-    /// The current line of a Focus Tab that left the Live Window becomes the
-    /// oldest line still kept.
-    pub(crate) fn move_current_lines_off_dropped(&mut self, file_id: &str, trimmed: &Trimmed) {
-        let oldest = self.line_ref_of_entry(0);
-        let Some(oldest) = oldest else { return };
-        for tab in self.focus.tabs.iter_mut() {
-            if let Some(line) = tab.current.as_ref() {
-                let dropped = &*line.file_id == file_id
-                    && (line.generation < trimmed.generation
-                        || (line.generation == trimmed.generation && line.line < trimmed.first_kept));
-                if dropped {
-                    tab.current = Some(oldest.clone());
-                }
             }
         }
     }

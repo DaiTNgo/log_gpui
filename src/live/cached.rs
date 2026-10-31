@@ -3,13 +3,13 @@
 //! to the cache on disk and read through a Line Index, so their text is not
 //! held in memory. It keeps what `LiveBuffer` keeps of a remote file (how
 //! its lines are numbered, its Generations, the Breaks between its lines,
-//! Load more and Clear), and gives the same rows.
+//! and Clear), and gives the same rows.
 //!
 //! A Remote Command's output is kept the same way, with the output each
 //! line came from; each Run is a Generation, and the last one kept shows
 //! again under a Break "previous run" when its tab is chosen again.
 
-use super::buffer::{BreakMark, ClearMark, HeldStart, HoldMode, PROVISIONAL_BASE, Trimmed, size_text};
+use super::buffer::{BreakMark, ClearMark, HeldStart, PROVISIONAL_BASE, Trimmed, size_text};
 use super::source::{BreakKind, EarlierFile, EarlierStart, RestartKind, StreamMask, clock_text};
 use crate::index::file::{GenerationStart, IndexedFile};
 use crate::index::indexing::IndexOptions;
@@ -27,7 +27,6 @@ fn is_top_mark(kind: BreakKind) -> bool {
     matches!(
         kind,
         BreakKind::LeftWindow
-            | BreakKind::StartOfLoaded
             | BreakKind::EarlierAvailable
             | BreakKind::EarlierWindowFull
             | BreakKind::StartTimeOverflow
@@ -67,7 +66,6 @@ pub struct CachedFile {
     next_offset: u64,
     pending: Option<BreakMark>,
     disconnected_at: Option<String>,
-    pub hold: HoldMode,
     pub clear_mark: Option<ClearMark>,
     inodes: Vec<(u32, Option<u64>)>,
     /// Breaks above lines, by (Generation, line number).
@@ -103,7 +101,6 @@ impl CachedFile {
             next_offset: 0,
             pending: None,
             disconnected_at: None,
-            hold: HoldMode::Window,
             clear_mark: None,
             inodes: Vec::new(),
             marks: BTreeMap::new(),
@@ -159,7 +156,6 @@ impl CachedFile {
             next_offset: 0,
             pending: None,
             disconnected_at: None,
-            hold: HoldMode::Window,
             clear_mark: None,
             inodes: Vec::new(),
             marks: BTreeMap::new(),
@@ -230,7 +226,6 @@ impl CachedFile {
             return Ok(None);
         }
         let next_index = (newest.first_line_no + newest.lines() as u64) as usize;
-        let extended = meta.extended;
         let (chain, file, segments) = Self::index(&cache, &options, &budget, cp.generation, &BTreeMap::new())?;
         let mut restored = Self {
             name,
@@ -247,7 +242,6 @@ impl CachedFile {
             next_offset: cp.server_end,
             pending: None,
             disconnected_at: None,
-            hold: if extended { HoldMode::Extended } else { HoldMode::Window },
             clear_mark: None,
             inodes: vec![(cp.generation, cp.inode)],
             marks: BTreeMap::new(),
@@ -302,7 +296,7 @@ impl CachedFile {
         if !lined_up {
             self.cache.set_checkpoint(crate::remote::cache::Checkpoint::default())?;
         }
-        self.cache.set_extended(self.hold == HoldMode::Extended)
+        Ok(())
     }
 
     /// The lines as a Line Index reads them.
@@ -681,34 +675,6 @@ impl CachedFile {
         }
     }
 
-    /// Lines read by Load More, above the oldest held line.
-    pub fn apply_older(&mut self, lines: &[String], bytes: &[u32], reached_start: bool, before_start_time: bool) -> io::Result<Applied> {
-        let old_top = self.top();
-        if !lines.is_empty() {
-            self.remove_top_marks();
-        }
-        let refs: Vec<&str> = lines.iter().map(String::as_str).collect();
-        let top_index = self.cache.meta().generations.iter().position(|g| g.lines() > 0).unwrap_or(self.newest());
-        if !lines.is_empty() {
-            self.cache.prepend_with(top_index, &refs, bytes)?;
-            self.hold = HoldMode::Extended;
-        }
-        if before_start_time
-            && !lines.is_empty()
-            && let Some(top) = old_top
-            && !self.marks.contains_key(&top)
-        {
-            let label = format!("{} {} lines before the Starting Time loaded", self.name, crate::count::format_count(lines.len()));
-            self.marks.insert(top, Arc::new(BreakMark { kind: BreakKind::BeforeStartTime, label }));
-        }
-        if !reached_start && !lines.is_empty() && self.top_mark().is_none() {
-            let label = format!("{} {}", self.name, BreakKind::StartOfLoaded.label());
-            self.set_top_mark(BreakMark { kind: BreakKind::StartOfLoaded, label });
-        }
-        self.rebuild()?;
-        Ok(Applied { structural: !lines.is_empty(), ..Applied::default() })
-    }
-
     /// The Break at the top that offers the next Rotated File.
     pub fn set_earlier_available(&mut self, file: Option<&EarlierFile>, window_full: bool) -> io::Result<()> {
         match file {
@@ -743,17 +709,6 @@ impl CachedFile {
         self.place_marks();
     }
 
-    /// Load More found the file changed under the lines held.
-    pub fn mark_changed(&mut self) {
-        let mark = BreakMark { kind: BreakKind::Changed, label: format!("{} {}", self.name, BreakKind::Changed.label()) };
-        if self.top().is_some() {
-            self.set_top_mark(mark);
-            self.place_marks();
-        } else {
-            self.add_pending(mark);
-        }
-    }
-
     pub fn set_inode(&mut self, inode: Option<u64>) {
         let generation = self.generation;
         match self.inodes.iter_mut().find(|(g, _)| *g == generation) {
@@ -771,15 +726,7 @@ impl CachedFile {
         self.cache.set_checkpoint(checkpoint)
     }
 
-    // ── The Live Window, Load more and Clear ────────────────────────────────
-
-    /// How many lines the file may hold now.
-    pub fn limit(&self, window: usize, full_read_limit: usize) -> usize {
-        match self.hold {
-            HoldMode::Window => window,
-            HoldMode::Extended => full_read_limit,
-        }
-    }
+    // ── The Live Window and Clear ───────────────────────────────────────────
 
     /// Keep at most `window` lines, as `LiveBuffer::trim_to_window`.
     pub fn trim_to_window(&mut self, window: usize) -> io::Result<Option<Trimmed>> {
@@ -788,13 +735,6 @@ impl CachedFile {
             return Ok(None);
         }
         self.trim_to(window).map(Some)
-    }
-
-    /// Back to the Live Window at once.
-    pub fn back_to_window(&mut self, window: usize) -> io::Result<Option<Trimmed>> {
-        self.hold = HoldMode::Window;
-        self.cache.set_extended(false)?;
-        if window > 0 && self.len() > window { self.trim_to(window).map(Some) } else { Ok(None) }
     }
 
     fn trim_to(&mut self, keep: usize) -> io::Result<Trimmed> {
@@ -830,7 +770,6 @@ impl CachedFile {
         let newest = self.newest();
         self.cache.set_first_line_no(newest, self.next_index as u64)?;
         self.marks.clear();
-        self.hold = HoldMode::Window;
         self.clear_mark = Some(ClearMark { generation: self.generation, line_no: self.next_index, offset: self.next_offset, time: time.to_string() });
         self.add_pending(BreakMark { kind: BreakKind::Cleared, label: format!("{} {} {time}", self.name, BreakKind::Cleared.label()) });
         self.rebuild()?;

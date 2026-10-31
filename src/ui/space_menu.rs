@@ -380,85 +380,16 @@ fn file_menu(menu: PopupMenu, file: &FileRef, in_space_menu: bool, cx: &mut App)
     }
 }
 
-/// Clear, Load More and Back to Live Window of a Remote File, with what the
-/// file holds on top.
+/// Clear of a Remote File, with what the file holds on top.
 fn remote_file_live_items(menu: PopupMenu, file: &FileRef, cx: &App) -> PopupMenu {
-    let (info, step) = {
-        let view = file.view.read(cx);
-        (view.hold_info(&file.file_id), view.live.load_more_step)
-    };
-    let Some(info) = info else { return menu };
+    let Some(info) = file.view.read(cx).hold_info(&file.file_id) else { return menu };
     let clear = file.clone();
-    if info.command {
-        return menu
-            .item(PopupMenuItem::new(info.tooltip()).disabled(true))
-            .item(PopupMenuItem::new("Clear").on_click(move |_, _, app| {
-                let id = clear.file_id.clone();
-                clear.view.update(app, |this, cx| this.request_clear_file(&id, cx));
-            }))
-            .item(PopupMenuItem::separator());
-    }
-    let more = file.clone();
-    let back = file.clone();
-    let extended = info.extended;
-    // At the Full Read Limit the button opens the whole file instead.
-    let load_off = (info.load_more_off.is_some()
-        && info.load_more_off != Some(crate::app::live_more::AT_FULL_READ_LIMIT))
-        || info.loading;
-    let loading = info.loading;
-    let cancel = file.clone();
-    let custom = file.clone();
-    let menu = menu
-        .item(PopupMenuItem::new(info.tooltip()).disabled(true))
+    menu.item(PopupMenuItem::new(info.tooltip()).disabled(true))
         .item(PopupMenuItem::new("Clear").on_click(move |_, _, app| {
             let id = clear.file_id.clone();
             clear.view.update(app, |this, cx| this.request_clear_file(&id, cx));
-        }));
-    let menu = if !info.offers_load_more() {
-        menu
-    } else {
-        let menu = menu.item(
-            PopupMenuItem::new(format!("Load more ({})", info.amount_label(step)))
-                .disabled(load_off)
-                .on_click(move |_, _, app| {
-                    let id = more.file_id.clone();
-                    more.view.update(app, |this, cx| this.load_more(&id, None, cx));
-                }),
-        );
-        let mut menu = menu;
-        for lines in [1_000usize, 10_000, 100_000] {
-            let file = file.clone();
-            menu = menu.item(
-                PopupMenuItem::new(format!("Load more ({} lines)", info.amount_label(lines)))
-                .disabled(load_off)
-                .on_click(move |_, _, app| {
-                    let id = file.file_id.clone();
-                    file.view.update(app, |this, cx| this.load_more(&id, Some(lines), cx));
-                }),
-            );
-        }
-        menu.item(PopupMenuItem::new("Load more (custom number)…").disabled(load_off).on_click(
-            move |_, window, app| {
-                let id = custom.file_id.clone();
-                custom.view.update(app, |this, cx| this.open_custom_load(&id, window, cx));
-            },
-        ))
-    };
-    let menu = if loading {
-        menu.item(PopupMenuItem::new("Cancel loading").on_click(move |_, _, app| {
-            let id = cancel.file_id.clone();
-            cancel.view.update(app, |this, _| this.cancel_load_more(&id));
         }))
-    } else {
-        menu
-    };
-    menu.item(PopupMenuItem::new("Back to Live Window").disabled(!extended).on_click(
-        move |_, _, app| {
-            let id = back.file_id.clone();
-            back.view.update(app, |this, cx| this.back_to_live_window(&id, cx));
-        },
-    ))
-    .item(PopupMenuItem::separator())
+        .item(PopupMenuItem::separator())
 }
 
 /// Append a Log Space row to `list`.
@@ -666,7 +597,7 @@ pub fn push_file(list: MenuList, file: FileRef, active: bool) -> MenuList {
                 let text = info.as_ref().map(|i| i.tooltip()).unwrap_or_default();
                 let short = info
                     .as_ref()
-                    .map(|i| format!("{} MB{}", i.approx_mb(), if i.extended { " · Ext" } else { "" }))
+                    .map(|i| crate::count::format_count(i.lines))
                     .unwrap_or_default();
                 div()
                     .id(SharedString::from(format!("hold-{hold_file}")))

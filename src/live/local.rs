@@ -145,13 +145,9 @@ impl LocalFileSource {
                     Ok(SourceCommand::Close) => return,
                     Ok(SourceCommand::Pause) => paused = true,
                     Ok(SourceCommand::Resume) => paused = false,
-                    Ok(SourceCommand::LoadMore { lines, first_hash, first_line_no, .. }) => {
-                        super::local_older::send_older(&self.path, first_line_no, first_hash, lines, &events);
-                    }
                     Ok(SourceCommand::SetWindow(_))
                 | Ok(SourceCommand::Reconnect)
                 | Ok(SourceCommand::Clear)
-                | Ok(SourceCommand::CancelLoadMore)
                 | Ok(SourceCommand::LoadEarlier { .. })
                 | Ok(SourceCommand::Restart)
                 | Ok(SourceCommand::Replace { .. })

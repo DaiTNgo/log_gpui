@@ -9,7 +9,7 @@ use gpui::{Context, IntoElement, Styled as _};
 use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::popover::Popover;
 use gpui_component::status_bar::StatusBar;
-use gpui_component::{ActiveTheme as _, Disableable as _, IconName, Selectable as _, Sizable as _};
+use gpui_component::{ActiveTheme as _, IconName, Selectable as _, Sizable as _};
 
 impl AppView {
     /// The live state of the open Log Space as one label: the worst status of
@@ -63,49 +63,13 @@ impl AppView {
         })
     }
 
-    /// Load more, Clear and Back to Live Window of the only file of the open
-    /// Log Space, which has no file row to hold them. Each shows only for the
-    /// kind of file it applies to (a Remote Command only has Clear).
+    /// Clear of the only file of the open Log Space, which has no file row
+    /// to hold it, and how many lines it holds.
     fn single_file_live_buttons(&self, mut bar: StatusBar, cx: &mut Context<Self>) -> StatusBar {
         let Some(file) = self.active_space().and_then(|s| s.single_file()) else { return bar };
         let file_id = file.file_id.clone();
         let Some(info) = self.hold_info(&file_id) else { return bar };
-        let step = self.live.load_more_step;
         bar = bar.left(Button::new("status-file-name").ghost().xsmall().label(file.display_name.clone()).tooltip(info.tooltip()));
-        if info.offers_load_more() {
-            let id = file_id.clone();
-            let at_limit = info.load_more_off == Some(crate::app::live_more::AT_FULL_READ_LIMIT);
-            let off = (info.load_more_off.is_some() && !at_limit) || info.loading;
-            bar = bar.right(
-                Button::new("status-load-more")
-                    .ghost()
-                    .xsmall()
-                    .disabled(off)
-                    .label(format!("Load more ({})", info.amount_label(step)))
-                    .on_click(cx.listener(move |this, _, _window, cx| this.load_more(&id, None, cx))),
-            );
-            if info.loading {
-                let id = file_id.clone();
-                bar = bar.right(
-                    Button::new("status-cancel-load")
-                        .ghost()
-                        .xsmall()
-                        .label("Cancel loading")
-                        .on_click(cx.listener(move |this, _, _window, _cx| this.cancel_load_more(&id))),
-                );
-            }
-        }
-        if !info.command {
-            let id = file_id.clone();
-            bar = bar.right(
-                Button::new("status-back-to-live")
-                    .ghost()
-                    .xsmall()
-                    .disabled(!info.extended)
-                    .label("Back to Live Window")
-                    .on_click(cx.listener(move |this, _, _window, cx| this.back_to_live_window(&id, cx))),
-            );
-        }
         let id = file_id;
         bar.right(
             Button::new("status-clear")

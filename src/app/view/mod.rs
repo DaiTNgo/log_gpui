@@ -119,7 +119,6 @@ impl Render for AppView {
         let new_space_dialog = self.render_new_space_dialog(cx);
         let format_editor = self.render_format_editor(cx);
         let confirm = self.render_confirm(cx);
-        let custom_load = self.render_custom_load(cx);
         let host_key_dialog = self.render_host_key_dialog(cx);
         let secret_dialog = self.render_secret_dialog(cx);
         let sign_in_dialog = self.render_sign_in_dialog(cx);
@@ -236,7 +235,6 @@ impl Render for AppView {
             .child(project_switcher)
             .child(new_space_dialog)
             .child(format_editor)
-            .child(custom_load)
             .child(remote_picker)
             // Above the picker: its Manage… opens the Servers dialog.
             .child(servers_dialog)

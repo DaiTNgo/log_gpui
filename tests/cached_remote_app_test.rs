@@ -80,7 +80,7 @@ fn bytes(lines: &[String]) -> Vec<u32> {
 
 /// Rows (number, Generation, text, Break above, stream), the Filter, the
 /// Matches, and what the file holds.
-type View = (Vec<(usize, u32, String, Option<String>, Option<log_gpui::model::Stream>)>, Vec<usize>, Vec<usize>, Option<(usize, bool)>);
+type View = (Vec<(usize, u32, String, Option<String>, Option<log_gpui::model::Stream>)>, Vec<usize>, Vec<usize>, Option<usize>);
 
 impl Remote {
     fn send(&mut self, event: SourceEvent) {
@@ -107,7 +107,7 @@ impl Remote {
                 .iter()
                 .map(|e| (e.index, e.generation, e.raw_line.to_string(), e.break_before.as_ref().map(|m| m.label.clone()), e.stream))
                 .collect();
-            let hold = app.hold_info(&self.id).map(|i| (i.lines, i.extended));
+            let hold = app.hold_info(&self.id).map(|i| i.lines);
             (rows, app.filter_pass.to_vec(), app.focus.search().matched_visible_indices.to_vec(), hold)
         })
     }
@@ -191,24 +191,16 @@ fn a_remote_file_through_its_cache_shows_what_it_showed_in_memory(cx: &mut TestA
 }
 
 #[gpui::test]
-fn load_more_clear_and_back_to_the_window_show_what_they_showed_in_memory(cx: &mut TestAppContext) {
+fn clear_and_an_earlier_file_show_what_they_should(cx: &mut TestAppContext) {
     like_golden(
         cx,
-        "load_more_clear_back",
+        "clear_and_earlier",
         100,
         false,
         &[
             &|r| r.tail(lines(300..360)),
             &|r| r.send(SourceEvent::TotalLines(Some(400))),
-            &|r| {
-                let older = lines(200..300);
-                r.send(SourceEvent::Older { generation: 0, bytes: bytes(&older), lines: older, reached_start: false, before_start_time: false })
-            },
             &|r| r.append(lines(360..380)),
-            &|r| {
-                r.h.view.update(&mut r.h.cx, |app, cx| app.back_to_live_window(FILE_ID, cx));
-                r.h.cx.run_until_parked();
-            },
             &|r| {
                 r.send(SourceEvent::EarlierAvailable(Some(EarlierFile { name: "app.log.1".into(), size: 2048, compressed: false })))
             },

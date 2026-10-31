@@ -144,8 +144,10 @@
   - Test: chuyển tab rồi quay lại chỉ đọc phần mới; đóng tab xoá cache; cùng file ở hai tab thì đóng một tab cache vẫn còn; mở app không còn cache cũ.
 - [x] 10.2 Bỏ giới hạn dung lượng: setting "Remote cache", nút "Clear Remote cache", `remote_cache_limit_mb` trong session, `check_remote_cache_size`/`trim_to_size` (task 8.3).
   - Đã làm. Session cũ có `remote_cache_limit_mb` vẫn đọc được (field lạ bị bỏ qua). Test chạy: `remote_cache_test`, `cached_remote_app_test`, `session_test`.
-- [ ] 10.3 Bỏ Load more: Remote File và file local, `HoldMode::Extended`, Back to Live Window, setting "Load more step", `SourceCommand::LoadMore` và event `Older` ở source.
+- [x] 10.3 Bỏ Load more: Remote File và file local, `HoldMode::Extended`, Back to Live Window, setting "Load more step", `SourceCommand::LoadMore` và event `Older` ở source.
   - Full Read Limit chỉ còn cho Open in full.
+  - Đã làm: bỏ thêm hộp "Load more (custom number)", lệnh bàn phím Load More và Back to Live Window, Break `StartOfLoaded`/`Changed`/`BeforeStartTime` (chỉ Load more tạo ra), `local_older.rs`, phần đọc ngược của Remote source cho Load more. Nút trên Break "older lines left the window" giờ là Open in full. "N lines held" chỉ còn số dòng.
+  - Test: bỏ 6 test Load more trong `remote_source_test` và test `offers_load_more`; test so golden của Load more đổi thành `clear_and_earlier` và `earlier_generation`, golden ghi từ code hiện tại (không còn đường cũ để đối chiếu). Đã chạy các test liên quan (cache, keymap, live controls, session, status bar…), không chạy test sshd.
 - [ ] 10.4 Bỏ "Load earlier generation": `SourceCommand::LoadEarlier`, event `Earlier`, nút trên Break. Break ở đầu khi còn Rotated File chỉ gợi ý Open in full.
 - [ ] 10.5 Ghi cache lỗi: báo một notice và ngừng đọc file đó; dòng đã có vẫn xem được.
   - Test: segment không ghi được thì notice, source đóng, view giữ dòng.

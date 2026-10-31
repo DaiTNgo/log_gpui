@@ -119,9 +119,6 @@ pub struct CacheMeta {
     pub generations: Vec<GenerationMeta>,
     /// Seconds since the epoch the cache was last opened.
     pub last_opened: u64,
-    /// More lines than the Live Window are held (Load more).
-    #[serde(default)]
-    pub extended: bool,
     /// A Remote Command: when the Run kept here was left (`HH:MM`).
     #[serde(default)]
     pub ended: Option<String>,
@@ -190,7 +187,6 @@ impl RemoteCache {
                 target,
                 generations: Vec::new(),
                 last_opened: 0,
-                extended: false,
                 ended: None,
             },
         };
@@ -560,7 +556,6 @@ impl RemoteCache {
                 g.checkpoint = checkpoint;
             }
         }
-        self.meta.extended = false;
         self.save()
     }
 
@@ -581,10 +576,6 @@ impl RemoteCache {
         self.save()
     }
 
-    pub fn set_extended(&mut self, extended: bool) -> io::Result<()> {
-        self.meta.extended = extended;
-        self.save()
-    }
 }
 
 impl Drop for RemoteCache {

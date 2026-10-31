@@ -65,8 +65,6 @@ impl AppView {
             Command::ToggleFollow => self.toggle_follow(cx),
             Command::TogglePause => self.toggle_pause(cx),
             Command::ClearFile => self.request_clear_current_file(cx),
-            Command::LoadMore => self.load_more_current_file(cx),
-            Command::BackToLiveWindow => self.back_to_live_window_current_file(cx),
             Command::OpenInFull => self.open_in_full_current(cx),
             Command::ToggleInspector => {
                 self.toggle_or_reveal_context_section(crate::workspace::state::ContextSection::Inspector, cx);

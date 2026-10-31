@@ -40,9 +40,7 @@ pub enum Command {
     ToggleFollow,
     TogglePause,
     ClearFile,
-    LoadMore,
     OpenInFull,
-    BackToLiveWindow,
     ToggleInspector,
     NewLogSpace,
     ToggleRawParsed,
@@ -61,7 +59,7 @@ pub enum Command {
 
 impl Command {
     /// In the order the Command Palette and the Keymap settings list them.
-    pub const ALL: [Command; 43] = [
+    pub const ALL: [Command; 41] = [
         Command::ToggleSearch,
         Command::NextMatch,
         Command::PrevMatch,
@@ -88,9 +86,7 @@ impl Command {
         Command::ToggleFollow,
         Command::TogglePause,
         Command::ClearFile,
-        Command::LoadMore,
         Command::OpenInFull,
-        Command::BackToLiveWindow,
         Command::ToggleInspector,
         Command::NewLogSpace,
         Command::ToggleRawParsed,
@@ -152,9 +148,7 @@ impl Command {
             Command::ToggleFollow => ("live.follow", "Live: Toggle Follow", &["cmd-alt-f"]),
             Command::TogglePause => ("live.pause", "Live: Toggle Pause", &["cmd-alt-p"]),
             Command::ClearFile => ("live.clear_file", "Live: Clear File", &[]),
-            Command::LoadMore => ("live.load_more", "Live: Load More Older Lines", &["cmd-shift-up"]),
             Command::OpenInFull => ("live.open_in_full", "Live: Open in Full…", &[]),
-            Command::BackToLiveWindow => ("live.back_to_window", "Live: Back to Live Window", &[]),
             Command::ToggleInspector => ("inspector.toggle", "Inspector: Toggle Slide-out Inspector", &["cmd-i"]),
             Command::NewLogSpace => ("log_space.new", "Log Space: New Log Space…", &["cmd-o"]),
             Command::ToggleRawParsed => ("view.raw_parsed", "View: Toggle Raw / Parsed", &["cmd-shift-r"]),

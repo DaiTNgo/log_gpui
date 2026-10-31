@@ -35,17 +35,6 @@ pub struct BreakMark {
     pub label: String,
 }
 
-/// How many lines a Remote File keeps.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum HoldMode {
-    /// The newest lines, as many as the Live Window.
-    #[default]
-    Window,
-    /// Everything from the oldest line loaded by Load More, up to the Full
-    /// Read Limit.
-    Extended,
-}
-
 /// Where the oldest held line is in the file on the Server.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct HeldStart {

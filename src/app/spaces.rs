@@ -273,7 +273,6 @@ impl AppView {
         let other_dialog = self.confirm.is_some()
             || self.server_dialog.is_some()
             || self.format_editor.is_some()
-            || self.custom_load.is_some()
             || self.project_switcher_open
             || self.remote.picker.is_some()
             || self.remote.download.is_some()

@@ -1090,7 +1090,6 @@ fn break_has_actions(kind: crate::live::BreakKind) -> bool {
         kind,
         BreakKind::LeftWindow
             | BreakKind::Cleared
-            | BreakKind::StartOfLoaded
             | BreakKind::EarlierAvailable
             | BreakKind::EarlierWindowFull
             | BreakKind::StartTimeOverflow
@@ -1152,30 +1151,17 @@ pub(crate) fn render_break(
                     },
                 )];
             }
-            let more_view = a.view.clone();
-            let more_file = a.file_id.clone();
-            let mut buttons = vec![break_button(
-                ElementId::from(gpui::SharedString::from(format!("break-more-{}-{}", a.file_id, a.id))),
-                "Load more",
+            // Older lines than the Live Window holds: Open in full reads them.
+            let (view, file) = (a.view.clone(), a.file_id.clone());
+            vec![break_button(
+                ElementId::from(gpui::SharedString::from(format!("break-full-{}-{}", a.file_id, a.id))),
+                "Open in full…",
                 colors,
                 move |cx| {
-                    let id = more_file.clone();
-                    more_view.update(cx, |this, cx| this.load_more(&id, None, cx));
+                    let id = file.clone();
+                    view.update(cx, |this, cx| this.request_open_in_full(&id, cx));
                 },
-            )];
-            if a.kind == crate::live::BreakKind::StartOfLoaded {
-                let (view, file) = (a.view.clone(), a.file_id.clone());
-                buttons.push(break_button(
-                    ElementId::from(gpui::SharedString::from(format!("break-back-{}-{}", a.file_id, a.id))),
-                    "Back to Live Window",
-                    colors,
-                    move |cx| {
-                        let id = file.clone();
-                        view.update(cx, |this, cx| this.back_to_live_window(&id, cx));
-                    },
-                ));
-            }
-            buttons
+            )]
         })
         .unwrap_or_default();
     div()

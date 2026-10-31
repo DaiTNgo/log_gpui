@@ -286,8 +286,6 @@ pub struct AppView {
     /// How many such blocks were asked for (for tests).
     pub blocks_read_soon: usize,
     pub confirm: Option<ConfirmAction>,
-    /// Load more with a number the user types.
-    pub custom_load: Option<live_more::CustomLoad>,
     /// A light message shown above the status bar until dismissed.
     pub notice: Option<String>,
     pub session_save_gen: u64,
@@ -606,7 +604,6 @@ impl AppView {
             rows_reading: std::collections::HashSet::new(),
             blocks_read_soon: 0,
             confirm: None,
-            custom_load: None,
             notice: keymap_error
                 .or_else(|| imported_now_static.then(|| crate::workspace::session::IMPORTED_NOW_STATIC.to_string())),
             session_save_gen: 0,
@@ -620,7 +617,6 @@ impl AppView {
             true
         });
         this.live.window = this.workspace_state.live_window.max(1_000);
-        this.live.load_more_step = this.workspace_state.load_more_step.clamp(1_000, 1_000_000);
         this.live.full_read_limit = this.workspace_state.full_read_limit_lines.clamp(10_000, 20_000_000);
         this.live.glob_limit = this.workspace_state.live_glob_limit.clamp(1, 500);
         this.live.glob_interval = this.workspace_state.live_glob_interval.clamp(2, 300);

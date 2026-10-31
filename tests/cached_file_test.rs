@@ -177,19 +177,14 @@ fn the_live_window_drops_the_same_lines() {
 }
 
 #[test]
-fn load_more_and_an_earlier_generation_are_alike() {
-    let mut f = both("load_more_and_earlier", 30);
+fn an_earlier_generation_goes_above_the_file_held_from_its_first_line() {
+    let mut f = both("earlier_generation", 30);
     let all = lines(0..300);
     let n = all.len();
     f.tail(&all[n - 50..], 30_000);
     f.total(n);
-    // Load more: older lines above, not the start of the file.
-    let older = &all[n - 120..n - 50];
-    f.cached.apply_older(older, &bytes(older), false, false).unwrap();
-    f.same("load more");
-    // The rest, to the start of the file, then a Rotated File above.
-    let rest = &all[..n - 120];
-    f.cached.apply_older(rest, &bytes(rest), true, false).unwrap();
+    // Backfill to the start of the file, then a Rotated File above.
+    f.backfill(&all[..n - 50]);
     f.cached.set_earlier_available(Some(&EarlierFile { name: "app.log.1".into(), size: 4096, compressed: false }), false).unwrap();
     f.same("offered");
     let earlier = lines(1000..1040);
