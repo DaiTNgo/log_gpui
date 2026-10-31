@@ -59,7 +59,7 @@ A Log Space that follows files as they are written: Local Live Files and Remote 
 _Avoid_: Remote Log Space, remote space, tail space, SSH space, server space, remote tab.
 
 **Local Live File**:
-A local file in a Live Log Space. It has Generations like a Remote File, but no Live Window, Load more or Clear: it is read whole from disk.
+A local file in a Live Log Space. It has Generations like a Remote File, but no Live Window or Clear: it is read whole from disk.
 _Avoid_: Tailed file, local remote.
 
 **Remote File**:
@@ -91,8 +91,12 @@ The paths and Live Globs last added from one Server, offered again in the file p
 _Avoid_: History, bookmarks, favorites.
 
 **Live Window**:
-The newest lines a Remote File holds, up to a set number of lines. A Local Live File has none. Lines older than the window are no longer shown; Load More brings them back from the file.
+The newest lines a Remote File holds, up to a set number of lines. A Local Live File has none. Lines older than the window are no longer shown; only Open in full reads them.
 _Avoid_: Buffer, cache, history limit.
+
+**Remote Cache**:
+Where the lines a Remote File or Remote Command received are kept on the user's disk while a tab shows it, read through a Line Index like a local file. It lets the text stay out of memory and lets a Dormant Tab show its lines again at once. It goes when no open tab shows the file and when the app quits; it is never a saved copy (that is a Remote Copy).
+_Avoid_: Mirror, download, local copy.
 
 **Server**:
 The saved details for reaching one machine over SSH: address, port, user, how to sign in (key, password, or ssh-agent (SSH_AUTH_SOCK, 1Password, Secretive, a chosen socket; on Windows System/1Password mean the OpenSSH agent pipe and Pageant is also offered), optionally followed by questions the server asks such as a one-time code), and optionally a Jump Server. A Server may belong to one Server Group and carry tags. Servers are shared by every Project.
@@ -155,7 +159,7 @@ Reading the text of every line again in the background for something that needs 
 _Avoid_: Search job, background search.
 
 **Dormant Tab**:
-A tab whose lines are not read: not yet since the app opened, or let go when the user left it. It keeps its Filter, Focus Tabs, Search Expression, place and Markers, and is read again when chosen.
+A tab whose lines are not read: not yet since the app opened, or let go when the user left it. It keeps its Filter, Focus Tabs, Search Expression, place and Markers, and is read again when chosen; its Remote Files show the lines in their Remote Cache at once and read only what is new.
 _Avoid_: Unloaded tab, sleeping tab, lazy tab.
 
 **Raw View**:
@@ -357,13 +361,13 @@ _Avoid_: Column manager, view panel.
 L1. **Pause Is Per Log Space**: Pause stops every file of the Log Space at once; there is no per-file pause. Resuming takes in every line written while paused, so nothing is skipped.
 L2. **Follow Tracks The Scroll**: Scrolling away from the newest line turns Follow off; scrolling back to it turns Follow on. In the Raw View, Follow keeps the view at its last line; scrolling up in it turns Follow off, and the Follow switch or End turns it back on.
 L3. **Live Starts Fresh**: A Live Log Space always opens following and not paused, at its newest lines in the Parsed and the Raw View alike; Follow and Pause are not remembered. A Static or Scratch Log Space has neither. A Static Log Space made by Open in full opens at the first line read.
-L4. **Remote Opens At The End**: A Remote File first shows its last lines at once, or the lines from its Starting Time when the user chose one, then fills its Live Window with older lines in the background while it stays readable and live, until the Live Window is full, the Starting Time is reached or the file ends. When there is room left, the newest Rotated File is read on if it is not compressed (L24); other Rotated Files are read only when the user chooses. Every load stays inside the Live Window. Line numbers are always the line's real number in its Generation on its Server.
+L4. **Remote Opens At The End**: A Remote File first shows its last lines at once, or the lines from its Starting Time when the user chose one, then fills its Live Window with older lines in the background while it stays readable and live, until the Live Window is full, the Starting Time is reached or the file ends. When there is room left, the newest Rotated File is read on if it is not compressed (L24); other Rotated Files are read only by Open in full. Every load stays inside the Live Window. Line numbers are always the line's real number in its Generation on its Server.
 L5. **Rotation Keeps History**: When a file is rotated, truncated or deleted, the lines already read stay, a Break is drawn, and reading continues in the new file as a new Generation, waiting for it to appear if needed. A Marker belongs to one line of one Generation.
 L6. **Reconnect Without Loss**: A lost connection is retried by itself and reading resumes where it stopped, with a Break marking the outage. After a long outage the app stops retrying and waits for the user, and a Server that needs Sign-in Prompts is not retried by itself at all (L17).
 L7. **Live Status In The Status Bar**: The connection state of a Live Log Space, and the Follow and Pause switches, are shown in the status bar only.
 L8. **Remote Clocks Are Not Adjusted**: Rule 19 holds across Servers: times from different Servers are compared as written, with no timezone or clock-skew correction.
 L9. **Readable Without Elevation**: A Remote File is read with the Server's own user. A file that user cannot read shows a permission error; the app never asks for elevated rights.
-L10. **Live Is A Window, Not An Archive**: A Live Log Space may stay connected for as long as the user likes, but holds only the Live Window of each Remote File; the oldest lines leave as new ones arrive. Nothing received is kept after the Log Space is closed. To read a Remote File in full, the user uses Open in full to make a Remote Copy, or downloads the file to keep it in a folder of their own.
+L10. **Live Is A Window, Not An Archive**: A Live Log Space may stay connected for as long as the user likes, but holds only the Live Window of each Remote File; the oldest lines leave as new ones arrive. What it received stays in its Remote Cache only while an open tab shows the file: closing that tab or quitting the app lets it go, and nothing is kept for the next time the app opens. To read a Remote File in full, the user uses Open in full to make a Remote Copy, or downloads the file to keep it in a folder of their own.
 L11. **Paths May Not Exist Yet**: A Remote File or Live Glob may be added before any file exists; it waits and starts reading when a file appears. A Server that cannot be reached or a folder that does not exist is refused when adding.
 L12. **Leaving The Window**: A line that leaves the Live Window loses its Marker, stops counting toward Filter Values, and a Break at the top of the view says older lines have left. A Filter Value with no lines left disappears unless it is ticked. A Focus Tab whose current line left moves to the oldest line still held.
 L13. **Window Per Remote File**: The Live Window size is one app-wide setting applied to each Remote File separately, so a busy file never pushes a quiet file's lines out. A Local Live File has no Live Window: it is read whole from disk, and Clear never drops its lines.
@@ -378,7 +382,7 @@ L21. **Gone Is Not An Error**: A file of a Live Glob that disappears from its Se
 L22. **One Pick, Many Servers**: A path or Live Glob picked once can be added on several Servers at once; each Server gets its own Remote File or Live Glob, named `<server>:<path>`.
 L23. **Stopping A Glob Keeps Its Files**: A Live Glob can be stopped and resumed. While stopped, its files keep reading live and can still become Gone, but no new matching file is added. Resuming checks the folder at once and reads files that appeared meanwhile from their start, within the Live Window. A stopped Live Glob stays stopped when the Project is reopened, and reopens only the files it already had that still exist.
 
-L24. **Rotated Files Are Earlier Generations**: The Rotated Files of a Remote File show as Generations above the current file, never as Source Files of their own. Their order is by time of last write, the newest nearest the current file. When a Remote File has been read to its first line and the Live Window has room, the newest Rotated File is read on automatically if it is not compressed; an older one, or a compressed one, is read only when the user chooses. Open in full reads no Rotated File the user did not tick.
+L24. **Rotated Files Are Earlier Generations**: The Rotated Files of a Remote File show as Generations above the current file, never as Source Files of their own. Their order is by time of last write, the newest nearest the current file. When a Remote File has been read to its first line and the Live Window has room, the newest Rotated File is read on automatically if it is not compressed; an older one, or a compressed one, is read only by Open in full. Open in full reads no Rotated File the user did not tick.
 L25. **Starting Time Uses The File's Clock**: A Starting Time is compared with the times as written in the file. A span such as `1h` is counted back from the newest line of the file, not from the clock of this machine or of the Server (L8).
 L26. **Full Read Never Cuts Silently**: Open in full reads no more than the Full Read Limit. When the estimate is above it the app asks before reading; when the real count reaches it during the read the app stops and draws a Break "stopped at Full Read Limit".
 
@@ -428,5 +432,5 @@ L26. **Full Read Never Cuts Silently**: Open in full reads no more than the Full
 40. **Invalid Patterns Keep Last Preview**: While the template of a Log Format is invalid, the Preview keeps the result of the last valid one. The error shows only once the user stops typing or leaves the field.
 41. **A Jump Never Narrows**: Go to Line, next/previous Match and next/previous error only move the current line. They never change Search, Filter, the Time Range or which lines the view and the Focus Pane show, and what is typed in the Go to bar is not remembered.
 42. **Reading Never Blocks**: Opening a file, Search, a Filter or Highlight Rule Custom Value, a new Detected Field and another Log Format all run in the background with progress; results show as they come, and the view can always be read and scrolled.
-43. **Text Stays On Disk**: The app never holds the text of every line in memory: only the lines shown and a small set around them. A Remote File's Live Window is the exception (L10).
-44. **Only The Open Tab Reads**: When the app opens only the chosen tab is read; every other tab is a Dormant Tab. Leaving a tab lets its lines go, and choosing it again reads its files again.
+43. **Text Stays On Disk**: The app never holds the text of every line in memory: only the lines shown and a small set around them. A Remote File's lines are on disk in its Remote Cache (L10).
+44. **Only The Open Tab Reads**: When the app opens only the chosen tab is read; every other tab is a Dormant Tab. Leaving a tab lets its lines go from memory, and choosing it again reads its files again (a Remote File from its Remote Cache, then only what is new on the Server). Closing the last tab that shows files of a Server ends the connection to it.

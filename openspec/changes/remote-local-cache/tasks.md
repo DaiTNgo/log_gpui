@@ -128,7 +128,7 @@
   - Đã làm (phần Remote): bỏ cờ `remote_cache_enabled`/`remote_cache_index`, code giai đoạn 1 (mirror vào `LiveBuffer` khi rời tab, `LiveBuffer::restore`, `RemoteCache::write_snapshot`/`read_lines`, `live.checkpoints`), đường lùi về RAM khi mở tab và các nhánh RAM của Load more, Clear, Back to Live Window, đổi Live Window. Remote File và Remote Command chỉ còn đi qua cache; khi cache bị một cửa sổ app khác giữ hoặc đĩa lỗi, tab báo lý do và không đọc. Hai test so với đường RAM (`cached_remote_app_test`) so với kết quả cố định trong `tests/golden/cached_remote_app/`, ghi từ đường cache và kiểm lại trên code trước khi bỏ đường RAM.
   - Phần còn lại (đường giữ dòng của file local, `ParsedFile::entries/lines`, `FileEntries::Held`, `LiveBuffer`) đã bỏ cùng task 12.1 của `line-offset-index`; task 9.4 của change đó đánh dấu đã được thay bằng change này.
 - [ ] 9.4 Đo bằng `perf_probe` và `mem_probe` với một Remote File 1.000.000 dòng (sshd thử): RSS, thời gian mở lại tab, thời gian index lại khi chèn hoặc cắt. Ghi vào design.md.
-- [ ] 9.5 Cập nhật CONTEXT.md:
+- [x] 9.5 Cập nhật CONTEXT.md:
   - thêm thuật ngữ Remote Cache;
   - sửa Live Window;
   - sửa L10 (dòng nhận được giữ trên đĩa trong phiên app, mất khi đóng tab hoặc tắt app);
@@ -159,5 +159,6 @@
 - [x] 10.6 Kết nối SSH: khi không còn tab đang mở nào có file của một Server (Remote File, Remote Command, Live Glob) thì đóng kết nối tới Server đó; chuyển tab vẫn giữ.
   - Test: đóng tab Remote cuối cùng của `web1` thì session đóng; chuyển tab thì không.
   - Đã làm: khi đóng tab (`close_tab_at`, `close_scope_at`), app đóng session tới các Server mà không tab đang mở nào dùng (`servers_in_open_tabs`: file và Live Glob của các tab, mọi project). Giữ lại: Server một Open in full đang đọc, Jump Host của Server đang dùng, và mọi Server khi một hộp thoại Remote đang mở. Test: `cached_remote_app_test::a_server_is_in_use_while_an_open_tab_shows_its_files` (tập Server đang dùng). Việc ngắt session thật chỉ kiểm được với sshd, chưa chạy.
-- [ ] 10.7 Cập nhật Settings và CONTEXT.md theo các mục trên (gộp với 9.5).
+- [x] 10.7 Cập nhật Settings và CONTEXT.md theo các mục trên (gộp với 9.5).
+  - Đã làm: Settings bỏ hàng "Load more step" và "Remote cache" (ở 10.2, 10.3), sửa mô tả Live Window và Full Read Limit. CONTEXT.md: thêm Remote Cache; sửa Live Window, Local Live File, Dormant Tab; sửa L4, L10, L24, quy tắc 43 (bỏ ngoại lệ Remote) và 44 (đọc lại từ Remote Cache, đóng tab cuối của một Server thì ngắt kết nối).
 
