@@ -38,6 +38,8 @@ pub struct IndexedFile {
     streams: Mutex<super::meta::Runs<Option<crate::model::Stream>>>,
     /// Lines whose output the Filter's index has.
     streams_filled: Mutex<usize>,
+    /// Breaks below lines, by position: where a Remote Copy's read stopped.
+    marks_after: Mutex<std::collections::BTreeMap<usize, Arc<crate::live::BreakMark>>>,
 }
 
 /// Most bytes `IndexedFile::extend` indexes in one call.
@@ -124,6 +126,7 @@ impl IndexedFile {
             marks: Mutex::default(),
             streams: Mutex::default(),
             streams_filled: Mutex::default(),
+            marks_after: Mutex::default(),
         }
     }
 
@@ -149,6 +152,7 @@ impl IndexedFile {
             marks: Mutex::new(self.marks.lock().unwrap().clone()),
             streams: Mutex::new(self.streams.lock().unwrap().clone()),
             streams_filled: Mutex::new(*self.streams_filled.lock().unwrap()),
+            marks_after: Mutex::new(self.marks_after.lock().unwrap().clone()),
         }
     }
 
@@ -225,6 +229,13 @@ impl IndexedFile {
             entry.break_before = Some(mark.clone());
         }
         entry.stream = self.streams.lock().unwrap().get(n).flatten();
+        entry.break_after = self.marks_after.lock().unwrap().get(&n).cloned();
+    }
+
+    /// The Breaks drawn below lines, by position.
+    pub fn set_marks_after(&self, marks: std::collections::BTreeMap<usize, Arc<crate::live::BreakMark>>) {
+        *self.marks_after.lock().unwrap() = marks;
+        self.cache.lock().unwrap().forget_file(0);
     }
 
     /// The output each line of a Remote Command came from, by position.

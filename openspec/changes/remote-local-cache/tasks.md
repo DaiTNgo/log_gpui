@@ -97,8 +97,9 @@
 
 ## 7. Remote Copy qua Line Index
 
-- [ ] 7.1 `ParsedFile::from_remote_copy` thành `IndexedFile` trên chain các `gen-*.log`, đánh số theo `first_line_no` của từng Generation (decision 9). Reload và `restore_markers_after_reload` đọc qua Line Index.
+- [x] 7.1 `ParsedFile::from_remote_copy` thành `IndexedFile` trên chain các `gen-*.log`, đánh số theo `first_line_no` của từng Generation (decision 9). Reload và `restore_markers_after_reload` đọc qua Line Index.
   - Test: các test của `remote-full-read` và Open in full.
+  - Đã làm: `CopyFile` (`src/live/copy_file.rs`) đọc các `gen-*.log` qua Line Index, cả khi Open in full đang đọc (mỗi lô dòng được ghi và flush xuống file trước khi báo cho app, app index phần mới) lẫn khi mở lại từ thư mục. Break "rotated" giữa các Generation, "older lines were not read" ở đầu, và Break dưới dòng cuối khi đọc dừng giữa chừng (`IndexedFile::set_marks_after`). Reload giữ Marker qua `CopyFile::position_of`. Bỏ `ParsedFile::from_remote_copy` và các hàm copy của `LiveBuffer`.
 
 ## 8. Dọn cache
 

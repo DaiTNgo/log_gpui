@@ -5,6 +5,7 @@ pub mod backward;
 pub mod buffer;
 pub mod cached;
 pub mod command;
+pub mod copy_file;
 pub mod health;
 pub mod line_time;
 pub mod local;

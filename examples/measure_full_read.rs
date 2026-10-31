@@ -8,13 +8,11 @@
 //!
 //! `cargo run --release --example measure_full_read`
 
-use log_gpui::live::LiveBuffer;
 use log_gpui::live::backward::ReadAt;
 use log_gpui::remote::compress::{Compression, decoder};
 use log_gpui::remote::copy;
 use log_gpui::remote::full_read::{GenerationPlan, ReadControl, ReadEvent, ReadPlan, find_start_offset, run};
 use log_gpui::remote::*;
-use log_gpui::space_view::ParsedFile;
 use std::io::{Read, Write};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
@@ -137,6 +135,7 @@ fn main() {
     let size = std::fs::metadata(&remote_file).unwrap().len();
     println!("ssh: {lines} lines, {:.0} MB, loopback sshd", size as f64 / 1e6);
     let copies = tempfile::tempdir().unwrap();
+    let dir = copy::create_dir(copies.path()).unwrap();
     let plan = ReadPlan {
         server_id,
         server_name: "web1".into(),
@@ -157,22 +156,26 @@ fn main() {
         start_text: None,
         to_text: None,
         limit_lines: 2_000_000,
-        dir: copy::create_dir(copies.path()).unwrap(),
+        dir: dir.clone(),
     };
     let (tx, rx) = async_channel::unbounded();
     let rss_before = rss_mb();
     let started = Instant::now();
     hub.spawn(run(hub.clone(), Arc::new(Mutex::new(store)), plan, tx, Arc::new(ReadControl::default())));
-    let mut parsed = ParsedFile::empty();
-    let mut buffer = LiveBuffer::command("web1:app.log");
+    // The copy is read through its Line Index as the app reads it.
+    let budget = log_gpui::index::HandleBudget::new(16);
+    let mut copy_file = log_gpui::live::copy_file::CopyFile::reading("web1:app.log", Default::default()).unwrap();
     let (mut got, mut first_lines_at, mut peak) = (0usize, None, 0.0f64);
     while let Ok(event) = rx.recv_blocking() {
         match event {
-            ReadEvent::GenerationStart { first_line_no, .. } => buffer.begin_copy_generation(first_line_no, true, "rotated"),
-            ReadEvent::Lines { lines, bytes } => {
+            ReadEvent::GenerationStart { index, distance, first_line_no, .. } => {
+                let path = dir.join(copy::GenerationMeta::file_name(distance));
+                copy_file.begin_generation(&path, first_line_no, index == 0, &budget).unwrap();
+            }
+            ReadEvent::Lines { lines, .. } => {
                 first_lines_at.get_or_insert_with(|| started.elapsed());
                 got += lines.len();
-                buffer.apply_append_with(&mut parsed, &lines, &bytes);
+                copy_file.grow().unwrap();
                 peak = peak.max(rss_mb());
             }
             ReadEvent::Done(_) | ReadEvent::Failed { .. } => break,

@@ -1,7 +1,21 @@
+use log_gpui::index::HandleBudget;
+use log_gpui::live::copy_file::CopyFile;
 use log_gpui::live::{BreakKind, is_real_line_number};
+use log_gpui::model::LogEntry;
 use log_gpui::remote::copy::{self, CopyMeta, GenerationMeta, StopReason};
-use log_gpui::space_view::ParsedFile;
 use log_gpui::workspace::log_space::LogFile;
+use std::sync::Arc;
+
+/// A Remote Copy read from its folder through its Line Index (task 7.1).
+fn open(dir: &std::path::Path) -> std::io::Result<CopyFile> {
+    CopyFile::open(dir, "web1:/app/app.log", Default::default(), HandleBudget::new(16))
+}
+
+/// Every row of the copy.
+fn rows(copy: &CopyFile) -> Vec<Arc<LogEntry>> {
+    let file = copy.file();
+    (0..file.len()).map(|i| file.entry(i).unwrap()).collect()
+}
 
 fn generation(distance: u32, name: &str, first: Option<usize>, lines: usize) -> GenerationMeta {
     GenerationMeta {
@@ -54,14 +68,18 @@ fn generations_come_oldest_first_with_a_break_and_numbers_from_their_files() {
         ],
         2_000_000,
     );
-    let parsed = ParsedFile::from_remote_copy(&dir, "web1:/app/app.log").unwrap();
-    let seen: Vec<(u32, usize)> = parsed.entries.iter().map(|e| (e.generation, e.index)).collect();
+    let copy = open(&dir).unwrap();
+    let entries = rows(&copy);
+    let seen: Vec<(u32, usize)> = entries.iter().map(|e| (e.generation, e.index)).collect();
     assert_eq!(seen, [(0, 1), (0, 2), (0, 3), (1, 1_500_001), (1, 1_500_002)]);
-    let mark = parsed.entries[3].break_before.as_ref().unwrap();
+    let mark = entries[3].break_before.as_ref().unwrap();
     assert_eq!(mark.kind, BreakKind::Rotated);
     assert_eq!(mark.label, "web1:/app/app.log rotated");
-    assert_eq!(parsed.lines.len(), 5);
-    assert_eq!(parsed.live.as_ref().unwrap().generation, 1);
+    assert_eq!(copy.file().line(4).unwrap().as_ref(), "2026-10-19 10:00:11 INFO line 11");
+    assert_eq!(copy.generation, 1);
+    assert_eq!(copy.position_of(0, 1_500_002), Some(4));
+    assert_eq!(copy.position_of(1, 3), Some(2));
+    assert_eq!(copy.position_of(1, 4), None, "past the end of its Generation");
 }
 
 #[test]
@@ -70,11 +88,11 @@ fn a_stopped_generation_gets_a_break_below_its_last_line() {
     g.complete = false;
     g.stop = Some(StopReason::FullReadLimit);
     let (_root, dir) = write_copy(vec![(g, text(1..=3))], 2_000_000);
-    let parsed = ParsedFile::from_remote_copy(&dir, "web1:/app/app.log").unwrap();
-    let mark = parsed.entries.last().unwrap().break_after.as_ref().unwrap();
+    let entries = rows(&open(&dir).unwrap());
+    let mark = entries.last().unwrap().break_after.as_ref().unwrap();
     assert_eq!(mark.kind, BreakKind::ReadLimit);
     assert_eq!(mark.label, "stopped at Full Read Limit (2,000,000 lines)");
-    assert!(parsed.entries[0].break_after.is_none());
+    assert!(entries[0].break_after.is_none());
 }
 
 #[test]
@@ -82,16 +100,16 @@ fn older_lines_not_read_are_said_above_the_first_line() {
     let mut g = generation(0, "app.log", Some(8_000), 3);
     g.older_not_read = true;
     let (_root, dir) = write_copy(vec![(g, text(1..=3))], 2_000_000);
-    let parsed = ParsedFile::from_remote_copy(&dir, "web1:/app/app.log").unwrap();
-    assert_eq!(parsed.entries[0].break_before.as_ref().unwrap().kind, BreakKind::OlderNotRead);
-    assert_eq!(parsed.entries[0].index, 8_000);
+    let entries = rows(&open(&dir).unwrap());
+    assert_eq!(entries[0].break_before.as_ref().unwrap().kind, BreakKind::OlderNotRead);
+    assert_eq!(entries[0].index, 8_000);
 }
 
 #[test]
 fn numbers_that_could_not_be_counted_are_not_real() {
     let (_root, dir) = write_copy(vec![(generation(0, "app.log", None, 2), text(1..=2))], 2_000_000);
-    let parsed = ParsedFile::from_remote_copy(&dir, "web1:/app/app.log").unwrap();
-    assert!(!is_real_line_number(parsed.entries[0].index));
+    let entries = rows(&open(&dir).unwrap());
+    assert!(!is_real_line_number(entries[0].index));
 }
 
 #[test]
@@ -100,13 +118,13 @@ fn a_copy_whose_read_never_finished_is_read_as_cancelled() {
     let dir = copy::create_dir(root.path()).unwrap();
     std::fs::write(dir.join("gen-1.log"), text(1..=2)).unwrap();
     std::fs::write(dir.join("gen-0.log"), text(3..=4)).unwrap();
-    let parsed = ParsedFile::from_remote_copy(&dir, "web1:/app/app.log").unwrap();
-    assert_eq!(parsed.entries.len(), 4);
-    assert_eq!(parsed.entries[1].break_after.as_ref().unwrap().kind, BreakKind::ReadCancelled);
-    assert_eq!(parsed.entries[3].break_after.as_ref().unwrap().kind, BreakKind::ReadCancelled);
+    let entries = rows(&open(&dir).unwrap());
+    assert_eq!(entries.len(), 4);
+    assert_eq!(entries[1].break_after.as_ref().unwrap().kind, BreakKind::ReadCancelled);
+    assert_eq!(entries[3].break_after.as_ref().unwrap().kind, BreakKind::ReadCancelled);
     // An empty folder is an error, not an empty file.
     let empty = copy::create_dir(root.path()).unwrap();
-    assert!(ParsedFile::from_remote_copy(&empty, "x").is_err());
+    assert!(open(&empty).is_err());
 }
 
 #[test]

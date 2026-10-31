@@ -4,9 +4,8 @@
 //! connection.
 
 use super::AppView;
-use super::live::{FileDelta, now_label};
-use crate::live::BreakKind;
-use crate::remote::copy::{self, StopReason};
+use super::live::FileDelta;
+use crate::remote::copy;
 use crate::remote::full_read::{GenerationPlan, ReadControl, ReadEvent, ReadPlan, run};
 use crate::workspace::log_space::{LogFile, LogSpaceKind};
 use crate::space_view::ParsedFile;
@@ -59,6 +58,8 @@ pub struct CopyRead {
     pub numbers_unavailable: bool,
     /// Where reading the Generation of this file started in.
     finished: bool,
+    /// The copy as read so far, through its Line Index.
+    file: Option<crate::live::copy_file::CopyFile>,
 }
 
 impl CopyRead {
@@ -185,9 +186,22 @@ impl AppView {
             };
             (file_id, display, space_id, None)
         };
-        let mut parsed = ParsedFile::empty();
-        parsed.live = Some(crate::live::LiveBuffer::command(&display));
-        self.parsed_files.insert(file_id.clone(), parsed);
+        let options = self
+            .active_project()
+            .and_then(|p| p.log_space(&space_id))
+            .and_then(|s| s.file(&file_id))
+            .cloned()
+            .map(|f| self.index_options_for(&f).1)
+            .unwrap_or_default();
+        let copy_file = match crate::live::copy_file::CopyFile::reading(&display, options) {
+            Ok(file) => file,
+            Err(e) => {
+                self.notice = Some(format!("Could not read the copy: {e}"));
+                cx.notify();
+                return None;
+            }
+        };
+        self.parsed_files.insert(file_id.clone(), copy_parsed(&copy_file));
         // Generations the copy will hold: the file moves up by one for each.
         if let Some(space) = self.active_project_mut().and_then(|p| p.log_space_mut(&space_id)) {
             if let Some(f) = space.file_mut(&file_id) {
@@ -223,7 +237,17 @@ impl AppView {
         hub.spawn(async move { run(run_hub, servers, plan, tx, run_ctl).await });
         self.live.copy_reads.insert(
             file_id.clone(),
-            CopyRead { rx, ctl, space_id, progress: None, dir, replaces, numbers_unavailable: false, finished: false },
+            CopyRead {
+                rx,
+                ctl,
+                space_id,
+                progress: None,
+                dir,
+                replaces,
+                numbers_unavailable: false,
+                finished: false,
+                file: Some(copy_file),
+            },
         );
         self.schedule_session_save(cx);
         cx.notify();
@@ -270,29 +294,31 @@ impl AppView {
 
     fn apply_copy_events(&mut self, file_id: &str, events: Vec<ReadEvent>) -> FileDelta {
         let mut delta = FileDelta::default();
-        let Some(mut parsed) = self.parsed_files.remove(file_id) else { return delta };
-        let Some(mut buffer) = parsed.live.take() else {
-            self.parsed_files.insert(file_id.to_string(), parsed);
-            return delta;
-        };
+        let Some(read) = self.live.copy_reads.get_mut(file_id) else { return delta };
+        let Some(mut file) = read.file.take() else { return delta };
+        let dir = read.dir.clone();
+        let budget = self.live.handle_budget.clone();
         let limit = self.live.full_read_limit;
+        let mut failed = None;
         // Reload ended: whether its copy replaces the old one.
         let mut replaced: Option<bool> = None;
         for event in events {
             match event {
-                ReadEvent::GenerationStart { index, first_line_no, .. } => {
-                    let label = format!("{} rotated", buffer.name);
-                    buffer.begin_copy_generation(first_line_no, index == 0, &label);
+                ReadEvent::GenerationStart { index, distance, first_line_no, .. } => {
+                    let path = dir.join(copy::GenerationMeta::file_name(distance));
+                    if let Err(e) = file.begin_generation(&path, first_line_no, index == 0, &budget) {
+                        failed = Some(e);
+                    }
                     if index > 0 {
                         self.begin_generation_for(file_id);
                     }
                 }
                 ReadEvent::FirstLineNo { first_line_no, .. } => match first_line_no {
                     Some(n) => {
-                        if let Some(by) = buffer.set_first_line_no(&mut parsed, n) {
+                        if let Some(by) = file.set_first_line_no(n) {
                             delta.structural = true;
                             delta.renumbered = Some(by);
-                            delta.generation = buffer.generation;
+                            delta.generation = file.generation;
                         }
                     }
                     None => {
@@ -301,31 +327,31 @@ impl AppView {
                         }
                     }
                 },
-                ReadEvent::Lines { lines, bytes } => {
-                    let range = buffer.apply_append_with(&mut parsed, &lines, &bytes);
-                    delta.appended = Some(match delta.appended.take() {
-                        Some(old) => old.start..range.end,
-                        None => range,
-                    });
-                }
+                // The read wrote them to the newest file before it said so.
+                ReadEvent::Lines { .. } => match file.grow() {
+                    Ok(range) if !range.is_empty() => {
+                        delta.appended = Some(match delta.appended.take() {
+                            Some(old) => old.start..range.end,
+                            None => range,
+                        });
+                    }
+                    Ok(_) => {}
+                    Err(e) => failed = Some(e),
+                },
                 ReadEvent::Progress { what, done, total } => {
                     if let Some(read) = self.live.copy_reads.get_mut(file_id) {
                         read.progress = Some((what, done, total));
                     }
                 }
                 ReadEvent::Stopped(reason) => {
-                    let kind = match reason {
-                        StopReason::Cancelled => BreakKind::ReadCancelled,
-                        StopReason::FullReadLimit => BreakKind::ReadLimit,
-                        StopReason::RotatedWhileReading => BreakKind::ReadRotated,
-                        StopReason::OlderNotRead => BreakKind::OlderNotRead,
-                    };
-                    buffer.mark_read_end(&mut parsed, kind, &reason.label(limit));
+                    let _ = file.grow();
+                    file.mark_read_end(reason, &reason.label(limit));
                     delta.structural = true;
                 }
                 ReadEvent::Done(meta) => {
+                    let _ = file.grow();
                     if meta.generations.first().is_some_and(|g| g.older_not_read) {
-                        buffer.mark_older_not_read(&mut parsed, &format!("{}: older lines were not read", meta.name()));
+                        file.mark_older_not_read(&format!("{}: older lines were not read", meta.name()));
                         delta.structural = true;
                     }
                     if let Some(read) = self.live.copy_reads.get_mut(file_id) {
@@ -344,13 +370,17 @@ impl AppView {
                 }
             }
         }
-        let _ = now_label;
-        let generation = buffer.generation;
-        if replaced == Some(true) {
-            self.restore_markers_after_reload(file_id, &parsed, generation);
+        if let Some(e) = failed {
+            self.notice = Some(format!("Open in full: the copy could not be read ({e})"));
         }
-        parsed.live = Some(buffer);
-        self.parsed_files.insert(file_id.to_string(), parsed);
+        if replaced == Some(true) {
+            self.restore_markers_after_reload(file_id, &file);
+        }
+        let format_id = self.parsed_files.get(file_id).and_then(|p| p.format_id.clone());
+        self.parsed_files.insert(file_id.to_string(), ParsedFile { format_id, ..copy_parsed(&file) });
+        if let Some(read) = self.live.copy_reads.get_mut(file_id) {
+            read.file = Some(file);
+        }
         if let Some(done) = replaced {
             self.finish_reload(file_id, done);
             delta.structural = true;
@@ -496,11 +526,12 @@ impl AppView {
     /// The Markers of the file go on lines that are the same (by Generation
     /// distance, number and content) in the new copy, and are dropped on the
     /// others, as when a file on disk is read again.
-    fn restore_markers_after_reload(&mut self, file_id: &str, parsed: &ParsedFile, generation: u32) {
+    fn restore_markers_after_reload(&mut self, file_id: &str, copy: &crate::live::copy_file::CopyFile) {
+        let generation = copy.generation;
+        let lines = copy.file();
         let hash_at = |ago: u32, line: usize| -> Option<u64> {
-            let wanted = generation.checked_sub(ago)?;
-            let pos = parsed.entries.iter().position(|e| e.generation == wanted && e.index == line)?;
-            parsed.lines.get(pos).map(|l| crate::workspace::log_space::line_hash(l))
+            let pos = copy.position_of(ago, line)?;
+            lines.line(pos).map(|l| crate::workspace::log_space::line_hash(&l))
         };
         if let Some(project) = self.active_project_mut() {
             for space in &mut project.log_spaces {
@@ -540,15 +571,16 @@ impl AppView {
             return;
         }
         let Some(dir) = file.copy.as_deref() else { return };
-        let parsed = match ParsedFile::from_remote_copy(Path::new(dir), &file.display_name) {
-            Ok(parsed) => parsed,
+        let (_, options) = self.index_options_for(file);
+        let budget = self.live.handle_budget.clone();
+        let (parsed, generation) = match crate::live::copy_file::CopyFile::open(Path::new(dir), &file.display_name, options, budget) {
+            Ok(copy) => (copy_parsed(&copy), copy.generation),
             Err(e) => {
                 let error = format!("{}: the saved copy could not be read ({e})", file.display_name);
                 self.notice = Some(error.clone());
-                ParsedFile::failed(error)
+                (ParsedFile::failed(error), 0)
             }
         };
-        let generation = parsed.live.as_ref().map(|b| b.generation).unwrap_or(0);
         self.parsed_files.insert(file.file_id.clone(), parsed);
         // Markers keep their distance: the newest Generation is 0 back.
         if let Some(project) = self.active_project_mut() {
@@ -603,4 +635,16 @@ impl AppView {
 /// Counts for a test or a tooltip: the folders of every Remote Copy by file.
 pub fn copy_dirs(files: &[&LogFile]) -> HashMap<String, PathBuf> {
     files.iter().filter_map(|f| f.copy.as_ref().map(|d| (f.file_id.clone(), PathBuf::from(d)))).collect()
+}
+
+/// A `ParsedFile` reading the lines of a Remote Copy through its Line Index.
+fn copy_parsed(copy: &crate::live::copy_file::CopyFile) -> ParsedFile {
+    let file = copy.file();
+    let max_chars = file.indexed.data.read().unwrap().max_chars.clone();
+    ParsedFile {
+        max_chars,
+        raw_breaks: Arc::new(copy.marks_by_position()),
+        indexed: Some(file),
+        ..ParsedFile::empty()
+    }
 }

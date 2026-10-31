@@ -656,6 +656,8 @@ impl Reader {
                 let mut text = lines.join("\n");
                 text.push('\n');
                 out.write_all(text.as_bytes()).await.map_err(|e| e.to_string())?;
+                // The app reads the lines from the file: they are on it first.
+                out.flush().await.map_err(|e| e.to_string())?;
                 self.lines += lines.len();
                 meta.lines += lines.len();
                 self.send(ReadEvent::Lines { lines, bytes });
@@ -871,6 +873,8 @@ impl DecodeJob {
             batch_bytes.push(n as u32);
             batch_lines.push(text);
             if batch_lines.len() >= 5_000 {
+                // The app reads the lines from the file: they are on it first.
+                let _ = out.flush();
                 flush(&mut batch_lines, &mut batch_bytes, &self.tx);
                 if !self.ctl.checkpoint_blocking() {
                     result.end = DecodeEnd::Cancelled;

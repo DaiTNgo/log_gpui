@@ -11,6 +11,11 @@ use log_gpui::remote::full_read::GenerationPlan;
 use log_gpui::remote::{AuthMethod, Server};
 use std::time::{Duration, Instant};
 
+/// Lines a Remote Copy holds, read through its Line Index.
+fn held(parsed: &log_gpui::space_view::ParsedFile) -> usize {
+    parsed.indexed.as_ref().map_or(0, |f| f.len())
+}
+
 fn ssh() -> Option<(String, u16, String)> {
     let dir = std::env::var("SSH_TEST_DIR").ok()?;
     Some((
@@ -119,7 +124,7 @@ fn open_in_full_makes_an_imported_space_with_a_copy_that_opens_again(cx: &mut Te
         let file = last_space(app).file(&file_id).unwrap().clone();
         app.ensure_copy_loaded(&file);
         let parsed = app.parsed_files.get(&file_id).unwrap();
-        assert_eq!(parsed.entries.len(), 160);
+        assert_eq!(held(parsed), 160);
         assert!(parsed.load_error.is_none());
         assert_eq!(last_space(app).file(&file_id).unwrap().generation, 1);
     });
@@ -157,12 +162,12 @@ fn cancel_keeps_the_lines_and_ends_with_a_break(cx: &mut TestAppContext) {
     wait_for(&mut h, |app| app.live.copy_reads.is_empty());
     h.view.read_with(&h.cx, |app, _| {
         let parsed = app.parsed_files.get(&file_id).unwrap();
-        let last = parsed.entries.last();
+        let last = parsed.indexed.as_ref().and_then(|f| f.len().checked_sub(1).and_then(|n| f.entry(n)));
         if let Some(last) = last {
             let mark = last.break_after.as_ref().expect("a Break below the last line");
             assert_eq!(mark.label, "read cancelled");
         }
-        assert!(parsed.entries.len() < 400_000);
+        assert!(held(parsed) < 400_000);
     });
 }
 
@@ -253,7 +258,7 @@ fn reload_replaces_the_copy_and_keeps_only_markers_on_unchanged_lines(cx: &mut T
     text.extend((100..120).map(|i| stamp(i).trim_end().to_string()));
     std::fs::write(&file, text.join("\n") + "\n").unwrap();
     h.view.update(&mut h.cx, |app, cx| app.reload_copy(&file_id, cx));
-    wait_for(&mut h, |app| app.live.copy_reads.is_empty() && app.parsed_files.get(&file_id).is_some_and(|p| p.entries.len() == 120));
+    wait_for(&mut h, |app| app.live.copy_reads.is_empty() && app.parsed_files.get(&file_id).is_some_and(|p| held(p) == 120));
     h.view.read_with(&h.cx, |app, _| {
         let f = last_space(app).file(&file_id).unwrap();
         let new_dir = f.copy.clone().unwrap();
@@ -297,10 +302,10 @@ fn a_remote_copy_does_not_follow_the_server_until_reloaded(cx: &mut TestAppConte
     h.view.read_with(&h.cx, |app, _| {
         assert!(app.live.sources.is_empty(), "nothing follows the server");
         assert!(!app.active_space_is_live());
-        assert_eq!(app.parsed_files[&file_id].entries.len(), 50);
+        assert_eq!(held(&app.parsed_files[&file_id]), 50);
     });
     h.view.update(&mut h.cx, |app, cx| app.reload_copy(&file_id, cx));
-    wait_for(&mut h, |app| app.live.copy_reads.is_empty() && app.parsed_files.get(&file_id).is_some_and(|p| p.entries.len() == 100));
+    wait_for(&mut h, |app| app.live.copy_reads.is_empty() && app.parsed_files.get(&file_id).is_some_and(|p| held(p) == 100));
 }
 
 fn estimate_ready(app: &log_gpui::app::AppView) -> bool {
