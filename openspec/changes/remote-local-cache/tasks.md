@@ -123,6 +123,8 @@
   - `trim_open_view` cho file giữ trong RAM;
   - `ParsedFile::entries`, `ParsedFile::lines`, `FileEntries::Held` cho Remote.
   - Làm task 12.1 của `line-offset-index`, và đánh dấu task 9.4 của change đó đã được thay bằng change này.
+  - Đã làm (phần Remote): bỏ cờ `remote_cache_enabled`/`remote_cache_index`, code giai đoạn 1 (mirror vào `LiveBuffer` khi rời tab, `LiveBuffer::restore`, `RemoteCache::write_snapshot`/`read_lines`, `live.checkpoints`), đường lùi về RAM khi mở tab và các nhánh RAM của Load more, Clear, Back to Live Window, đổi Live Window. Remote File và Remote Command chỉ còn đi qua cache; khi cache bị một cửa sổ app khác giữ hoặc đĩa lỗi, tab báo lý do và không đọc. Hai test so với đường RAM (`cached_remote_app_test`) so với kết quả cố định trong `tests/golden/cached_remote_app/`, ghi từ đường cache và kiểm lại trên code trước khi bỏ đường RAM.
+  - Còn lại: `LiveBuffer` vẫn giữ dòng cho file local đọc nguyên (`read_file`, `index_local_files = false`, nay chỉ test dùng), và `ParsedFile::entries/lines`, `FileEntries::Held` còn dùng ở file local đọc đồng bộ, Archive Entry chưa cache và Scratch không có `LogFile`. Đó là task 12.1 của `line-offset-index`.
 - [ ] 9.4 Đo bằng `perf_probe` và `mem_probe` với một Remote File 1.000.000 dòng (sshd thử): RSS, thời gian mở lại tab, thời gian index lại khi chèn hoặc cắt. Ghi vào design.md.
 - [ ] 9.5 Cập nhật CONTEXT.md:
   - thêm thuật ngữ Remote Cache;

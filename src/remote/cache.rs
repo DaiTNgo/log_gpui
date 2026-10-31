@@ -581,57 +581,6 @@ impl RemoteCache {
         self.save()
     }
 
-    /// Replace what the cache holds with `generations`, oldest first: what
-    /// the app holds of the file when its tab is left or the app quits
-    /// (the first stage of `remote-local-cache`: the lines stay in memory
-    /// while the tab is open, and are kept here for the next time).
-    pub fn write_snapshot(&mut self, generations: &[Snapshot<'_>], extended: bool) -> io::Result<()> {
-        for g in std::mem::take(&mut self.meta.generations) {
-            let _ = std::fs::remove_dir_all(self.dir.join(gen_name(g.id)));
-        }
-        for (id, snap) in generations.iter().enumerate() {
-            let id = id as u32;
-            let gen_dir = self.dir.join(gen_name(id));
-            std::fs::create_dir_all(&gen_dir)?;
-            let bytes = write_lines(&gen_dir.join(seg_name(0)), &snap.lines, false)?;
-            let lens: Vec<u8> = snap.lens.iter().flat_map(|l| l.to_le_bytes()).collect();
-            std::fs::write(gen_dir.join(lens_name(0)), lens)?;
-            self.meta.generations.push(GenerationMeta {
-                id,
-                first_line_no: snap.first_line_no,
-                segments: vec![SegmentMeta { id: 0, lines: snap.lines.len(), bytes, skip_lines: 0, skip_bytes: 0 }],
-                checkpoint: snap.checkpoint.clone(),
-                rotated_name: None,
-                part: false,
-            });
-        }
-        self.meta.extended = extended;
-        self.save()
-    }
-
-    /// The lines of each Generation, oldest first, with the length each one
-    /// had in the file on the Server (empty when not kept).
-    pub fn read_lines(&self) -> io::Result<Vec<(GenerationMeta, Vec<String>, Vec<u32>)>> {
-        let mut out = Vec::new();
-        for generation in &self.meta.generations {
-            let gen_dir = self.dir.join(gen_name(generation.id));
-            let (mut lines, mut lens) = (Vec::new(), Vec::new());
-            for seg in &generation.segments {
-                let text = std::fs::read(gen_dir.join(seg_name(seg.id)))?;
-                let held = &text[(seg.skip_bytes as usize).min(text.len())..];
-                lines.extend(String::from_utf8_lossy(held).lines().map(str::to_string));
-                if let Ok(raw) = std::fs::read(gen_dir.join(lens_name(seg.id))) {
-                    lens.extend(raw.chunks_exact(4).map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]])).skip(seg.skip_lines));
-                }
-            }
-            if lens.len() != lines.len() {
-                lens.clear();
-            }
-            out.push((generation.clone(), lines, lens));
-        }
-        Ok(out)
-    }
-
     pub fn set_extended(&mut self, extended: bool) -> io::Result<()> {
         self.meta.extended = extended;
         self.save()
@@ -643,15 +592,6 @@ impl Drop for RemoteCache {
         let _ = self.save();
         let _ = std::fs::remove_file(self.dir.join(LOCK_FILE));
     }
-}
-
-/// One Generation of what the app holds, for `RemoteCache::write_snapshot`.
-pub struct Snapshot<'a> {
-    pub first_line_no: u64,
-    pub lines: Vec<&'a str>,
-    /// Length of each line in the file on the Server, line end included.
-    pub lens: Vec<u32>,
-    pub checkpoint: Checkpoint,
 }
 
 /// Whether a cache with lines to show is kept in `dir`.

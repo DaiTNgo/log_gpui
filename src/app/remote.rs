@@ -128,7 +128,6 @@ impl AppView {
                 source.handle.close();
             }
             // What the Remote Files hold is kept for the next time.
-            this.snapshot_all_remote_files();
             this.close_all_cached();
             let hub = quit_hub.clone();
             let executor = cx.background_executor().clone();

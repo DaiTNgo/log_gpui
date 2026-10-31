@@ -53,21 +53,10 @@ fn rows(app: &log_gpui::app::AppView) -> Vec<(usize, String)> {
     app.rows_snapshot().iter().map(|e| (e.index, e.raw_line.to_string())).collect()
 }
 
+/// Read through its cache while the tab is open, with no text in memory.
 #[gpui::test]
 fn a_remote_file_chosen_again_shows_its_kept_lines_and_reads_on_only_the_new_ones(cx: &mut TestAppContext) {
-    chosen_again(cx, false);
-}
-
-/// The same, with the lines read through the cache while the tab is open
-/// (stage 2): no text in memory.
-#[gpui::test]
-fn read_through_its_cache_a_remote_file_chosen_again_reads_on_only_the_new_ones(cx: &mut TestAppContext) {
-    chosen_again(cx, true);
-}
-
-fn chosen_again(cx: &mut TestAppContext, through_cache: bool) {
     let mut h = common::open_app(cx);
-    h.view.update(&mut h.cx, |app, _| app.remote_cache_index = through_cache);
     let Some(server_id) = add_server(&mut h) else { return };
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("app.log");
@@ -83,7 +72,7 @@ fn chosen_again(cx: &mut TestAppContext, through_cache: bool) {
     });
     wait_for(&mut h, "every line, numbered, and a Checkpoint", |app| {
         let cached = app.live.cached.values().any(|c| c.cache().meta().generations.last().is_some_and(|g| g.checkpoint.head_hash.is_some()));
-        app.view.len() == 3_000 && app.rows_snapshot()[0].index == 1 && (!app.live.checkpoints.is_empty() || cached)
+        app.view.len() == 3_000 && app.rows_snapshot()[0].index == 1 && cached
     });
 
     // Another tab: the Remote File's tab goes Dormant and its lines are kept.
@@ -112,10 +101,8 @@ fn chosen_again(cx: &mut TestAppContext, through_cache: bool) {
         let have = rows(app);
         let first_diff = have.iter().zip(&want).position(|(a, b)| a != b);
         assert_eq!((have.len(), first_diff), (want.len(), None), "nothing read twice, nothing missing: {:?}", first_diff.map(|i| (&have[i], &want[i])));
-        if through_cache {
-            let parsed = app.parsed_files.values().find(|p| p.indexed.is_some() && p.live.is_none()).expect("read through its cache");
-            assert!(parsed.entries.is_empty() && parsed.lines.is_empty(), "no text in memory");
-        }
+        let parsed = app.parsed_files.values().find(|p| p.indexed.is_some() && p.live.is_none()).expect("read through its cache");
+        assert!(parsed.entries.is_empty() && parsed.lines.is_empty(), "no text in memory");
     });
 }
 

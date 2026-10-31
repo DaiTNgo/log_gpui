@@ -117,9 +117,6 @@ pub struct LiveRuntime {
     /// the path again, its lines are a new Generation below a Break
     /// "replaced".
     pub local_deleted: HashSet<String>,
-    /// The last Checkpoint of each Remote File: how far its lines line up
-    /// with the file on the Server.
-    pub checkpoints: HashMap<String, crate::live::remote::ResumeFrom>,
     /// Where a Remote File restored from its cache reads on from, until its
     /// source starts.
     pub resume_from: HashMap<String, crate::live::remote::ResumeFrom>,
@@ -178,7 +175,6 @@ impl LiveRuntime {
             static_watched: None,
             static_gone: HashSet::new(),
             local_deleted: HashSet::new(),
-            checkpoints: HashMap::new(),
             resume_from: HashMap::new(),
             cached: HashMap::new(),
             previous_run: HashMap::new(),
@@ -308,9 +304,7 @@ impl AppView {
         self.flush_scratch_saves();
         let left: Vec<String> = self.parsed_files.keys().filter(|id| !keep.contains(*id)).cloned().collect();
         for id in &left {
-            self.snapshot_remote_file(id);
             self.close_cached(id);
-            self.live.checkpoints.remove(id);
         }
         self.parsed_files.retain(|id, _| keep.contains(id));
     }
@@ -372,9 +366,7 @@ impl AppView {
                 source.handle.close();
             }
             // What was received goes to the Remote Cache, for next time.
-            self.snapshot_remote_file(&file_id);
             self.close_cached(&file_id);
-            self.live.checkpoints.remove(&file_id);
             self.parsed_files.remove(&file_id);
         }
         // A Dormant Tab's space stays paused for when it is chosen again.
@@ -566,19 +558,6 @@ impl AppView {
                     self.refresh_cached_parsed(&file_id);
                     self.drop_markers_for(&file_id, &trimmed);
                     trimmed_any = true;
-                }
-                continue;
-            }
-            if let Some(parsed) = self.parsed_files.get_mut(&file_id) {
-                if let Some(mut buffer) = parsed.live.take() {
-                    // A smaller window drops at once, not after 10% more.
-                    let limit = buffer.limit(window, self.live.full_read_limit);
-                    let trimmed = buffer.trim_to_window(parsed, limit);
-                    parsed.live = Some(buffer);
-                    if let Some(trimmed) = trimmed {
-                        self.drop_markers_for(&file_id, &trimmed);
-                        trimmed_any = true;
-                    }
                 }
             }
         }
@@ -897,11 +876,8 @@ impl AppView {
                 }
                 SourceEvent::Problem(message) => self.notice = Some(message),
                 SourceEvent::Run { .. } => {}
-                // Kept for the Remote Cache, written when the tab is left.
-                SourceEvent::Checkpoint { generation, inode, server_end, head_hash, tail_hash } => {
-                    let from = crate::live::remote::ResumeFrom { generation, inode, server_end, head_hash, tail_hash };
-                    self.live.checkpoints.insert(file_id.to_string(), from);
-                }
+                // Only a Remote File, read through its Remote Cache, has one.
+                SourceEvent::Checkpoint { .. } => {}
                 SourceEvent::Status(status) => {
                     if std::env::var_os("LOG_GPUI_LIVE_TRACE").is_some() {
                         eprintln!("live status: {file_id}: {}", status.label());

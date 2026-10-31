@@ -131,15 +131,9 @@ impl AppView {
         if !self.is_live_remote_file(file_id) {
             return None;
         }
-        // Read through its Remote Cache, or held in memory.
-        let (held, extended, at_start) = match self.live.cached.get(file_id) {
-            Some(cached) => (cached.len(), cached.hold == HoldMode::Extended, cached.at_generation_start()),
-            None => {
-                let parsed = self.parsed_files.get(file_id)?;
-                let buffer = parsed.live.as_ref()?;
-                (parsed.entries.len(), buffer.hold == HoldMode::Extended, buffer.at_generation_start(parsed))
-            }
-        };
+        // Read through its Remote Cache.
+        let cached = self.live.cached.get(file_id)?;
+        let (held, extended, at_start) = (cached.len(), cached.hold == HoldMode::Extended, cached.at_generation_start());
         let status = self.live.sources.get(file_id).map(|s| &s.status);
         let command = self.live.sources.get(file_id).is_some_and(|s| s.command);
         let load_more_off = if command {
@@ -234,28 +228,7 @@ impl AppView {
                     self.raw.selected = None;
                 }
                 cleared.insert(file_id.clone());
-                continue;
             }
-            let Some(mut parsed) = self.parsed_files.remove(file_id) else { continue };
-            let Some(mut buffer) = parsed.live.take() else {
-                self.parsed_files.insert(file_id.clone(), parsed);
-                continue;
-            };
-            let trimmed = buffer.clear(&mut parsed, &time);
-            parsed.live = Some(buffer);
-            self.parsed_files.insert(file_id.clone(), parsed);
-            self.drop_markers_for(file_id, &trimmed);
-            if let Some(source) = self.live.sources.get(file_id) {
-                source.handle.send(SourceCommand::Clear);
-            }
-            self.live.loading_more.remove(file_id);
-            if self.raw.editors.contains_key(file_id) {
-                self.raw.stale.insert(file_id.clone());
-            }
-            if self.raw.selected.as_ref().is_some_and(|(f, _)| f == file_id) {
-                self.raw.selected = None;
-            }
-            cleared.insert(file_id.clone());
         }
         if cleared.is_empty() {
             return;
@@ -309,25 +282,8 @@ impl AppView {
                     first_hash,
                 )
             }
-            None => {
-                let Some(parsed) = self.parsed_files.get(file_id) else { return };
-                let Some(buffer) = parsed.live.as_ref() else { return };
-                let start = buffer.held_start(parsed);
-                // The line the batch has to end just above: a different one
-                // means the file changed.
-                let first_hash = match (parsed.entries.first(), parsed.lines.first()) {
-                    (Some(entry), Some(text)) if entry.generation == start.generation => Some(line_hash(text)),
-                    _ => None,
-                };
-                (
-                    start.clone(),
-                    buffer.top_generation_bytes(parsed),
-                    parsed.entries.first().map(|e| e.index).filter(|n| crate::live::is_real_line_number(*n)),
-                    buffer.inode_of(start.generation),
-                    parsed.entries.len(),
-                    first_hash,
-                )
-            }
+            // Only a file read through its Remote Cache loads more.
+            None => return,
         };
         // Where the oldest held line starts in the file being read; for a
         // Rotated File the source works from how many bytes are held.
@@ -392,13 +348,8 @@ impl AppView {
         // The Live Window's room first; a file with none (or one that
         // already holds more) takes a Load More Step, up to the Full Read
         // Limit, and holds it from then on.
-        let (held, extended) = match self.live.cached.get(file_id) {
-            Some(cached) => (cached.len(), cached.hold == HoldMode::Extended),
-            None => {
-                let Some(parsed) = self.parsed_files.get(file_id) else { return };
-                (parsed.entries.len(), parsed.live.as_ref().is_some_and(|b| b.hold == HoldMode::Extended))
-            }
-        };
+        let Some(cached) = self.live.cached.get(file_id) else { return };
+        let (held, extended) = (cached.len(), cached.hold == HoldMode::Extended);
         let window_room = if extended { 0 } else { self.live.window.saturating_sub(held) };
         let room = if window_room > 0 {
             window_room
@@ -469,33 +420,13 @@ impl AppView {
     /// Cut the file down to the Live Window at once and give the memory back.
     pub fn back_to_live_window(&mut self, file_id: &str, cx: &mut Context<Self>) {
         let window = self.live.window;
-        if let Some(cached) = self.live.cached.get_mut(file_id) {
-            let trimmed = cached.back_to_window(window);
-            self.refresh_cached_parsed(file_id);
-            if let Ok(Some(trimmed)) = trimmed {
-                self.drop_markers_for(file_id, &trimmed);
-                self.rebuild_open_view_keeping_position(cx);
-                self.move_current_lines_off_dropped(file_id, &trimmed);
-            }
-            cx.notify();
-            return;
-        }
-        let Some(mut parsed) = self.parsed_files.remove(file_id) else { return };
-        let Some(mut buffer) = parsed.live.take() else {
-            self.parsed_files.insert(file_id.to_string(), parsed);
-            return;
-        };
-        let trimmed = buffer.back_to_window(&mut parsed, window);
-        parsed.live = Some(buffer);
-        self.parsed_files.insert(file_id.to_string(), parsed);
-        if let Some(trimmed) = trimmed {
+        let Some(cached) = self.live.cached.get_mut(file_id) else { return };
+        let trimmed = cached.back_to_window(window);
+        self.refresh_cached_parsed(file_id);
+        if let Ok(Some(trimmed)) = trimmed {
             self.drop_markers_for(file_id, &trimmed);
-            if self.raw.editors.contains_key(file_id) {
-                self.raw.stale.insert(file_id.to_string());
-            }
             self.rebuild_open_view_keeping_position(cx);
             self.move_current_lines_off_dropped(file_id, &trimmed);
-            super::live::release_freed_memory();
         }
         cx.notify();
     }

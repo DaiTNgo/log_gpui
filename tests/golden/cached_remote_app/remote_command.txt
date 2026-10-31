@@ -1,0 +1,1177 @@
+## step 0
+hold Some((44, false))
+filter [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43]
+matches []
+1 g0 stderr 2026-09-05 10:00:00 [INFO] [api] request 0 user=0
+2 g0 stdout     at Handler.run(Handler.java:0)
+3 g0 stdout 2026-09-05 10:00:01 [WARN] [api] request 1 user=1
+4 g0 stderr 2026-09-05 10:00:02 [ERROR] [api] request 2 user=2
+5 g0 stdout 2026-09-05 10:00:03 [INFO] [api] request 3 user=3
+6 g0 stdout 2026-09-05 10:00:04 [WARN] [api] request 4 user=4
+7 g0 stderr 2026-09-05 10:00:05 [ERROR] [api] request 5 user=5
+8 g0 stdout 2026-09-05 10:00:06 [INFO] [api] request 6 user=6
+9 g0 stdout 2026-09-05 10:00:07 [WARN] [api] request 7 user=0
+10 g0 stderr 2026-09-05 10:00:08 [ERROR] [api] request 8 user=1
+11 g0 stdout 2026-09-05 10:00:09 [INFO] [api] request 9 user=2
+12 g0 stdout 2026-09-05 10:00:10 [WARN] [api] request 10 user=3
+13 g0 stderr     at Handler.run(Handler.java:10)
+14 g0 stdout 2026-09-05 10:00:11 [ERROR] [api] request 11 user=4
+15 g0 stdout 2026-09-05 10:00:12 [INFO] [api] request 12 user=5
+16 g0 stderr 2026-09-05 10:00:13 [WARN] [api] request 13 user=6
+17 g0 stdout 2026-09-05 10:00:14 [ERROR] [api] request 14 user=0
+18 g0 stdout 2026-09-05 10:00:15 [INFO] [api] request 15 user=1
+19 g0 stderr 2026-09-05 10:00:16 [WARN] [api] request 16 user=2
+20 g0 stdout 2026-09-05 10:00:17 [ERROR] [api] request 17 user=3
+21 g0 stdout 2026-09-05 10:00:18 [INFO] [api] request 18 user=4
+22 g0 stderr 2026-09-05 10:00:19 [WARN] [api] request 19 user=5
+23 g0 stdout 2026-09-05 10:00:20 [ERROR] [api] request 20 user=6
+24 g0 stdout     at Handler.run(Handler.java:20)
+25 g0 stderr 2026-09-05 10:00:21 [INFO] [api] request 21 user=0
+26 g0 stdout 2026-09-05 10:00:22 [WARN] [api] request 22 user=1
+27 g0 stdout 2026-09-05 10:00:23 [ERROR] [api] request 23 user=2
+28 g0 stderr 2026-09-05 10:00:24 [INFO] [api] request 24 user=3
+29 g0 stdout 2026-09-05 10:00:25 [WARN] [api] request 25 user=4
+30 g0 stdout 2026-09-05 10:00:26 [ERROR] [api] request 26 user=5
+31 g0 stderr 2026-09-05 10:00:27 [INFO] [api] request 27 user=6
+32 g0 stdout 2026-09-05 10:00:28 [WARN] [api] request 28 user=0
+33 g0 stdout 2026-09-05 10:00:29 [ERROR] [api] request 29 user=1
+34 g0 stderr 2026-09-05 10:00:30 [INFO] [api] request 30 user=2
+35 g0 stdout     at Handler.run(Handler.java:30)
+36 g0 stdout 2026-09-05 10:00:31 [WARN] [api] request 31 user=3
+37 g0 stderr 2026-09-05 10:00:32 [ERROR] [api] request 32 user=4
+38 g0 stdout 2026-09-05 10:00:33 [INFO] [api] request 33 user=5
+39 g0 stdout 2026-09-05 10:00:34 [WARN] [api] request 34 user=6
+40 g0 stderr 2026-09-05 10:00:35 [ERROR] [api] request 35 user=0
+41 g0 stdout 2026-09-05 10:00:36 [INFO] [api] request 36 user=1
+42 g0 stdout 2026-09-05 10:00:37 [WARN] [api] request 37 user=2
+43 g0 stderr 2026-09-05 10:00:38 [ERROR] [api] request 38 user=3
+44 g0 stdout 2026-09-05 10:00:39 [INFO] [api] request 39 user=4
+## step 1
+hold Some((44, false))
+filter [0, 3, 6, 9, 12, 15, 18, 21, 24, 27, 30, 33, 36, 39, 42]
+matches []
+1 g0 stderr 2026-09-05 10:00:00 [INFO] [api] request 0 user=0
+2 g0 stdout     at Handler.run(Handler.java:0)
+3 g0 stdout 2026-09-05 10:00:01 [WARN] [api] request 1 user=1
+4 g0 stderr 2026-09-05 10:00:02 [ERROR] [api] request 2 user=2
+5 g0 stdout 2026-09-05 10:00:03 [INFO] [api] request 3 user=3
+6 g0 stdout 2026-09-05 10:00:04 [WARN] [api] request 4 user=4
+7 g0 stderr 2026-09-05 10:00:05 [ERROR] [api] request 5 user=5
+8 g0 stdout 2026-09-05 10:00:06 [INFO] [api] request 6 user=6
+9 g0 stdout 2026-09-05 10:00:07 [WARN] [api] request 7 user=0
+10 g0 stderr 2026-09-05 10:00:08 [ERROR] [api] request 8 user=1
+11 g0 stdout 2026-09-05 10:00:09 [INFO] [api] request 9 user=2
+12 g0 stdout 2026-09-05 10:00:10 [WARN] [api] request 10 user=3
+13 g0 stderr     at Handler.run(Handler.java:10)
+14 g0 stdout 2026-09-05 10:00:11 [ERROR] [api] request 11 user=4
+15 g0 stdout 2026-09-05 10:00:12 [INFO] [api] request 12 user=5
+16 g0 stderr 2026-09-05 10:00:13 [WARN] [api] request 13 user=6
+17 g0 stdout 2026-09-05 10:00:14 [ERROR] [api] request 14 user=0
+18 g0 stdout 2026-09-05 10:00:15 [INFO] [api] request 15 user=1
+19 g0 stderr 2026-09-05 10:00:16 [WARN] [api] request 16 user=2
+20 g0 stdout 2026-09-05 10:00:17 [ERROR] [api] request 17 user=3
+21 g0 stdout 2026-09-05 10:00:18 [INFO] [api] request 18 user=4
+22 g0 stderr 2026-09-05 10:00:19 [WARN] [api] request 19 user=5
+23 g0 stdout 2026-09-05 10:00:20 [ERROR] [api] request 20 user=6
+24 g0 stdout     at Handler.run(Handler.java:20)
+25 g0 stderr 2026-09-05 10:00:21 [INFO] [api] request 21 user=0
+26 g0 stdout 2026-09-05 10:00:22 [WARN] [api] request 22 user=1
+27 g0 stdout 2026-09-05 10:00:23 [ERROR] [api] request 23 user=2
+28 g0 stderr 2026-09-05 10:00:24 [INFO] [api] request 24 user=3
+29 g0 stdout 2026-09-05 10:00:25 [WARN] [api] request 25 user=4
+30 g0 stdout 2026-09-05 10:00:26 [ERROR] [api] request 26 user=5
+31 g0 stderr 2026-09-05 10:00:27 [INFO] [api] request 27 user=6
+32 g0 stdout 2026-09-05 10:00:28 [WARN] [api] request 28 user=0
+33 g0 stdout 2026-09-05 10:00:29 [ERROR] [api] request 29 user=1
+34 g0 stderr 2026-09-05 10:00:30 [INFO] [api] request 30 user=2
+35 g0 stdout     at Handler.run(Handler.java:30)
+36 g0 stdout 2026-09-05 10:00:31 [WARN] [api] request 31 user=3
+37 g0 stderr 2026-09-05 10:00:32 [ERROR] [api] request 32 user=4
+38 g0 stdout 2026-09-05 10:00:33 [INFO] [api] request 33 user=5
+39 g0 stdout 2026-09-05 10:00:34 [WARN] [api] request 34 user=6
+40 g0 stderr 2026-09-05 10:00:35 [ERROR] [api] request 35 user=0
+41 g0 stdout 2026-09-05 10:00:36 [INFO] [api] request 36 user=1
+42 g0 stdout 2026-09-05 10:00:37 [WARN] [api] request 37 user=2
+43 g0 stderr 2026-09-05 10:00:38 [ERROR] [api] request 38 user=3
+44 g0 stdout 2026-09-05 10:00:39 [INFO] [api] request 39 user=4
+## step 2
+hold Some((66, false))
+filter [0, 3, 6, 9, 12, 15, 18, 21, 24, 27, 30, 33, 36, 39, 42, 44, 47, 50, 53, 56, 59, 62, 65]
+matches []
+1 g0 stderr 2026-09-05 10:00:00 [INFO] [api] request 0 user=0
+2 g0 stdout     at Handler.run(Handler.java:0)
+3 g0 stdout 2026-09-05 10:00:01 [WARN] [api] request 1 user=1
+4 g0 stderr 2026-09-05 10:00:02 [ERROR] [api] request 2 user=2
+5 g0 stdout 2026-09-05 10:00:03 [INFO] [api] request 3 user=3
+6 g0 stdout 2026-09-05 10:00:04 [WARN] [api] request 4 user=4
+7 g0 stderr 2026-09-05 10:00:05 [ERROR] [api] request 5 user=5
+8 g0 stdout 2026-09-05 10:00:06 [INFO] [api] request 6 user=6
+9 g0 stdout 2026-09-05 10:00:07 [WARN] [api] request 7 user=0
+10 g0 stderr 2026-09-05 10:00:08 [ERROR] [api] request 8 user=1
+11 g0 stdout 2026-09-05 10:00:09 [INFO] [api] request 9 user=2
+12 g0 stdout 2026-09-05 10:00:10 [WARN] [api] request 10 user=3
+13 g0 stderr     at Handler.run(Handler.java:10)
+14 g0 stdout 2026-09-05 10:00:11 [ERROR] [api] request 11 user=4
+15 g0 stdout 2026-09-05 10:00:12 [INFO] [api] request 12 user=5
+16 g0 stderr 2026-09-05 10:00:13 [WARN] [api] request 13 user=6
+17 g0 stdout 2026-09-05 10:00:14 [ERROR] [api] request 14 user=0
+18 g0 stdout 2026-09-05 10:00:15 [INFO] [api] request 15 user=1
+19 g0 stderr 2026-09-05 10:00:16 [WARN] [api] request 16 user=2
+20 g0 stdout 2026-09-05 10:00:17 [ERROR] [api] request 17 user=3
+21 g0 stdout 2026-09-05 10:00:18 [INFO] [api] request 18 user=4
+22 g0 stderr 2026-09-05 10:00:19 [WARN] [api] request 19 user=5
+23 g0 stdout 2026-09-05 10:00:20 [ERROR] [api] request 20 user=6
+24 g0 stdout     at Handler.run(Handler.java:20)
+25 g0 stderr 2026-09-05 10:00:21 [INFO] [api] request 21 user=0
+26 g0 stdout 2026-09-05 10:00:22 [WARN] [api] request 22 user=1
+27 g0 stdout 2026-09-05 10:00:23 [ERROR] [api] request 23 user=2
+28 g0 stderr 2026-09-05 10:00:24 [INFO] [api] request 24 user=3
+29 g0 stdout 2026-09-05 10:00:25 [WARN] [api] request 25 user=4
+30 g0 stdout 2026-09-05 10:00:26 [ERROR] [api] request 26 user=5
+31 g0 stderr 2026-09-05 10:00:27 [INFO] [api] request 27 user=6
+32 g0 stdout 2026-09-05 10:00:28 [WARN] [api] request 28 user=0
+33 g0 stdout 2026-09-05 10:00:29 [ERROR] [api] request 29 user=1
+34 g0 stderr 2026-09-05 10:00:30 [INFO] [api] request 30 user=2
+35 g0 stdout     at Handler.run(Handler.java:30)
+36 g0 stdout 2026-09-05 10:00:31 [WARN] [api] request 31 user=3
+37 g0 stderr 2026-09-05 10:00:32 [ERROR] [api] request 32 user=4
+38 g0 stdout 2026-09-05 10:00:33 [INFO] [api] request 33 user=5
+39 g0 stdout 2026-09-05 10:00:34 [WARN] [api] request 34 user=6
+40 g0 stderr 2026-09-05 10:00:35 [ERROR] [api] request 35 user=0
+41 g0 stdout 2026-09-05 10:00:36 [INFO] [api] request 36 user=1
+42 g0 stdout 2026-09-05 10:00:37 [WARN] [api] request 37 user=2
+43 g0 stderr 2026-09-05 10:00:38 [ERROR] [api] request 38 user=3
+44 g0 stdout 2026-09-05 10:00:39 [INFO] [api] request 39 user=4
+45 g0 stderr 2026-09-05 10:00:40 [WARN] [api] request 40 user=5
+46 g0 stdout     at Handler.run(Handler.java:40)
+47 g0 stdout 2026-09-05 10:00:41 [ERROR] [api] request 41 user=6
+48 g0 stderr 2026-09-05 10:00:42 [INFO] [api] request 42 user=0
+49 g0 stdout 2026-09-05 10:00:43 [WARN] [api] request 43 user=1
+50 g0 stdout 2026-09-05 10:00:44 [ERROR] [api] request 44 user=2
+51 g0 stderr 2026-09-05 10:00:45 [INFO] [api] request 45 user=3
+52 g0 stdout 2026-09-05 10:00:46 [WARN] [api] request 46 user=4
+53 g0 stdout 2026-09-05 10:00:47 [ERROR] [api] request 47 user=5
+54 g0 stderr 2026-09-05 10:00:48 [INFO] [api] request 48 user=6
+55 g0 stdout 2026-09-05 10:00:49 [WARN] [api] request 49 user=0
+56 g0 stdout 2026-09-05 10:00:50 [ERROR] [api] request 50 user=1
+57 g0 stderr     at Handler.run(Handler.java:50)
+58 g0 stdout 2026-09-05 10:00:51 [INFO] [api] request 51 user=2
+59 g0 stdout 2026-09-05 10:00:52 [WARN] [api] request 52 user=3
+60 g0 stderr 2026-09-05 10:00:53 [ERROR] [api] request 53 user=4
+61 g0 stdout 2026-09-05 10:00:54 [INFO] [api] request 54 user=5
+62 g0 stdout 2026-09-05 10:00:55 [WARN] [api] request 55 user=6
+63 g0 stderr 2026-09-05 10:00:56 [ERROR] [api] request 56 user=0
+64 g0 stdout 2026-09-05 10:00:57 [INFO] [api] request 57 user=1
+65 g0 stdout 2026-09-05 10:00:58 [WARN] [api] request 58 user=2
+66 g0 stderr 2026-09-05 10:00:59 [ERROR] [api] request 59 user=3
+## step 3
+hold Some((66, false))
+filter [0, 3, 6, 9, 12, 15, 18, 21, 24, 27, 30, 33, 36, 39, 42, 44, 47, 50, 53, 56, 59, 62, 65]
+matches []
+1 g0 stderr 2026-09-05 10:00:00 [INFO] [api] request 0 user=0
+2 g0 stdout     at Handler.run(Handler.java:0)
+3 g0 stdout 2026-09-05 10:00:01 [WARN] [api] request 1 user=1
+4 g0 stderr 2026-09-05 10:00:02 [ERROR] [api] request 2 user=2
+5 g0 stdout 2026-09-05 10:00:03 [INFO] [api] request 3 user=3
+6 g0 stdout 2026-09-05 10:00:04 [WARN] [api] request 4 user=4
+7 g0 stderr 2026-09-05 10:00:05 [ERROR] [api] request 5 user=5
+8 g0 stdout 2026-09-05 10:00:06 [INFO] [api] request 6 user=6
+9 g0 stdout 2026-09-05 10:00:07 [WARN] [api] request 7 user=0
+10 g0 stderr 2026-09-05 10:00:08 [ERROR] [api] request 8 user=1
+11 g0 stdout 2026-09-05 10:00:09 [INFO] [api] request 9 user=2
+12 g0 stdout 2026-09-05 10:00:10 [WARN] [api] request 10 user=3
+13 g0 stderr     at Handler.run(Handler.java:10)
+14 g0 stdout 2026-09-05 10:00:11 [ERROR] [api] request 11 user=4
+15 g0 stdout 2026-09-05 10:00:12 [INFO] [api] request 12 user=5
+16 g0 stderr 2026-09-05 10:00:13 [WARN] [api] request 13 user=6
+17 g0 stdout 2026-09-05 10:00:14 [ERROR] [api] request 14 user=0
+18 g0 stdout 2026-09-05 10:00:15 [INFO] [api] request 15 user=1
+19 g0 stderr 2026-09-05 10:00:16 [WARN] [api] request 16 user=2
+20 g0 stdout 2026-09-05 10:00:17 [ERROR] [api] request 17 user=3
+21 g0 stdout 2026-09-05 10:00:18 [INFO] [api] request 18 user=4
+22 g0 stderr 2026-09-05 10:00:19 [WARN] [api] request 19 user=5
+23 g0 stdout 2026-09-05 10:00:20 [ERROR] [api] request 20 user=6
+24 g0 stdout     at Handler.run(Handler.java:20)
+25 g0 stderr 2026-09-05 10:00:21 [INFO] [api] request 21 user=0
+26 g0 stdout 2026-09-05 10:00:22 [WARN] [api] request 22 user=1
+27 g0 stdout 2026-09-05 10:00:23 [ERROR] [api] request 23 user=2
+28 g0 stderr 2026-09-05 10:00:24 [INFO] [api] request 24 user=3
+29 g0 stdout 2026-09-05 10:00:25 [WARN] [api] request 25 user=4
+30 g0 stdout 2026-09-05 10:00:26 [ERROR] [api] request 26 user=5
+31 g0 stderr 2026-09-05 10:00:27 [INFO] [api] request 27 user=6
+32 g0 stdout 2026-09-05 10:00:28 [WARN] [api] request 28 user=0
+33 g0 stdout 2026-09-05 10:00:29 [ERROR] [api] request 29 user=1
+34 g0 stderr 2026-09-05 10:00:30 [INFO] [api] request 30 user=2
+35 g0 stdout     at Handler.run(Handler.java:30)
+36 g0 stdout 2026-09-05 10:00:31 [WARN] [api] request 31 user=3
+37 g0 stderr 2026-09-05 10:00:32 [ERROR] [api] request 32 user=4
+38 g0 stdout 2026-09-05 10:00:33 [INFO] [api] request 33 user=5
+39 g0 stdout 2026-09-05 10:00:34 [WARN] [api] request 34 user=6
+40 g0 stderr 2026-09-05 10:00:35 [ERROR] [api] request 35 user=0
+41 g0 stdout 2026-09-05 10:00:36 [INFO] [api] request 36 user=1
+42 g0 stdout 2026-09-05 10:00:37 [WARN] [api] request 37 user=2
+43 g0 stderr 2026-09-05 10:00:38 [ERROR] [api] request 38 user=3
+44 g0 stdout 2026-09-05 10:00:39 [INFO] [api] request 39 user=4
+45 g0 stderr 2026-09-05 10:00:40 [WARN] [api] request 40 user=5
+46 g0 stdout     at Handler.run(Handler.java:40)
+47 g0 stdout 2026-09-05 10:00:41 [ERROR] [api] request 41 user=6
+48 g0 stderr 2026-09-05 10:00:42 [INFO] [api] request 42 user=0
+49 g0 stdout 2026-09-05 10:00:43 [WARN] [api] request 43 user=1
+50 g0 stdout 2026-09-05 10:00:44 [ERROR] [api] request 44 user=2
+51 g0 stderr 2026-09-05 10:00:45 [INFO] [api] request 45 user=3
+52 g0 stdout 2026-09-05 10:00:46 [WARN] [api] request 46 user=4
+53 g0 stdout 2026-09-05 10:00:47 [ERROR] [api] request 47 user=5
+54 g0 stderr 2026-09-05 10:00:48 [INFO] [api] request 48 user=6
+55 g0 stdout 2026-09-05 10:00:49 [WARN] [api] request 49 user=0
+56 g0 stdout 2026-09-05 10:00:50 [ERROR] [api] request 50 user=1
+57 g0 stderr     at Handler.run(Handler.java:50)
+58 g0 stdout 2026-09-05 10:00:51 [INFO] [api] request 51 user=2
+59 g0 stdout 2026-09-05 10:00:52 [WARN] [api] request 52 user=3
+60 g0 stderr 2026-09-05 10:00:53 [ERROR] [api] request 53 user=4
+61 g0 stdout 2026-09-05 10:00:54 [INFO] [api] request 54 user=5
+62 g0 stdout 2026-09-05 10:00:55 [WARN] [api] request 55 user=6
+63 g0 stderr 2026-09-05 10:00:56 [ERROR] [api] request 56 user=0
+64 g0 stdout 2026-09-05 10:00:57 [INFO] [api] request 57 user=1
+65 g0 stdout 2026-09-05 10:00:58 [WARN] [api] request 58 user=2
+66 g0 stderr 2026-09-05 10:00:59 [ERROR] [api] request 59 user=3
+## step 4
+hold Some((66, false))
+filter [0, 3, 6, 9, 12, 15, 18, 21, 24, 27, 30, 33, 36, 39, 42, 44, 47, 50, 53, 56, 59, 62, 65]
+matches []
+1 g0 stderr 2026-09-05 10:00:00 [INFO] [api] request 0 user=0
+2 g0 stdout     at Handler.run(Handler.java:0)
+3 g0 stdout 2026-09-05 10:00:01 [WARN] [api] request 1 user=1
+4 g0 stderr 2026-09-05 10:00:02 [ERROR] [api] request 2 user=2
+5 g0 stdout 2026-09-05 10:00:03 [INFO] [api] request 3 user=3
+6 g0 stdout 2026-09-05 10:00:04 [WARN] [api] request 4 user=4
+7 g0 stderr 2026-09-05 10:00:05 [ERROR] [api] request 5 user=5
+8 g0 stdout 2026-09-05 10:00:06 [INFO] [api] request 6 user=6
+9 g0 stdout 2026-09-05 10:00:07 [WARN] [api] request 7 user=0
+10 g0 stderr 2026-09-05 10:00:08 [ERROR] [api] request 8 user=1
+11 g0 stdout 2026-09-05 10:00:09 [INFO] [api] request 9 user=2
+12 g0 stdout 2026-09-05 10:00:10 [WARN] [api] request 10 user=3
+13 g0 stderr     at Handler.run(Handler.java:10)
+14 g0 stdout 2026-09-05 10:00:11 [ERROR] [api] request 11 user=4
+15 g0 stdout 2026-09-05 10:00:12 [INFO] [api] request 12 user=5
+16 g0 stderr 2026-09-05 10:00:13 [WARN] [api] request 13 user=6
+17 g0 stdout 2026-09-05 10:00:14 [ERROR] [api] request 14 user=0
+18 g0 stdout 2026-09-05 10:00:15 [INFO] [api] request 15 user=1
+19 g0 stderr 2026-09-05 10:00:16 [WARN] [api] request 16 user=2
+20 g0 stdout 2026-09-05 10:00:17 [ERROR] [api] request 17 user=3
+21 g0 stdout 2026-09-05 10:00:18 [INFO] [api] request 18 user=4
+22 g0 stderr 2026-09-05 10:00:19 [WARN] [api] request 19 user=5
+23 g0 stdout 2026-09-05 10:00:20 [ERROR] [api] request 20 user=6
+24 g0 stdout     at Handler.run(Handler.java:20)
+25 g0 stderr 2026-09-05 10:00:21 [INFO] [api] request 21 user=0
+26 g0 stdout 2026-09-05 10:00:22 [WARN] [api] request 22 user=1
+27 g0 stdout 2026-09-05 10:00:23 [ERROR] [api] request 23 user=2
+28 g0 stderr 2026-09-05 10:00:24 [INFO] [api] request 24 user=3
+29 g0 stdout 2026-09-05 10:00:25 [WARN] [api] request 25 user=4
+30 g0 stdout 2026-09-05 10:00:26 [ERROR] [api] request 26 user=5
+31 g0 stderr 2026-09-05 10:00:27 [INFO] [api] request 27 user=6
+32 g0 stdout 2026-09-05 10:00:28 [WARN] [api] request 28 user=0
+33 g0 stdout 2026-09-05 10:00:29 [ERROR] [api] request 29 user=1
+34 g0 stderr 2026-09-05 10:00:30 [INFO] [api] request 30 user=2
+35 g0 stdout     at Handler.run(Handler.java:30)
+36 g0 stdout 2026-09-05 10:00:31 [WARN] [api] request 31 user=3
+37 g0 stderr 2026-09-05 10:00:32 [ERROR] [api] request 32 user=4
+38 g0 stdout 2026-09-05 10:00:33 [INFO] [api] request 33 user=5
+39 g0 stdout 2026-09-05 10:00:34 [WARN] [api] request 34 user=6
+40 g0 stderr 2026-09-05 10:00:35 [ERROR] [api] request 35 user=0
+41 g0 stdout 2026-09-05 10:00:36 [INFO] [api] request 36 user=1
+42 g0 stdout 2026-09-05 10:00:37 [WARN] [api] request 37 user=2
+43 g0 stderr 2026-09-05 10:00:38 [ERROR] [api] request 38 user=3
+44 g0 stdout 2026-09-05 10:00:39 [INFO] [api] request 39 user=4
+45 g0 stderr 2026-09-05 10:00:40 [WARN] [api] request 40 user=5
+46 g0 stdout     at Handler.run(Handler.java:40)
+47 g0 stdout 2026-09-05 10:00:41 [ERROR] [api] request 41 user=6
+48 g0 stderr 2026-09-05 10:00:42 [INFO] [api] request 42 user=0
+49 g0 stdout 2026-09-05 10:00:43 [WARN] [api] request 43 user=1
+50 g0 stdout 2026-09-05 10:00:44 [ERROR] [api] request 44 user=2
+51 g0 stderr 2026-09-05 10:00:45 [INFO] [api] request 45 user=3
+52 g0 stdout 2026-09-05 10:00:46 [WARN] [api] request 46 user=4
+53 g0 stdout 2026-09-05 10:00:47 [ERROR] [api] request 47 user=5
+54 g0 stderr 2026-09-05 10:00:48 [INFO] [api] request 48 user=6
+55 g0 stdout 2026-09-05 10:00:49 [WARN] [api] request 49 user=0
+56 g0 stdout 2026-09-05 10:00:50 [ERROR] [api] request 50 user=1
+57 g0 stderr     at Handler.run(Handler.java:50)
+58 g0 stdout 2026-09-05 10:00:51 [INFO] [api] request 51 user=2
+59 g0 stdout 2026-09-05 10:00:52 [WARN] [api] request 52 user=3
+60 g0 stderr 2026-09-05 10:00:53 [ERROR] [api] request 53 user=4
+61 g0 stdout 2026-09-05 10:00:54 [INFO] [api] request 54 user=5
+62 g0 stdout 2026-09-05 10:00:55 [WARN] [api] request 55 user=6
+63 g0 stderr 2026-09-05 10:00:56 [ERROR] [api] request 56 user=0
+64 g0 stdout 2026-09-05 10:00:57 [INFO] [api] request 57 user=1
+65 g0 stdout 2026-09-05 10:00:58 [WARN] [api] request 58 user=2
+66 g0 stderr 2026-09-05 10:00:59 [ERROR] [api] request 59 user=3
+## step 5
+hold Some((77, false))
+filter [0, 3, 6, 9, 12, 15, 18, 21, 24, 27, 30, 33, 36, 39, 42, 44, 47, 50, 53, 56, 59, 62, 65, 66, 69, 72, 75]
+matches []
+1 g0 stderr 2026-09-05 10:00:00 [INFO] [api] request 0 user=0
+2 g0 stdout     at Handler.run(Handler.java:0)
+3 g0 stdout 2026-09-05 10:00:01 [WARN] [api] request 1 user=1
+4 g0 stderr 2026-09-05 10:00:02 [ERROR] [api] request 2 user=2
+5 g0 stdout 2026-09-05 10:00:03 [INFO] [api] request 3 user=3
+6 g0 stdout 2026-09-05 10:00:04 [WARN] [api] request 4 user=4
+7 g0 stderr 2026-09-05 10:00:05 [ERROR] [api] request 5 user=5
+8 g0 stdout 2026-09-05 10:00:06 [INFO] [api] request 6 user=6
+9 g0 stdout 2026-09-05 10:00:07 [WARN] [api] request 7 user=0
+10 g0 stderr 2026-09-05 10:00:08 [ERROR] [api] request 8 user=1
+11 g0 stdout 2026-09-05 10:00:09 [INFO] [api] request 9 user=2
+12 g0 stdout 2026-09-05 10:00:10 [WARN] [api] request 10 user=3
+13 g0 stderr     at Handler.run(Handler.java:10)
+14 g0 stdout 2026-09-05 10:00:11 [ERROR] [api] request 11 user=4
+15 g0 stdout 2026-09-05 10:00:12 [INFO] [api] request 12 user=5
+16 g0 stderr 2026-09-05 10:00:13 [WARN] [api] request 13 user=6
+17 g0 stdout 2026-09-05 10:00:14 [ERROR] [api] request 14 user=0
+18 g0 stdout 2026-09-05 10:00:15 [INFO] [api] request 15 user=1
+19 g0 stderr 2026-09-05 10:00:16 [WARN] [api] request 16 user=2
+20 g0 stdout 2026-09-05 10:00:17 [ERROR] [api] request 17 user=3
+21 g0 stdout 2026-09-05 10:00:18 [INFO] [api] request 18 user=4
+22 g0 stderr 2026-09-05 10:00:19 [WARN] [api] request 19 user=5
+23 g0 stdout 2026-09-05 10:00:20 [ERROR] [api] request 20 user=6
+24 g0 stdout     at Handler.run(Handler.java:20)
+25 g0 stderr 2026-09-05 10:00:21 [INFO] [api] request 21 user=0
+26 g0 stdout 2026-09-05 10:00:22 [WARN] [api] request 22 user=1
+27 g0 stdout 2026-09-05 10:00:23 [ERROR] [api] request 23 user=2
+28 g0 stderr 2026-09-05 10:00:24 [INFO] [api] request 24 user=3
+29 g0 stdout 2026-09-05 10:00:25 [WARN] [api] request 25 user=4
+30 g0 stdout 2026-09-05 10:00:26 [ERROR] [api] request 26 user=5
+31 g0 stderr 2026-09-05 10:00:27 [INFO] [api] request 27 user=6
+32 g0 stdout 2026-09-05 10:00:28 [WARN] [api] request 28 user=0
+33 g0 stdout 2026-09-05 10:00:29 [ERROR] [api] request 29 user=1
+34 g0 stderr 2026-09-05 10:00:30 [INFO] [api] request 30 user=2
+35 g0 stdout     at Handler.run(Handler.java:30)
+36 g0 stdout 2026-09-05 10:00:31 [WARN] [api] request 31 user=3
+37 g0 stderr 2026-09-05 10:00:32 [ERROR] [api] request 32 user=4
+38 g0 stdout 2026-09-05 10:00:33 [INFO] [api] request 33 user=5
+39 g0 stdout 2026-09-05 10:00:34 [WARN] [api] request 34 user=6
+40 g0 stderr 2026-09-05 10:00:35 [ERROR] [api] request 35 user=0
+41 g0 stdout 2026-09-05 10:00:36 [INFO] [api] request 36 user=1
+42 g0 stdout 2026-09-05 10:00:37 [WARN] [api] request 37 user=2
+43 g0 stderr 2026-09-05 10:00:38 [ERROR] [api] request 38 user=3
+44 g0 stdout 2026-09-05 10:00:39 [INFO] [api] request 39 user=4
+45 g0 stderr 2026-09-05 10:00:40 [WARN] [api] request 40 user=5
+46 g0 stdout     at Handler.run(Handler.java:40)
+47 g0 stdout 2026-09-05 10:00:41 [ERROR] [api] request 41 user=6
+48 g0 stderr 2026-09-05 10:00:42 [INFO] [api] request 42 user=0
+49 g0 stdout 2026-09-05 10:00:43 [WARN] [api] request 43 user=1
+50 g0 stdout 2026-09-05 10:00:44 [ERROR] [api] request 44 user=2
+51 g0 stderr 2026-09-05 10:00:45 [INFO] [api] request 45 user=3
+52 g0 stdout 2026-09-05 10:00:46 [WARN] [api] request 46 user=4
+53 g0 stdout 2026-09-05 10:00:47 [ERROR] [api] request 47 user=5
+54 g0 stderr 2026-09-05 10:00:48 [INFO] [api] request 48 user=6
+55 g0 stdout 2026-09-05 10:00:49 [WARN] [api] request 49 user=0
+56 g0 stdout 2026-09-05 10:00:50 [ERROR] [api] request 50 user=1
+57 g0 stderr     at Handler.run(Handler.java:50)
+58 g0 stdout 2026-09-05 10:00:51 [INFO] [api] request 51 user=2
+59 g0 stdout 2026-09-05 10:00:52 [WARN] [api] request 52 user=3
+60 g0 stderr 2026-09-05 10:00:53 [ERROR] [api] request 53 user=4
+61 g0 stdout 2026-09-05 10:00:54 [INFO] [api] request 54 user=5
+62 g0 stdout 2026-09-05 10:00:55 [WARN] [api] request 55 user=6
+63 g0 stderr 2026-09-05 10:00:56 [ERROR] [api] request 56 user=0
+64 g0 stdout 2026-09-05 10:00:57 [INFO] [api] request 57 user=1
+65 g0 stdout 2026-09-05 10:00:58 [WARN] [api] request 58 user=2
+66 g0 stderr 2026-09-05 10:00:59 [ERROR] [api] request 59 user=3
+  -- web1$ tail -f app.log exited (1) hh:mm:ss; web1$ tail -f app.log restarted hh:mm:ss
+1 g1 stderr 2026-09-05 10:01:00 [INFO] [api] request 60 user=4
+2 g1 stdout     at Handler.run(Handler.java:60)
+3 g1 stdout 2026-09-05 10:01:01 [WARN] [api] request 61 user=5
+4 g1 stderr 2026-09-05 10:01:02 [ERROR] [api] request 62 user=6
+5 g1 stdout 2026-09-05 10:01:03 [INFO] [api] request 63 user=0
+6 g1 stdout 2026-09-05 10:01:04 [WARN] [api] request 64 user=1
+7 g1 stderr 2026-09-05 10:01:05 [ERROR] [api] request 65 user=2
+8 g1 stdout 2026-09-05 10:01:06 [INFO] [api] request 66 user=3
+9 g1 stdout 2026-09-05 10:01:07 [WARN] [api] request 67 user=4
+10 g1 stderr 2026-09-05 10:01:08 [ERROR] [api] request 68 user=5
+11 g1 stdout 2026-09-05 10:01:09 [INFO] [api] request 69 user=6
+## step 6
+hold Some((77, false))
+filter [0, 3, 6, 9, 12, 15, 18, 21, 24, 27, 30, 33, 36, 39, 42, 44, 47, 50, 53, 56, 59, 62, 65, 66, 69, 72, 75]
+matches []
+1 g0 stderr 2026-09-05 10:00:00 [INFO] [api] request 0 user=0
+2 g0 stdout     at Handler.run(Handler.java:0)
+3 g0 stdout 2026-09-05 10:00:01 [WARN] [api] request 1 user=1
+4 g0 stderr 2026-09-05 10:00:02 [ERROR] [api] request 2 user=2
+5 g0 stdout 2026-09-05 10:00:03 [INFO] [api] request 3 user=3
+6 g0 stdout 2026-09-05 10:00:04 [WARN] [api] request 4 user=4
+7 g0 stderr 2026-09-05 10:00:05 [ERROR] [api] request 5 user=5
+8 g0 stdout 2026-09-05 10:00:06 [INFO] [api] request 6 user=6
+9 g0 stdout 2026-09-05 10:00:07 [WARN] [api] request 7 user=0
+10 g0 stderr 2026-09-05 10:00:08 [ERROR] [api] request 8 user=1
+11 g0 stdout 2026-09-05 10:00:09 [INFO] [api] request 9 user=2
+12 g0 stdout 2026-09-05 10:00:10 [WARN] [api] request 10 user=3
+13 g0 stderr     at Handler.run(Handler.java:10)
+14 g0 stdout 2026-09-05 10:00:11 [ERROR] [api] request 11 user=4
+15 g0 stdout 2026-09-05 10:00:12 [INFO] [api] request 12 user=5
+16 g0 stderr 2026-09-05 10:00:13 [WARN] [api] request 13 user=6
+17 g0 stdout 2026-09-05 10:00:14 [ERROR] [api] request 14 user=0
+18 g0 stdout 2026-09-05 10:00:15 [INFO] [api] request 15 user=1
+19 g0 stderr 2026-09-05 10:00:16 [WARN] [api] request 16 user=2
+20 g0 stdout 2026-09-05 10:00:17 [ERROR] [api] request 17 user=3
+21 g0 stdout 2026-09-05 10:00:18 [INFO] [api] request 18 user=4
+22 g0 stderr 2026-09-05 10:00:19 [WARN] [api] request 19 user=5
+23 g0 stdout 2026-09-05 10:00:20 [ERROR] [api] request 20 user=6
+24 g0 stdout     at Handler.run(Handler.java:20)
+25 g0 stderr 2026-09-05 10:00:21 [INFO] [api] request 21 user=0
+26 g0 stdout 2026-09-05 10:00:22 [WARN] [api] request 22 user=1
+27 g0 stdout 2026-09-05 10:00:23 [ERROR] [api] request 23 user=2
+28 g0 stderr 2026-09-05 10:00:24 [INFO] [api] request 24 user=3
+29 g0 stdout 2026-09-05 10:00:25 [WARN] [api] request 25 user=4
+30 g0 stdout 2026-09-05 10:00:26 [ERROR] [api] request 26 user=5
+31 g0 stderr 2026-09-05 10:00:27 [INFO] [api] request 27 user=6
+32 g0 stdout 2026-09-05 10:00:28 [WARN] [api] request 28 user=0
+33 g0 stdout 2026-09-05 10:00:29 [ERROR] [api] request 29 user=1
+34 g0 stderr 2026-09-05 10:00:30 [INFO] [api] request 30 user=2
+35 g0 stdout     at Handler.run(Handler.java:30)
+36 g0 stdout 2026-09-05 10:00:31 [WARN] [api] request 31 user=3
+37 g0 stderr 2026-09-05 10:00:32 [ERROR] [api] request 32 user=4
+38 g0 stdout 2026-09-05 10:00:33 [INFO] [api] request 33 user=5
+39 g0 stdout 2026-09-05 10:00:34 [WARN] [api] request 34 user=6
+40 g0 stderr 2026-09-05 10:00:35 [ERROR] [api] request 35 user=0
+41 g0 stdout 2026-09-05 10:00:36 [INFO] [api] request 36 user=1
+42 g0 stdout 2026-09-05 10:00:37 [WARN] [api] request 37 user=2
+43 g0 stderr 2026-09-05 10:00:38 [ERROR] [api] request 38 user=3
+44 g0 stdout 2026-09-05 10:00:39 [INFO] [api] request 39 user=4
+45 g0 stderr 2026-09-05 10:00:40 [WARN] [api] request 40 user=5
+46 g0 stdout     at Handler.run(Handler.java:40)
+47 g0 stdout 2026-09-05 10:00:41 [ERROR] [api] request 41 user=6
+48 g0 stderr 2026-09-05 10:00:42 [INFO] [api] request 42 user=0
+49 g0 stdout 2026-09-05 10:00:43 [WARN] [api] request 43 user=1
+50 g0 stdout 2026-09-05 10:00:44 [ERROR] [api] request 44 user=2
+51 g0 stderr 2026-09-05 10:00:45 [INFO] [api] request 45 user=3
+52 g0 stdout 2026-09-05 10:00:46 [WARN] [api] request 46 user=4
+53 g0 stdout 2026-09-05 10:00:47 [ERROR] [api] request 47 user=5
+54 g0 stderr 2026-09-05 10:00:48 [INFO] [api] request 48 user=6
+55 g0 stdout 2026-09-05 10:00:49 [WARN] [api] request 49 user=0
+56 g0 stdout 2026-09-05 10:00:50 [ERROR] [api] request 50 user=1
+57 g0 stderr     at Handler.run(Handler.java:50)
+58 g0 stdout 2026-09-05 10:00:51 [INFO] [api] request 51 user=2
+59 g0 stdout 2026-09-05 10:00:52 [WARN] [api] request 52 user=3
+60 g0 stderr 2026-09-05 10:00:53 [ERROR] [api] request 53 user=4
+61 g0 stdout 2026-09-05 10:00:54 [INFO] [api] request 54 user=5
+62 g0 stdout 2026-09-05 10:00:55 [WARN] [api] request 55 user=6
+63 g0 stderr 2026-09-05 10:00:56 [ERROR] [api] request 56 user=0
+64 g0 stdout 2026-09-05 10:00:57 [INFO] [api] request 57 user=1
+65 g0 stdout 2026-09-05 10:00:58 [WARN] [api] request 58 user=2
+66 g0 stderr 2026-09-05 10:00:59 [ERROR] [api] request 59 user=3
+  -- web1$ tail -f app.log exited (1) hh:mm:ss; web1$ tail -f app.log restarted hh:mm:ss
+1 g1 stderr 2026-09-05 10:01:00 [INFO] [api] request 60 user=4
+2 g1 stdout     at Handler.run(Handler.java:60)
+3 g1 stdout 2026-09-05 10:01:01 [WARN] [api] request 61 user=5
+4 g1 stderr 2026-09-05 10:01:02 [ERROR] [api] request 62 user=6
+5 g1 stdout 2026-09-05 10:01:03 [INFO] [api] request 63 user=0
+6 g1 stdout 2026-09-05 10:01:04 [WARN] [api] request 64 user=1
+7 g1 stderr 2026-09-05 10:01:05 [ERROR] [api] request 65 user=2
+8 g1 stdout 2026-09-05 10:01:06 [INFO] [api] request 66 user=3
+9 g1 stdout 2026-09-05 10:01:07 [WARN] [api] request 67 user=4
+10 g1 stderr 2026-09-05 10:01:08 [ERROR] [api] request 68 user=5
+11 g1 stdout 2026-09-05 10:01:09 [INFO] [api] request 69 user=6
+## step 7
+hold Some((77, false))
+filter [0, 3, 6, 9, 12, 15, 18, 21, 24, 27, 30, 33, 36, 39, 42, 44, 47, 50, 53, 56, 59, 62, 65, 66, 69, 72, 75]
+matches []
+1 g0 stderr 2026-09-05 10:00:00 [INFO] [api] request 0 user=0
+2 g0 stdout     at Handler.run(Handler.java:0)
+3 g0 stdout 2026-09-05 10:00:01 [WARN] [api] request 1 user=1
+4 g0 stderr 2026-09-05 10:00:02 [ERROR] [api] request 2 user=2
+5 g0 stdout 2026-09-05 10:00:03 [INFO] [api] request 3 user=3
+6 g0 stdout 2026-09-05 10:00:04 [WARN] [api] request 4 user=4
+7 g0 stderr 2026-09-05 10:00:05 [ERROR] [api] request 5 user=5
+8 g0 stdout 2026-09-05 10:00:06 [INFO] [api] request 6 user=6
+9 g0 stdout 2026-09-05 10:00:07 [WARN] [api] request 7 user=0
+10 g0 stderr 2026-09-05 10:00:08 [ERROR] [api] request 8 user=1
+11 g0 stdout 2026-09-05 10:00:09 [INFO] [api] request 9 user=2
+12 g0 stdout 2026-09-05 10:00:10 [WARN] [api] request 10 user=3
+13 g0 stderr     at Handler.run(Handler.java:10)
+14 g0 stdout 2026-09-05 10:00:11 [ERROR] [api] request 11 user=4
+15 g0 stdout 2026-09-05 10:00:12 [INFO] [api] request 12 user=5
+16 g0 stderr 2026-09-05 10:00:13 [WARN] [api] request 13 user=6
+17 g0 stdout 2026-09-05 10:00:14 [ERROR] [api] request 14 user=0
+18 g0 stdout 2026-09-05 10:00:15 [INFO] [api] request 15 user=1
+19 g0 stderr 2026-09-05 10:00:16 [WARN] [api] request 16 user=2
+20 g0 stdout 2026-09-05 10:00:17 [ERROR] [api] request 17 user=3
+21 g0 stdout 2026-09-05 10:00:18 [INFO] [api] request 18 user=4
+22 g0 stderr 2026-09-05 10:00:19 [WARN] [api] request 19 user=5
+23 g0 stdout 2026-09-05 10:00:20 [ERROR] [api] request 20 user=6
+24 g0 stdout     at Handler.run(Handler.java:20)
+25 g0 stderr 2026-09-05 10:00:21 [INFO] [api] request 21 user=0
+26 g0 stdout 2026-09-05 10:00:22 [WARN] [api] request 22 user=1
+27 g0 stdout 2026-09-05 10:00:23 [ERROR] [api] request 23 user=2
+28 g0 stderr 2026-09-05 10:00:24 [INFO] [api] request 24 user=3
+29 g0 stdout 2026-09-05 10:00:25 [WARN] [api] request 25 user=4
+30 g0 stdout 2026-09-05 10:00:26 [ERROR] [api] request 26 user=5
+31 g0 stderr 2026-09-05 10:00:27 [INFO] [api] request 27 user=6
+32 g0 stdout 2026-09-05 10:00:28 [WARN] [api] request 28 user=0
+33 g0 stdout 2026-09-05 10:00:29 [ERROR] [api] request 29 user=1
+34 g0 stderr 2026-09-05 10:00:30 [INFO] [api] request 30 user=2
+35 g0 stdout     at Handler.run(Handler.java:30)
+36 g0 stdout 2026-09-05 10:00:31 [WARN] [api] request 31 user=3
+37 g0 stderr 2026-09-05 10:00:32 [ERROR] [api] request 32 user=4
+38 g0 stdout 2026-09-05 10:00:33 [INFO] [api] request 33 user=5
+39 g0 stdout 2026-09-05 10:00:34 [WARN] [api] request 34 user=6
+40 g0 stderr 2026-09-05 10:00:35 [ERROR] [api] request 35 user=0
+41 g0 stdout 2026-09-05 10:00:36 [INFO] [api] request 36 user=1
+42 g0 stdout 2026-09-05 10:00:37 [WARN] [api] request 37 user=2
+43 g0 stderr 2026-09-05 10:00:38 [ERROR] [api] request 38 user=3
+44 g0 stdout 2026-09-05 10:00:39 [INFO] [api] request 39 user=4
+45 g0 stderr 2026-09-05 10:00:40 [WARN] [api] request 40 user=5
+46 g0 stdout     at Handler.run(Handler.java:40)
+47 g0 stdout 2026-09-05 10:00:41 [ERROR] [api] request 41 user=6
+48 g0 stderr 2026-09-05 10:00:42 [INFO] [api] request 42 user=0
+49 g0 stdout 2026-09-05 10:00:43 [WARN] [api] request 43 user=1
+50 g0 stdout 2026-09-05 10:00:44 [ERROR] [api] request 44 user=2
+51 g0 stderr 2026-09-05 10:00:45 [INFO] [api] request 45 user=3
+52 g0 stdout 2026-09-05 10:00:46 [WARN] [api] request 46 user=4
+53 g0 stdout 2026-09-05 10:00:47 [ERROR] [api] request 47 user=5
+54 g0 stderr 2026-09-05 10:00:48 [INFO] [api] request 48 user=6
+55 g0 stdout 2026-09-05 10:00:49 [WARN] [api] request 49 user=0
+56 g0 stdout 2026-09-05 10:00:50 [ERROR] [api] request 50 user=1
+57 g0 stderr     at Handler.run(Handler.java:50)
+58 g0 stdout 2026-09-05 10:00:51 [INFO] [api] request 51 user=2
+59 g0 stdout 2026-09-05 10:00:52 [WARN] [api] request 52 user=3
+60 g0 stderr 2026-09-05 10:00:53 [ERROR] [api] request 53 user=4
+61 g0 stdout 2026-09-05 10:00:54 [INFO] [api] request 54 user=5
+62 g0 stdout 2026-09-05 10:00:55 [WARN] [api] request 55 user=6
+63 g0 stderr 2026-09-05 10:00:56 [ERROR] [api] request 56 user=0
+64 g0 stdout 2026-09-05 10:00:57 [INFO] [api] request 57 user=1
+65 g0 stdout 2026-09-05 10:00:58 [WARN] [api] request 58 user=2
+66 g0 stderr 2026-09-05 10:00:59 [ERROR] [api] request 59 user=3
+  -- web1$ tail -f app.log exited (1) hh:mm:ss; web1$ tail -f app.log restarted hh:mm:ss
+1 g1 stderr 2026-09-05 10:01:00 [INFO] [api] request 60 user=4
+2 g1 stdout     at Handler.run(Handler.java:60)
+3 g1 stdout 2026-09-05 10:01:01 [WARN] [api] request 61 user=5
+4 g1 stderr 2026-09-05 10:01:02 [ERROR] [api] request 62 user=6
+5 g1 stdout 2026-09-05 10:01:03 [INFO] [api] request 63 user=0
+6 g1 stdout 2026-09-05 10:01:04 [WARN] [api] request 64 user=1
+7 g1 stderr 2026-09-05 10:01:05 [ERROR] [api] request 65 user=2
+8 g1 stdout 2026-09-05 10:01:06 [INFO] [api] request 66 user=3
+9 g1 stdout 2026-09-05 10:01:07 [WARN] [api] request 67 user=4
+10 g1 stderr 2026-09-05 10:01:08 [ERROR] [api] request 68 user=5
+11 g1 stdout 2026-09-05 10:01:09 [INFO] [api] request 69 user=6
+## step 8
+hold Some((88, false))
+filter [0, 3, 6, 9, 12, 15, 18, 21, 24, 27, 30, 33, 36, 39, 42, 44, 47, 50, 53, 56, 59, 62, 65, 66, 69, 72, 75, 77, 80, 83, 86]
+matches []
+1 g0 stderr 2026-09-05 10:00:00 [INFO] [api] request 0 user=0
+2 g0 stdout     at Handler.run(Handler.java:0)
+3 g0 stdout 2026-09-05 10:00:01 [WARN] [api] request 1 user=1
+4 g0 stderr 2026-09-05 10:00:02 [ERROR] [api] request 2 user=2
+5 g0 stdout 2026-09-05 10:00:03 [INFO] [api] request 3 user=3
+6 g0 stdout 2026-09-05 10:00:04 [WARN] [api] request 4 user=4
+7 g0 stderr 2026-09-05 10:00:05 [ERROR] [api] request 5 user=5
+8 g0 stdout 2026-09-05 10:00:06 [INFO] [api] request 6 user=6
+9 g0 stdout 2026-09-05 10:00:07 [WARN] [api] request 7 user=0
+10 g0 stderr 2026-09-05 10:00:08 [ERROR] [api] request 8 user=1
+11 g0 stdout 2026-09-05 10:00:09 [INFO] [api] request 9 user=2
+12 g0 stdout 2026-09-05 10:00:10 [WARN] [api] request 10 user=3
+13 g0 stderr     at Handler.run(Handler.java:10)
+14 g0 stdout 2026-09-05 10:00:11 [ERROR] [api] request 11 user=4
+15 g0 stdout 2026-09-05 10:00:12 [INFO] [api] request 12 user=5
+16 g0 stderr 2026-09-05 10:00:13 [WARN] [api] request 13 user=6
+17 g0 stdout 2026-09-05 10:00:14 [ERROR] [api] request 14 user=0
+18 g0 stdout 2026-09-05 10:00:15 [INFO] [api] request 15 user=1
+19 g0 stderr 2026-09-05 10:00:16 [WARN] [api] request 16 user=2
+20 g0 stdout 2026-09-05 10:00:17 [ERROR] [api] request 17 user=3
+21 g0 stdout 2026-09-05 10:00:18 [INFO] [api] request 18 user=4
+22 g0 stderr 2026-09-05 10:00:19 [WARN] [api] request 19 user=5
+23 g0 stdout 2026-09-05 10:00:20 [ERROR] [api] request 20 user=6
+24 g0 stdout     at Handler.run(Handler.java:20)
+25 g0 stderr 2026-09-05 10:00:21 [INFO] [api] request 21 user=0
+26 g0 stdout 2026-09-05 10:00:22 [WARN] [api] request 22 user=1
+27 g0 stdout 2026-09-05 10:00:23 [ERROR] [api] request 23 user=2
+28 g0 stderr 2026-09-05 10:00:24 [INFO] [api] request 24 user=3
+29 g0 stdout 2026-09-05 10:00:25 [WARN] [api] request 25 user=4
+30 g0 stdout 2026-09-05 10:00:26 [ERROR] [api] request 26 user=5
+31 g0 stderr 2026-09-05 10:00:27 [INFO] [api] request 27 user=6
+32 g0 stdout 2026-09-05 10:00:28 [WARN] [api] request 28 user=0
+33 g0 stdout 2026-09-05 10:00:29 [ERROR] [api] request 29 user=1
+34 g0 stderr 2026-09-05 10:00:30 [INFO] [api] request 30 user=2
+35 g0 stdout     at Handler.run(Handler.java:30)
+36 g0 stdout 2026-09-05 10:00:31 [WARN] [api] request 31 user=3
+37 g0 stderr 2026-09-05 10:00:32 [ERROR] [api] request 32 user=4
+38 g0 stdout 2026-09-05 10:00:33 [INFO] [api] request 33 user=5
+39 g0 stdout 2026-09-05 10:00:34 [WARN] [api] request 34 user=6
+40 g0 stderr 2026-09-05 10:00:35 [ERROR] [api] request 35 user=0
+41 g0 stdout 2026-09-05 10:00:36 [INFO] [api] request 36 user=1
+42 g0 stdout 2026-09-05 10:00:37 [WARN] [api] request 37 user=2
+43 g0 stderr 2026-09-05 10:00:38 [ERROR] [api] request 38 user=3
+44 g0 stdout 2026-09-05 10:00:39 [INFO] [api] request 39 user=4
+45 g0 stderr 2026-09-05 10:00:40 [WARN] [api] request 40 user=5
+46 g0 stdout     at Handler.run(Handler.java:40)
+47 g0 stdout 2026-09-05 10:00:41 [ERROR] [api] request 41 user=6
+48 g0 stderr 2026-09-05 10:00:42 [INFO] [api] request 42 user=0
+49 g0 stdout 2026-09-05 10:00:43 [WARN] [api] request 43 user=1
+50 g0 stdout 2026-09-05 10:00:44 [ERROR] [api] request 44 user=2
+51 g0 stderr 2026-09-05 10:00:45 [INFO] [api] request 45 user=3
+52 g0 stdout 2026-09-05 10:00:46 [WARN] [api] request 46 user=4
+53 g0 stdout 2026-09-05 10:00:47 [ERROR] [api] request 47 user=5
+54 g0 stderr 2026-09-05 10:00:48 [INFO] [api] request 48 user=6
+55 g0 stdout 2026-09-05 10:00:49 [WARN] [api] request 49 user=0
+56 g0 stdout 2026-09-05 10:00:50 [ERROR] [api] request 50 user=1
+57 g0 stderr     at Handler.run(Handler.java:50)
+58 g0 stdout 2026-09-05 10:00:51 [INFO] [api] request 51 user=2
+59 g0 stdout 2026-09-05 10:00:52 [WARN] [api] request 52 user=3
+60 g0 stderr 2026-09-05 10:00:53 [ERROR] [api] request 53 user=4
+61 g0 stdout 2026-09-05 10:00:54 [INFO] [api] request 54 user=5
+62 g0 stdout 2026-09-05 10:00:55 [WARN] [api] request 55 user=6
+63 g0 stderr 2026-09-05 10:00:56 [ERROR] [api] request 56 user=0
+64 g0 stdout 2026-09-05 10:00:57 [INFO] [api] request 57 user=1
+65 g0 stdout 2026-09-05 10:00:58 [WARN] [api] request 58 user=2
+66 g0 stderr 2026-09-05 10:00:59 [ERROR] [api] request 59 user=3
+  -- web1$ tail -f app.log exited (1) hh:mm:ss; web1$ tail -f app.log restarted hh:mm:ss
+1 g1 stderr 2026-09-05 10:01:00 [INFO] [api] request 60 user=4
+2 g1 stdout     at Handler.run(Handler.java:60)
+3 g1 stdout 2026-09-05 10:01:01 [WARN] [api] request 61 user=5
+4 g1 stderr 2026-09-05 10:01:02 [ERROR] [api] request 62 user=6
+5 g1 stdout 2026-09-05 10:01:03 [INFO] [api] request 63 user=0
+6 g1 stdout 2026-09-05 10:01:04 [WARN] [api] request 64 user=1
+7 g1 stderr 2026-09-05 10:01:05 [ERROR] [api] request 65 user=2
+8 g1 stdout 2026-09-05 10:01:06 [INFO] [api] request 66 user=3
+9 g1 stdout 2026-09-05 10:01:07 [WARN] [api] request 67 user=4
+10 g1 stderr 2026-09-05 10:01:08 [ERROR] [api] request 68 user=5
+11 g1 stdout 2026-09-05 10:01:09 [INFO] [api] request 69 user=6
+  -- web1$ tail -f app.log disconnected hh:mm:ss – reconnected hh:mm:ss, resumed from hh:mm:ss
+12 g1 stderr 2026-09-05 10:01:10 [WARN] [api] request 70 user=0
+13 g1 stdout     at Handler.run(Handler.java:70)
+14 g1 stdout 2026-09-05 10:01:11 [ERROR] [api] request 71 user=1
+15 g1 stderr 2026-09-05 10:01:12 [INFO] [api] request 72 user=2
+16 g1 stdout 2026-09-05 10:01:13 [WARN] [api] request 73 user=3
+17 g1 stdout 2026-09-05 10:01:14 [ERROR] [api] request 74 user=4
+18 g1 stderr 2026-09-05 10:01:15 [INFO] [api] request 75 user=5
+19 g1 stdout 2026-09-05 10:01:16 [WARN] [api] request 76 user=6
+20 g1 stdout 2026-09-05 10:01:17 [ERROR] [api] request 77 user=0
+21 g1 stderr 2026-09-05 10:01:18 [INFO] [api] request 78 user=1
+22 g1 stdout 2026-09-05 10:01:19 [WARN] [api] request 79 user=2
+## step 9
+hold Some((88, false))
+filter [0, 3, 6, 9, 12, 15, 18, 21, 24, 27, 30, 33, 36, 39, 42, 44, 47, 50, 53, 56, 59, 62, 65, 66, 69, 72, 75, 77, 80, 83, 86]
+matches []
+1 g0 stderr 2026-09-05 10:00:00 [INFO] [api] request 0 user=0
+2 g0 stdout     at Handler.run(Handler.java:0)
+3 g0 stdout 2026-09-05 10:00:01 [WARN] [api] request 1 user=1
+4 g0 stderr 2026-09-05 10:00:02 [ERROR] [api] request 2 user=2
+5 g0 stdout 2026-09-05 10:00:03 [INFO] [api] request 3 user=3
+6 g0 stdout 2026-09-05 10:00:04 [WARN] [api] request 4 user=4
+7 g0 stderr 2026-09-05 10:00:05 [ERROR] [api] request 5 user=5
+8 g0 stdout 2026-09-05 10:00:06 [INFO] [api] request 6 user=6
+9 g0 stdout 2026-09-05 10:00:07 [WARN] [api] request 7 user=0
+10 g0 stderr 2026-09-05 10:00:08 [ERROR] [api] request 8 user=1
+11 g0 stdout 2026-09-05 10:00:09 [INFO] [api] request 9 user=2
+12 g0 stdout 2026-09-05 10:00:10 [WARN] [api] request 10 user=3
+13 g0 stderr     at Handler.run(Handler.java:10)
+14 g0 stdout 2026-09-05 10:00:11 [ERROR] [api] request 11 user=4
+15 g0 stdout 2026-09-05 10:00:12 [INFO] [api] request 12 user=5
+16 g0 stderr 2026-09-05 10:00:13 [WARN] [api] request 13 user=6
+17 g0 stdout 2026-09-05 10:00:14 [ERROR] [api] request 14 user=0
+18 g0 stdout 2026-09-05 10:00:15 [INFO] [api] request 15 user=1
+19 g0 stderr 2026-09-05 10:00:16 [WARN] [api] request 16 user=2
+20 g0 stdout 2026-09-05 10:00:17 [ERROR] [api] request 17 user=3
+21 g0 stdout 2026-09-05 10:00:18 [INFO] [api] request 18 user=4
+22 g0 stderr 2026-09-05 10:00:19 [WARN] [api] request 19 user=5
+23 g0 stdout 2026-09-05 10:00:20 [ERROR] [api] request 20 user=6
+24 g0 stdout     at Handler.run(Handler.java:20)
+25 g0 stderr 2026-09-05 10:00:21 [INFO] [api] request 21 user=0
+26 g0 stdout 2026-09-05 10:00:22 [WARN] [api] request 22 user=1
+27 g0 stdout 2026-09-05 10:00:23 [ERROR] [api] request 23 user=2
+28 g0 stderr 2026-09-05 10:00:24 [INFO] [api] request 24 user=3
+29 g0 stdout 2026-09-05 10:00:25 [WARN] [api] request 25 user=4
+30 g0 stdout 2026-09-05 10:00:26 [ERROR] [api] request 26 user=5
+31 g0 stderr 2026-09-05 10:00:27 [INFO] [api] request 27 user=6
+32 g0 stdout 2026-09-05 10:00:28 [WARN] [api] request 28 user=0
+33 g0 stdout 2026-09-05 10:00:29 [ERROR] [api] request 29 user=1
+34 g0 stderr 2026-09-05 10:00:30 [INFO] [api] request 30 user=2
+35 g0 stdout     at Handler.run(Handler.java:30)
+36 g0 stdout 2026-09-05 10:00:31 [WARN] [api] request 31 user=3
+37 g0 stderr 2026-09-05 10:00:32 [ERROR] [api] request 32 user=4
+38 g0 stdout 2026-09-05 10:00:33 [INFO] [api] request 33 user=5
+39 g0 stdout 2026-09-05 10:00:34 [WARN] [api] request 34 user=6
+40 g0 stderr 2026-09-05 10:00:35 [ERROR] [api] request 35 user=0
+41 g0 stdout 2026-09-05 10:00:36 [INFO] [api] request 36 user=1
+42 g0 stdout 2026-09-05 10:00:37 [WARN] [api] request 37 user=2
+43 g0 stderr 2026-09-05 10:00:38 [ERROR] [api] request 38 user=3
+44 g0 stdout 2026-09-05 10:00:39 [INFO] [api] request 39 user=4
+45 g0 stderr 2026-09-05 10:00:40 [WARN] [api] request 40 user=5
+46 g0 stdout     at Handler.run(Handler.java:40)
+47 g0 stdout 2026-09-05 10:00:41 [ERROR] [api] request 41 user=6
+48 g0 stderr 2026-09-05 10:00:42 [INFO] [api] request 42 user=0
+49 g0 stdout 2026-09-05 10:00:43 [WARN] [api] request 43 user=1
+50 g0 stdout 2026-09-05 10:00:44 [ERROR] [api] request 44 user=2
+51 g0 stderr 2026-09-05 10:00:45 [INFO] [api] request 45 user=3
+52 g0 stdout 2026-09-05 10:00:46 [WARN] [api] request 46 user=4
+53 g0 stdout 2026-09-05 10:00:47 [ERROR] [api] request 47 user=5
+54 g0 stderr 2026-09-05 10:00:48 [INFO] [api] request 48 user=6
+55 g0 stdout 2026-09-05 10:00:49 [WARN] [api] request 49 user=0
+56 g0 stdout 2026-09-05 10:00:50 [ERROR] [api] request 50 user=1
+57 g0 stderr     at Handler.run(Handler.java:50)
+58 g0 stdout 2026-09-05 10:00:51 [INFO] [api] request 51 user=2
+59 g0 stdout 2026-09-05 10:00:52 [WARN] [api] request 52 user=3
+60 g0 stderr 2026-09-05 10:00:53 [ERROR] [api] request 53 user=4
+61 g0 stdout 2026-09-05 10:00:54 [INFO] [api] request 54 user=5
+62 g0 stdout 2026-09-05 10:00:55 [WARN] [api] request 55 user=6
+63 g0 stderr 2026-09-05 10:00:56 [ERROR] [api] request 56 user=0
+64 g0 stdout 2026-09-05 10:00:57 [INFO] [api] request 57 user=1
+65 g0 stdout 2026-09-05 10:00:58 [WARN] [api] request 58 user=2
+66 g0 stderr 2026-09-05 10:00:59 [ERROR] [api] request 59 user=3
+  -- web1$ tail -f app.log exited (1) hh:mm:ss; web1$ tail -f app.log restarted hh:mm:ss
+1 g1 stderr 2026-09-05 10:01:00 [INFO] [api] request 60 user=4
+2 g1 stdout     at Handler.run(Handler.java:60)
+3 g1 stdout 2026-09-05 10:01:01 [WARN] [api] request 61 user=5
+4 g1 stderr 2026-09-05 10:01:02 [ERROR] [api] request 62 user=6
+5 g1 stdout 2026-09-05 10:01:03 [INFO] [api] request 63 user=0
+6 g1 stdout 2026-09-05 10:01:04 [WARN] [api] request 64 user=1
+7 g1 stderr 2026-09-05 10:01:05 [ERROR] [api] request 65 user=2
+8 g1 stdout 2026-09-05 10:01:06 [INFO] [api] request 66 user=3
+9 g1 stdout 2026-09-05 10:01:07 [WARN] [api] request 67 user=4
+10 g1 stderr 2026-09-05 10:01:08 [ERROR] [api] request 68 user=5
+11 g1 stdout 2026-09-05 10:01:09 [INFO] [api] request 69 user=6
+  -- web1$ tail -f app.log disconnected hh:mm:ss – reconnected hh:mm:ss, resumed from hh:mm:ss
+12 g1 stderr 2026-09-05 10:01:10 [WARN] [api] request 70 user=0
+13 g1 stdout     at Handler.run(Handler.java:70)
+14 g1 stdout 2026-09-05 10:01:11 [ERROR] [api] request 71 user=1
+15 g1 stderr 2026-09-05 10:01:12 [INFO] [api] request 72 user=2
+16 g1 stdout 2026-09-05 10:01:13 [WARN] [api] request 73 user=3
+17 g1 stdout 2026-09-05 10:01:14 [ERROR] [api] request 74 user=4
+18 g1 stderr 2026-09-05 10:01:15 [INFO] [api] request 75 user=5
+19 g1 stdout 2026-09-05 10:01:16 [WARN] [api] request 76 user=6
+20 g1 stdout 2026-09-05 10:01:17 [ERROR] [api] request 77 user=0
+21 g1 stderr 2026-09-05 10:01:18 [INFO] [api] request 78 user=1
+22 g1 stdout 2026-09-05 10:01:19 [WARN] [api] request 79 user=2
+## step 10
+hold Some((93, false))
+filter [0, 3, 6, 9, 12, 15, 18, 21, 24, 27, 30, 33, 36, 39, 42, 44, 47, 50, 53, 56, 59, 62, 65, 66, 69, 72, 75, 77, 80, 83, 86, 88, 91]
+matches []
+1 g0 stderr 2026-09-05 10:00:00 [INFO] [api] request 0 user=0
+2 g0 stdout     at Handler.run(Handler.java:0)
+3 g0 stdout 2026-09-05 10:00:01 [WARN] [api] request 1 user=1
+4 g0 stderr 2026-09-05 10:00:02 [ERROR] [api] request 2 user=2
+5 g0 stdout 2026-09-05 10:00:03 [INFO] [api] request 3 user=3
+6 g0 stdout 2026-09-05 10:00:04 [WARN] [api] request 4 user=4
+7 g0 stderr 2026-09-05 10:00:05 [ERROR] [api] request 5 user=5
+8 g0 stdout 2026-09-05 10:00:06 [INFO] [api] request 6 user=6
+9 g0 stdout 2026-09-05 10:00:07 [WARN] [api] request 7 user=0
+10 g0 stderr 2026-09-05 10:00:08 [ERROR] [api] request 8 user=1
+11 g0 stdout 2026-09-05 10:00:09 [INFO] [api] request 9 user=2
+12 g0 stdout 2026-09-05 10:00:10 [WARN] [api] request 10 user=3
+13 g0 stderr     at Handler.run(Handler.java:10)
+14 g0 stdout 2026-09-05 10:00:11 [ERROR] [api] request 11 user=4
+15 g0 stdout 2026-09-05 10:00:12 [INFO] [api] request 12 user=5
+16 g0 stderr 2026-09-05 10:00:13 [WARN] [api] request 13 user=6
+17 g0 stdout 2026-09-05 10:00:14 [ERROR] [api] request 14 user=0
+18 g0 stdout 2026-09-05 10:00:15 [INFO] [api] request 15 user=1
+19 g0 stderr 2026-09-05 10:00:16 [WARN] [api] request 16 user=2
+20 g0 stdout 2026-09-05 10:00:17 [ERROR] [api] request 17 user=3
+21 g0 stdout 2026-09-05 10:00:18 [INFO] [api] request 18 user=4
+22 g0 stderr 2026-09-05 10:00:19 [WARN] [api] request 19 user=5
+23 g0 stdout 2026-09-05 10:00:20 [ERROR] [api] request 20 user=6
+24 g0 stdout     at Handler.run(Handler.java:20)
+25 g0 stderr 2026-09-05 10:00:21 [INFO] [api] request 21 user=0
+26 g0 stdout 2026-09-05 10:00:22 [WARN] [api] request 22 user=1
+27 g0 stdout 2026-09-05 10:00:23 [ERROR] [api] request 23 user=2
+28 g0 stderr 2026-09-05 10:00:24 [INFO] [api] request 24 user=3
+29 g0 stdout 2026-09-05 10:00:25 [WARN] [api] request 25 user=4
+30 g0 stdout 2026-09-05 10:00:26 [ERROR] [api] request 26 user=5
+31 g0 stderr 2026-09-05 10:00:27 [INFO] [api] request 27 user=6
+32 g0 stdout 2026-09-05 10:00:28 [WARN] [api] request 28 user=0
+33 g0 stdout 2026-09-05 10:00:29 [ERROR] [api] request 29 user=1
+34 g0 stderr 2026-09-05 10:00:30 [INFO] [api] request 30 user=2
+35 g0 stdout     at Handler.run(Handler.java:30)
+36 g0 stdout 2026-09-05 10:00:31 [WARN] [api] request 31 user=3
+37 g0 stderr 2026-09-05 10:00:32 [ERROR] [api] request 32 user=4
+38 g0 stdout 2026-09-05 10:00:33 [INFO] [api] request 33 user=5
+39 g0 stdout 2026-09-05 10:00:34 [WARN] [api] request 34 user=6
+40 g0 stderr 2026-09-05 10:00:35 [ERROR] [api] request 35 user=0
+41 g0 stdout 2026-09-05 10:00:36 [INFO] [api] request 36 user=1
+42 g0 stdout 2026-09-05 10:00:37 [WARN] [api] request 37 user=2
+43 g0 stderr 2026-09-05 10:00:38 [ERROR] [api] request 38 user=3
+44 g0 stdout 2026-09-05 10:00:39 [INFO] [api] request 39 user=4
+45 g0 stderr 2026-09-05 10:00:40 [WARN] [api] request 40 user=5
+46 g0 stdout     at Handler.run(Handler.java:40)
+47 g0 stdout 2026-09-05 10:00:41 [ERROR] [api] request 41 user=6
+48 g0 stderr 2026-09-05 10:00:42 [INFO] [api] request 42 user=0
+49 g0 stdout 2026-09-05 10:00:43 [WARN] [api] request 43 user=1
+50 g0 stdout 2026-09-05 10:00:44 [ERROR] [api] request 44 user=2
+51 g0 stderr 2026-09-05 10:00:45 [INFO] [api] request 45 user=3
+52 g0 stdout 2026-09-05 10:00:46 [WARN] [api] request 46 user=4
+53 g0 stdout 2026-09-05 10:00:47 [ERROR] [api] request 47 user=5
+54 g0 stderr 2026-09-05 10:00:48 [INFO] [api] request 48 user=6
+55 g0 stdout 2026-09-05 10:00:49 [WARN] [api] request 49 user=0
+56 g0 stdout 2026-09-05 10:00:50 [ERROR] [api] request 50 user=1
+57 g0 stderr     at Handler.run(Handler.java:50)
+58 g0 stdout 2026-09-05 10:00:51 [INFO] [api] request 51 user=2
+59 g0 stdout 2026-09-05 10:00:52 [WARN] [api] request 52 user=3
+60 g0 stderr 2026-09-05 10:00:53 [ERROR] [api] request 53 user=4
+61 g0 stdout 2026-09-05 10:00:54 [INFO] [api] request 54 user=5
+62 g0 stdout 2026-09-05 10:00:55 [WARN] [api] request 55 user=6
+63 g0 stderr 2026-09-05 10:00:56 [ERROR] [api] request 56 user=0
+64 g0 stdout 2026-09-05 10:00:57 [INFO] [api] request 57 user=1
+65 g0 stdout 2026-09-05 10:00:58 [WARN] [api] request 58 user=2
+66 g0 stderr 2026-09-05 10:00:59 [ERROR] [api] request 59 user=3
+  -- web1$ tail -f app.log exited (1) hh:mm:ss; web1$ tail -f app.log restarted hh:mm:ss
+1 g1 stderr 2026-09-05 10:01:00 [INFO] [api] request 60 user=4
+2 g1 stdout     at Handler.run(Handler.java:60)
+3 g1 stdout 2026-09-05 10:01:01 [WARN] [api] request 61 user=5
+4 g1 stderr 2026-09-05 10:01:02 [ERROR] [api] request 62 user=6
+5 g1 stdout 2026-09-05 10:01:03 [INFO] [api] request 63 user=0
+6 g1 stdout 2026-09-05 10:01:04 [WARN] [api] request 64 user=1
+7 g1 stderr 2026-09-05 10:01:05 [ERROR] [api] request 65 user=2
+8 g1 stdout 2026-09-05 10:01:06 [INFO] [api] request 66 user=3
+9 g1 stdout 2026-09-05 10:01:07 [WARN] [api] request 67 user=4
+10 g1 stderr 2026-09-05 10:01:08 [ERROR] [api] request 68 user=5
+11 g1 stdout 2026-09-05 10:01:09 [INFO] [api] request 69 user=6
+  -- web1$ tail -f app.log disconnected hh:mm:ss – reconnected hh:mm:ss, resumed from hh:mm:ss
+12 g1 stderr 2026-09-05 10:01:10 [WARN] [api] request 70 user=0
+13 g1 stdout     at Handler.run(Handler.java:70)
+14 g1 stdout 2026-09-05 10:01:11 [ERROR] [api] request 71 user=1
+15 g1 stderr 2026-09-05 10:01:12 [INFO] [api] request 72 user=2
+16 g1 stdout 2026-09-05 10:01:13 [WARN] [api] request 73 user=3
+17 g1 stdout 2026-09-05 10:01:14 [ERROR] [api] request 74 user=4
+18 g1 stderr 2026-09-05 10:01:15 [INFO] [api] request 75 user=5
+19 g1 stdout 2026-09-05 10:01:16 [WARN] [api] request 76 user=6
+20 g1 stdout 2026-09-05 10:01:17 [ERROR] [api] request 77 user=0
+21 g1 stderr 2026-09-05 10:01:18 [INFO] [api] request 78 user=1
+22 g1 stdout 2026-09-05 10:01:19 [WARN] [api] request 79 user=2
+  -- web1$ tail -f app.log older lines left the window hh:mm:ss
+28 g1 stderr 2026-09-05 10:01:25 [WARN] [api] request 85 user=1
+29 g1 stdout 2026-09-05 10:01:26 [ERROR] [api] request 86 user=2
+30 g1 stdout 2026-09-05 10:01:27 [INFO] [api] request 87 user=3
+31 g1 stderr 2026-09-05 10:01:28 [WARN] [api] request 88 user=4
+32 g1 stdout 2026-09-05 10:01:29 [ERROR] [api] request 89 user=5
+## step 11
+hold Some((93, false))
+filter [0, 3, 6, 9, 12, 15, 18, 21, 24, 27, 30, 33, 36, 39, 42, 44, 47, 50, 53, 56, 59, 62, 65, 66, 69, 72, 75, 77, 80, 83, 86, 88, 91]
+matches []
+1 g0 stderr 2026-09-05 10:00:00 [INFO] [api] request 0 user=0
+2 g0 stdout     at Handler.run(Handler.java:0)
+3 g0 stdout 2026-09-05 10:00:01 [WARN] [api] request 1 user=1
+4 g0 stderr 2026-09-05 10:00:02 [ERROR] [api] request 2 user=2
+5 g0 stdout 2026-09-05 10:00:03 [INFO] [api] request 3 user=3
+6 g0 stdout 2026-09-05 10:00:04 [WARN] [api] request 4 user=4
+7 g0 stderr 2026-09-05 10:00:05 [ERROR] [api] request 5 user=5
+8 g0 stdout 2026-09-05 10:00:06 [INFO] [api] request 6 user=6
+9 g0 stdout 2026-09-05 10:00:07 [WARN] [api] request 7 user=0
+10 g0 stderr 2026-09-05 10:00:08 [ERROR] [api] request 8 user=1
+11 g0 stdout 2026-09-05 10:00:09 [INFO] [api] request 9 user=2
+12 g0 stdout 2026-09-05 10:00:10 [WARN] [api] request 10 user=3
+13 g0 stderr     at Handler.run(Handler.java:10)
+14 g0 stdout 2026-09-05 10:00:11 [ERROR] [api] request 11 user=4
+15 g0 stdout 2026-09-05 10:00:12 [INFO] [api] request 12 user=5
+16 g0 stderr 2026-09-05 10:00:13 [WARN] [api] request 13 user=6
+17 g0 stdout 2026-09-05 10:00:14 [ERROR] [api] request 14 user=0
+18 g0 stdout 2026-09-05 10:00:15 [INFO] [api] request 15 user=1
+19 g0 stderr 2026-09-05 10:00:16 [WARN] [api] request 16 user=2
+20 g0 stdout 2026-09-05 10:00:17 [ERROR] [api] request 17 user=3
+21 g0 stdout 2026-09-05 10:00:18 [INFO] [api] request 18 user=4
+22 g0 stderr 2026-09-05 10:00:19 [WARN] [api] request 19 user=5
+23 g0 stdout 2026-09-05 10:00:20 [ERROR] [api] request 20 user=6
+24 g0 stdout     at Handler.run(Handler.java:20)
+25 g0 stderr 2026-09-05 10:00:21 [INFO] [api] request 21 user=0
+26 g0 stdout 2026-09-05 10:00:22 [WARN] [api] request 22 user=1
+27 g0 stdout 2026-09-05 10:00:23 [ERROR] [api] request 23 user=2
+28 g0 stderr 2026-09-05 10:00:24 [INFO] [api] request 24 user=3
+29 g0 stdout 2026-09-05 10:00:25 [WARN] [api] request 25 user=4
+30 g0 stdout 2026-09-05 10:00:26 [ERROR] [api] request 26 user=5
+31 g0 stderr 2026-09-05 10:00:27 [INFO] [api] request 27 user=6
+32 g0 stdout 2026-09-05 10:00:28 [WARN] [api] request 28 user=0
+33 g0 stdout 2026-09-05 10:00:29 [ERROR] [api] request 29 user=1
+34 g0 stderr 2026-09-05 10:00:30 [INFO] [api] request 30 user=2
+35 g0 stdout     at Handler.run(Handler.java:30)
+36 g0 stdout 2026-09-05 10:00:31 [WARN] [api] request 31 user=3
+37 g0 stderr 2026-09-05 10:00:32 [ERROR] [api] request 32 user=4
+38 g0 stdout 2026-09-05 10:00:33 [INFO] [api] request 33 user=5
+39 g0 stdout 2026-09-05 10:00:34 [WARN] [api] request 34 user=6
+40 g0 stderr 2026-09-05 10:00:35 [ERROR] [api] request 35 user=0
+41 g0 stdout 2026-09-05 10:00:36 [INFO] [api] request 36 user=1
+42 g0 stdout 2026-09-05 10:00:37 [WARN] [api] request 37 user=2
+43 g0 stderr 2026-09-05 10:00:38 [ERROR] [api] request 38 user=3
+44 g0 stdout 2026-09-05 10:00:39 [INFO] [api] request 39 user=4
+45 g0 stderr 2026-09-05 10:00:40 [WARN] [api] request 40 user=5
+46 g0 stdout     at Handler.run(Handler.java:40)
+47 g0 stdout 2026-09-05 10:00:41 [ERROR] [api] request 41 user=6
+48 g0 stderr 2026-09-05 10:00:42 [INFO] [api] request 42 user=0
+49 g0 stdout 2026-09-05 10:00:43 [WARN] [api] request 43 user=1
+50 g0 stdout 2026-09-05 10:00:44 [ERROR] [api] request 44 user=2
+51 g0 stderr 2026-09-05 10:00:45 [INFO] [api] request 45 user=3
+52 g0 stdout 2026-09-05 10:00:46 [WARN] [api] request 46 user=4
+53 g0 stdout 2026-09-05 10:00:47 [ERROR] [api] request 47 user=5
+54 g0 stderr 2026-09-05 10:00:48 [INFO] [api] request 48 user=6
+55 g0 stdout 2026-09-05 10:00:49 [WARN] [api] request 49 user=0
+56 g0 stdout 2026-09-05 10:00:50 [ERROR] [api] request 50 user=1
+57 g0 stderr     at Handler.run(Handler.java:50)
+58 g0 stdout 2026-09-05 10:00:51 [INFO] [api] request 51 user=2
+59 g0 stdout 2026-09-05 10:00:52 [WARN] [api] request 52 user=3
+60 g0 stderr 2026-09-05 10:00:53 [ERROR] [api] request 53 user=4
+61 g0 stdout 2026-09-05 10:00:54 [INFO] [api] request 54 user=5
+62 g0 stdout 2026-09-05 10:00:55 [WARN] [api] request 55 user=6
+63 g0 stderr 2026-09-05 10:00:56 [ERROR] [api] request 56 user=0
+64 g0 stdout 2026-09-05 10:00:57 [INFO] [api] request 57 user=1
+65 g0 stdout 2026-09-05 10:00:58 [WARN] [api] request 58 user=2
+66 g0 stderr 2026-09-05 10:00:59 [ERROR] [api] request 59 user=3
+  -- web1$ tail -f app.log exited (1) hh:mm:ss; web1$ tail -f app.log restarted hh:mm:ss
+1 g1 stderr 2026-09-05 10:01:00 [INFO] [api] request 60 user=4
+2 g1 stdout     at Handler.run(Handler.java:60)
+3 g1 stdout 2026-09-05 10:01:01 [WARN] [api] request 61 user=5
+4 g1 stderr 2026-09-05 10:01:02 [ERROR] [api] request 62 user=6
+5 g1 stdout 2026-09-05 10:01:03 [INFO] [api] request 63 user=0
+6 g1 stdout 2026-09-05 10:01:04 [WARN] [api] request 64 user=1
+7 g1 stderr 2026-09-05 10:01:05 [ERROR] [api] request 65 user=2
+8 g1 stdout 2026-09-05 10:01:06 [INFO] [api] request 66 user=3
+9 g1 stdout 2026-09-05 10:01:07 [WARN] [api] request 67 user=4
+10 g1 stderr 2026-09-05 10:01:08 [ERROR] [api] request 68 user=5
+11 g1 stdout 2026-09-05 10:01:09 [INFO] [api] request 69 user=6
+  -- web1$ tail -f app.log disconnected hh:mm:ss – reconnected hh:mm:ss, resumed from hh:mm:ss
+12 g1 stderr 2026-09-05 10:01:10 [WARN] [api] request 70 user=0
+13 g1 stdout     at Handler.run(Handler.java:70)
+14 g1 stdout 2026-09-05 10:01:11 [ERROR] [api] request 71 user=1
+15 g1 stderr 2026-09-05 10:01:12 [INFO] [api] request 72 user=2
+16 g1 stdout 2026-09-05 10:01:13 [WARN] [api] request 73 user=3
+17 g1 stdout 2026-09-05 10:01:14 [ERROR] [api] request 74 user=4
+18 g1 stderr 2026-09-05 10:01:15 [INFO] [api] request 75 user=5
+19 g1 stdout 2026-09-05 10:01:16 [WARN] [api] request 76 user=6
+20 g1 stdout 2026-09-05 10:01:17 [ERROR] [api] request 77 user=0
+21 g1 stderr 2026-09-05 10:01:18 [INFO] [api] request 78 user=1
+22 g1 stdout 2026-09-05 10:01:19 [WARN] [api] request 79 user=2
+  -- web1$ tail -f app.log older lines left the window hh:mm:ss
+28 g1 stderr 2026-09-05 10:01:25 [WARN] [api] request 85 user=1
+29 g1 stdout 2026-09-05 10:01:26 [ERROR] [api] request 86 user=2
+30 g1 stdout 2026-09-05 10:01:27 [INFO] [api] request 87 user=3
+31 g1 stderr 2026-09-05 10:01:28 [WARN] [api] request 88 user=4
+32 g1 stdout 2026-09-05 10:01:29 [ERROR] [api] request 89 user=5
+## step 12
+hold Some((110, false))
+filter [0, 3, 6, 9, 12, 15, 18, 21, 24, 27, 30, 33, 36, 39, 42, 44, 47, 50, 53, 56, 59, 62, 65, 66, 69, 72, 75, 77, 80, 83, 86, 88, 91, 93, 96, 99, 102, 105, 108]
+matches []
+1 g0 stderr 2026-09-05 10:00:00 [INFO] [api] request 0 user=0
+2 g0 stdout     at Handler.run(Handler.java:0)
+3 g0 stdout 2026-09-05 10:00:01 [WARN] [api] request 1 user=1
+4 g0 stderr 2026-09-05 10:00:02 [ERROR] [api] request 2 user=2
+5 g0 stdout 2026-09-05 10:00:03 [INFO] [api] request 3 user=3
+6 g0 stdout 2026-09-05 10:00:04 [WARN] [api] request 4 user=4
+7 g0 stderr 2026-09-05 10:00:05 [ERROR] [api] request 5 user=5
+8 g0 stdout 2026-09-05 10:00:06 [INFO] [api] request 6 user=6
+9 g0 stdout 2026-09-05 10:00:07 [WARN] [api] request 7 user=0
+10 g0 stderr 2026-09-05 10:00:08 [ERROR] [api] request 8 user=1
+11 g0 stdout 2026-09-05 10:00:09 [INFO] [api] request 9 user=2
+12 g0 stdout 2026-09-05 10:00:10 [WARN] [api] request 10 user=3
+13 g0 stderr     at Handler.run(Handler.java:10)
+14 g0 stdout 2026-09-05 10:00:11 [ERROR] [api] request 11 user=4
+15 g0 stdout 2026-09-05 10:00:12 [INFO] [api] request 12 user=5
+16 g0 stderr 2026-09-05 10:00:13 [WARN] [api] request 13 user=6
+17 g0 stdout 2026-09-05 10:00:14 [ERROR] [api] request 14 user=0
+18 g0 stdout 2026-09-05 10:00:15 [INFO] [api] request 15 user=1
+19 g0 stderr 2026-09-05 10:00:16 [WARN] [api] request 16 user=2
+20 g0 stdout 2026-09-05 10:00:17 [ERROR] [api] request 17 user=3
+21 g0 stdout 2026-09-05 10:00:18 [INFO] [api] request 18 user=4
+22 g0 stderr 2026-09-05 10:00:19 [WARN] [api] request 19 user=5
+23 g0 stdout 2026-09-05 10:00:20 [ERROR] [api] request 20 user=6
+24 g0 stdout     at Handler.run(Handler.java:20)
+25 g0 stderr 2026-09-05 10:00:21 [INFO] [api] request 21 user=0
+26 g0 stdout 2026-09-05 10:00:22 [WARN] [api] request 22 user=1
+27 g0 stdout 2026-09-05 10:00:23 [ERROR] [api] request 23 user=2
+28 g0 stderr 2026-09-05 10:00:24 [INFO] [api] request 24 user=3
+29 g0 stdout 2026-09-05 10:00:25 [WARN] [api] request 25 user=4
+30 g0 stdout 2026-09-05 10:00:26 [ERROR] [api] request 26 user=5
+31 g0 stderr 2026-09-05 10:00:27 [INFO] [api] request 27 user=6
+32 g0 stdout 2026-09-05 10:00:28 [WARN] [api] request 28 user=0
+33 g0 stdout 2026-09-05 10:00:29 [ERROR] [api] request 29 user=1
+34 g0 stderr 2026-09-05 10:00:30 [INFO] [api] request 30 user=2
+35 g0 stdout     at Handler.run(Handler.java:30)
+36 g0 stdout 2026-09-05 10:00:31 [WARN] [api] request 31 user=3
+37 g0 stderr 2026-09-05 10:00:32 [ERROR] [api] request 32 user=4
+38 g0 stdout 2026-09-05 10:00:33 [INFO] [api] request 33 user=5
+39 g0 stdout 2026-09-05 10:00:34 [WARN] [api] request 34 user=6
+40 g0 stderr 2026-09-05 10:00:35 [ERROR] [api] request 35 user=0
+41 g0 stdout 2026-09-05 10:00:36 [INFO] [api] request 36 user=1
+42 g0 stdout 2026-09-05 10:00:37 [WARN] [api] request 37 user=2
+43 g0 stderr 2026-09-05 10:00:38 [ERROR] [api] request 38 user=3
+44 g0 stdout 2026-09-05 10:00:39 [INFO] [api] request 39 user=4
+45 g0 stderr 2026-09-05 10:00:40 [WARN] [api] request 40 user=5
+46 g0 stdout     at Handler.run(Handler.java:40)
+47 g0 stdout 2026-09-05 10:00:41 [ERROR] [api] request 41 user=6
+48 g0 stderr 2026-09-05 10:00:42 [INFO] [api] request 42 user=0
+49 g0 stdout 2026-09-05 10:00:43 [WARN] [api] request 43 user=1
+50 g0 stdout 2026-09-05 10:00:44 [ERROR] [api] request 44 user=2
+51 g0 stderr 2026-09-05 10:00:45 [INFO] [api] request 45 user=3
+52 g0 stdout 2026-09-05 10:00:46 [WARN] [api] request 46 user=4
+53 g0 stdout 2026-09-05 10:00:47 [ERROR] [api] request 47 user=5
+54 g0 stderr 2026-09-05 10:00:48 [INFO] [api] request 48 user=6
+55 g0 stdout 2026-09-05 10:00:49 [WARN] [api] request 49 user=0
+56 g0 stdout 2026-09-05 10:00:50 [ERROR] [api] request 50 user=1
+57 g0 stderr     at Handler.run(Handler.java:50)
+58 g0 stdout 2026-09-05 10:00:51 [INFO] [api] request 51 user=2
+59 g0 stdout 2026-09-05 10:00:52 [WARN] [api] request 52 user=3
+60 g0 stderr 2026-09-05 10:00:53 [ERROR] [api] request 53 user=4
+61 g0 stdout 2026-09-05 10:00:54 [INFO] [api] request 54 user=5
+62 g0 stdout 2026-09-05 10:00:55 [WARN] [api] request 55 user=6
+63 g0 stderr 2026-09-05 10:00:56 [ERROR] [api] request 56 user=0
+64 g0 stdout 2026-09-05 10:00:57 [INFO] [api] request 57 user=1
+65 g0 stdout 2026-09-05 10:00:58 [WARN] [api] request 58 user=2
+66 g0 stderr 2026-09-05 10:00:59 [ERROR] [api] request 59 user=3
+  -- web1$ tail -f app.log exited (1) hh:mm:ss; web1$ tail -f app.log restarted hh:mm:ss
+1 g1 stderr 2026-09-05 10:01:00 [INFO] [api] request 60 user=4
+2 g1 stdout     at Handler.run(Handler.java:60)
+3 g1 stdout 2026-09-05 10:01:01 [WARN] [api] request 61 user=5
+4 g1 stderr 2026-09-05 10:01:02 [ERROR] [api] request 62 user=6
+5 g1 stdout 2026-09-05 10:01:03 [INFO] [api] request 63 user=0
+6 g1 stdout 2026-09-05 10:01:04 [WARN] [api] request 64 user=1
+7 g1 stderr 2026-09-05 10:01:05 [ERROR] [api] request 65 user=2
+8 g1 stdout 2026-09-05 10:01:06 [INFO] [api] request 66 user=3
+9 g1 stdout 2026-09-05 10:01:07 [WARN] [api] request 67 user=4
+10 g1 stderr 2026-09-05 10:01:08 [ERROR] [api] request 68 user=5
+11 g1 stdout 2026-09-05 10:01:09 [INFO] [api] request 69 user=6
+  -- web1$ tail -f app.log disconnected hh:mm:ss – reconnected hh:mm:ss, resumed from hh:mm:ss
+12 g1 stderr 2026-09-05 10:01:10 [WARN] [api] request 70 user=0
+13 g1 stdout     at Handler.run(Handler.java:70)
+14 g1 stdout 2026-09-05 10:01:11 [ERROR] [api] request 71 user=1
+15 g1 stderr 2026-09-05 10:01:12 [INFO] [api] request 72 user=2
+16 g1 stdout 2026-09-05 10:01:13 [WARN] [api] request 73 user=3
+17 g1 stdout 2026-09-05 10:01:14 [ERROR] [api] request 74 user=4
+18 g1 stderr 2026-09-05 10:01:15 [INFO] [api] request 75 user=5
+19 g1 stdout 2026-09-05 10:01:16 [WARN] [api] request 76 user=6
+20 g1 stdout 2026-09-05 10:01:17 [ERROR] [api] request 77 user=0
+21 g1 stderr 2026-09-05 10:01:18 [INFO] [api] request 78 user=1
+22 g1 stdout 2026-09-05 10:01:19 [WARN] [api] request 79 user=2
+  -- web1$ tail -f app.log older lines left the window hh:mm:ss
+28 g1 stderr 2026-09-05 10:01:25 [WARN] [api] request 85 user=1
+29 g1 stdout 2026-09-05 10:01:26 [ERROR] [api] request 86 user=2
+30 g1 stdout 2026-09-05 10:01:27 [INFO] [api] request 87 user=3
+31 g1 stderr 2026-09-05 10:01:28 [WARN] [api] request 88 user=4
+32 g1 stdout 2026-09-05 10:01:29 [ERROR] [api] request 89 user=5
+  -- command changed hh:mm:ss: web1$ tail -f app.log → web1$ tail -f other.log
+1 g2 stderr 2026-09-05 10:01:30 [INFO] [api] request 90 user=6
+2 g2 stdout     at Handler.run(Handler.java:90)
+3 g2 stdout 2026-09-05 10:01:31 [WARN] [api] request 91 user=0
+4 g2 stderr 2026-09-05 10:01:32 [ERROR] [api] request 92 user=1
+5 g2 stdout 2026-09-05 10:01:33 [INFO] [api] request 93 user=2
+6 g2 stdout 2026-09-05 10:01:34 [WARN] [api] request 94 user=3
+7 g2 stderr 2026-09-05 10:01:35 [ERROR] [api] request 95 user=4
+8 g2 stdout 2026-09-05 10:01:36 [INFO] [api] request 96 user=5
+9 g2 stdout 2026-09-05 10:01:37 [WARN] [api] request 97 user=6
+10 g2 stderr 2026-09-05 10:01:38 [ERROR] [api] request 98 user=0
+11 g2 stdout 2026-09-05 10:01:39 [INFO] [api] request 99 user=1
+12 g2 stdout 2026-09-05 10:01:40 [WARN] [api] request 100 user=2
+13 g2 stderr     at Handler.run(Handler.java:100)
+14 g2 stdout 2026-09-05 10:01:41 [ERROR] [api] request 101 user=3
+15 g2 stdout 2026-09-05 10:01:42 [INFO] [api] request 102 user=4
+16 g2 stderr 2026-09-05 10:01:43 [WARN] [api] request 103 user=5
+17 g2 stdout 2026-09-05 10:01:44 [ERROR] [api] request 104 user=6
+## step 13
+hold Some((100, false))
+filter [2, 5, 8, 11, 14, 17, 20, 23, 26, 29, 32, 35, 38, 41, 44, 47, 50, 53, 56, 59, 62, 65, 68, 71, 74, 77, 80, 83, 86, 89, 92, 95, 98]
+matches []
+  -- web1$ tail -f other.log older lines left the window
+28 g2 stdout 2026-09-05 10:01:54 [INFO] [api] request 114 user=2
+29 g2 stdout 2026-09-05 10:01:55 [WARN] [api] request 115 user=3
+30 g2 stderr 2026-09-05 10:01:56 [ERROR] [api] request 116 user=4
+31 g2 stdout 2026-09-05 10:01:57 [INFO] [api] request 117 user=5
+32 g2 stdout 2026-09-05 10:01:58 [WARN] [api] request 118 user=6
+33 g2 stderr 2026-09-05 10:01:59 [ERROR] [api] request 119 user=0
+34 g2 stdout 2026-09-05 10:02:00 [INFO] [api] request 120 user=1
+35 g2 stdout     at Handler.run(Handler.java:120)
+36 g2 stderr 2026-09-05 10:02:01 [WARN] [api] request 121 user=2
+37 g2 stdout 2026-09-05 10:02:02 [ERROR] [api] request 122 user=3
+38 g2 stdout 2026-09-05 10:02:03 [INFO] [api] request 123 user=4
+39 g2 stderr 2026-09-05 10:02:04 [WARN] [api] request 124 user=5
+40 g2 stdout 2026-09-05 10:02:05 [ERROR] [api] request 125 user=6
+41 g2 stdout 2026-09-05 10:02:06 [INFO] [api] request 126 user=0
+42 g2 stderr 2026-09-05 10:02:07 [WARN] [api] request 127 user=1
+43 g2 stdout 2026-09-05 10:02:08 [ERROR] [api] request 128 user=2
+44 g2 stdout 2026-09-05 10:02:09 [INFO] [api] request 129 user=3
+45 g2 stderr 2026-09-05 10:02:10 [WARN] [api] request 130 user=4
+46 g2 stdout     at Handler.run(Handler.java:130)
+47 g2 stdout 2026-09-05 10:02:11 [ERROR] [api] request 131 user=5
+48 g2 stderr 2026-09-05 10:02:12 [INFO] [api] request 132 user=6
+49 g2 stdout 2026-09-05 10:02:13 [WARN] [api] request 133 user=0
+50 g2 stdout 2026-09-05 10:02:14 [ERROR] [api] request 134 user=1
+51 g2 stderr 2026-09-05 10:02:15 [INFO] [api] request 135 user=2
+52 g2 stdout 2026-09-05 10:02:16 [WARN] [api] request 136 user=3
+53 g2 stdout 2026-09-05 10:02:17 [ERROR] [api] request 137 user=4
+54 g2 stderr 2026-09-05 10:02:18 [INFO] [api] request 138 user=5
+55 g2 stdout 2026-09-05 10:02:19 [WARN] [api] request 139 user=6
+56 g2 stdout 2026-09-05 10:02:20 [ERROR] [api] request 140 user=0
+57 g2 stderr     at Handler.run(Handler.java:140)
+58 g2 stdout 2026-09-05 10:02:21 [INFO] [api] request 141 user=1
+59 g2 stdout 2026-09-05 10:02:22 [WARN] [api] request 142 user=2
+60 g2 stderr 2026-09-05 10:02:23 [ERROR] [api] request 143 user=3
+61 g2 stdout 2026-09-05 10:02:24 [INFO] [api] request 144 user=4
+62 g2 stdout 2026-09-05 10:02:25 [WARN] [api] request 145 user=5
+63 g2 stderr 2026-09-05 10:02:26 [ERROR] [api] request 146 user=6
+64 g2 stdout 2026-09-05 10:02:27 [INFO] [api] request 147 user=0
+65 g2 stdout 2026-09-05 10:02:28 [WARN] [api] request 148 user=1
+66 g2 stderr 2026-09-05 10:02:29 [ERROR] [api] request 149 user=2
+67 g2 stdout 2026-09-05 10:02:30 [INFO] [api] request 150 user=3
+68 g2 stdout     at Handler.run(Handler.java:150)
+69 g2 stderr 2026-09-05 10:02:31 [WARN] [api] request 151 user=4
+70 g2 stdout 2026-09-05 10:02:32 [ERROR] [api] request 152 user=5
+71 g2 stdout 2026-09-05 10:02:33 [INFO] [api] request 153 user=6
+72 g2 stderr 2026-09-05 10:02:34 [WARN] [api] request 154 user=0
+73 g2 stdout 2026-09-05 10:02:35 [ERROR] [api] request 155 user=1
+74 g2 stdout 2026-09-05 10:02:36 [INFO] [api] request 156 user=2
+75 g2 stderr 2026-09-05 10:02:37 [WARN] [api] request 157 user=3
+76 g2 stdout 2026-09-05 10:02:38 [ERROR] [api] request 158 user=4
+77 g2 stdout 2026-09-05 10:02:39 [INFO] [api] request 159 user=5
+78 g2 stderr 2026-09-05 10:02:40 [WARN] [api] request 160 user=6
+79 g2 stdout     at Handler.run(Handler.java:160)
+80 g2 stdout 2026-09-05 10:02:41 [ERROR] [api] request 161 user=0
+81 g2 stderr 2026-09-05 10:02:42 [INFO] [api] request 162 user=1
+82 g2 stdout 2026-09-05 10:02:43 [WARN] [api] request 163 user=2
+83 g2 stdout 2026-09-05 10:02:44 [ERROR] [api] request 164 user=3
+84 g2 stderr 2026-09-05 10:02:45 [INFO] [api] request 165 user=4
+85 g2 stdout 2026-09-05 10:02:46 [WARN] [api] request 166 user=5
+86 g2 stdout 2026-09-05 10:02:47 [ERROR] [api] request 167 user=6
+87 g2 stderr 2026-09-05 10:02:48 [INFO] [api] request 168 user=0
+88 g2 stdout 2026-09-05 10:02:49 [WARN] [api] request 169 user=1
+89 g2 stdout 2026-09-05 10:02:50 [ERROR] [api] request 170 user=2
+90 g2 stderr     at Handler.run(Handler.java:170)
+91 g2 stdout 2026-09-05 10:02:51 [INFO] [api] request 171 user=3
+92 g2 stdout 2026-09-05 10:02:52 [WARN] [api] request 172 user=4
+93 g2 stderr 2026-09-05 10:02:53 [ERROR] [api] request 173 user=5
+94 g2 stdout 2026-09-05 10:02:54 [INFO] [api] request 174 user=6
+95 g2 stdout 2026-09-05 10:02:55 [WARN] [api] request 175 user=0
+96 g2 stderr 2026-09-05 10:02:56 [ERROR] [api] request 176 user=1
+97 g2 stdout 2026-09-05 10:02:57 [INFO] [api] request 177 user=2
+98 g2 stdout 2026-09-05 10:02:58 [WARN] [api] request 178 user=3
+99 g2 stderr 2026-09-05 10:02:59 [ERROR] [api] request 179 user=4
+100 g2 stdout 2026-09-05 10:03:00 [INFO] [api] request 180 user=5
+101 g2 stdout     at Handler.run(Handler.java:180)
+102 g2 stderr 2026-09-05 10:03:01 [WARN] [api] request 181 user=6
+103 g2 stdout 2026-09-05 10:03:02 [ERROR] [api] request 182 user=0
+104 g2 stdout 2026-09-05 10:03:03 [INFO] [api] request 183 user=1
+105 g2 stderr 2026-09-05 10:03:04 [WARN] [api] request 184 user=2
+106 g2 stdout 2026-09-05 10:03:05 [ERROR] [api] request 185 user=3
+107 g2 stdout 2026-09-05 10:03:06 [INFO] [api] request 186 user=4
+108 g2 stderr 2026-09-05 10:03:07 [WARN] [api] request 187 user=5
+109 g2 stdout 2026-09-05 10:03:08 [ERROR] [api] request 188 user=6
+110 g2 stdout 2026-09-05 10:03:09 [INFO] [api] request 189 user=0
+111 g2 stderr 2026-09-05 10:03:10 [WARN] [api] request 190 user=1
+112 g2 stdout     at Handler.run(Handler.java:190)
+113 g2 stdout 2026-09-05 10:03:11 [ERROR] [api] request 191 user=2
+114 g2 stderr 2026-09-05 10:03:12 [INFO] [api] request 192 user=3
+115 g2 stdout 2026-09-05 10:03:13 [WARN] [api] request 193 user=4
+116 g2 stdout 2026-09-05 10:03:14 [ERROR] [api] request 194 user=5
+117 g2 stderr 2026-09-05 10:03:15 [INFO] [api] request 195 user=6
+118 g2 stdout 2026-09-05 10:03:16 [WARN] [api] request 196 user=0
+119 g2 stdout 2026-09-05 10:03:17 [ERROR] [api] request 197 user=1
+120 g2 stderr 2026-09-05 10:03:18 [INFO] [api] request 198 user=2
+121 g2 stdout 2026-09-05 10:03:19 [WARN] [api] request 199 user=3
+122 g2 stdout 2026-09-05 10:03:20 [ERROR] [api] request 200 user=4
+123 g2 stderr     at Handler.run(Handler.java:200)
+124 g2 stdout 2026-09-05 10:03:21 [INFO] [api] request 201 user=5
+125 g2 stdout 2026-09-05 10:03:22 [WARN] [api] request 202 user=6
+126 g2 stderr 2026-09-05 10:03:23 [ERROR] [api] request 203 user=0
+127 g2 stdout 2026-09-05 10:03:24 [INFO] [api] request 204 user=1
+## step 14
+hold Some((0, false))
+filter []
+matches []
+## step 15
+hold Some((5, false))
+filter [0, 3]
+matches []
+  -- web1$ tail -f other.log cleared hh:mm:ss
+128 g2 stderr 2026-09-05 10:03:25 [WARN] [api] request 205 user=2
+129 g2 stdout 2026-09-05 10:03:26 [ERROR] [api] request 206 user=3
+130 g2 stdout 2026-09-05 10:03:27 [INFO] [api] request 207 user=4
+131 g2 stderr 2026-09-05 10:03:28 [WARN] [api] request 208 user=5
+132 g2 stdout 2026-09-05 10:03:29 [ERROR] [api] request 209 user=6

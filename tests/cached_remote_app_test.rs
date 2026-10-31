@@ -1,7 +1,9 @@
 //! A Remote File read through its Remote Cache in the real `AppView`
-//! (openspec change `remote-local-cache`, stage 2): the same events give the
-//! view they give with the lines held in memory, and the text is not in
-//! memory.
+//! (openspec change `remote-local-cache`): the events give the view they
+//! gave when the lines were held in memory, and the text is not in memory.
+//! What the view showed then is kept in `tests/golden/cached_remote_app/`
+//! (recorded from the cache path once it was checked equal to the memory
+//! path, before that path was removed).
 
 mod common;
 
@@ -21,15 +23,14 @@ struct Remote {
 }
 
 /// A Live Log Space of one Remote File, its source a fake the test feeds.
-fn open(cx: &mut TestAppContext, cached: bool, window: usize) -> Remote {
-    open_one(cx, cached, window, false)
+fn open(cx: &mut TestAppContext, window: usize) -> Remote {
+    open_one(cx, window, false)
 }
 
 /// The same with a Remote Command in place of the file.
-fn open_one(cx: &mut TestAppContext, cached: bool, window: usize, command: bool) -> Remote {
+fn open_one(cx: &mut TestAppContext, window: usize, command: bool) -> Remote {
     let mut h = common::open_app(cx);
     let file_id = h.view.update(&mut h.cx, |app, cx| {
-        app.remote_cache_index = cached;
         app.live.window = window;
         let project = app.workspace_state.active_project_mut().unwrap();
         let space = project.create_log_space("Remote", LogSpaceKind::Live).unwrap();
@@ -77,6 +78,10 @@ fn bytes(lines: &[String]) -> Vec<u32> {
     lines.iter().map(|l| l.len() as u32 + 1).collect()
 }
 
+/// Rows (number, Generation, text, Break above, stream), the Filter, the
+/// Matches, and what the file holds.
+type View = (Vec<(usize, u32, String, Option<String>, Option<log_gpui::model::Stream>)>, Vec<usize>, Vec<usize>, Option<(usize, bool)>);
+
 impl Remote {
     fn send(&mut self, event: SourceEvent) {
         self.tx.try_send(event).unwrap();
@@ -95,7 +100,7 @@ impl Remote {
         self.send(SourceEvent::Append { bytes: bytes(&l), lines: l, streams: None });
     }
 
-    fn view(&self) -> (Vec<(usize, u32, String, Option<String>, Option<log_gpui::model::Stream>)>, Vec<usize>, Vec<usize>, Option<(usize, bool)>) {
+    fn view(&self) -> View {
         self.h.view.read_with(&self.h.cx, |app: &AppView, _| {
             let rows = app
                 .rows_snapshot()
@@ -108,36 +113,60 @@ impl Remote {
     }
 }
 
-/// Run `steps` with the lines held in memory and through the cache, and
-/// compare the views after each.
-fn alike(cx: &mut TestAppContext, window: usize, steps: &[&dyn Fn(&mut Remote)]) {
-    alike_one(cx, window, false, steps);
+/// The view as text: what the file holds, the Filter, the Matches, then
+/// each row (number, Generation, stream, text) with the Break above it. The
+/// time of day in a Break's label is left out.
+fn render(view: &View) -> String {
+    let clock = regex::Regex::new(r"\b\d\d:\d\d:\d\d\b").unwrap();
+    let (rows, filter, matches, hold) = view;
+    let mut out = format!("hold {hold:?}\nfilter {filter:?}\nmatches {matches:?}\n");
+    for (index, generation, text, mark, stream) in rows {
+        if let Some(mark) = mark {
+            out.push_str(&format!("  -- {}\n", clock.replace_all(mark, "hh:mm:ss")));
+        }
+        let stream = stream.map_or("", |s| s.as_str());
+        out.push_str(&format!("{index} g{generation} {stream} {text}\n"));
+    }
+    out
 }
 
-fn alike_one(cx: &mut TestAppContext, window: usize, command: bool, steps: &[&dyn Fn(&mut Remote)]) {
-    let mut ram = open_one(cx, false, window, command);
-    let mut cached = open_one(&mut cx.clone(), true, window, command);
+/// Run `steps` and compare the view after each with
+/// `tests/golden/cached_remote_app/<name>.txt`; with `UPDATE_GOLDEN` set,
+/// the file is written instead.
+fn like_golden(cx: &mut TestAppContext, name: &str, window: usize, command: bool, steps: &[&dyn Fn(&mut Remote)]) {
+    let mut r = open_one(cx, window, command);
+    let mut have = String::new();
     for (n, step) in steps.iter().enumerate() {
-        step(&mut ram);
-        step(&mut cached);
-        let (a, b) = (ram.view(), cached.view());
-        let first = a.0.iter().zip(&b.0).position(|(x, y)| x != y);
-        assert!(a.0.len() == b.0.len() && first.is_none(), "step {n}: rows {} / {}, first difference {:?} / {:?}", a.0.len(), b.0.len(), first.map(|i| &a.0[i]), first.map(|i| &b.0[i]));
-        assert_eq!(a.1, b.1, "step {n}: Filter");
-        assert_eq!(a.2, b.2, "step {n}: Matches");
-        assert_eq!(a.3, b.3, "step {n}: what the file holds");
+        step(&mut r);
+        have.push_str(&format!("## step {n}\n{}", render(&r.view())));
     }
-    cached.h.view.read_with(&cached.h.cx, |app, _| {
-        let parsed = &app.parsed_files[&cached.id];
+    r.h.view.read_with(&r.h.cx, |app, _| {
+        let parsed = &app.parsed_files[&r.id];
         assert!(parsed.indexed.is_some() && parsed.entries.is_empty() && parsed.lines.is_empty(), "no text in memory");
     });
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden/cached_remote_app").join(format!("{name}.txt"));
+    if std::env::var_os("UPDATE_GOLDEN").is_some() {
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, &have).unwrap();
+        return;
+    }
+    let want = std::fs::read_to_string(&path).unwrap();
+    for (n, (a, b)) in want.split("## step ").zip(have.split("## step ")).enumerate() {
+        if a != b {
+            let line = a.lines().zip(b.lines()).position(|(x, y)| x != y);
+            panic!("{name}, step {}: first difference at line {line:?}:\nwant {:?}\nhave {:?}", n.saturating_sub(1), line.and_then(|l| a.lines().nth(l)), line.and_then(|l| b.lines().nth(l)));
+        }
+    }
+    assert_eq!(want.len(), have.len(), "{name}: as many steps");
 }
 
 #[gpui::test]
-fn a_remote_file_through_its_cache_shows_what_it_shows_in_memory(cx: &mut TestAppContext) {
-    alike(
+fn a_remote_file_through_its_cache_shows_what_it_showed_in_memory(cx: &mut TestAppContext) {
+    like_golden(
         cx,
+        "remote_file",
         200,
+        false,
         &[
             &|r| r.tail(lines(400..460)),
             &|r| r.send(SourceEvent::TotalLines(Some(500))),
@@ -162,10 +191,12 @@ fn a_remote_file_through_its_cache_shows_what_it_shows_in_memory(cx: &mut TestAp
 }
 
 #[gpui::test]
-fn load_more_clear_and_back_to_the_window_are_alike(cx: &mut TestAppContext) {
-    alike(
+fn load_more_clear_and_back_to_the_window_show_what_they_showed_in_memory(cx: &mut TestAppContext) {
+    like_golden(
         cx,
+        "load_more_clear_back",
         100,
+        false,
         &[
             &|r| r.tail(lines(300..360)),
             &|r| r.send(SourceEvent::TotalLines(Some(400))),
@@ -208,7 +239,7 @@ impl Remote {
 
 #[gpui::test]
 fn a_remote_file_removed_from_its_log_space_takes_its_cache_along(cx: &mut TestAppContext) {
-    let mut r = open(cx, true, 1_000);
+    let mut r = open(cx, 1_000);
     r.tail(lines(0..50));
     let dir = r.cache_dir();
     assert!(dir.is_dir());
@@ -221,7 +252,7 @@ fn a_remote_file_removed_from_its_log_space_takes_its_cache_along(cx: &mut TestA
 
 #[gpui::test]
 fn a_deleted_log_space_takes_the_caches_of_its_files_along(cx: &mut TestAppContext) {
-    let mut r = open(cx, true, 1_000);
+    let mut r = open(cx, 1_000);
     r.tail(lines(0..50));
     let dir = r.cache_dir();
     let space = r.space_id();
@@ -235,7 +266,7 @@ fn a_deleted_log_space_takes_the_caches_of_its_files_along(cx: &mut TestAppConte
 
 #[gpui::test]
 fn a_cache_another_log_space_still_refers_to_stays(cx: &mut TestAppContext) {
-    let mut r = open(cx, true, 1_000);
+    let mut r = open(cx, 1_000);
     r.tail(lines(0..50));
     let dir = r.cache_dir();
     let first = r.space_id();
@@ -251,7 +282,7 @@ fn a_cache_another_log_space_still_refers_to_stays(cx: &mut TestAppContext) {
 
 #[gpui::test]
 fn over_the_limit_the_caches_of_other_files_go_and_the_open_one_stays(cx: &mut TestAppContext) {
-    let mut r = open(cx, true, 100_000);
+    let mut r = open(cx, 100_000);
     r.tail(lines(0..2_000));
     let open_dir = r.cache_dir();
     // A cache of a file no tab shows, opened earlier.
@@ -291,10 +322,11 @@ impl Remote {
 }
 
 #[gpui::test]
-fn a_remote_command_through_its_cache_shows_what_it_shows_in_memory(cx: &mut TestAppContext) {
+fn a_remote_command_through_its_cache_shows_what_it_showed_in_memory(cx: &mut TestAppContext) {
     use log_gpui::live::source::RestartKind;
-    alike_one(
+    like_golden(
         cx,
+        "remote_command",
         100,
         true,
         &[

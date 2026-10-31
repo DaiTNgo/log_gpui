@@ -298,21 +298,19 @@ impl AppView {
             return;
         }
         // Read through its Remote Cache: kept from last time, or new.
-        if is_command && let Some(parsed) = self.open_cached_remote_command(file_id, name) {
-            self.parsed_files.insert(file_id.to_string(), parsed);
-            return;
-        }
-        if !is_command && let Some(parsed) = self.open_cached_remote_file(file_id, name) {
-            self.parsed_files.insert(file_id.to_string(), parsed);
-            return;
-        }
-        // Kept from last time: shown at once, read on from where it ended.
-        if !is_command && let Some(parsed) = self.remote_file_from_cache(file_id, name) {
-            self.parsed_files.insert(file_id.to_string(), parsed);
-            return;
-        }
-        let mut parsed = ParsedFile::empty();
-        parsed.live = Some(if is_command { LiveBuffer::command(name) } else { LiveBuffer::remote(name) });
+        let parsed = match self.open_cached(file_id, name, is_command) {
+            Ok(parsed) => parsed,
+            Err(e) => {
+                let why = if e.kind() == std::io::ErrorKind::WouldBlock {
+                    "it is open in another window of the app".to_string()
+                } else {
+                    format!("its Remote Cache could not be opened ({e})")
+                };
+                let message = format!("{name} is not read here: {why}");
+                self.notice = Some(message.clone());
+                ParsedFile::failed(message)
+            }
+        };
         self.parsed_files.insert(file_id.to_string(), parsed);
     }
 
