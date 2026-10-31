@@ -534,6 +534,7 @@ impl AppView {
         self.raw.edited.remove(file_id);
         self.raw.unsaved.remove(file_id);
         self.raw.save_gen.remove(file_id);
+        self.drop_unused_remote_caches();
     }
 
     /// ⌘C in the Raw View: copy the selected imported line.

@@ -99,6 +99,7 @@ impl AppView {
         for file in removed.log_spaces.iter().flat_map(|s| s.files.iter()) {
             self.delete_copy_of(file);
         }
+        self.drop_unused_remote_caches();
         if removing_active {
             self.restore_active_session(cx);
         }

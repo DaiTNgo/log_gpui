@@ -403,6 +403,7 @@ impl AppView {
         self.remote.secrets.delete(&removed.secret_account());
         self.remote.picker_state.forget_server(server_id);
         self.save_picker_state();
+        self.drop_unused_remote_caches();
         cx.notify();
         Ok(())
     }

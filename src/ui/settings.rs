@@ -70,6 +70,9 @@ struct Values {
     full_read_limit: usize,
     glob_limit: usize,
     glob_interval: u64,
+    /// The Remote Cache limit in MB, and the bytes it takes now.
+    cache_limit_mb: u64,
+    cache_bytes: u64,
     minimap: bool,
     search_highlight: bool,
     phrase_colors: bool,
@@ -96,6 +99,8 @@ pub fn open_settings_dialog(view: Entity<AppView>, window: &mut Window, cx: &mut
                     full_read_limit: v.live.full_read_limit,
                     glob_limit: v.live.glob_limit,
                     glob_interval: v.live.glob_interval,
+                    cache_limit_mb: v.live.cache_limit >> 20,
+                    cache_bytes: v.remote_cache_size(),
                     minimap: v.show_minimap,
                     search_highlight: v.workspace_state.show_search_highlight,
                     phrase_colors: v.phrase_colors(),
@@ -414,6 +419,14 @@ fn rows_of(section: SettingsSection, view: &Entity<AppView>, v: &Values, cx: &Ap
             let limits = [10usize, 25, 50, 100, 200, 500];
             let intervals = [2u64, 5, 10, 30, 60, 300];
             let (current_limit, current_interval) = (v.glob_limit, v.glob_interval);
+            let (cache_view, clear_view) = (view.clone(), view.clone());
+            let cache_limits = [512u64, 1024, 2048, 5120, 10240];
+            let current_cache = v.cache_limit_mb;
+            let cache_now = if v.cache_bytes >= 1 << 30 {
+                format!("{:.1} GB", v.cache_bytes as f64 / f64::from(1u32 << 30))
+            } else {
+                format!("{} MB", v.cache_bytes >> 20)
+            };
             vec![Row {
                 title: "Live Window",
                 description: "How many of the newest lines each Remote File keeps. Older lines leave the view as new ones arrive.",
@@ -502,6 +515,39 @@ fn rows_of(section: SettingsSection, view: &Entity<AppView>, v: &Values, cx: &Ap
                             window.refresh();
                         }
                     })
+                    .into_any_element(),
+            },
+            Row {
+                title: "Remote cache",
+                description: "The lines of Remote Files are kept on disk, so a tab chosen again shows them at once. Above this size the caches opened longest ago go; those of open tabs stay.",
+                control: h_flex()
+                    .gap_2()
+                    .items_center()
+                    .child(
+                        ButtonGroup::new("settings-remote-cache-limit")
+                            .small()
+                            .children(cache_limits.map(|mb| {
+                                Button::new(SharedString::from(format!("remote-cache-limit-{mb}")))
+                                    .label(if mb >= 1024 { format!("{} GB", mb / 1024) } else { format!("{mb} MB") })
+                                    .selected(current_cache == mb)
+                            }))
+                            .on_click(move |ix: &Vec<usize>, window, app| {
+                                if let Some(&i) = ix.first() {
+                                    cache_view.update(app, |this, cx| this.set_remote_cache_limit(cache_limits[i], cx));
+                                    window.refresh();
+                                }
+                            }),
+                    )
+                    .child(div().text_xs().text_color(cx.theme().muted_foreground).child(format!("Now {cache_now}")))
+                    .child(
+                        Button::new("settings-clear-remote-cache")
+                            .small()
+                            .label("Clear Remote cache")
+                            .on_click(move |_, window, app| {
+                                clear_view.update(app, |this, cx| this.clear_remote_cache(cx));
+                                window.refresh();
+                            }),
+                    )
                     .into_any_element(),
             }]
         }

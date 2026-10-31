@@ -202,3 +202,89 @@ fn a_generation_held_from_its_middle_numbers_its_lines_as_on_the_server() {
     assert_eq!(entries.position_of(2, 1), Some(11));
     assert_eq!(entries.position_of(4000, 0), None, "not held");
 }
+
+// ── Cleanup (task 8) ────────────────────────────────────────────────────────
+
+use log_gpui::remote::cache;
+use std::collections::HashSet;
+
+/// A cache of `n` lines of about 100 bytes for `path`, last opened at `at`.
+fn cache_of(root: &std::path::Path, path: &str, n: usize, at: u64) -> std::path::PathBuf {
+    let target = CacheTarget::File { path: path.into() };
+    let dir = dir_for(root, "srv-1", &target);
+    let mut c = RemoteCache::open(&dir, "srv-1", target, 1_000).unwrap();
+    let l: Vec<String> = (0..n).map(|i| format!("{i:>99}")).collect();
+    c.append(&refs(&l)).unwrap();
+    drop(c);
+    let meta_path = dir.join(cache::META_FILE);
+    let mut meta: serde_json::Value = serde_json::from_slice(&std::fs::read(&meta_path).unwrap()).unwrap();
+    meta["last_opened"] = at.into();
+    std::fs::write(&meta_path, serde_json::to_vec(&meta).unwrap()).unwrap();
+    dir
+}
+
+#[test]
+fn the_sweep_removes_caches_nobody_refers_to_and_those_not_opened_for_long() {
+    let root = tempfile::tempdir().unwrap();
+    let kept = cache_of(root.path(), "/a.log", 10, 1_000);
+    let unused = cache_of(root.path(), "/b.log", 10, 1_000);
+    let old = cache_of(root.path(), "/c.log", 10, 10);
+    let in_use: HashSet<_> = [kept.clone(), old.clone()].into();
+    assert_eq!(cache::sweep(root.path(), &in_use, None), 1);
+    assert!(kept.is_dir() && old.is_dir() && !unused.exists());
+    assert_eq!(cache::sweep(root.path(), &in_use, Some(500)), 1, "not opened since 500");
+    assert!(kept.is_dir() && !old.exists());
+    // No file refers to any: the Server's folder goes too.
+    cache::sweep(root.path(), &HashSet::new(), None);
+    assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 0);
+}
+
+#[test]
+fn a_folder_that_is_not_a_cache_is_never_removed() {
+    let root = tempfile::tempdir().unwrap();
+    let dir = cache_of(root.path(), "/a.log", 10, 1_000);
+    std::fs::write(dir.join("notes.txt"), "mine").unwrap();
+    assert!(cache::remove(&dir).is_err());
+    assert_eq!(cache::sweep(root.path(), &HashSet::new(), None), 0);
+    assert!(dir.join("notes.txt").exists());
+}
+
+#[test]
+fn a_cache_another_app_window_uses_is_left() {
+    let root = tempfile::tempdir().unwrap();
+    let dir = cache_of(root.path(), "/a.log", 10, 1_000);
+    // pid 1 runs on every Unix.
+    std::fs::write(dir.join("lock"), "1").unwrap();
+    assert_eq!(cache::sweep(root.path(), &HashSet::new(), None), 0);
+    assert!(dir.is_dir());
+}
+
+#[test]
+fn over_the_limit_the_cache_opened_longest_ago_goes_first_but_not_an_open_one() {
+    let root = tempfile::tempdir().unwrap();
+    // About 100 KB each.
+    let open = cache_of(root.path(), "/open.log", 1_000, 1);
+    let oldest = cache_of(root.path(), "/oldest.log", 1_000, 2);
+    let middle = cache_of(root.path(), "/middle.log", 1_000, 3);
+    let newest = cache_of(root.path(), "/newest.log", 1_000, 4);
+    let keep: HashSet<_> = [open.clone()].into();
+    let t = cache::trim_to_size(root.path(), 250_000, &keep);
+    assert_eq!(t.removed, 2);
+    assert!(open.is_dir() && !oldest.exists() && !middle.exists() && newest.is_dir());
+    assert!(t.bytes <= 250_000 && t.bytes == cache::total_size(root.path()));
+    // Only the open one would have to go: it stays, over the limit.
+    let t = cache::trim_to_size(root.path(), 1, &[open.clone(), newest.clone()].into());
+    assert_eq!(t.removed, 0);
+    assert!(t.bytes > 1 && open.is_dir());
+}
+
+#[test]
+fn a_cache_with_no_meta_is_listed_and_removed_like_any() {
+    let root = tempfile::tempdir().unwrap();
+    let dir = cache_of(root.path(), "/a.log", 10, 1_000);
+    std::fs::remove_file(dir.join(cache::META_FILE)).unwrap();
+    let found = cache::list(root.path());
+    assert_eq!((found.len(), found[0].last_opened), (1, 0));
+    assert!(!cache::has_lines(&dir), "read as no cache");
+    assert_eq!(cache::trim_to_size(root.path(), 0, &HashSet::new()).removed, 1);
+}

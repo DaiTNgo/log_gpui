@@ -637,6 +637,7 @@ impl AppView {
         this.live.full_read_limit = this.workspace_state.full_read_limit_lines.clamp(10_000, 20_000_000);
         this.live.glob_limit = this.workspace_state.live_glob_limit.clamp(1, 500);
         this.live.glob_interval = this.workspace_state.live_glob_interval.clamp(2, 300);
+        this.live.cache_limit = this.workspace_state.remote_cache_limit_mb.clamp(256, 1 << 20) << 20;
         this.density = this.workspace_state.density;
         this.text_zoom = this.workspace_state.text_zoom;
         this.column_layout.update_density(this.text_scale());
@@ -649,6 +650,8 @@ impl AppView {
         // So are Archive Entries cut off while being unpacked, or held by
         // no Log Space.
         crate::archive_cache::sweep(&this.archive_cache_root(), &this.archive_dirs_in_use());
+        // Remote Caches no file refers to, or not opened for 14 days.
+        this.sweep_remote_caches_at_start();
         this.start_live_pump(cx);
         this
     }

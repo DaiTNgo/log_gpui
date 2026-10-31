@@ -94,11 +94,14 @@
 
 ## 8. Dọn cache
 
-- [ ] 8.1 Xoá cache khi file rời Log Space, khi Log Space bị xoá, khi Edit… làm nó thành file khác, và khi Server bị xoá.
-- [ ] 8.2 Lúc khởi động: sweep các thư mục không có `LogFile` trỏ tới (như `copy::sweep`), và bỏ cache có `last_opened` cũ hơn 14 ngày.
-- [ ] 8.3 Giới hạn dung lượng chung, mặc định 2 GB, trong Settings mục Live, kèm nút "Clear Remote cache".
+- [x] 8.1 Xoá cache khi file rời Log Space, khi Log Space bị xoá, khi Edit… làm nó thành file khác, và khi Server bị xoá.
+  - Đã làm: sau mỗi lần file rời app (`forget_file`), xoá Project, xoá Server, app sweep các cache không còn `LogFile` nào trỏ tới. Cache mà một Log Space khác vẫn trỏ tới thì giữ. File đang đọc qua một cache không còn là của nó (Edit…) thì thôi đọc cache đó trước.
+  - Chỉ xoá thư mục chỉ chứa những gì cache ghi; cache mà một cửa sổ app khác đang giữ `lock` thì để lại.
+- [x] 8.2 Lúc khởi động: sweep các thư mục không có `LogFile` trỏ tới (như `copy::sweep`), và bỏ cache có `last_opened` cũ hơn 14 ngày.
+- [x] 8.3 Giới hạn dung lượng chung, mặc định 2 GB, trong Settings mục Live, kèm nút "Clear Remote cache".
   - Kiểm sau khi ghi (tối đa mỗi 10 s). Bỏ cache được mở lâu nhất trước; không bỏ cache của tab đang mở.
   - Test: vượt giới hạn với một tab đang mở.
+  - Đã làm: Settings › General có hàng "Remote cache" (512 MB đến 10 GB, dung lượng hiện tại, nút "Clear Remote cache"). Nếu chỉ còn cache của tab đang mở mà vẫn vượt, app báo một notice một lần. 8.1–8.3 nằm chung một commit vì dùng chung `sweep`/`list`/`remove`.
 
 ## 9. Bật mặc định và dọn đường RAM
 

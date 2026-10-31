@@ -173,3 +173,91 @@ fn load_more_clear_and_back_to_the_window_are_alike(cx: &mut TestAppContext) {
         ],
     );
 }
+
+// ── Cleanup (task 8) ────────────────────────────────────────────────────────
+
+impl Remote {
+    fn space_id(&self) -> String {
+        self.h.view.read_with(&self.h.cx, |app, _| app.workspace_state.active_project().unwrap().log_spaces.iter().find(|s| s.name == "Remote").unwrap().id.clone())
+    }
+
+    fn cache_dir(&self) -> std::path::PathBuf {
+        self.h.view.read_with(&self.h.cx, |app, _| {
+            let root = app.remote_cache_root_for_test();
+            let target = log_gpui::remote::cache::CacheTarget::File { path: "/app/app.log".into() };
+            log_gpui::remote::cache::dir_for(&root, "srv-1", &target)
+        })
+    }
+}
+
+#[gpui::test]
+fn a_remote_file_removed_from_its_log_space_takes_its_cache_along(cx: &mut TestAppContext) {
+    let mut r = open(cx, true, 1_000);
+    r.tail(lines(0..50));
+    let dir = r.cache_dir();
+    assert!(dir.is_dir());
+    let space = r.space_id();
+    r.h.view.update(&mut r.h.cx, |app, cx| app.remove_file_from_space(&space, FILE_ID, cx));
+    r.h.cx.run_until_parked();
+    assert!(!dir.exists(), "its cache is gone");
+    r.h.view.read_with(&r.h.cx, |app, _| assert!(app.live.cached.is_empty(), "nothing reads it"));
+}
+
+#[gpui::test]
+fn a_deleted_log_space_takes_the_caches_of_its_files_along(cx: &mut TestAppContext) {
+    let mut r = open(cx, true, 1_000);
+    r.tail(lines(0..50));
+    let dir = r.cache_dir();
+    let space = r.space_id();
+    r.h.view.update(&mut r.h.cx, |app, cx| {
+        app.request_delete_log_space(&space, cx);
+        app.accept_confirm(cx);
+    });
+    r.h.cx.run_until_parked();
+    assert!(!dir.exists());
+}
+
+#[gpui::test]
+fn a_cache_another_log_space_still_refers_to_stays(cx: &mut TestAppContext) {
+    let mut r = open(cx, true, 1_000);
+    r.tail(lines(0..50));
+    let dir = r.cache_dir();
+    let first = r.space_id();
+    r.h.view.update(&mut r.h.cx, |app, _| {
+        let project = app.workspace_state.active_project_mut().unwrap();
+        let space = project.create_log_space("Remote 2", LogSpaceKind::Live).unwrap();
+        space.add_remote_files(&[("srv-1".into(), "web1".into(), "/app/app.log".into())]).unwrap();
+    });
+    r.h.view.update(&mut r.h.cx, |app, cx| app.remove_file_from_space(&first, FILE_ID, cx));
+    r.h.cx.run_until_parked();
+    assert!(dir.is_dir(), "the other Log Space reads it next time");
+}
+
+#[gpui::test]
+fn over_the_limit_the_caches_of_other_files_go_and_the_open_one_stays(cx: &mut TestAppContext) {
+    let mut r = open(cx, true, 100_000);
+    r.tail(lines(0..2_000));
+    let open_dir = r.cache_dir();
+    // A cache of a file no tab shows, opened earlier.
+    let root = r.h.view.read_with(&r.h.cx, |app, _| app.remote_cache_root_for_test());
+    let target = log_gpui::remote::cache::CacheTarget::File { path: "/app/other.log".into() };
+    let other = log_gpui::remote::cache::dir_for(&root, "srv-1", &target);
+    {
+        let mut c = log_gpui::remote::cache::RemoteCache::open(&other, "srv-1", target, 1_000).unwrap();
+        let l = lines(0..2_000);
+        c.append(&l.iter().map(String::as_str).collect::<Vec<_>>()).unwrap();
+    }
+    r.h.view.update(&mut r.h.cx, |app, _| {
+        // The other file is in a Log Space too, so only the limit removes it.
+        let project = app.workspace_state.active_project_mut().unwrap();
+        let space = project.create_log_space("Other", LogSpaceKind::Live).unwrap();
+        space.add_remote_files(&[("srv-1".into(), "web1".into(), "/app/other.log".into())]).unwrap();
+        app.live.cache_limit = 10_000;
+        app.trim_remote_caches();
+        assert!(app.notice.as_deref().is_some_and(|n| n.contains("open tabs")), "{:?}", app.notice);
+    });
+    assert!(!other.exists(), "the cache no tab shows went");
+    assert!(open_dir.is_dir(), "the open tab's stayed");
+    r.append(lines(2_000..2_010));
+    r.h.view.read_with(&r.h.cx, |app, _| assert_eq!(app.rows_snapshot().len(), lines(0..2_010).len()));
+}
