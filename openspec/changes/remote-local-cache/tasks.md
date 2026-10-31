@@ -18,8 +18,9 @@
 - [x] 2.1 `GenerationStart.first_number`: `IndexedFile::place` đánh số `first_number + (n − pos)` (decision 3). Mặc định là 1, nên file local không đổi.
   - Test: một Generation bắt đầu ở dòng 4.001 trên Server thì dòng đầu có số 4.001, kể cả với Marker và Go to Line.
   - Đã làm: `first_number` trên `GenerationStart`, `IndexedFile::set_generations`. `place`, `line_number` và `FileEntries::position_of` (Marker, Next Marker) đánh số từ đó. Go to Line trong app và `drop_markers_that_no_longer_match` (đang coi vị trí là `line − 1`) sẽ kiểm ở nhóm 4.
-- [ ] 2.2 Stream của Remote Command: `seg-<k>.stream` (1 bit mỗi dòng) được ghi cạnh segment và đọc vào `LineMeta` khi index (decision 6).
+- [x] 2.2 Stream của Remote Command: `seg-<k>.stream` (1 bit mỗi dòng) được ghi cạnh segment và đọc vào `LineMeta` khi index (decision 6).
   - Test: cột Stream và Filter theo stream cho kết quả như đường RAM hiện tại.
+  - Đã làm: `seg-<k>.stream` giữ 1 byte mỗi dòng (0 file, 1 stdout, 2 stderr), không phải 1 bit, để ghi nối và cắt theo dòng như `.lens`. `IndexedFile::set_streams` nhận stream theo vị trí (dạng `Runs`); các row đọc qua Line Index và Filter Scan (`each_entry_at`) đều có `stream`. Test so với đường RAM nằm ở 6.1.
 
 ## 3. Source: Checkpoint và Resume
 

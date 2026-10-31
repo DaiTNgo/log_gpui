@@ -8,6 +8,8 @@
 //!   meta.json          the Generations, their segments and checkpoints
 //!   lock               the pid of the app using it
 //!   gen-<id>/seg-<k>.log
+//!   gen-<id>/seg-<k>.lens     length of each line on the Server (u32 LE)
+//!   gen-<id>/seg-<k>.stream   a command's output of each line (one byte)
 //! ```
 //!
 //! A Generation is a list of segments read top to bottom. New lines go to
@@ -116,6 +118,9 @@ pub struct CacheMeta {
     /// More lines than the Live Window are held (Load more).
     #[serde(default)]
     pub extended: bool,
+    /// A Remote Command: when the Run kept here was left (`HH:MM`).
+    #[serde(default)]
+    pub ended: Option<String>,
 }
 
 /// The cache of one Remote File or Remote Command, open for writing.
@@ -182,6 +187,7 @@ impl RemoteCache {
                 generations: Vec::new(),
                 last_opened: 0,
                 extended: false,
+                ended: None,
             },
         };
         let mut cache = Self { dir: dir.to_path_buf(), meta, segment_lines: segment_lines.max(1) };
@@ -334,6 +340,12 @@ impl RemoteCache {
     /// `append`, with the length of each line on the Server (kept to find
     /// where lines are in the file there; empty: not known).
     pub fn append_with(&mut self, lines: &[&str], lens: &[u32]) -> io::Result<()> {
+        self.append_streams(lines, lens, &[])
+    }
+
+    /// `append_with`, with the output of a Remote Command each line came
+    /// from (`stream_code`; empty: a file).
+    pub fn append_streams(&mut self, lines: &[&str], lens: &[u32], streams: &[u8]) -> io::Result<()> {
         if lines.is_empty() {
             return Ok(());
         }
@@ -356,6 +368,9 @@ impl RemoteCache {
             seg.bytes += write_lines(&gen_dir.join(seg_name(seg.id)), &rest[..take], true)?;
             let done = lines.len() - rest.len();
             write_lens(&gen_dir.join(lens_name(seg.id)), lens.get(done..done + take).unwrap_or(&[]), take, true)?;
+            if !streams.is_empty() {
+                write_streams(&gen_dir.join(streams_name(seg.id)), streams.get(done..done + take).unwrap_or(&[]), seg.lines + seg.skip_lines, take)?;
+            }
             seg.lines += take;
             rest = &rest[take..];
         }
@@ -401,6 +416,27 @@ impl RemoteCache {
         out
     }
 
+    /// The output each line held came from, top to bottom across every
+    /// Generation (`stream_code`; 0 where not kept).
+    pub fn streams(&self) -> Vec<u8> {
+        let mut out = Vec::with_capacity(self.lines());
+        for g in &self.meta.generations {
+            let gen_dir = self.dir.join(gen_name(g.id));
+            for seg in &g.segments {
+                let mut codes = std::fs::read(gen_dir.join(streams_name(seg.id))).unwrap_or_default();
+                codes.resize(seg.lines + seg.skip_lines, 0);
+                out.extend_from_slice(&codes[seg.skip_lines..]);
+            }
+        }
+        out
+    }
+
+    /// A Remote Command's Run kept here was left at `time`.
+    pub fn set_ended(&mut self, time: Option<String>) -> io::Result<()> {
+        self.meta.ended = time;
+        self.save()
+    }
+
     /// Drop the oldest `count` lines held: the Live Window. A segment whose
     /// lines all left goes; one with some left is read from after them. An
     /// emptied earlier Generation goes too.
@@ -423,6 +459,7 @@ impl RemoteCache {
                 g.segments.remove(0);
                 let _ = std::fs::remove_file(gen_dir.join(seg_name(id)));
                 let _ = std::fs::remove_file(gen_dir.join(lens_name(id)));
+                let _ = std::fs::remove_file(gen_dir.join(streams_name(id)));
                 continue;
             }
             // Some of its lines stay: find where the first of them starts.
@@ -458,6 +495,7 @@ impl RemoteCache {
                 g.segments.pop();
                 let _ = std::fs::remove_file(gen_dir.join(seg_name(id)));
                 let _ = std::fs::remove_file(gen_dir.join(lens_name(id)));
+                let _ = std::fs::remove_file(gen_dir.join(streams_name(id)));
                 continue;
             }
             let path = gen_dir.join(seg_name(seg.id));
@@ -472,6 +510,9 @@ impl RemoteCache {
             let kept = (seg.skip_lines + seg.lines - count) as u64 * 4;
             if let Ok(file) = std::fs::OpenOptions::new().write(true).open(&lens) {
                 file.set_len(kept)?;
+            }
+            if let Ok(file) = std::fs::OpenOptions::new().write(true).open(gen_dir.join(streams_name(seg.id))) {
+                file.set_len(kept / 4)?;
             }
             seg.lines -= count;
             seg.bytes = end as u64;
@@ -603,6 +644,43 @@ pub fn has_lines(dir: &Path) -> bool {
 
 fn lens_name(id: u32) -> String {
     format!("seg-{id}.lens")
+}
+
+fn streams_name(id: u32) -> String {
+    format!("seg-{id}.stream")
+}
+
+/// The byte a line's output is kept as: 0 for none (a file).
+pub fn stream_code(stream: Option<crate::model::Stream>) -> u8 {
+    match stream {
+        None => 0,
+        Some(crate::model::Stream::Stdout) => 1,
+        Some(crate::model::Stream::Stderr) => 2,
+    }
+}
+
+pub fn stream_of(code: u8) -> Option<crate::model::Stream> {
+    match code {
+        1 => Some(crate::model::Stream::Stdout),
+        2 => Some(crate::model::Stream::Stderr),
+        _ => None,
+    }
+}
+
+/// Write the outputs of `count` lines to `path` after its first `at`
+/// (zeros past `codes`): the file is padded to `at` first, as a segment
+/// may have lines from before streams were kept.
+fn write_streams(path: &Path, codes: &[u8], at: usize, count: usize) -> io::Result<()> {
+    let mut file = std::fs::OpenOptions::new().create(true).write(true).truncate(false).open(path)?;
+    let len = file.metadata()?.len() as usize;
+    if len != at {
+        file.set_len(at as u64)?;
+    }
+    use std::io::Seek as _;
+    file.seek(io::SeekFrom::Start(at as u64))?;
+    let mut bytes = codes.to_vec();
+    bytes.resize(count, 0);
+    file.write_all(&bytes)
 }
 
 fn gen_name(id: u32) -> String {

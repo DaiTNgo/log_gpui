@@ -288,3 +288,46 @@ fn a_cache_with_no_meta_is_listed_and_removed_like_any() {
     assert!(!cache::has_lines(&dir), "read as no cache");
     assert_eq!(cache::trim_to_size(root.path(), 0, &HashSet::new()).removed, 1);
 }
+
+/// The output of each line of a Remote Command is kept beside its segment
+/// and given to the rows read through the Line Index (task 2.2).
+#[test]
+fn a_commands_streams_are_kept_per_line_through_the_window_cut_and_reopening() {
+    use log_gpui::index::file::IndexedFile;
+    use log_gpui::index::meta::Runs;
+    use log_gpui::index::{HandleBudget, LineSource};
+    use log_gpui::model::Stream;
+    use std::sync::Arc;
+    let root = tempfile::tempdir().unwrap();
+    let target = CacheTarget::Command { command: "remote-cmd:srv-1:1".into() };
+    let dir = dir_for(root.path(), "cmd", &target);
+    let mut cache = RemoteCache::open(&dir, "cmd", target.clone(), 7).unwrap();
+    let text = lines(0..30);
+    // Every third line on stderr.
+    let codes: Vec<u8> = (0..30).map(|i| if i % 3 == 0 { 2 } else { 1 }).collect();
+    cache.append_streams(&refs(&text[..10]), &[], &codes[..10]).unwrap();
+    cache.append_streams(&refs(&text[10..]), &[], &codes[10..]).unwrap();
+    assert_eq!(cache.streams(), codes);
+    cache.drop_top(9).unwrap();
+    assert_eq!(cache.streams(), codes[9..]);
+    cache.drop_bottom(2).unwrap();
+    assert_eq!(cache.streams(), codes[9..28]);
+    drop(cache);
+    let cache = RemoteCache::open(&dir, "cmd", target, 7).unwrap();
+    assert_eq!(cache.streams(), codes[9..28], "read again");
+
+    let (chain, _) = cache.chain(HandleBudget::new(8)).unwrap();
+    let file = IndexedFile::index_now(Arc::new(chain) as Arc<dyn LineSource>, Default::default()).unwrap();
+    let mut runs = Runs::default();
+    for (i, code) in cache.streams().iter().enumerate() {
+        runs.set(i, log_gpui::remote::cache::stream_of(*code));
+    }
+    file.set_streams(runs);
+    for i in 0..file.len() {
+        let want = if (i + 9) % 3 == 0 { Stream::Stderr } else { Stream::Stdout };
+        assert_eq!(file.entry(i).unwrap().stream, Some(want), "line {i}");
+    }
+    let mut seen = Vec::new();
+    file.each_entry_at(&[0, 1, 5], |n, e, _| seen.push((n, e.stream))).unwrap();
+    assert_eq!(seen, [(0, Some(Stream::Stderr)), (1, Some(Stream::Stdout)), (5, Some(Stream::Stdout))]);
+}

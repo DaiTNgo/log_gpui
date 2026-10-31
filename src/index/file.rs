@@ -34,6 +34,8 @@ pub struct IndexedFile {
     chain: Option<Arc<ChainSource>>,
     /// Breaks above lines inside a Generation, by position.
     marks: Mutex<std::collections::BTreeMap<usize, Arc<crate::live::BreakMark>>>,
+    /// The output each line of a Remote Command came from, by position.
+    streams: Mutex<super::meta::Runs<Option<crate::model::Stream>>>,
 }
 
 /// Most bytes `IndexedFile::extend` indexes in one call.
@@ -118,6 +120,7 @@ impl IndexedFile {
             generations,
             chain: None,
             marks: Mutex::default(),
+            streams: Mutex::default(),
         }
     }
 
@@ -141,6 +144,7 @@ impl IndexedFile {
             generations: Mutex::new(self.generations.lock().unwrap().clone()),
             chain: self.chain.clone(),
             marks: Mutex::new(self.marks.lock().unwrap().clone()),
+            streams: Mutex::new(self.streams.lock().unwrap().clone()),
         }
     }
 
@@ -216,6 +220,13 @@ impl IndexedFile {
         if let Some(mark) = self.marks.lock().unwrap().get(&n) {
             entry.break_before = Some(mark.clone());
         }
+        entry.stream = self.streams.lock().unwrap().get(n).flatten();
+    }
+
+    /// The output each line of a Remote Command came from, by position.
+    pub fn set_streams(&self, streams: super::meta::Runs<Option<crate::model::Stream>>) {
+        *self.streams.lock().unwrap() = streams;
+        self.cache.lock().unwrap().forget_file(0);
     }
 
     /// The Breaks drawn above lines that do not start a Generation, by
@@ -360,6 +371,15 @@ impl IndexedFile {
                 let start = data.file.meta.get(first).and_then(|m| m.parent_of(first)).unwrap_or(first);
                 (start, read_entries(&*self.source, &data.file, start..last + 1, &mut parser)?)
             };
+            let mut entries = entries;
+            {
+                let streams = self.streams.lock().unwrap();
+                if !streams.runs().is_empty() {
+                    for (at, entry) in entries.iter_mut().enumerate() {
+                        entry.stream = streams.get(start + at).flatten();
+                    }
+                }
+            }
             let mut parent = 0;
             let mut next = i;
             for (at, entry) in entries.iter().enumerate() {
