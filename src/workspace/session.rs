@@ -72,8 +72,13 @@ pub struct ProjectSnapshot {
 /// an Imported Log Space.
 pub const IMPORTED_NOW_STATIC: &str = "Imported Log Spaces are now Static. Create a Live Log Space to follow files.";
 
+/// The Live Window's default before session version 5.
+const OLD_DEFAULT_LIVE_WINDOW: usize = 100_000;
+
 impl SessionManifest {
-    pub const CURRENT_VERSION: u32 = 4;
+    /// Version 5: the Live Window's default went from 100,000 to 1,000,000
+    /// lines (the lines are kept on disk, `remote-local-cache`).
+    pub const CURRENT_VERSION: u32 = 5;
     /// The last format still opened. Version 3 Markers (a whole line with a
     /// type and a note) are dropped when it is read.
     const OLDEST_READABLE_VERSION: u32 = 3;
@@ -163,7 +168,13 @@ impl SessionManifest {
         }
         ws.active_project_id = self.active_project_id;
         ws.focus_pane = self.focus_pane;
-        ws.live_window = self.live_window;
+        // A session saved before kept the old default: it takes the new
+        // one. A number the user chose stays.
+        ws.live_window = if self.version < 5 && self.live_window == OLD_DEFAULT_LIVE_WINDOW {
+            crate::workspace::state::default_live_window()
+        } else {
+            self.live_window
+        };
         ws.load_more_step = self.load_more_step;
         ws.full_read_limit_lines = self.full_read_limit_lines;
         ws.live_glob_limit = self.live_glob_limit;

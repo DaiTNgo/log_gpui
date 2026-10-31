@@ -61,7 +61,7 @@ fn test_manifest_round_trips_project_and_working_set() {
     assert!(parsed.is_ok(), "round trip error: {:?}", parsed.err());
 
     let restored = parsed.unwrap();
-    assert_eq!(restored.version, 4);
+    assert_eq!(restored.version, 5);
     assert_eq!(restored.active_project_id.as_deref(), Some("payment-service"));
     assert_eq!(restored.projects.len(), 1);
 
@@ -137,7 +137,7 @@ fn test_persistence_save_then_load_round_trip() {
     assert!(path.exists());
 
     let loaded = persistence.load().unwrap().expect("manifest not found");
-    assert_eq!(loaded.version, 4);
+    assert_eq!(loaded.version, 5);
     assert_eq!(loaded.projects.len(), 1);
     assert_eq!(loaded.projects[0].name, "Payment Service");
     let space = &loaded.projects[0].log_spaces[0];
@@ -449,4 +449,23 @@ fn a_session_saved_with_the_old_kinds_opens_as_static_and_live() {
     assert_eq!(kinds, [("Payment".to_string(), LogSpaceKind::Static), ("Checkout".to_string(), LogSpaceKind::Live)]);
     let saved_again = SessionManifest::from_workspace(&restored).to_json().unwrap();
     assert!(!saved_again.contains("Imported") && !saved_again.contains("\"Remote\""), "{saved_again}");
+}
+
+/// Session version 5 raised the Live Window's default to 1,000,000 lines
+/// (`remote-local-cache` task 9.1): a session saved before with the old
+/// default takes the new one; a number the user chose stays.
+#[test]
+fn an_older_session_with_the_old_live_window_default_takes_the_new_one() {
+    let read = |version: u32, window: usize| {
+        let mut ws = build_workspace();
+        ws.live_window = window;
+        let json = SessionManifest::from_workspace(&ws).to_json().unwrap();
+        let mut value: serde_json::Value = serde_json::from_str(&json).unwrap();
+        value["version"] = version.into();
+        SessionManifest::from_json(&value.to_string()).unwrap().into_workspace().live_window
+    };
+    assert_eq!(read(4, 100_000), 1_000_000, "the old default");
+    assert_eq!(read(4, 50_000), 50_000, "chosen by the user");
+    assert_eq!(read(5, 100_000), 100_000, "chosen after the change");
+    assert_eq!(log_gpui::workspace::state::WorkspaceState::new().live_window, 1_000_000);
 }

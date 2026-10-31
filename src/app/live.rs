@@ -33,7 +33,7 @@ pub const LINES_PER_FILE_PER_PUMP: usize = 8_000;
 pub const PREPARE_MIN_LINES: usize = 1_500;
 
 /// Default Live Window: the newest lines kept for each Remote File.
-pub const DEFAULT_LIVE_WINDOW: usize = 100_000;
+pub const DEFAULT_LIVE_WINDOW: usize = 1_000_000;
 
 /// The most lines a Remote File holds once Load More made its window longer
 /// (the Full Read Limit; `remote-full-read` will make it a setting).

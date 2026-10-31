@@ -61,7 +61,7 @@ pub struct WorkspaceState {
 
 /// Default Live Window.
 pub fn default_live_window() -> usize {
-    100_000
+    1_000_000
 }
 
 /// Default Live Glob file limit.
