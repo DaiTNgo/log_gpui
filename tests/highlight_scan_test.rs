@@ -4,7 +4,7 @@
 
 mod common;
 
-use common::{open_app_with_held_lines, open_app_with_lines};
+use common::{open_app_with_lines};
 use gpui::TestAppContext;
 use log_gpui::highlight::{HighlightRule, paint_rows};
 use log_gpui::palette::next_rule_color;
@@ -53,16 +53,6 @@ fn a_rule_on_the_message_paints_the_top_rows_at_once_and_the_rest_by_a_scan(cx: 
         let ids: Vec<u64> = app.highlight_rules().iter().map(|r| r.id).collect();
         assert_eq!(app.rule_counts[&ids[0]], 30_000_usize.div_ceil(7));
         assert_eq!(app.rule_counts[&ids[1]], 3000);
-    });
-}
-
-#[gpui::test]
-fn a_held_file_is_painted_at_once(cx: &mut TestAppContext) {
-    let mut h = open_app_with_held_lines(cx, &lines());
-    h.view.update(&mut h.cx, |app, cx| {
-        add_rules(app, cx);
-        assert!(!app.paint_is_scanning());
-        assert_eq!(app.highlight_paints.get(21_000).map(|p| p.rule), Some(0));
     });
 }
 

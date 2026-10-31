@@ -1,5 +1,7 @@
-//! Fake Remote File sources over an Imported Log Space, to drive Live batches
-//! through the real `AppView` and compare the view with one built again.
+//! Fake live sources over the local files of a Log Space, to drive Live
+//! batches through the real `AppView` and compare the view with one built
+//! again. Lines sent are written to the file first, as a program writing
+//! its log does: the file is read through its Line Index.
 #![allow(dead_code)]
 
 use super::Harness;
@@ -40,16 +42,14 @@ pub fn lines(name: &str, range: std::ops::Range<usize>, offset: usize) -> Vec<St
 
 pub struct Files {
     pub h: Harness,
-    pub senders: Vec<(String, async_channel::Sender<SourceEvent>)>,
+    /// Each file's name, path and fake source.
+    pub senders: Vec<(String, std::path::PathBuf, async_channel::Sender<SourceEvent>)>,
 }
 
-/// An Imported Log Space of one file per name, read through fake Remote File
-/// sources the test sends lines to.
+/// A Log Space of one local file per name, read through fake live sources
+/// the test sends lines to.
 pub fn open(cx: &mut TestAppContext, names: &[(&str, usize)], count: usize, window: usize) -> Files {
     let mut h = open_app(cx);
-    // These tests send lines that are not in the files: the files are held
-    // in memory, the way Remote files are, not read through a Line Index.
-    h.view.update(&mut h.cx, |app, _| app.index_local_files = false);
     let mut sources = Vec::new();
     for (name, offset) in names {
         let path = h.dir.path().join(format!("{name}.log"));
@@ -65,7 +65,7 @@ pub fn open(cx: &mut TestAppContext, names: &[(&str, usize)], count: usize, wind
     let ids: Vec<(String, String)> = h.view.read_with(&h.cx, |app, _| {
         app.parsed_files
             .iter()
-            .map(|(id, p)| (id.clone(), p.lines.first().map(|l| l.to_string()).unwrap_or_default()))
+            .map(|(id, p)| (id.clone(), p.line(0).map(|l| l.to_string()).unwrap_or_default()))
             .collect()
     });
     let mut senders = Vec::new();
@@ -87,22 +87,26 @@ pub fn open(cx: &mut TestAppContext, names: &[(&str, usize)], count: usize, wind
                     seq: 1_000,
                     status: SourceStatus::Live,
                     name: format!("{name}.log"),
-                    remote: true,
+                    remote: false,
                     command: false,
                     numbers_unavailable: false,
                     health: Default::default(),
                 },
             );
         });
-        senders.push((name.to_string(), tx));
+        senders.push((name.to_string(), h.dir.path().join(format!("{name}.log")), tx));
     }
     Files { h, senders }
 }
 
 impl Files {
+    /// Write `lines` to the end of file `name`, then tell its source.
     pub fn send(&self, name: &str, lines: Vec<String>) {
+        use std::io::Write as _;
+        let (_, path, tx) = self.senders.iter().find(|(n, _, _)| n == name).unwrap();
+        let text: String = lines.iter().map(|l| format!("{l}\n")).collect();
+        std::fs::OpenOptions::new().append(true).open(path).unwrap().write_all(text.as_bytes()).unwrap();
         let bytes = lines.iter().map(|l| l.len() as u32 + 1).collect();
-        let (_, tx) = self.senders.iter().find(|(n, _)| n == name).unwrap();
         tx.try_send(SourceEvent::Append { lines, bytes, streams: None }).unwrap();
     }
 

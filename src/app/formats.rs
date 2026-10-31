@@ -7,7 +7,7 @@
 use super::AppView;
 use crate::log_format::{CompiledFormat, FormatChoice, LogFormat, LogFormatStore, compile_template, resolve};
 use crate::workspace::log_space::LogSpace;
-use gpui::{AppContext as _, Context};
+use gpui::Context;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -80,82 +80,22 @@ impl AppView {
     }
 
     /// Read again, now, the cached files of `space` read with another format
-    /// than theirs (a file loaded for the first time, a glob that matches).
-    pub(crate) fn apply_log_formats(&mut self, space: &LogSpace) {
-        // A file read through its Line Index is read again from the file.
+    /// than theirs (a file loaded for the first time, a glob that matches):
+    /// a file read through its Line Index is read again from the file.
+    pub(crate) fn apply_log_formats(&mut self, _space: &LogSpace) {
         self.read_indexed_again_if_stale();
-        for (file_id, wanted) in self.wanted_formats(space) {
-            let have = self.parsed_files.get(&file_id).map(|p| p.format_id.clone());
-            if have.is_none() || have == Some(wanted.clone()) {
-                continue;
-            }
-            let compiled = wanted.as_deref().and_then(|id| self.formats.compiled(id));
-            if let Some(parsed) = self.parsed_files.get_mut(&file_id) {
-                parsed.reformat(wanted, compiled);
-            }
-        }
     }
 
     /// Read the open Log Space's files whose format changed again, in the
-    /// background, then rebuild the view (time order, Filter columns).
+    /// background (Indexing), then rebuild the view (time order, Filter
+    /// columns).
     pub(crate) fn reread_formats(&mut self, cx: &mut Context<Self>) {
-        let Some(space) = self.active_space().cloned() else { return };
         if self.read_indexed_again_if_stale() {
             self.start_queued_loads(cx);
         }
-        let mut jobs = Vec::new();
-        for (file_id, wanted) in self.wanted_formats(&space) {
-            let Some(parsed) = self.parsed_files.get(&file_id) else { continue };
-            if parsed.format_id == wanted {
-                continue;
-            }
-            let compiled = wanted.as_deref().and_then(|id| self.formats.compiled(id));
-            jobs.push((file_id, wanted, compiled, crate::parser::text::stored_lines(&parsed.entries)));
-        }
         self.formats.generation += 1;
-        if jobs.is_empty() {
-            self.formats.reading = false;
-            self.rebuild_open_view_keeping_position(cx);
-            return;
-        }
-        let generation = self.formats.generation;
-        self.formats.reading = true;
-        cx.notify();
-        cx.spawn(async move |this, cx| {
-            let read = cx
-                .background_spawn(async move {
-                    jobs.into_iter()
-                        .map(|(id, wanted, compiled, lines)| {
-                            let fresh = crate::parser::text::reread(&lines, compiled.as_deref());
-                            (id, wanted, compiled, lines, fresh)
-                        })
-                        .collect::<Vec<_>>()
-                })
-                .await;
-            this.update(cx, |this, cx| {
-                if this.formats.generation != generation {
-                    return;
-                }
-                this.formats.reading = false;
-                for (id, wanted, compiled, lines, fresh) in read {
-                    let Some(parsed) = this.parsed_files.get_mut(&id) else { continue };
-                    let same = parsed.entries.len() == lines.len()
-                        && parsed.entries.iter().zip(&lines).all(|(e, l)| e.index == l.0 && e.generation == l.1);
-                    if same {
-                        for (entry, f) in parsed.entries.iter_mut().zip(fresh) {
-                            crate::parser::text::adopt(entry, f);
-                        }
-                        parsed.adopt_format(wanted, compiled);
-                    } else {
-                        // Live lines came meanwhile: read them all now.
-                        parsed.reformat(wanted, compiled);
-                    }
-                }
-                this.rebuild_open_view_keeping_position(cx);
-            })
-            .ok();
-        })
-        .detach();
+        self.formats.reading = false;
+        self.rebuild_open_view_keeping_position(cx);
     }
 
     /// The format chosen by hand for a Log Space (`None`: not chosen).

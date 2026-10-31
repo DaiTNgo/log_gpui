@@ -714,24 +714,3 @@ pub(crate) fn remove_positions<T>(items: &mut Vec<T>, dropped: &[usize]) {
     });
 }
 
-/// Take the items at `dropped` (ascending positions) out of `items` and
-/// return them in order.
-pub(crate) fn take_positions<T>(items: &mut Vec<T>, dropped: &[usize]) -> Vec<T> {
-    let (Some(&first), Some(&last)) = (dropped.first(), dropped.last()) else { return Vec::new() };
-    if last - first + 1 == dropped.len() {
-        return items.drain(first..=last).collect();
-    }
-    let mut taken = Vec::with_capacity(dropped.len());
-    let mut kept = Vec::with_capacity(items.len() - dropped.len());
-    let mut next = 0;
-    for (row, item) in std::mem::take(items).into_iter().enumerate() {
-        if next < dropped.len() && dropped[next] == row {
-            taken.push(item);
-            next += 1;
-        } else {
-            kept.push(item);
-        }
-    }
-    *items = kept;
-    taken
-}

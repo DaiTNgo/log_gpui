@@ -11,10 +11,10 @@ fn raw_view_shows_every_line_as_stored() {
     let text = "first\n\n   indented\nlast";
     let parsed = ParsedFile::from_text(text);
     // Every line is a row in the Parsed View too, empty ones included.
-    assert_eq!(parsed.lines.len(), 4);
-    assert_eq!(parsed.lines[1], "");
-    assert_eq!(parsed.lines[2], "   indented");
-    assert_eq!(parsed.entries.len(), 4);
+    assert_eq!(parsed.lines().len(), 4);
+    assert_eq!(parsed.lines()[1], "");
+    assert_eq!(parsed.lines()[2], "   indented");
+    assert_eq!(parsed.entries().len(), 4);
 }
 
 #[test]
@@ -73,12 +73,12 @@ fn splitting_text_keeps_blank_lines() {
 #[test]
 fn reparsing_after_an_edit_reads_the_new_text() {
     let before = ParsedFile::from_text("2026-09-05 10:00:00 [INFO] [api] one\n");
-    assert_eq!(before.entries.len(), 1);
+    assert_eq!(before.entries().len(), 1);
     let after = ParsedFile::from_text(
         "2026-09-05 10:00:00 [INFO] [api] one\n2026-09-05 10:00:01 [ERROR] [api] two\n",
     );
-    assert_eq!(after.entries.len(), 2);
-    assert_eq!(after.entries[1].tag(), "api");
+    assert_eq!(after.entries().len(), 2);
+    assert_eq!(after.entries()[1].tag(), "api");
 }
 
 #[test]

@@ -93,7 +93,7 @@ impl Render for AppView {
                     .iter()
                     .map(|k| (*k, self.filter_index.coverage(k.as_str())))
                     .collect(),
-                reading_fields: self.line_cache.reading,
+                reading_fields: !self.loads.is_empty(),
                 source_tints: Arc::new(self.source_tints(colors.dark)),
             })
         };

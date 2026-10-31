@@ -91,7 +91,7 @@ fn clear_in_a_mixed_live_space_drops_only_the_remote_lines(cx: &mut TestAppConte
         assert!(app.hold_info(&local_id).is_none(), "the local file, in its File View too, has none of it");
     });
     h.view.update(&mut h.cx, |app, cx| app.request_clear_all_files(&space_id, cx));
-    wait_for(&mut h, |app| app.parsed_files[&remote_id].entries.is_empty());
+    wait_for(&mut h, |app| app.parsed_files[&remote_id].is_empty());
     h.view.read_with(&h.cx, |app, _| {
         assert_eq!(app.view.len(), 10, "every line of api.log stays");
         assert!(app.parsed_files[&local_id].indexed.is_some());

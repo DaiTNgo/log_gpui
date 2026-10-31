@@ -484,9 +484,8 @@ impl AppView {
 
 /// Position of the largest of `lens` (the first one on a tie), 0 when empty.
 impl AppView {
-    /// The row with the longest text, which sets how wide the list is. A
-    /// file read through its Line Index gives its longest line from the
-    /// index; only held files are walked.
+    /// The row with the longest text, which sets how wide the list is: each
+    /// file's Line Index gives its longest line.
     pub(crate) fn find_longest_row(&self) -> usize {
         let rows = self.rows();
         let mut best: Option<(usize, usize, usize)> = None; // (length, file, position)
@@ -495,11 +494,7 @@ impl AppView {
                 Some(crate::view_data::FileEntries::Indexed(indexed)) => {
                     indexed.longest_line().map(|(pos, len)| (len as usize, pos))
                 }
-                Some(crate::view_data::FileEntries::Held(entries)) => {
-                    let pos = longest(entries.iter().map(|e| e.payload().len()));
-                    entries.get(pos).map(|e| (e.payload().len(), pos))
-                }
-                None => None,
+                Some(crate::view_data::FileEntries::Empty) | None => None,
             };
             if let Some((len, pos)) = found {
                 if best.is_none_or(|(b, _, _)| len > b) {

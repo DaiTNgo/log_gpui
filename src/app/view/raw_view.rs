@@ -317,10 +317,10 @@ impl AppView {
         let step = self.live.load_more_step;
         let (warning, muted) = (cx.theme().warning, cx.theme().muted_foreground);
         let cleared = self
-            .parsed_files
+            .live
+            .cached
             .get(&section.file_id)
-            .and_then(|p| p.live.as_ref())
-            .and_then(|b| b.clear_mark.as_ref())
+            .and_then(|c| c.clear_mark.as_ref())
             .filter(|_| section.lines.is_empty())
             .map(|mark| format!("{} cleared {}", section.display_name, mark.time));
         let id = |name: &str| SharedString::from(format!("raw-{name}-{}", section.file_id));

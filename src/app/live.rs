@@ -10,7 +10,6 @@ use crate::live::{
     BreakKind, LineSource, LocalFileSource, SourceCommand, SourceEvent, SourceHandle,
     SourceStatus, Trimmed,
 };
-use crate::model::LogEntry;
 use crate::workspace::log_space::{LogSpaceKind, RemoteTarget};
 use crate::workspace::working_set::{TabTarget, ViewMode};
 use gpui::{Context, Pixels, point};
@@ -28,9 +27,6 @@ pub const PUMP_BUDGET: Duration = Duration::from_millis(8);
 /// The most lines of one file one pump takes: a bigger `Append` is cut.
 pub const LINES_PER_FILE_PER_PUMP: usize = 8_000;
 
-/// A batch of this many lines or more is read on a worker thread before the
-/// app applies it.
-pub const PREPARE_MIN_LINES: usize = 1_500;
 
 /// Default Live Window: the newest lines kept for each Remote File.
 pub const DEFAULT_LIVE_WINDOW: usize = 1_000_000;
@@ -102,9 +98,6 @@ pub struct LiveRuntime {
     /// Events taken from a source that did not fit one pump, per file, in
     /// order, to be applied before what the source sends next.
     pub(crate) backlog: HashMap<String, std::collections::VecDeque<SourceEvent>>,
-    /// Files whose batch is being read on a worker thread, by the `seq` of
-    /// their source; their events wait until it is applied.
-    parsing: HashMap<String, u64>,
     /// Where the next pump starts among the files, so every file gets turns.
     pump_cursor: usize,
     /// When the files of an open Static Log Space were last looked at.
@@ -120,8 +113,7 @@ pub struct LiveRuntime {
     /// Where a Remote File restored from its cache reads on from, until its
     /// source starts.
     pub resume_from: HashMap<String, crate::live::remote::ResumeFrom>,
-    /// Remote Files and Remote Commands read through their Remote Cache
-    /// (stage 2).
+    /// Remote Files and Remote Commands read through their Remote Cache.
     pub cached: HashMap<String, crate::live::cached::CachedFile>,
     /// The last lines a Remote Command's cache kept, until its source
     /// starts and runs it again below them.
@@ -142,8 +134,6 @@ pub struct LiveRuntime {
     /// The handles the local files read through their Line Index may hold
     /// open: each Generation of a file kept readable holds one.
     pub handle_budget: std::sync::Arc<crate::index::HandleBudget>,
-    /// A batch of this many lines is read on a worker thread.
-    pub preparse_min: usize,
     /// Batches applied since the allocator's cache was last given back.
     batches_since_release: usize,
 }
@@ -170,7 +160,6 @@ impl LiveRuntime {
             globs: super::globs::GlobRuntime::new(),
             pump_started: false,
             backlog: HashMap::new(),
-            parsing: HashMap::new(),
             pump_cursor: 0,
             static_watched: None,
             static_gone: HashSet::new(),
@@ -185,7 +174,6 @@ impl LiveRuntime {
             index_more_scheduled: false,
             first_marks: HashMap::new(),
             handle_budget: crate::index::HandleBudget::shared(),
-            preparse_min: PREPARE_MIN_LINES,
             batches_since_release: 0,
         }
     }
@@ -224,7 +212,6 @@ pub(crate) struct FileDelta {
     pub(crate) appended: Option<Range<usize>>,
     /// Lines were inserted above, dropped, or renumbered.
     pub(crate) structural: bool,
-    pub(crate) trimmed: Option<Trimmed>,
     pub(crate) renumbered: Option<isize>,
     pub(crate) generation: u32,
     /// The last line already shown was replaced by its finished version.
@@ -386,11 +373,8 @@ impl AppView {
             }
             let Some(parsed) = self.parsed_files.get(&file_id) else { continue };
             // A file read through its Line Index follows from what is indexed.
-            let local_offset = match (&parsed.indexed, parsed.live.as_ref()) {
-                (Some(indexed), _) => indexed.indexed.data.read().unwrap().file.lines.end(),
-                (None, Some(buffer)) => buffer.local_offset,
-                (None, None) => continue,
-            };
+            let Some(indexed) = &parsed.indexed else { continue };
+            let local_offset = indexed.indexed.data.read().unwrap().file.lines.end();
             let handle = match (&file.remote, &file.path) {
                 (Some(remote), _) => {
                     let spawned = match &remote.target {
@@ -591,22 +575,14 @@ impl AppView {
             if !deltas.is_empty() && started.elapsed() >= PUMP_BUDGET {
                 break;
             }
-            if self.live.parsing.contains_key(&file_id) {
-                continue;
-            }
             let events = self.drain_events(&file_id);
             if events.is_empty() {
                 continue;
             }
-            let events = match self.start_preparing(&file_id, events, cx) {
-                Ok(()) => continue,
-                Err(events) => events,
-            };
             let delta = self.apply_file_events(&file_id, events);
             deltas.push((file_id, delta));
         }
-        let more = !self.live.parsing.is_empty()
-            || self.live.backlog.values().any(|q| !q.is_empty())
+        let more = self.live.backlog.values().any(|q| !q.is_empty())
             || self.live.sources.values().any(|s| !s.handle.events.is_empty());
         if deltas.is_empty() {
             return more;
@@ -663,74 +639,6 @@ impl AppView {
         events
     }
 
-    /// Read the lines of a big batch on a worker thread, and apply the batch
-    /// when they are read, so the frames go on meanwhile. A small batch is
-    /// given back for the caller to apply.
-    fn start_preparing(
-        &mut self,
-        file_id: &str,
-        events: Vec<SourceEvent>,
-        cx: &mut Context<Self>,
-    ) -> Result<(), Vec<SourceEvent>> {
-        let lines: usize = events
-            .iter()
-            .map(|e| match e {
-                SourceEvent::Tail { lines, .. }
-                | SourceEvent::Backfill { lines, .. }
-                | SourceEvent::Older { lines, .. }
-                | SourceEvent::Append { lines, .. } => lines.len(),
-                _ => 0,
-            })
-            .sum();
-        let (Some(source), Some(parsed)) = (self.live.sources.get(file_id), self.parsed_files.get(file_id)) else {
-            return Err(events);
-        };
-        let Some(buffer) = parsed.live.as_ref() else { return Err(events) };
-        if lines < self.live.preparse_min {
-            return Err(events);
-        }
-        let job = buffer.prepare_job(parsed.entries.first().map(|e| e.generation));
-        let seq = source.seq;
-        self.live.parsing.insert(file_id.to_string(), seq);
-        let file_id = file_id.to_string();
-        cx.spawn(async move |this, cx| {
-            let (events, prepared) = cx
-                .background_executor()
-                .spawn(async move {
-                    let prepared = job.run(&events);
-                    (events, prepared)
-                })
-                .await;
-            this.update(cx, |this, cx| this.finish_preparing(&file_id, seq, events, prepared, cx)).ok();
-        })
-        .detach();
-        Ok(())
-    }
-
-    fn finish_preparing(
-        &mut self,
-        file_id: &str,
-        seq: u64,
-        events: Vec<SourceEvent>,
-        prepared: std::collections::VecDeque<crate::live::PreparedLines>,
-        cx: &mut Context<Self>,
-    ) {
-        self.live.parsing.remove(file_id);
-        // A source that was closed or replaced meanwhile has no say any more.
-        if self.live.sources.get(file_id).map(|s| s.seq) != Some(seq) {
-            return;
-        }
-        if let Some(buffer) = self.parsed_files.get_mut(file_id).and_then(|p| p.live.as_mut()) {
-            buffer.set_prepared(prepared);
-        }
-        let delta = self.apply_file_events(file_id, events);
-        if let Some(buffer) = self.parsed_files.get_mut(file_id).and_then(|p| p.live.as_mut()) {
-            buffer.set_prepared(Default::default());
-        }
-        self.apply_deltas(vec![(file_id.to_string(), delta)], cx);
-        self.ask_again_after_auth_failure(cx);
-    }
-
     /// Follow turns off when the user scrolled away from the newest line, and
     /// on when they scrolled back to it.
     fn update_follow_from_scroll(&mut self) {
@@ -753,155 +661,19 @@ impl AppView {
     }
 
     fn apply_file_events(&mut self, file_id: &str, events: Vec<SourceEvent>) -> FileDelta {
-        let mut delta = FileDelta::default();
-        let window = self.live.window;
-        let time = now_label();
         if self.live.cached.contains_key(file_id) {
             return self.apply_cached_events(file_id, events);
         }
-        let Some(mut parsed) = self.parsed_files.remove(file_id) else { return delta };
-        if parsed.indexed.is_some() {
-            return self.apply_indexed_events(file_id, parsed, events);
-        }
-        let Some(mut buffer) = parsed.live.take() else {
-            self.parsed_files.insert(file_id.to_string(), parsed);
-            return delta;
-        };
-        for event in events {
-            if let Some(source) = self.live.sources.get_mut(file_id) {
-                source.health.observe(&event, std::time::SystemTime::now());
+        // A local file read through its Line Index; a file not read (it
+        // failed, or its cache is held elsewhere) takes no lines.
+        match self.parsed_files.remove(file_id) {
+            Some(parsed) if parsed.indexed.is_some() => self.apply_indexed_events(file_id, parsed, events),
+            Some(parsed) => {
+                self.parsed_files.insert(file_id.to_string(), parsed);
+                FileDelta::default()
             }
-            if !matches!(event, SourceEvent::Inode(_)) {
-                delta.shown = true;
-            }
-            match event {
-                SourceEvent::Tail { lines, generation, bytes, end_offset } => {
-                    buffer.apply_tail_with(&mut parsed, &lines, generation, &bytes, end_offset);
-                    delta.structural = true;
-                }
-                SourceEvent::Backfill { lines, bytes, .. } => {
-                    buffer.apply_backfill_with(&mut parsed, &lines, &bytes);
-                    delta.structural = true;
-                }
-                SourceEvent::Older { lines, bytes, reached_start, before_start_time, .. } => {
-                    self.live.loading_more.remove(file_id);
-                    if buffer.apply_older_with(&mut parsed, &lines, &bytes, reached_start, before_start_time)
-                        && !lines.is_empty()
-                    {
-                        delta.structural = true;
-                    }
-                }
-                SourceEvent::Earlier { start, lines, bytes, last_line_no, reached_start } => {
-                    if reached_start || start.is_none() && lines.is_empty() {
-                        self.live.loading_earlier.remove(file_id);
-                    }
-                    if buffer.apply_earlier(&mut parsed, start.as_ref(), &lines, &bytes, last_line_no) {
-                        self.shift_generations_for(file_id);
-                    }
-                    // More than the Live Window now: the file keeps it.
-                    if parsed.entries.len() > window {
-                        buffer.hold = crate::live::HoldMode::Extended;
-                    }
-                    delta.structural = true;
-                }
-                SourceEvent::EarlierAvailable(file) => {
-                    self.live.loading_earlier.remove(file_id);
-                    // "Open in full…" only when nothing more fits in memory.
-                    let full = parsed.entries.len() >= self.live.full_read_limit;
-                    buffer.set_earlier_available(&mut parsed, file.as_ref(), full);
-                    match file {
-                        Some(file) => self.live.earlier.insert(file_id.to_string(), file),
-                        None => self.live.earlier.remove(file_id),
-                    };
-                    delta.structural = true;
-                }
-                SourceEvent::StartTimeOverflow { lines, since } => {
-                    buffer.set_start_overflow(&mut parsed, lines, &since);
-                    delta.structural = true;
-                }
-                SourceEvent::Progress(progress) => {
-                    match progress {
-                        Some(p) => self.live.progress.insert(file_id.to_string(), p),
-                        None => self.live.progress.remove(file_id),
-                    };
-                }
-                SourceEvent::OlderUnavailable => {
-                    self.live.loading_more.remove(file_id);
-                    buffer.mark_changed(&mut parsed);
-                    delta.structural = true;
-                }
-                SourceEvent::Inode(inode) => buffer.set_inode(inode),
-                SourceEvent::Append { lines, bytes, streams } => {
-                    if buffer.replaces_last_line() && !lines.is_empty() {
-                        delta.replaced_last = true;
-                    }
-                    let range = buffer.apply_append_streams(&mut parsed, &lines, &bytes, streams.as_ref());
-                    delta.appended = Some(match delta.appended.take() {
-                        Some(old) => old.start..range.end,
-                        None => range,
-                    });
-                }
-                SourceEvent::TotalLines(total) => match total {
-                    Some(total) => {
-                        if let Some(d) = buffer.apply_total(&mut parsed, Some(total)) {
-                            delta.structural = true;
-                            delta.renumbered = Some(d);
-                            delta.generation = buffer.generation;
-                        }
-                    }
-                    None => {
-                        if let Some(source) = self.live.sources.get_mut(file_id) {
-                            source.numbers_unavailable = true;
-                        }
-                    }
-                },
-                SourceEvent::Break { kind } => {
-                    buffer.apply_break(kind, &time);
-                    if kind.starts_generation() {
-                        self.begin_generation_for(file_id);
-                    }
-                    if matches!(kind, BreakKind::Disconnected | BreakKind::Reconnected) {
-                        // Only the label changes; rows do not.
-                    }
-                }
-                SourceEvent::CommandChanged { from, to } => {
-                    buffer.apply_command_changed(&from, &to, &time);
-                    self.begin_generation_for(file_id);
-                    if let Some(old) = self.live.release_after_replace.remove(file_id) {
-                        self.release_unused_server(&old);
-                    }
-                    if let Some(source) = self.live.sources.get_mut(file_id) {
-                        source.name = to;
-                    }
-                }
-                SourceEvent::Problem(message) => self.notice = Some(message),
-                SourceEvent::Run { .. } => {}
-                // Only a Remote File, read through its Remote Cache, has one.
-                SourceEvent::Checkpoint { .. } => {}
-                SourceEvent::Status(status) => {
-                    if std::env::var_os("LOG_GPUI_LIVE_TRACE").is_some() {
-                        eprintln!("live status: {file_id}: {}", status.label());
-                    }
-                    if let Some(source) = self.live.sources.get_mut(file_id) {
-                        source.status = status;
-                    }
-                }
-            }
+            None => FileDelta::default(),
         }
-        {
-            let limit = buffer.limit(window, self.live.full_read_limit);
-            // Not structural: the oldest rows of the file leave the view in
-            // place (`trim_open_view`).
-            if let Some(trimmed) = buffer.trim_to_window(&mut parsed, limit) {
-                delta.trimmed = Some(trimmed);
-            }
-        }
-        parsed.live = Some(buffer);
-        self.parsed_files.insert(file_id.to_string(), parsed);
-        if let Some(trimmed) = delta.trimmed.clone() {
-            self.drop_markers_for(file_id, &trimmed);
-        }
-        delta
     }
 
     /// Events of a Remote File read through its Remote Cache (stage 2 of
@@ -1333,12 +1105,12 @@ impl AppView {
         };
         let relevant: Vec<&(String, FileDelta)> = deltas
             .iter()
-            .filter(|(id, d)| space_files.contains(id) && (d.appended.is_some() || d.structural || d.trimmed.is_some()))
+            .filter(|(id, d)| space_files.contains(id) && (d.appended.is_some() || d.structural))
             .collect();
         if relevant.is_empty() {
             // Background files: the sidebar's status and counts are what a
             // new frame would show.
-            if deltas.iter().any(|(_, d)| d.shown || d.appended.is_some() || d.structural || d.trimmed.is_some()) {
+            if deltas.iter().any(|(_, d)| d.shown || d.appended.is_some() || d.structural) {
                 cx.notify();
             }
             return;
@@ -1346,28 +1118,14 @@ impl AppView {
 
         let before = self.view.len();
         let structural = relevant.iter().any(|(_, d)| d.structural);
-        let trimmed_any = relevant.iter().any(|(_, d)| d.trimmed.is_some());
-        let in_place = !structural && self.apply_trims_and_appends(&relevant, cx);
+        let in_place = !structural && self.append_to_open_view(&relevant, cx);
         if !in_place {
             self.rebuild_open_view_keeping_position(cx);
-
-            if let Some((file_id, d)) = relevant.iter().find(|(_, d)| d.trimmed.is_some()).map(|(f, d)| (f.as_str(), d)) {
-                if let Some(trimmed) = &d.trimmed {
-                    self.move_current_lines_off_dropped(file_id, trimmed);
-                }
-            }
-        }
-        // Lines trimmed off a file the open view does not show were never
-        // taken out of a view: they go now.
-        for parsed in self.parsed_files.values_mut() {
-            if !parsed.trimmed_off.is_empty() {
-                parsed.trimmed_off = Vec::new();
-            }
         }
         // Rows are copied and freed in large blocks all the time: give the
         // allocator's cache back now and then, or it grows to gigabytes.
         self.live.batches_since_release += 1;
-        if structural || trimmed_any || self.live.batches_since_release >= 50 {
+        if structural || self.live.batches_since_release >= 50 {
             self.live.batches_since_release = 0;
             release_freed_memory();
         }
@@ -1382,32 +1140,6 @@ impl AppView {
         cx.notify();
     }
 
-    /// Show a batch without building the view again: the oldest rows of the
-    /// files that were trimmed leave in place, then the new lines are added.
-    /// Returns false when the view has to be built again.
-    fn apply_trims_and_appends(&mut self, relevant: &[&(String, FileDelta)], cx: &mut Context<Self>) -> bool {
-        let mut adjusted: Vec<(String, FileDelta)> = Vec::new();
-        for (file_id, delta) in relevant.iter().copied() {
-            let mut delta = delta.clone();
-            if let Some(trimmed) = delta.trimmed.clone() {
-                if !self.trim_open_view(file_id, &trimmed) {
-                    return false;
-                }
-                // Paints worked out again for the rows left start their Scan.
-                self.start_paint_scan(cx);
-                // The new lines are where they were, less the lines that left.
-                delta.appended = delta
-                    .appended
-                    .take()
-                    .filter(|r| r.end > trimmed.removed)
-                    .map(|r| r.start.saturating_sub(trimmed.removed)..r.end - trimmed.removed);
-            }
-            adjusted.push((file_id.clone(), delta));
-        }
-        let appended: Vec<&(String, FileDelta)> = adjusted.iter().filter(|(_, d)| d.appended.is_some()).collect();
-        appended.is_empty() || self.append_to_open_view(&appended, cx)
-    }
-
     /// Tell the Raw View's editors what changed: lines at the end are added to
     /// the text, anything else builds the editor again.
     fn queue_raw_updates(&mut self, deltas: &[(String, FileDelta)]) {
@@ -1419,20 +1151,9 @@ impl AppView {
                 self.raw.stale.insert(file_id.clone());
                 continue;
             }
-            // The oldest lines leave the editor's text; lines of this batch
-            // that were trimmed at once were never in it.
-            let removed = delta.trimmed.as_ref().map_or(0, |t| t.removed);
-            if let Some(trimmed) = &delta.trimmed {
-                if delta.appended.as_ref().is_some_and(|r| r.start < trimmed.removed) {
-                    self.raw.stale.insert(file_id.clone());
-                    continue;
-                }
-                *self.raw.pending_trims.entry(file_id.clone()).or_default() += trimmed.text_bytes;
-            }
             let Some(range) = delta.appended.clone() else { continue };
             let Some(parsed) = self.parsed_files.get(file_id) else { continue };
-            let held = range.start - removed..range.end - removed;
-            let Some(lines) = parsed.lines.get(held) else {
+            let Some(lines) = range.clone().map(|n| parsed.line(n)).collect::<Option<Vec<_>>>() else {
                 self.raw.stale.insert(file_id.clone());
                 continue;
             };
@@ -1466,20 +1187,6 @@ impl AppView {
         } else {
             HashSet::new()
         };
-
-        // The Detected Fields of the new lines, read in their file.
-        let config = self.line_config();
-        if !config.is_empty() {
-            for (file_id, delta) in relevant {
-                let (Some(range), Some(parsed)) = (delta.appended.clone(), self.parsed_files.get_mut(file_id.as_str()))
-                else {
-                    continue;
-                };
-                for entry in parsed.entries.get_mut(range).into_iter().flatten() {
-                    entry.extra = config.extra_spans(entry);
-                }
-            }
-        }
 
         // New rows with the time they sort by and where they came from.
         struct NewRow {
@@ -1831,15 +1538,11 @@ fn own_timestamp(parsed: &crate::space_view::ParsedFile, pos: usize) -> Option<f
             .meta(pos)
             .filter(|m| m.flags & crate::index::meta::flags::OWN_TS != 0)
             .map(|m| crate::index::meta::seconds(m.ts_us)),
-        None => parsed
-            .entries
-            .get(pos)
-            .filter(|e| e.has_time && e.timestamp.is_finite() && e.timestamp > 0.0)
-            .map(|e| e.timestamp),
+        None => None,
     }
 }
 
-/// `effective_ts_at` for a file held or read through its Line Index.
+/// The time row `pos` of a file read through its Line Index sorts by.
 fn parsed_effective_ts(parsed: &crate::space_view::ParsedFile, pos: usize) -> Option<f64> {
     match &parsed.indexed {
         Some(file) => {
@@ -1850,23 +1553,7 @@ fn parsed_effective_ts(parsed: &crate::space_view::ParsedFile, pos: usize) -> Op
                 None
             }
         }
-        None => effective_ts_at(&parsed.entries, pos),
-    }
-}
-
-fn effective_ts_at(entries: &[LogEntry], pos: usize) -> Option<f64> {
-    let entry = entries.get(pos)?;
-    if entry.has_time && entry.timestamp.is_finite() && entry.timestamp > 0.0 {
-        return Some(entry.timestamp);
-    }
-    let parent = entry.parent?;
-    let back = entry.index.checked_sub(parent)?;
-    let parent_pos = pos.checked_sub(back)?;
-    let parent_entry = entries.get(parent_pos)?;
-    if parent_entry.index == parent && parent_entry.has_time {
-        Some(parent_entry.timestamp)
-    } else {
-        None
+        None => None,
     }
 }
 

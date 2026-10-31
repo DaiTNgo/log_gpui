@@ -79,8 +79,9 @@ fn assert_same(a: &Snapshot, b: &Snapshot, what: &str) {
     assert_eq!(a.hits, b.hits, "{what}: Focus Find hits");
 }
 
-/// A Remote File's source that the test sends events through.
-fn fake_source(h: &mut Harness) -> (async_channel::Sender<SourceEvent>, String) {
+/// A source of the local file that the test sends events through: what it
+/// sends is written to the file first.
+fn fake_source(h: &mut Harness) -> (Sender, String) {
     let file_id = h.view.read_with(&h.cx, |app, _| app.parsed_files.keys().next().unwrap().clone());
     let (tx, events) = async_channel::unbounded();
     let (commands, _rx) = async_channel::unbounded();
@@ -97,24 +98,32 @@ fn fake_source(h: &mut Harness) -> (async_channel::Sender<SourceEvent>, String) 
                 seq: 1_000,
                 status: SourceStatus::Live,
                 name: "app.log".into(),
-                remote: true,
+                remote: false,
                 command: false,
                 numbers_unavailable: false,
                 health: Default::default(),
             },
         );
     });
-    (tx, file_id)
+    (Sender { tx, path: h.dir.path().join("app.log") }, file_id)
 }
 
-fn send(tx: &async_channel::Sender<SourceEvent>, lines: Vec<String>) {
+struct Sender {
+    tx: async_channel::Sender<SourceEvent>,
+    path: std::path::PathBuf,
+}
+
+fn send(to: &Sender, lines: Vec<String>) {
+    use std::io::Write as _;
+    let text: String = lines.iter().map(|l| format!("{l}\n")).collect();
+    std::fs::OpenOptions::new().append(true).open(&to.path).unwrap().write_all(text.as_bytes()).unwrap();
     let bytes = lines.iter().map(|l| l.len() as u32 + 1).collect();
-    tx.try_send(SourceEvent::Append { lines, bytes, streams: None }).unwrap();
+    to.tx.try_send(SourceEvent::Append { lines, bytes, streams: None }).unwrap();
 }
 
 #[gpui::test]
 fn incremental_batches_equal_a_full_refresh(cx: &mut TestAppContext) {
-    let mut h = common::open_app_with_held_lines(cx, &file_lines(0..60));
+    let mut h = common::open_app_with_lines(cx, &file_lines(0..60));
     let (tx, _) = fake_source(&mut h);
     h.view.update(&mut h.cx, |app, cx| {
         let color = log_gpui::palette::next_rule_color(0);
@@ -145,7 +154,7 @@ fn incremental_batches_equal_a_full_refresh(cx: &mut TestAppContext) {
 
 #[gpui::test]
 fn the_same_with_the_find_filter_on(cx: &mut TestAppContext) {
-    let mut h = common::open_app_with_held_lines(cx, &file_lines(0..60));
+    let mut h = common::open_app_with_lines(cx, &file_lines(0..60));
     let (tx, _) = fake_source(&mut h);
     h.view.update(&mut h.cx, |app, cx| {
         app.trigger_search_query("user=4 || ERROR", cx);
@@ -179,7 +188,7 @@ fn the_same_with_the_find_filter_on(cx: &mut TestAppContext) {
 
 #[gpui::test]
 fn the_same_without_search_or_filter_and_with_a_time_range(cx: &mut TestAppContext) {
-    let mut h = common::open_app_with_held_lines(cx, &file_lines(0..30));
+    let mut h = common::open_app_with_lines(cx, &file_lines(0..30));
     let (tx, _) = fake_source(&mut h);
     h.view.update(&mut h.cx, |app, cx| {
         app.filter_state.set_time_range("10:00:20", "");

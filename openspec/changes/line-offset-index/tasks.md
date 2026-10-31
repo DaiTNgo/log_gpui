@@ -198,7 +198,8 @@ Hiện tại (c8bf40d):
   - Đã làm trong `static-live-log-spaces` 4.3 (`Replaced`, `Rewritten`) và 4.4 (`ChainSource`, Generation của file local), handle đóng khi rời tab ở 4.5.
 - [x] 9.3 Phát hiện file Imported bị ghi đè (không phải append): index lại và báo người dùng.
   - Đã làm trong `static-live-log-spaces` 2.1 và 2.2: file của Static Log Space bị ghi đè được đọc lại ở nền, giữ Filter; không có notice riêng, chỉ có notice khi Marker bị bỏ (2.4).
-- [ ] 9.4 Remote File và Remote Command: Line Index trên bytes của Live Window; Backfill, Load More, Open in full và cắt Live Window cập nhật Line Index.
+- [x] 9.4 Remote File và Remote Command: Line Index trên bytes của Live Window; Backfill, Load More, Open in full và cắt Live Window cập nhật Line Index.
+  - Thay bằng change `remote-local-cache`: Remote File và Remote Command ghi dòng vào Remote Cache trên đĩa và đọc qua Line Index (task 4.x, 6.1, 9.3 của change đó).
   - Test: chạy lại test của `live-log` và `remote-log-space`.
 
 ## 10. Archive Entry
@@ -223,7 +224,12 @@ Hiện tại (c8bf40d):
 
 ## 12. Dọn đường cũ và đo lại
 
-- [ ] 12.1 Xoá `ParsedFile::entries`, `ParsedFile::lines`, `AppView::all_entries` và các đường dựng view cũ (`build_space_view`, `build_file_view`, `timeline::materialize` nếu không còn dùng).
+- [x] 12.1 Xoá `ParsedFile::entries`, `ParsedFile::lines`, `AppView::all_entries` và các đường dựng view cũ (`build_space_view`, `build_file_view`, `timeline::materialize` nếu không còn dùng).
+  - Đã làm (2026-10-31, cùng task 9.3 của `remote-local-cache`):
+    - `ParsedFile` chỉ còn Line Index: `from_bytes`/`from_text` index bytes trong memory (`BytesSource`), `from_path` index file trên đĩa; bỏ `entries`, `lines`, `live`, `trimmed_off`. `entries()`/`lines()` chỉ để test và file nhỏ đọc lại qua index.
+    - `FileEntries::Held` thành `FileEntries::Empty` (file chưa đọc). `build_space_view`/`build_file_view` vẫn dùng, nhưng chỉ còn đường gộp theo `LineMeta`.
+    - Bỏ `LiveBuffer` (chỉ giữ các type dùng chung: `BreakMark`, `HoldMode`, `Trimmed`…), đường đọc nguyên file local (`read_file`, `index_local_files`), parse trước trên worker (`PrepareJob`), cắt hàng tại chỗ (`live_trim.rs`), đọc lại Detected Field và Log Format trên entry trong RAM (giờ index lại file).
+    - Test: bỏ test của code đã xoá (`live_buffer_test`, `live_clear_more_test`, `command_buffer_test`, `live_preparse_test`, `live_trim_test`, `live_local_window_test` (Live Window cho file local, trái quy tắc), ba test "held file"); `fake_live` ghi dòng vào file trước khi báo; `cached_file_test` so với kết quả cố định trong `tests/golden/cached_file/` (ghi từ đường cache, kiểm lại trên code trước khi bỏ `LiveBuffer`). Toàn bộ test không sshd qua; chưa chạy test cần sshd.
 - [x] 12.2 Cập nhật `examples/mem_probe.rs` và `examples/perf_probe.rs` sang đường mới. Ghi số trước và sau vào design.md:
   - thời gian mở
   - byte/dòng

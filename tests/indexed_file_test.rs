@@ -28,7 +28,7 @@ fn entries_read_again_are_those_of_the_whole_file() {
     let text = text();
     let source: Arc<dyn LineSource> = Arc::new(BytesSource::new(text.clone().into_bytes()));
     let file = IndexedFile::index_now(source, IndexOptions::default()).unwrap();
-    let want = ParsedFile::from_bytes(text.as_bytes()).entries;
+    let want = ParsedFile::from_bytes(text.as_bytes()).entries();
     assert_eq!(file.len(), want.len());
     // Out of order, across block edges, and twice (the second from the cache).
     let order: Vec<usize> = (0..want.len()).rev().chain([READ_AROUND - 1, READ_AROUND, READ_AROUND + 1]).collect();
@@ -46,7 +46,7 @@ fn detected_fields_are_read_with_the_lines() {
     let options = IndexOptions { config: config.clone(), ..Default::default() };
     let source: Arc<dyn LineSource> = Arc::new(BytesSource::new(text.clone().into_bytes()));
     let file = IndexedFile::index_now(source, options).unwrap();
-    let mut want = ParsedFile::from_bytes(text.as_bytes()).entries;
+    let mut want = ParsedFile::from_bytes(text.as_bytes()).entries();
     config.apply(&mut want);
     for n in [0, 7, 500, want.len() - 1] {
         assert_eq!(debug(&file.entry(n).unwrap()), debug(&want[n]), "line {n}");
@@ -75,7 +75,7 @@ fn the_raw_view_reads_an_indexed_file_s_lines() {
     let text = text();
     let source: Arc<dyn LineSource> = Arc::new(BytesSource::new(text.clone().into_bytes()));
     let file = Arc::new(IndexedFile::index_now(source, IndexOptions::default()).unwrap());
-    let held = ParsedFile::from_bytes(text.as_bytes()).lines;
+    let held = ParsedFile::from_bytes(text.as_bytes()).lines();
     let lines = RawLines::Indexed(file.clone());
     assert_eq!(lines.len(), held.len());
     assert_eq!(lines.get(7), held.get(7).cloned(), "one line, read from the file");
@@ -108,7 +108,7 @@ fn lines_written_since_are_indexed_on() {
     out.write_all(b" here\n\tat x.y(Z.java:1)\n2026-09-05 11:00:01 [INFO] [db] next user=3\n").unwrap();
     assert_eq!(file.extend().unwrap(), Extended::Appended { range: before - 1..before + 2, replaced_last: true, more: false });
     let all = std::fs::read(&path).unwrap();
-    let want = ParsedFile::from_bytes(&all).entries;
+    let want = ParsedFile::from_bytes(&all).entries();
     assert_eq!(file.len(), want.len());
     for n in [0, before - 2, before - 1, before, before + 1] {
         assert_eq!(debug(&file.entry(n).unwrap()), debug(&want[n]), "line {n}");

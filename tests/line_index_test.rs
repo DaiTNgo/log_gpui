@@ -316,12 +316,12 @@ fn lines_read_again_parse_as_the_whole_file_did() {
         let source = BytesSource::new(bytes.clone());
         let index = index_source(&source, None).unwrap();
         let whole = read_entries(&source, &index, 0..index.len(), &mut LineParser::new()).unwrap();
-        assert_eq!(debug(&whole), debug(&parsed.entries), "{name}: every line");
+        assert_eq!(debug(&whole), debug(&parsed.entries()), "{name}: every line");
         // Any stretch, starting on a Continuation Line or not.
         for start in 0..index.len() {
             let end = (start + 5).min(index.len());
             let part = read_entries(&source, &index, start..end, &mut LineParser::new()).unwrap();
-            assert_eq!(debug(&part), debug(&parsed.entries[start..end]), "{name}: lines {start}..{end}");
+            assert_eq!(debug(&part), debug(&parsed.entries()[start..end]), "{name}: lines {start}..{end}");
         }
     }
 }
@@ -335,7 +335,7 @@ fn lines_read_again_from_disk() {
     let index = index_source(&source, None).unwrap();
     let parsed = ParsedFile::from_bytes(&bytes);
     let screen = read_entries(&source, &index, 500..560, &mut LineParser::new()).unwrap();
-    assert_eq!(debug(&screen), debug(&parsed.entries[500..560]));
+    assert_eq!(debug(&screen), debug(&parsed.entries()[500..560]));
 }
 
 #[test]

@@ -188,21 +188,6 @@ impl AppView {
         rows.iter().zip(texts).filter(|(_, text)| find.matches(text)).map(|(row, _)| *row).collect()
     }
 
-    /// How many of the entries at `positions` (ascending) the open tab lists
-    /// before the Find Filter, in the Parsed View.
-    pub(crate) fn rows_before_find_filter_among(&self, positions: &[usize]) -> usize {
-        let limited = self.filter_limits_focus();
-        let search = self.focus.search();
-        if search.matcher.is_none() && !limited {
-            return 0;
-        }
-        positions
-            .iter()
-            .filter(|p| search.matcher.is_none() || search.matched_visible_indices.binary_search(p).is_ok())
-            .filter(|p| !limited || self.filter_pass.binary_search(p).is_ok())
-            .count()
-    }
-
     /// Switch the open tab's Find Filter on or off, keeping the user's place:
     /// switched on, a current line it drops moves to the nearest kept row
     /// (above, else below); switched off, the current line stays and the pane

@@ -5,7 +5,7 @@
 
 mod common;
 
-use common::{open_app_with_held_lines, open_app_with_lines};
+use common::{open_app_with_lines};
 use gpui::TestAppContext;
 
 fn lines() -> Vec<String> {
@@ -43,16 +43,6 @@ fn rows_built_again_find_the_matches_again_by_a_scan(cx: &mut TestAppContext) {
     });
     h.cx.run_until_parked();
     h.view.read_with(&h.cx, |app, _| {
-        assert!(!app.search_scanning());
-        assert_eq!(app.focus.search().matched_visible_indices.len(), 429);
-    });
-}
-
-#[gpui::test]
-fn a_held_file_is_searched_at_once(cx: &mut TestAppContext) {
-    let mut h = open_app_with_held_lines(cx, &lines());
-    h.view.update(&mut h.cx, |app, cx| {
-        app.trigger_search_query("timeout", cx);
         assert!(!app.search_scanning());
         assert_eq!(app.focus.search().matched_visible_indices.len(), 429);
     });

@@ -110,14 +110,9 @@ impl ViewData {
         self.bind_files(|id| parsed.get(id).map(ParsedFile::file_entries))
     }
 
-    /// The view with the entries `entries` gives for each file id.
-    pub fn bind_with<'a>(&'a self, entries: impl Fn(&str) -> Option<&'a [LogEntry]>) -> BoundRows<'a> {
-        self.bind_files(|id| entries(id).map(FileEntries::Held))
-    }
-
     /// The view with the lines `files` gives for each file id.
     pub fn bind_files<'a>(&'a self, files: impl Fn(&str) -> Option<FileEntries<'a>>) -> BoundRows<'a> {
-        let entries = self.files.iter().map(|f| files(&f.file_id).unwrap_or(FileEntries::Held(&[]))).collect();
+        let entries = self.files.iter().map(|f| files(&f.file_id).unwrap_or(FileEntries::Empty)).collect();
         BoundRows { data: self, entries }
     }
 
@@ -127,17 +122,18 @@ impl ViewData {
     }
 }
 
-/// Where a file's entries are: held, or read again from the file.
+/// Where a file's entries are: read again from the file through its Line
+/// Index, or none (a file not read).
 #[derive(Clone, Copy)]
 pub enum FileEntries<'a> {
-    Held(&'a [LogEntry]),
+    Empty,
     Indexed(&'a IndexedFile),
 }
 
 impl<'a> FileEntries<'a> {
     pub fn len(&self) -> usize {
         match self {
-            FileEntries::Held(entries) => entries.len(),
+            FileEntries::Empty => 0,
             FileEntries::Indexed(file) => file.len(),
         }
     }
@@ -149,7 +145,7 @@ impl<'a> FileEntries<'a> {
     /// The entry at `pos`.
     pub fn get(&self, pos: usize) -> Option<RowRef<'a>> {
         match self {
-            FileEntries::Held(entries) => entries.get(pos).map(RowRef::Borrowed),
+            FileEntries::Empty => None,
             FileEntries::Indexed(file) => file.entry(pos).map(RowRef::Shared),
         }
     }
@@ -157,7 +153,7 @@ impl<'a> FileEntries<'a> {
     /// How long the line at `pos` is, in bytes: nothing is read.
     pub fn line_len(&self, pos: usize) -> Option<usize> {
         match self {
-            FileEntries::Held(entries) => entries.get(pos).map(|e| e.raw_line.len()),
+            FileEntries::Empty => None,
             FileEntries::Indexed(file) => file.line_len(pos),
         }
     }
@@ -165,18 +161,17 @@ impl<'a> FileEntries<'a> {
     /// The entry at `pos` if nothing has to be read for it.
     pub fn cached(&self, pos: usize) -> Option<RowRef<'a>> {
         match self {
-            FileEntries::Held(entries) => entries.get(pos).map(RowRef::Borrowed),
+            FileEntries::Empty => None,
             FileEntries::Indexed(file) => file.cached_entry(pos).map(RowRef::Shared),
         }
     }
 
-    // What the view asks of a line without reading it: from its entry when
-    // it is held, from its `LineMeta` when it is not.
+    // What the view asks of a line without reading it: from its `LineMeta`.
 
     /// The line's number in its file and its Generation.
     pub fn line_number(&self, pos: usize) -> Option<(usize, u32)> {
         match self {
-            FileEntries::Held(entries) => entries.get(pos).map(|e| (e.index, e.generation)),
+            FileEntries::Empty => None,
             FileEntries::Indexed(file) => file.line_number(pos),
         }
     }
@@ -184,7 +179,7 @@ impl<'a> FileEntries<'a> {
     /// The position of line `line` (from 1) of Generation `generation`.
     pub fn position_of(&self, line: usize, generation: u32) -> Option<usize> {
         match self {
-            FileEntries::Held(entries) => entries.iter().position(|e| e.index == line && e.generation == generation),
+            FileEntries::Empty => None,
             FileEntries::Indexed(file) => {
                 let generations = file.generations();
                 let at = generations.iter().position(|g| g.generation == generation)?;
@@ -198,7 +193,7 @@ impl<'a> FileEntries<'a> {
     /// Whether the line has a time of its own.
     pub fn has_time(&self, pos: usize) -> bool {
         match self {
-            FileEntries::Held(entries) => entries.get(pos).is_some_and(|e| e.has_time),
+            FileEntries::Empty => false,
             FileEntries::Indexed(file) => file.meta(pos).is_some_and(|m| m.has_time()),
         }
     }
@@ -206,7 +201,7 @@ impl<'a> FileEntries<'a> {
     /// The line's timestamp, when it has a time of its own.
     pub fn own_time(&self, pos: usize) -> Option<f64> {
         match self {
-            FileEntries::Held(entries) => entries.get(pos).filter(|e| e.has_time).map(|e| e.timestamp),
+            FileEntries::Empty => None,
             FileEntries::Indexed(file) => file
                 .meta(pos)
                 .filter(|m| m.has_time() && m.flags & crate::index::meta::flags::OWN_TS != 0)
@@ -217,7 +212,7 @@ impl<'a> FileEntries<'a> {
     /// Whether the line is a Continuation Line.
     pub fn continues(&self, pos: usize) -> bool {
         match self {
-            FileEntries::Held(entries) => entries.get(pos).is_some_and(|e| e.parent.is_some()),
+            FileEntries::Empty => false,
             FileEntries::Indexed(file) => file.meta(pos).is_some_and(|m| m.parent_dist > 0),
         }
     }
@@ -225,7 +220,7 @@ impl<'a> FileEntries<'a> {
     /// The line's level.
     pub fn level(&self, pos: usize) -> Option<crate::model::LogLevel> {
         match self {
-            FileEntries::Held(entries) => entries.get(pos).map(|e| e.level),
+            FileEntries::Empty => None,
             FileEntries::Indexed(file) => file.meta(pos).map(|m| m.level()),
         }
     }
@@ -300,8 +295,8 @@ impl ViewData {
             .iter()
             .map(|f| match parsed.get(&*f.file_id) {
                 Some(ParsedFile { indexed: Some(file), .. }) => FileText::Indexed(file.texts()),
-                Some(p) => FileText::Held(p.lines.clone()),
-                None => FileText::Held(Arc::default()),
+                // A file not read has no lines.
+                _ => FileText::Held(Arc::default()),
             })
             .collect();
         ViewTexts { rows: self.rows.clone(), lines }

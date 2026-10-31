@@ -15,7 +15,7 @@ fn text() -> String {
 
 #[test]
 fn truncate_then_append_equals_a_full_build() {
-    let entries = ParsedFile::from_text(&text()).entries;
+    let entries = ParsedFile::from_text(&text()).entries();
     let full = FilterIndex::build(&entries);
     for cut in [0, 1, 5, 8, 20, entries.len() - 1, entries.len()] {
         let mut index = FilterIndex::build(&entries);

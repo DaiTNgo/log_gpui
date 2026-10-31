@@ -11,7 +11,7 @@ fn file(name: &str, lines: usize, modules: usize) -> Vec<LogEntry> {
     let text: Vec<String> = (0..lines)
         .map(|i| format!("2024-05-01 10:{:02}:{:02}.000 INFO [{name}{}] message {i}", i / 60 % 60, i % 60, i % modules))
         .collect();
-    ParsedFile::from_text(&text.join("\n")).entries
+    ParsedFile::from_text(&text.join("\n")).entries()
 }
 
 fn merged_index(files: &[&[LogEntry]]) -> FilterIndex {

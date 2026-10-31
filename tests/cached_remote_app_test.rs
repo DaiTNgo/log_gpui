@@ -142,7 +142,7 @@ fn like_golden(cx: &mut TestAppContext, name: &str, window: usize, command: bool
     }
     r.h.view.read_with(&r.h.cx, |app, _| {
         let parsed = &app.parsed_files[&r.id];
-        assert!(parsed.indexed.is_some() && parsed.entries.is_empty() && parsed.lines.is_empty(), "no text in memory");
+        assert!(parsed.indexed.is_some(), "read through its Line Index");
     });
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden/cached_remote_app").join(format!("{name}.txt"));
     if std::env::var_os("UPDATE_GOLDEN").is_some() {

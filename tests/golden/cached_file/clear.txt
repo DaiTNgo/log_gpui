@@ -1,0 +1,17 @@
+total 66: shift Some(-1099511627775)
+## cleared
+held start HeldStart { generation: 0, line_no: 67, offset: Some(7000) }, top bytes 0, at start false
+## after clear
+held start HeldStart { generation: 0, line_no: 67, offset: Some(7000) }, top bytes 476, at start false
+  -- web1:app.log cleared 10:05:00
+67 g0 2026-09-05 10:01:00 [INFO] [api] request 60
+68 g0     at Handler.run(Handler.java:60)
+69 g0 2026-09-05 10:01:01 [INFO] [api] request 61
+70 g0 2026-09-05 10:01:02 [INFO] [api] request 62
+71 g0 2026-09-05 10:01:03 [INFO] [api] request 63
+72 g0 2026-09-05 10:01:04 [INFO] [api] request 64
+73 g0 2026-09-05 10:01:05 [INFO] [api] request 65
+74 g0 2026-09-05 10:01:06 [INFO] [api] request 66
+75 g0 2026-09-05 10:01:07 [INFO] [api] request 67
+76 g0 2026-09-05 10:01:08 [INFO] [api] request 68
+77 g0 2026-09-05 10:01:09 [INFO] [api] request 69

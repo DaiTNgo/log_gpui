@@ -35,9 +35,11 @@ fn scans(f: &common::fake_live::Files) -> usize {
     f.h.view.read_with(&f.h.cx, |app, _| app.refreshes.scans)
 }
 
-/// The Matches a search found at once gives, for comparing.
+/// The Matches a search started at once (no pause) gives once its Scan is
+/// done, for comparing.
 fn matches_found_at_once(f: &mut common::fake_live::Files, text: &str) -> Vec<usize> {
     f.h.view.update(&mut f.h.cx, |app, cx| app.trigger_search_query(text, cx));
+    wait_for_scan(f);
     matches(f)
 }
 
@@ -128,11 +130,11 @@ fn a_newer_query_replaces_the_scan_of_the_one_before(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn a_full_refresh_finds_the_matches_at_once(cx: &mut TestAppContext) {
+fn a_full_refresh_finds_the_same_matches(cx: &mut TestAppContext) {
     let mut f = open(cx, &[("alpha", 0)], 200, 1_000_000);
     type_text(&mut f, "user=4");
     f.h.view.update(&mut f.h.cx, |app, cx| app.apply_filters_and_refresh(cx));
-    assert!(!scanning(&f), "no Scan is left running");
+    wait_for_scan(&mut f);
     let found = matches(&f);
     assert_eq!(found, matches_found_at_once(&mut f, "user=4"));
 }

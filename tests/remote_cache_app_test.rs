@@ -101,8 +101,7 @@ fn a_remote_file_chosen_again_shows_its_kept_lines_and_reads_on_only_the_new_one
         let have = rows(app);
         let first_diff = have.iter().zip(&want).position(|(a, b)| a != b);
         assert_eq!((have.len(), first_diff), (want.len(), None), "nothing read twice, nothing missing: {:?}", first_diff.map(|i| (&have[i], &want[i])));
-        let parsed = app.parsed_files.values().find(|p| p.indexed.is_some() && p.live.is_none()).expect("read through its cache");
-        assert!(parsed.entries.is_empty() && parsed.lines.is_empty(), "no text in memory");
+        assert!(app.live.cached.values().any(|c| c.len() == 3_005), "read through its cache");
     });
 }
 

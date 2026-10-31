@@ -52,7 +52,7 @@ fn main() {
     println!("{n} lines, {:.1} MB", text.len() as f64 / 1e6);
 
     let parsed = time("parse", || ParsedFile::from_bytes(text.as_bytes()));
-    let mut entries = parsed.entries.clone();
+    let mut entries = parsed.entries().clone();
     let index = time("FilterIndex::build", || FilterIndex::build(&entries));
 
     let mut filter = FilterState::new();

@@ -15,13 +15,13 @@ fn log_lines(n: usize) -> Vec<String> {
 
 #[gpui::test]
 fn raw_sections_share_the_files_breaks(cx: &mut TestAppContext) {
-    let mut h = common::open_app_with_held_lines(cx, &log_lines(20));
+    let mut h = common::open_app_with_lines(cx, &log_lines(20));
     h.view.update(&mut h.cx, |app, _| {
         let sections = app.raw_sections();
         assert_eq!(sections.len(), 1);
         let parsed = &app.parsed_files[&sections[0].file_id];
         assert!(Arc::ptr_eq(&sections[0].breaks, &parsed.raw_breaks), "no copy of the breaks");
-        assert!(Arc::ptr_eq(&sections[0].lines.all(), &parsed.lines), "no copy of the lines");
+        assert!(matches!(sections[0].lines, log_gpui::raw_view::RawLines::Indexed(_)), "the lines are read from the file");
     });
 }
 

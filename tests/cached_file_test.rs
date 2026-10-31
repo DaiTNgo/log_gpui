@@ -1,30 +1,58 @@
 //! A Remote File read through its Remote Cache (openspec change
-//! `remote-local-cache`, stage 2) gives the rows `LiveBuffer` gives in
-//! memory for the same events: the same numbers, Generations, text and
-//! Breaks.
+//! `remote-local-cache`) gives the rows `LiveBuffer` gave in memory for the
+//! same events: the same numbers, Generations, text and Breaks, kept in
+//! `tests/golden/cached_file/`.
 
 use log_gpui::index::HandleBudget;
 use log_gpui::live::cached::CachedFile;
 use log_gpui::live::source::{EarlierFile, EarlierStart};
-use log_gpui::live::{BreakKind, LiveBuffer};
+use log_gpui::live::BreakKind;
 use log_gpui::remote::cache::{CacheTarget, RemoteCache, dir_for};
-use log_gpui::space_view::ParsedFile;
 
 /// What a row shows: its number, Generation, text and the Break above it.
 type Row = (usize, u32, String, Option<String>);
 
+/// A Remote File read through its cache, and what it showed at each step:
+/// compared with `tests/golden/cached_file/<name>.txt`, what `LiveBuffer`
+/// showed in memory for the same events (recorded once the two were checked
+/// equal, before `LiveBuffer` was removed). With `UPDATE_GOLDEN` set, the
+/// file is written instead.
 struct Both {
-    ram: (LiveBuffer, ParsedFile),
     cached: CachedFile,
+    name: &'static str,
+    log: String,
     _dir: tempfile::TempDir,
 }
 
-fn both(segment_lines: usize) -> Both {
+fn both(name: &'static str, segment_lines: usize) -> Both {
     let dir = tempfile::tempdir().unwrap();
     let target = CacheTarget::File { path: "/var/log/app.log".into() };
     let cache = RemoteCache::open(&dir_for(dir.path(), "srv", &target), "srv", target, segment_lines).unwrap();
     let cached = CachedFile::new("web1:app.log", cache, Default::default(), HandleBudget::new(256)).unwrap();
-    Both { ram: (LiveBuffer::remote("web1:app.log"), ParsedFile::empty()), cached, _dir: dir }
+    Both { cached, name, log: String::new(), _dir: dir }
+}
+
+impl Drop for Both {
+    fn drop(&mut self) {
+        if std::thread::panicking() {
+            return;
+        }
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden/cached_file").join(format!("{}.txt", self.name));
+        if std::env::var_os("UPDATE_GOLDEN").is_some() {
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(&path, &self.log).unwrap();
+            return;
+        }
+        let want = std::fs::read_to_string(&path).unwrap();
+        let line = want.lines().zip(self.log.lines()).position(|(a, b)| a != b);
+        assert!(
+            line.is_none() && want.lines().count() == self.log.lines().count(),
+            "{}: first difference at line {line:?}: want {:?}, have {:?}",
+            self.name,
+            line.and_then(|l| want.lines().nth(l)),
+            line.and_then(|l| self.log.lines().nth(l)),
+        );
+    }
 }
 
 fn lines(range: std::ops::Range<usize>) -> Vec<String> {
@@ -42,10 +70,6 @@ fn bytes(lines: &[String]) -> Vec<u32> {
 }
 
 impl Both {
-    fn ram_rows(&self) -> Vec<Row> {
-        self.ram.1.entries.iter().map(|e| (e.index, e.generation, e.raw_line.to_string(), e.break_before.as_ref().map(|m| m.label.clone()))).collect()
-    }
-
     fn cached_rows(&self) -> Vec<Row> {
         let file = self.cached.file();
         (0..file.len())
@@ -56,66 +80,56 @@ impl Both {
             .collect()
     }
 
-    fn same(&self, what: &str) {
-        let (ram, cached) = (self.ram_rows(), self.cached_rows());
-        if std::env::var_os("SHOW").is_some() {
-            let marks: Vec<_> = cached.iter().enumerate().filter_map(|(i, r)| r.3.as_ref().map(|m| (i, r.0, m.clone()))).collect();
-            eprintln!("{what}: {} rows, first {:?}, last {:?}, marks {:?}", cached.len(), cached.first().map(|r| (r.0, r.1)), cached.last().map(|r| (r.0, r.1)), marks);
+    fn same(&mut self, what: &str) {
+        let rows = self.cached_rows();
+        self.log.push_str(&format!(
+            "## {what}\nheld start {:?}, top bytes {}, at start {}\n",
+            self.cached.held_start(),
+            self.cached.top_generation_bytes(),
+            self.cached.at_generation_start()
+        ));
+        for (index, generation, text, mark) in rows {
+            if let Some(mark) = mark {
+                self.log.push_str(&format!("  -- {mark}\n"));
+            }
+            self.log.push_str(&format!("{index} g{generation} {text}\n"));
         }
-        let first = ram.iter().zip(&cached).position(|(a, b)| a != b);
-        assert!(
-            ram.len() == cached.len() && first.is_none(),
-            "{what}: {} rows in memory, {} cached; first difference at {first:?}: {:?} / {:?}",
-            ram.len(),
-            cached.len(),
-            first.map(|i| &ram[i]),
-            first.map(|i| &cached[i]),
-        );
-        let (b, p) = &self.ram;
-        assert_eq!(b.held_start(p), self.cached.held_start(), "{what}: held start");
-        assert_eq!(b.top_generation_bytes(p), self.cached.top_generation_bytes(), "{what}: top bytes");
-        assert_eq!(b.at_generation_start(p), self.cached.at_generation_start(), "{what}: at start");
+    }
+
+    fn note(&mut self, what: impl std::fmt::Display) {
+        self.log.push_str(&format!("{what}\n"));
     }
 
     fn tail(&mut self, l: &[String], end: u64) {
-        let (b, p) = &mut self.ram;
-        b.apply_tail_with(p, l, 0, &bytes(l), end);
         self.cached.apply_tail(l, &bytes(l), end).unwrap();
     }
 
     fn backfill(&mut self, l: &[String]) {
-        let (b, p) = &mut self.ram;
-        b.apply_backfill_with(p, l, &bytes(l));
         self.cached.apply_backfill(l, &bytes(l)).unwrap();
     }
 
     fn append(&mut self, l: &[String]) {
-        let (b, p) = &mut self.ram;
-        b.apply_append_with(p, l, &bytes(l));
         self.cached.apply_append(l, &bytes(l)).unwrap();
     }
 
     fn total(&mut self, n: usize) {
-        let (b, p) = &mut self.ram;
-        assert_eq!(b.apply_total(p, Some(n)), self.cached.apply_total(Some(n)).unwrap(), "the same shift");
+        let shift = self.cached.apply_total(Some(n)).unwrap();
+        self.note(format!("total {n}: shift {shift:?}"));
     }
 
     fn brk(&mut self, kind: BreakKind, time: &str) {
-        self.ram.0.apply_break(kind, time);
         self.cached.apply_break(kind, time).unwrap();
     }
 
     fn trim(&mut self, window: usize) {
-        let (b, p) = &mut self.ram;
-        let ram = b.trim_to_window(p, window).map(|t| (t.removed, t.generation, t.first_kept));
         let cached = self.cached.trim_to_window(window).unwrap().map(|t| (t.removed, t.generation, t.first_kept));
-        assert_eq!(ram, cached, "the same trim");
+        self.note(format!("trim {window}: {cached:?}"));
     }
 }
 
 #[test]
 fn tail_total_backfill_and_append_number_the_lines_alike() {
-    let mut f = both(50);
+    let mut f = both("tail_total_backfill_append", 50);
     // The last lines of a file of 400, then their real numbers.
     let all = lines(0..400);
     let n = all.len();
@@ -133,7 +147,7 @@ fn tail_total_backfill_and_append_number_the_lines_alike() {
 
 #[test]
 fn breaks_and_generations_are_alike() {
-    let mut f = both(40);
+    let mut f = both("breaks_and_generations", 40);
     let first = lines(0..50);
     f.tail(&first, 5_000);
     f.total(first.len());
@@ -151,7 +165,7 @@ fn breaks_and_generations_are_alike() {
 
 #[test]
 fn the_live_window_drops_the_same_lines() {
-    let mut f = both(25);
+    let mut f = both("live_window", 25);
     let first = lines(0..100);
     f.tail(&first, 20_000);
     f.total(first.len());
@@ -164,35 +178,22 @@ fn the_live_window_drops_the_same_lines() {
 
 #[test]
 fn load_more_and_an_earlier_generation_are_alike() {
-    let mut f = both(30);
+    let mut f = both("load_more_and_earlier", 30);
     let all = lines(0..300);
     let n = all.len();
     f.tail(&all[n - 50..], 30_000);
     f.total(n);
     // Load more: older lines above, not the start of the file.
     let older = &all[n - 120..n - 50];
-    {
-        let (b, p) = &mut f.ram;
-        b.apply_older_with(p, older, &bytes(older), false, false);
-    }
     f.cached.apply_older(older, &bytes(older), false, false).unwrap();
     f.same("load more");
     // The rest, to the start of the file, then a Rotated File above.
     let rest = &all[..n - 120];
-    {
-        let (b, p) = &mut f.ram;
-        b.apply_older_with(p, rest, &bytes(rest), true, false);
-        b.set_earlier_available(p, Some(&EarlierFile { name: "app.log.1".into(), size: 4096, compressed: false }), false);
-    }
     f.cached.apply_older(rest, &bytes(rest), true, false).unwrap();
     f.cached.set_earlier_available(Some(&EarlierFile { name: "app.log.1".into(), size: 4096, compressed: false }), false).unwrap();
     f.same("offered");
     let earlier = lines(1000..1040);
     let start = EarlierStart { name: "app.log.1".into(), modified: Some("2026-09-04 23:59:00".into()) };
-    {
-        let (b, p) = &mut f.ram;
-        assert!(b.apply_earlier(p, Some(&start), &earlier, &bytes(&earlier), Some(earlier.len())));
-    }
     assert!(f.cached.apply_earlier(Some(&start), &earlier, &bytes(&earlier), Some(earlier.len())).unwrap().generations_moved);
     f.same("earlier generation");
     f.append(&lines(300..310));
@@ -201,14 +202,10 @@ fn load_more_and_an_earlier_generation_are_alike() {
 
 #[test]
 fn clear_is_alike() {
-    let mut f = both(30);
+    let mut f = both("clear", 30);
     let first = lines(0..60);
     f.tail(&first, 7_000);
     f.total(first.len());
-    {
-        let (b, p) = &mut f.ram;
-        b.clear(p, "10:05:00");
-    }
     f.cached.clear("10:05:00").unwrap();
     f.same("cleared");
     f.append(&lines(60..70));

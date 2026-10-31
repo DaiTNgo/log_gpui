@@ -12,7 +12,6 @@ use crate::index::file::IndexedFile;
 use crate::index::scan::block_order;
 use crate::index::view_rows::unpack;
 use crate::palette::{HighlightColor, next_rule_color};
-use crate::view_data::FileEntries;
 use gpui::Context;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -64,10 +63,7 @@ impl AppView {
         let columns = Some(&self.filter_index);
         let top = self.top_row_anchor().map_or(0, |a| a.row);
         let around = top.saturating_sub(PAINTED_AT_ONCE / 4)..top + PAINTED_AT_ONCE;
-        let read = |row: usize| {
-            around.contains(&row)
-                || rows.data.get(row).and_then(|(f, _)| rows.file(f)).is_some_and(|f| matches!(f, FileEntries::Held(_)))
-        };
+        let read = |row: usize| around.contains(&row);
         let split = paint_rows_split(&rules, &rows, columns, 0, read);
         let text_ids: Vec<u64> = split.text.iter().map(|t| t.id).collect();
         let read_rows: Vec<usize> = if split.unread.is_empty() {

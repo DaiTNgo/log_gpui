@@ -1,0 +1,505 @@
+total 110: shift Some(-1099511627775)
+trim 80: Some((52, 0, 53))
+## batch 0
+held start HeldStart { generation: 0, line_no: 53, offset: Some(17488) }, top bytes 3486, at start false
+  -- web1:app.log older lines left the window
+53 g0 2026-09-05 10:00:47 [INFO] [api] request 47
+54 g0 2026-09-05 10:00:48 [INFO] [api] request 48
+55 g0 2026-09-05 10:00:49 [INFO] [api] request 49
+56 g0 2026-09-05 10:00:50 [INFO] [api] request 50
+57 g0     at Handler.run(Handler.java:50)
+58 g0 2026-09-05 10:00:51 [INFO] [api] request 51
+59 g0 2026-09-05 10:00:52 [INFO] [api] request 52
+60 g0 2026-09-05 10:00:53 [INFO] [api] request 53
+61 g0 2026-09-05 10:00:54 [INFO] [api] request 54
+62 g0 2026-09-05 10:00:55 [INFO] [api] request 55
+63 g0 2026-09-05 10:00:56 [INFO] [api] request 56
+64 g0 2026-09-05 10:00:57 [INFO] [api] request 57
+65 g0 2026-09-05 10:00:58 [INFO] [api] request 58
+66 g0 2026-09-05 10:00:59 [INFO] [api] request 59
+67 g0 2026-09-05 10:01:00 [INFO] [api] request 60
+68 g0     at Handler.run(Handler.java:60)
+69 g0 2026-09-05 10:01:01 [INFO] [api] request 61
+70 g0 2026-09-05 10:01:02 [INFO] [api] request 62
+71 g0 2026-09-05 10:01:03 [INFO] [api] request 63
+72 g0 2026-09-05 10:01:04 [INFO] [api] request 64
+73 g0 2026-09-05 10:01:05 [INFO] [api] request 65
+74 g0 2026-09-05 10:01:06 [INFO] [api] request 66
+75 g0 2026-09-05 10:01:07 [INFO] [api] request 67
+76 g0 2026-09-05 10:01:08 [INFO] [api] request 68
+77 g0 2026-09-05 10:01:09 [INFO] [api] request 69
+78 g0 2026-09-05 10:01:10 [INFO] [api] request 70
+79 g0     at Handler.run(Handler.java:70)
+80 g0 2026-09-05 10:01:11 [INFO] [api] request 71
+81 g0 2026-09-05 10:01:12 [INFO] [api] request 72
+82 g0 2026-09-05 10:01:13 [INFO] [api] request 73
+83 g0 2026-09-05 10:01:14 [INFO] [api] request 74
+84 g0 2026-09-05 10:01:15 [INFO] [api] request 75
+85 g0 2026-09-05 10:01:16 [INFO] [api] request 76
+86 g0 2026-09-05 10:01:17 [INFO] [api] request 77
+87 g0 2026-09-05 10:01:18 [INFO] [api] request 78
+88 g0 2026-09-05 10:01:19 [INFO] [api] request 79
+89 g0 2026-09-05 10:01:20 [INFO] [api] request 80
+90 g0     at Handler.run(Handler.java:80)
+91 g0 2026-09-05 10:01:21 [INFO] [api] request 81
+92 g0 2026-09-05 10:01:22 [INFO] [api] request 82
+93 g0 2026-09-05 10:01:23 [INFO] [api] request 83
+94 g0 2026-09-05 10:01:24 [INFO] [api] request 84
+95 g0 2026-09-05 10:01:25 [INFO] [api] request 85
+96 g0 2026-09-05 10:01:26 [INFO] [api] request 86
+97 g0 2026-09-05 10:01:27 [INFO] [api] request 87
+98 g0 2026-09-05 10:01:28 [INFO] [api] request 88
+99 g0 2026-09-05 10:01:29 [INFO] [api] request 89
+100 g0 2026-09-05 10:01:30 [INFO] [api] request 90
+101 g0     at Handler.run(Handler.java:90)
+102 g0 2026-09-05 10:01:31 [INFO] [api] request 91
+103 g0 2026-09-05 10:01:32 [INFO] [api] request 92
+104 g0 2026-09-05 10:01:33 [INFO] [api] request 93
+105 g0 2026-09-05 10:01:34 [INFO] [api] request 94
+106 g0 2026-09-05 10:01:35 [INFO] [api] request 95
+107 g0 2026-09-05 10:01:36 [INFO] [api] request 96
+108 g0 2026-09-05 10:01:37 [INFO] [api] request 97
+109 g0 2026-09-05 10:01:38 [INFO] [api] request 98
+110 g0 2026-09-05 10:01:39 [INFO] [api] request 99
+111 g0 2026-09-05 10:01:40 [INFO] [api] request 100
+112 g0     at Handler.run(Handler.java:100)
+113 g0 2026-09-05 10:01:41 [INFO] [api] request 101
+114 g0 2026-09-05 10:01:42 [INFO] [api] request 102
+115 g0 2026-09-05 10:01:43 [INFO] [api] request 103
+116 g0 2026-09-05 10:01:44 [INFO] [api] request 104
+117 g0 2026-09-05 10:01:45 [INFO] [api] request 105
+118 g0 2026-09-05 10:01:46 [INFO] [api] request 106
+119 g0 2026-09-05 10:01:47 [INFO] [api] request 107
+120 g0 2026-09-05 10:01:48 [INFO] [api] request 108
+121 g0 2026-09-05 10:01:49 [INFO] [api] request 109
+122 g0 2026-09-05 10:01:50 [INFO] [api] request 110
+123 g0     at Handler.run(Handler.java:110)
+124 g0 2026-09-05 10:01:51 [INFO] [api] request 111
+125 g0 2026-09-05 10:01:52 [INFO] [api] request 112
+126 g0 2026-09-05 10:01:53 [INFO] [api] request 113
+127 g0 2026-09-05 10:01:54 [INFO] [api] request 114
+128 g0 2026-09-05 10:01:55 [INFO] [api] request 115
+129 g0 2026-09-05 10:01:56 [INFO] [api] request 116
+130 g0 2026-09-05 10:01:57 [INFO] [api] request 117
+131 g0 2026-09-05 10:01:58 [INFO] [api] request 118
+132 g0 2026-09-05 10:01:59 [INFO] [api] request 119
+trim 80: Some((22, 0, 75))
+## batch 1
+held start HeldStart { generation: 0, line_no: 75, offset: Some(18440) }, top bytes 3508, at start false
+  -- web1:app.log older lines left the window
+75 g0 2026-09-05 10:01:07 [INFO] [api] request 67
+76 g0 2026-09-05 10:01:08 [INFO] [api] request 68
+77 g0 2026-09-05 10:01:09 [INFO] [api] request 69
+78 g0 2026-09-05 10:01:10 [INFO] [api] request 70
+79 g0     at Handler.run(Handler.java:70)
+80 g0 2026-09-05 10:01:11 [INFO] [api] request 71
+81 g0 2026-09-05 10:01:12 [INFO] [api] request 72
+82 g0 2026-09-05 10:01:13 [INFO] [api] request 73
+83 g0 2026-09-05 10:01:14 [INFO] [api] request 74
+84 g0 2026-09-05 10:01:15 [INFO] [api] request 75
+85 g0 2026-09-05 10:01:16 [INFO] [api] request 76
+86 g0 2026-09-05 10:01:17 [INFO] [api] request 77
+87 g0 2026-09-05 10:01:18 [INFO] [api] request 78
+88 g0 2026-09-05 10:01:19 [INFO] [api] request 79
+89 g0 2026-09-05 10:01:20 [INFO] [api] request 80
+90 g0     at Handler.run(Handler.java:80)
+91 g0 2026-09-05 10:01:21 [INFO] [api] request 81
+92 g0 2026-09-05 10:01:22 [INFO] [api] request 82
+93 g0 2026-09-05 10:01:23 [INFO] [api] request 83
+94 g0 2026-09-05 10:01:24 [INFO] [api] request 84
+95 g0 2026-09-05 10:01:25 [INFO] [api] request 85
+96 g0 2026-09-05 10:01:26 [INFO] [api] request 86
+97 g0 2026-09-05 10:01:27 [INFO] [api] request 87
+98 g0 2026-09-05 10:01:28 [INFO] [api] request 88
+99 g0 2026-09-05 10:01:29 [INFO] [api] request 89
+100 g0 2026-09-05 10:01:30 [INFO] [api] request 90
+101 g0     at Handler.run(Handler.java:90)
+102 g0 2026-09-05 10:01:31 [INFO] [api] request 91
+103 g0 2026-09-05 10:01:32 [INFO] [api] request 92
+104 g0 2026-09-05 10:01:33 [INFO] [api] request 93
+105 g0 2026-09-05 10:01:34 [INFO] [api] request 94
+106 g0 2026-09-05 10:01:35 [INFO] [api] request 95
+107 g0 2026-09-05 10:01:36 [INFO] [api] request 96
+108 g0 2026-09-05 10:01:37 [INFO] [api] request 97
+109 g0 2026-09-05 10:01:38 [INFO] [api] request 98
+110 g0 2026-09-05 10:01:39 [INFO] [api] request 99
+111 g0 2026-09-05 10:01:40 [INFO] [api] request 100
+112 g0     at Handler.run(Handler.java:100)
+113 g0 2026-09-05 10:01:41 [INFO] [api] request 101
+114 g0 2026-09-05 10:01:42 [INFO] [api] request 102
+115 g0 2026-09-05 10:01:43 [INFO] [api] request 103
+116 g0 2026-09-05 10:01:44 [INFO] [api] request 104
+117 g0 2026-09-05 10:01:45 [INFO] [api] request 105
+118 g0 2026-09-05 10:01:46 [INFO] [api] request 106
+119 g0 2026-09-05 10:01:47 [INFO] [api] request 107
+120 g0 2026-09-05 10:01:48 [INFO] [api] request 108
+121 g0 2026-09-05 10:01:49 [INFO] [api] request 109
+122 g0 2026-09-05 10:01:50 [INFO] [api] request 110
+123 g0     at Handler.run(Handler.java:110)
+124 g0 2026-09-05 10:01:51 [INFO] [api] request 111
+125 g0 2026-09-05 10:01:52 [INFO] [api] request 112
+126 g0 2026-09-05 10:01:53 [INFO] [api] request 113
+127 g0 2026-09-05 10:01:54 [INFO] [api] request 114
+128 g0 2026-09-05 10:01:55 [INFO] [api] request 115
+129 g0 2026-09-05 10:01:56 [INFO] [api] request 116
+130 g0 2026-09-05 10:01:57 [INFO] [api] request 117
+131 g0 2026-09-05 10:01:58 [INFO] [api] request 118
+132 g0 2026-09-05 10:01:59 [INFO] [api] request 119
+133 g0 2026-09-05 10:02:00 [INFO] [api] request 120
+134 g0     at Handler.run(Handler.java:120)
+135 g0 2026-09-05 10:02:01 [INFO] [api] request 121
+136 g0 2026-09-05 10:02:02 [INFO] [api] request 122
+137 g0 2026-09-05 10:02:03 [INFO] [api] request 123
+138 g0 2026-09-05 10:02:04 [INFO] [api] request 124
+139 g0 2026-09-05 10:02:05 [INFO] [api] request 125
+140 g0 2026-09-05 10:02:06 [INFO] [api] request 126
+141 g0 2026-09-05 10:02:07 [INFO] [api] request 127
+142 g0 2026-09-05 10:02:08 [INFO] [api] request 128
+143 g0 2026-09-05 10:02:09 [INFO] [api] request 129
+144 g0 2026-09-05 10:02:10 [INFO] [api] request 130
+145 g0     at Handler.run(Handler.java:130)
+146 g0 2026-09-05 10:02:11 [INFO] [api] request 131
+147 g0 2026-09-05 10:02:12 [INFO] [api] request 132
+148 g0 2026-09-05 10:02:13 [INFO] [api] request 133
+149 g0 2026-09-05 10:02:14 [INFO] [api] request 134
+150 g0 2026-09-05 10:02:15 [INFO] [api] request 135
+151 g0 2026-09-05 10:02:16 [INFO] [api] request 136
+152 g0 2026-09-05 10:02:17 [INFO] [api] request 137
+153 g0 2026-09-05 10:02:18 [INFO] [api] request 138
+154 g0 2026-09-05 10:02:19 [INFO] [api] request 139
+trim 80: Some((22, 0, 97))
+## batch 2
+held start HeldStart { generation: 0, line_no: 97, offset: Some(19392) }, top bytes 3530, at start false
+  -- web1:app.log older lines left the window
+97 g0 2026-09-05 10:01:27 [INFO] [api] request 87
+98 g0 2026-09-05 10:01:28 [INFO] [api] request 88
+99 g0 2026-09-05 10:01:29 [INFO] [api] request 89
+100 g0 2026-09-05 10:01:30 [INFO] [api] request 90
+101 g0     at Handler.run(Handler.java:90)
+102 g0 2026-09-05 10:01:31 [INFO] [api] request 91
+103 g0 2026-09-05 10:01:32 [INFO] [api] request 92
+104 g0 2026-09-05 10:01:33 [INFO] [api] request 93
+105 g0 2026-09-05 10:01:34 [INFO] [api] request 94
+106 g0 2026-09-05 10:01:35 [INFO] [api] request 95
+107 g0 2026-09-05 10:01:36 [INFO] [api] request 96
+108 g0 2026-09-05 10:01:37 [INFO] [api] request 97
+109 g0 2026-09-05 10:01:38 [INFO] [api] request 98
+110 g0 2026-09-05 10:01:39 [INFO] [api] request 99
+111 g0 2026-09-05 10:01:40 [INFO] [api] request 100
+112 g0     at Handler.run(Handler.java:100)
+113 g0 2026-09-05 10:01:41 [INFO] [api] request 101
+114 g0 2026-09-05 10:01:42 [INFO] [api] request 102
+115 g0 2026-09-05 10:01:43 [INFO] [api] request 103
+116 g0 2026-09-05 10:01:44 [INFO] [api] request 104
+117 g0 2026-09-05 10:01:45 [INFO] [api] request 105
+118 g0 2026-09-05 10:01:46 [INFO] [api] request 106
+119 g0 2026-09-05 10:01:47 [INFO] [api] request 107
+120 g0 2026-09-05 10:01:48 [INFO] [api] request 108
+121 g0 2026-09-05 10:01:49 [INFO] [api] request 109
+122 g0 2026-09-05 10:01:50 [INFO] [api] request 110
+123 g0     at Handler.run(Handler.java:110)
+124 g0 2026-09-05 10:01:51 [INFO] [api] request 111
+125 g0 2026-09-05 10:01:52 [INFO] [api] request 112
+126 g0 2026-09-05 10:01:53 [INFO] [api] request 113
+127 g0 2026-09-05 10:01:54 [INFO] [api] request 114
+128 g0 2026-09-05 10:01:55 [INFO] [api] request 115
+129 g0 2026-09-05 10:01:56 [INFO] [api] request 116
+130 g0 2026-09-05 10:01:57 [INFO] [api] request 117
+131 g0 2026-09-05 10:01:58 [INFO] [api] request 118
+132 g0 2026-09-05 10:01:59 [INFO] [api] request 119
+133 g0 2026-09-05 10:02:00 [INFO] [api] request 120
+134 g0     at Handler.run(Handler.java:120)
+135 g0 2026-09-05 10:02:01 [INFO] [api] request 121
+136 g0 2026-09-05 10:02:02 [INFO] [api] request 122
+137 g0 2026-09-05 10:02:03 [INFO] [api] request 123
+138 g0 2026-09-05 10:02:04 [INFO] [api] request 124
+139 g0 2026-09-05 10:02:05 [INFO] [api] request 125
+140 g0 2026-09-05 10:02:06 [INFO] [api] request 126
+141 g0 2026-09-05 10:02:07 [INFO] [api] request 127
+142 g0 2026-09-05 10:02:08 [INFO] [api] request 128
+143 g0 2026-09-05 10:02:09 [INFO] [api] request 129
+144 g0 2026-09-05 10:02:10 [INFO] [api] request 130
+145 g0     at Handler.run(Handler.java:130)
+146 g0 2026-09-05 10:02:11 [INFO] [api] request 131
+147 g0 2026-09-05 10:02:12 [INFO] [api] request 132
+148 g0 2026-09-05 10:02:13 [INFO] [api] request 133
+149 g0 2026-09-05 10:02:14 [INFO] [api] request 134
+150 g0 2026-09-05 10:02:15 [INFO] [api] request 135
+151 g0 2026-09-05 10:02:16 [INFO] [api] request 136
+152 g0 2026-09-05 10:02:17 [INFO] [api] request 137
+153 g0 2026-09-05 10:02:18 [INFO] [api] request 138
+154 g0 2026-09-05 10:02:19 [INFO] [api] request 139
+155 g0 2026-09-05 10:02:20 [INFO] [api] request 140
+156 g0     at Handler.run(Handler.java:140)
+157 g0 2026-09-05 10:02:21 [INFO] [api] request 141
+158 g0 2026-09-05 10:02:22 [INFO] [api] request 142
+159 g0 2026-09-05 10:02:23 [INFO] [api] request 143
+160 g0 2026-09-05 10:02:24 [INFO] [api] request 144
+161 g0 2026-09-05 10:02:25 [INFO] [api] request 145
+162 g0 2026-09-05 10:02:26 [INFO] [api] request 146
+163 g0 2026-09-05 10:02:27 [INFO] [api] request 147
+164 g0 2026-09-05 10:02:28 [INFO] [api] request 148
+165 g0 2026-09-05 10:02:29 [INFO] [api] request 149
+166 g0 2026-09-05 10:02:30 [INFO] [api] request 150
+167 g0     at Handler.run(Handler.java:150)
+168 g0 2026-09-05 10:02:31 [INFO] [api] request 151
+169 g0 2026-09-05 10:02:32 [INFO] [api] request 152
+170 g0 2026-09-05 10:02:33 [INFO] [api] request 153
+171 g0 2026-09-05 10:02:34 [INFO] [api] request 154
+172 g0 2026-09-05 10:02:35 [INFO] [api] request 155
+173 g0 2026-09-05 10:02:36 [INFO] [api] request 156
+174 g0 2026-09-05 10:02:37 [INFO] [api] request 157
+175 g0 2026-09-05 10:02:38 [INFO] [api] request 158
+176 g0 2026-09-05 10:02:39 [INFO] [api] request 159
+trim 80: Some((22, 0, 119))
+## batch 3
+held start HeldStart { generation: 0, line_no: 119, offset: Some(20352) }, top bytes 3544, at start false
+  -- web1:app.log older lines left the window
+119 g0 2026-09-05 10:01:47 [INFO] [api] request 107
+120 g0 2026-09-05 10:01:48 [INFO] [api] request 108
+121 g0 2026-09-05 10:01:49 [INFO] [api] request 109
+122 g0 2026-09-05 10:01:50 [INFO] [api] request 110
+123 g0     at Handler.run(Handler.java:110)
+124 g0 2026-09-05 10:01:51 [INFO] [api] request 111
+125 g0 2026-09-05 10:01:52 [INFO] [api] request 112
+126 g0 2026-09-05 10:01:53 [INFO] [api] request 113
+127 g0 2026-09-05 10:01:54 [INFO] [api] request 114
+128 g0 2026-09-05 10:01:55 [INFO] [api] request 115
+129 g0 2026-09-05 10:01:56 [INFO] [api] request 116
+130 g0 2026-09-05 10:01:57 [INFO] [api] request 117
+131 g0 2026-09-05 10:01:58 [INFO] [api] request 118
+132 g0 2026-09-05 10:01:59 [INFO] [api] request 119
+133 g0 2026-09-05 10:02:00 [INFO] [api] request 120
+134 g0     at Handler.run(Handler.java:120)
+135 g0 2026-09-05 10:02:01 [INFO] [api] request 121
+136 g0 2026-09-05 10:02:02 [INFO] [api] request 122
+137 g0 2026-09-05 10:02:03 [INFO] [api] request 123
+138 g0 2026-09-05 10:02:04 [INFO] [api] request 124
+139 g0 2026-09-05 10:02:05 [INFO] [api] request 125
+140 g0 2026-09-05 10:02:06 [INFO] [api] request 126
+141 g0 2026-09-05 10:02:07 [INFO] [api] request 127
+142 g0 2026-09-05 10:02:08 [INFO] [api] request 128
+143 g0 2026-09-05 10:02:09 [INFO] [api] request 129
+144 g0 2026-09-05 10:02:10 [INFO] [api] request 130
+145 g0     at Handler.run(Handler.java:130)
+146 g0 2026-09-05 10:02:11 [INFO] [api] request 131
+147 g0 2026-09-05 10:02:12 [INFO] [api] request 132
+148 g0 2026-09-05 10:02:13 [INFO] [api] request 133
+149 g0 2026-09-05 10:02:14 [INFO] [api] request 134
+150 g0 2026-09-05 10:02:15 [INFO] [api] request 135
+151 g0 2026-09-05 10:02:16 [INFO] [api] request 136
+152 g0 2026-09-05 10:02:17 [INFO] [api] request 137
+153 g0 2026-09-05 10:02:18 [INFO] [api] request 138
+154 g0 2026-09-05 10:02:19 [INFO] [api] request 139
+155 g0 2026-09-05 10:02:20 [INFO] [api] request 140
+156 g0     at Handler.run(Handler.java:140)
+157 g0 2026-09-05 10:02:21 [INFO] [api] request 141
+158 g0 2026-09-05 10:02:22 [INFO] [api] request 142
+159 g0 2026-09-05 10:02:23 [INFO] [api] request 143
+160 g0 2026-09-05 10:02:24 [INFO] [api] request 144
+161 g0 2026-09-05 10:02:25 [INFO] [api] request 145
+162 g0 2026-09-05 10:02:26 [INFO] [api] request 146
+163 g0 2026-09-05 10:02:27 [INFO] [api] request 147
+164 g0 2026-09-05 10:02:28 [INFO] [api] request 148
+165 g0 2026-09-05 10:02:29 [INFO] [api] request 149
+166 g0 2026-09-05 10:02:30 [INFO] [api] request 150
+167 g0     at Handler.run(Handler.java:150)
+168 g0 2026-09-05 10:02:31 [INFO] [api] request 151
+169 g0 2026-09-05 10:02:32 [INFO] [api] request 152
+170 g0 2026-09-05 10:02:33 [INFO] [api] request 153
+171 g0 2026-09-05 10:02:34 [INFO] [api] request 154
+172 g0 2026-09-05 10:02:35 [INFO] [api] request 155
+173 g0 2026-09-05 10:02:36 [INFO] [api] request 156
+174 g0 2026-09-05 10:02:37 [INFO] [api] request 157
+175 g0 2026-09-05 10:02:38 [INFO] [api] request 158
+176 g0 2026-09-05 10:02:39 [INFO] [api] request 159
+177 g0 2026-09-05 10:02:40 [INFO] [api] request 160
+178 g0     at Handler.run(Handler.java:160)
+179 g0 2026-09-05 10:02:41 [INFO] [api] request 161
+180 g0 2026-09-05 10:02:42 [INFO] [api] request 162
+181 g0 2026-09-05 10:02:43 [INFO] [api] request 163
+182 g0 2026-09-05 10:02:44 [INFO] [api] request 164
+183 g0 2026-09-05 10:02:45 [INFO] [api] request 165
+184 g0 2026-09-05 10:02:46 [INFO] [api] request 166
+185 g0 2026-09-05 10:02:47 [INFO] [api] request 167
+186 g0 2026-09-05 10:02:48 [INFO] [api] request 168
+187 g0 2026-09-05 10:02:49 [INFO] [api] request 169
+188 g0 2026-09-05 10:02:50 [INFO] [api] request 170
+189 g0     at Handler.run(Handler.java:170)
+190 g0 2026-09-05 10:02:51 [INFO] [api] request 171
+191 g0 2026-09-05 10:02:52 [INFO] [api] request 172
+192 g0 2026-09-05 10:02:53 [INFO] [api] request 173
+193 g0 2026-09-05 10:02:54 [INFO] [api] request 174
+194 g0 2026-09-05 10:02:55 [INFO] [api] request 175
+195 g0 2026-09-05 10:02:56 [INFO] [api] request 176
+196 g0 2026-09-05 10:02:57 [INFO] [api] request 177
+197 g0 2026-09-05 10:02:58 [INFO] [api] request 178
+198 g0 2026-09-05 10:02:59 [INFO] [api] request 179
+trim 80: Some((22, 0, 141))
+## batch 4
+held start HeldStart { generation: 0, line_no: 141, offset: Some(21326) }, top bytes 3544, at start false
+  -- web1:app.log older lines left the window
+141 g0 2026-09-05 10:02:07 [INFO] [api] request 127
+142 g0 2026-09-05 10:02:08 [INFO] [api] request 128
+143 g0 2026-09-05 10:02:09 [INFO] [api] request 129
+144 g0 2026-09-05 10:02:10 [INFO] [api] request 130
+145 g0     at Handler.run(Handler.java:130)
+146 g0 2026-09-05 10:02:11 [INFO] [api] request 131
+147 g0 2026-09-05 10:02:12 [INFO] [api] request 132
+148 g0 2026-09-05 10:02:13 [INFO] [api] request 133
+149 g0 2026-09-05 10:02:14 [INFO] [api] request 134
+150 g0 2026-09-05 10:02:15 [INFO] [api] request 135
+151 g0 2026-09-05 10:02:16 [INFO] [api] request 136
+152 g0 2026-09-05 10:02:17 [INFO] [api] request 137
+153 g0 2026-09-05 10:02:18 [INFO] [api] request 138
+154 g0 2026-09-05 10:02:19 [INFO] [api] request 139
+155 g0 2026-09-05 10:02:20 [INFO] [api] request 140
+156 g0     at Handler.run(Handler.java:140)
+157 g0 2026-09-05 10:02:21 [INFO] [api] request 141
+158 g0 2026-09-05 10:02:22 [INFO] [api] request 142
+159 g0 2026-09-05 10:02:23 [INFO] [api] request 143
+160 g0 2026-09-05 10:02:24 [INFO] [api] request 144
+161 g0 2026-09-05 10:02:25 [INFO] [api] request 145
+162 g0 2026-09-05 10:02:26 [INFO] [api] request 146
+163 g0 2026-09-05 10:02:27 [INFO] [api] request 147
+164 g0 2026-09-05 10:02:28 [INFO] [api] request 148
+165 g0 2026-09-05 10:02:29 [INFO] [api] request 149
+166 g0 2026-09-05 10:02:30 [INFO] [api] request 150
+167 g0     at Handler.run(Handler.java:150)
+168 g0 2026-09-05 10:02:31 [INFO] [api] request 151
+169 g0 2026-09-05 10:02:32 [INFO] [api] request 152
+170 g0 2026-09-05 10:02:33 [INFO] [api] request 153
+171 g0 2026-09-05 10:02:34 [INFO] [api] request 154
+172 g0 2026-09-05 10:02:35 [INFO] [api] request 155
+173 g0 2026-09-05 10:02:36 [INFO] [api] request 156
+174 g0 2026-09-05 10:02:37 [INFO] [api] request 157
+175 g0 2026-09-05 10:02:38 [INFO] [api] request 158
+176 g0 2026-09-05 10:02:39 [INFO] [api] request 159
+177 g0 2026-09-05 10:02:40 [INFO] [api] request 160
+178 g0     at Handler.run(Handler.java:160)
+179 g0 2026-09-05 10:02:41 [INFO] [api] request 161
+180 g0 2026-09-05 10:02:42 [INFO] [api] request 162
+181 g0 2026-09-05 10:02:43 [INFO] [api] request 163
+182 g0 2026-09-05 10:02:44 [INFO] [api] request 164
+183 g0 2026-09-05 10:02:45 [INFO] [api] request 165
+184 g0 2026-09-05 10:02:46 [INFO] [api] request 166
+185 g0 2026-09-05 10:02:47 [INFO] [api] request 167
+186 g0 2026-09-05 10:02:48 [INFO] [api] request 168
+187 g0 2026-09-05 10:02:49 [INFO] [api] request 169
+188 g0 2026-09-05 10:02:50 [INFO] [api] request 170
+189 g0     at Handler.run(Handler.java:170)
+190 g0 2026-09-05 10:02:51 [INFO] [api] request 171
+191 g0 2026-09-05 10:02:52 [INFO] [api] request 172
+192 g0 2026-09-05 10:02:53 [INFO] [api] request 173
+193 g0 2026-09-05 10:02:54 [INFO] [api] request 174
+194 g0 2026-09-05 10:02:55 [INFO] [api] request 175
+195 g0 2026-09-05 10:02:56 [INFO] [api] request 176
+196 g0 2026-09-05 10:02:57 [INFO] [api] request 177
+197 g0 2026-09-05 10:02:58 [INFO] [api] request 178
+198 g0 2026-09-05 10:02:59 [INFO] [api] request 179
+199 g0 2026-09-05 10:03:00 [INFO] [api] request 180
+200 g0     at Handler.run(Handler.java:180)
+201 g0 2026-09-05 10:03:01 [INFO] [api] request 181
+202 g0 2026-09-05 10:03:02 [INFO] [api] request 182
+203 g0 2026-09-05 10:03:03 [INFO] [api] request 183
+204 g0 2026-09-05 10:03:04 [INFO] [api] request 184
+205 g0 2026-09-05 10:03:05 [INFO] [api] request 185
+206 g0 2026-09-05 10:03:06 [INFO] [api] request 186
+207 g0 2026-09-05 10:03:07 [INFO] [api] request 187
+208 g0 2026-09-05 10:03:08 [INFO] [api] request 188
+209 g0 2026-09-05 10:03:09 [INFO] [api] request 189
+210 g0 2026-09-05 10:03:10 [INFO] [api] request 190
+211 g0     at Handler.run(Handler.java:190)
+212 g0 2026-09-05 10:03:11 [INFO] [api] request 191
+213 g0 2026-09-05 10:03:12 [INFO] [api] request 192
+214 g0 2026-09-05 10:03:13 [INFO] [api] request 193
+215 g0 2026-09-05 10:03:14 [INFO] [api] request 194
+216 g0 2026-09-05 10:03:15 [INFO] [api] request 195
+217 g0 2026-09-05 10:03:16 [INFO] [api] request 196
+218 g0 2026-09-05 10:03:17 [INFO] [api] request 197
+219 g0 2026-09-05 10:03:18 [INFO] [api] request 198
+220 g0 2026-09-05 10:03:19 [INFO] [api] request 199
+trim 80: Some((22, 0, 163))
+## batch 5
+held start HeldStart { generation: 0, line_no: 163, offset: Some(22300) }, top bytes 3544, at start false
+  -- web1:app.log older lines left the window
+163 g0 2026-09-05 10:02:27 [INFO] [api] request 147
+164 g0 2026-09-05 10:02:28 [INFO] [api] request 148
+165 g0 2026-09-05 10:02:29 [INFO] [api] request 149
+166 g0 2026-09-05 10:02:30 [INFO] [api] request 150
+167 g0     at Handler.run(Handler.java:150)
+168 g0 2026-09-05 10:02:31 [INFO] [api] request 151
+169 g0 2026-09-05 10:02:32 [INFO] [api] request 152
+170 g0 2026-09-05 10:02:33 [INFO] [api] request 153
+171 g0 2026-09-05 10:02:34 [INFO] [api] request 154
+172 g0 2026-09-05 10:02:35 [INFO] [api] request 155
+173 g0 2026-09-05 10:02:36 [INFO] [api] request 156
+174 g0 2026-09-05 10:02:37 [INFO] [api] request 157
+175 g0 2026-09-05 10:02:38 [INFO] [api] request 158
+176 g0 2026-09-05 10:02:39 [INFO] [api] request 159
+177 g0 2026-09-05 10:02:40 [INFO] [api] request 160
+178 g0     at Handler.run(Handler.java:160)
+179 g0 2026-09-05 10:02:41 [INFO] [api] request 161
+180 g0 2026-09-05 10:02:42 [INFO] [api] request 162
+181 g0 2026-09-05 10:02:43 [INFO] [api] request 163
+182 g0 2026-09-05 10:02:44 [INFO] [api] request 164
+183 g0 2026-09-05 10:02:45 [INFO] [api] request 165
+184 g0 2026-09-05 10:02:46 [INFO] [api] request 166
+185 g0 2026-09-05 10:02:47 [INFO] [api] request 167
+186 g0 2026-09-05 10:02:48 [INFO] [api] request 168
+187 g0 2026-09-05 10:02:49 [INFO] [api] request 169
+188 g0 2026-09-05 10:02:50 [INFO] [api] request 170
+189 g0     at Handler.run(Handler.java:170)
+190 g0 2026-09-05 10:02:51 [INFO] [api] request 171
+191 g0 2026-09-05 10:02:52 [INFO] [api] request 172
+192 g0 2026-09-05 10:02:53 [INFO] [api] request 173
+193 g0 2026-09-05 10:02:54 [INFO] [api] request 174
+194 g0 2026-09-05 10:02:55 [INFO] [api] request 175
+195 g0 2026-09-05 10:02:56 [INFO] [api] request 176
+196 g0 2026-09-05 10:02:57 [INFO] [api] request 177
+197 g0 2026-09-05 10:02:58 [INFO] [api] request 178
+198 g0 2026-09-05 10:02:59 [INFO] [api] request 179
+199 g0 2026-09-05 10:03:00 [INFO] [api] request 180
+200 g0     at Handler.run(Handler.java:180)
+201 g0 2026-09-05 10:03:01 [INFO] [api] request 181
+202 g0 2026-09-05 10:03:02 [INFO] [api] request 182
+203 g0 2026-09-05 10:03:03 [INFO] [api] request 183
+204 g0 2026-09-05 10:03:04 [INFO] [api] request 184
+205 g0 2026-09-05 10:03:05 [INFO] [api] request 185
+206 g0 2026-09-05 10:03:06 [INFO] [api] request 186
+207 g0 2026-09-05 10:03:07 [INFO] [api] request 187
+208 g0 2026-09-05 10:03:08 [INFO] [api] request 188
+209 g0 2026-09-05 10:03:09 [INFO] [api] request 189
+210 g0 2026-09-05 10:03:10 [INFO] [api] request 190
+211 g0     at Handler.run(Handler.java:190)
+212 g0 2026-09-05 10:03:11 [INFO] [api] request 191
+213 g0 2026-09-05 10:03:12 [INFO] [api] request 192
+214 g0 2026-09-05 10:03:13 [INFO] [api] request 193
+215 g0 2026-09-05 10:03:14 [INFO] [api] request 194
+216 g0 2026-09-05 10:03:15 [INFO] [api] request 195
+217 g0 2026-09-05 10:03:16 [INFO] [api] request 196
+218 g0 2026-09-05 10:03:17 [INFO] [api] request 197
+219 g0 2026-09-05 10:03:18 [INFO] [api] request 198
+220 g0 2026-09-05 10:03:19 [INFO] [api] request 199
+221 g0 2026-09-05 10:03:20 [INFO] [api] request 200
+222 g0     at Handler.run(Handler.java:200)
+223 g0 2026-09-05 10:03:21 [INFO] [api] request 201
+224 g0 2026-09-05 10:03:22 [INFO] [api] request 202
+225 g0 2026-09-05 10:03:23 [INFO] [api] request 203
+226 g0 2026-09-05 10:03:24 [INFO] [api] request 204
+227 g0 2026-09-05 10:03:25 [INFO] [api] request 205
+228 g0 2026-09-05 10:03:26 [INFO] [api] request 206
+229 g0 2026-09-05 10:03:27 [INFO] [api] request 207
+230 g0 2026-09-05 10:03:28 [INFO] [api] request 208
+231 g0 2026-09-05 10:03:29 [INFO] [api] request 209
+232 g0 2026-09-05 10:03:30 [INFO] [api] request 210
+233 g0     at Handler.run(Handler.java:210)
+234 g0 2026-09-05 10:03:31 [INFO] [api] request 211
+235 g0 2026-09-05 10:03:32 [INFO] [api] request 212
+236 g0 2026-09-05 10:03:33 [INFO] [api] request 213
+237 g0 2026-09-05 10:03:34 [INFO] [api] request 214
+238 g0 2026-09-05 10:03:35 [INFO] [api] request 215
+239 g0 2026-09-05 10:03:36 [INFO] [api] request 216
+240 g0 2026-09-05 10:03:37 [INFO] [api] request 217
+241 g0 2026-09-05 10:03:38 [INFO] [api] request 218
+242 g0 2026-09-05 10:03:39 [INFO] [api] request 219

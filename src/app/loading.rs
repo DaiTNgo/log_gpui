@@ -12,13 +12,12 @@ use crate::index::file::IndexedFile;
 use crate::index::indexing::{IndexOptions, Indexed, Outcome, index_into};
 use crate::index::tail::{TAIL_BYTES, Tail, read_tail};
 use crate::index::{ChainSource, DiskSource, HandleBudget, LineSource};
-use crate::live::LiveBuffer;
 use crate::model::LogEntry;
 use crate::space_view::ParsedFile;
 use crate::workspace::log_space::{LogFile, StoredMarker};
 use gpui::Context;
 use std::sync::{Arc, Mutex};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 /// How often the progress of a read is shown again.
@@ -42,21 +41,16 @@ pub struct FileLoad {
     cancel: Arc<AtomicBool>,
 }
 
-/// How far a read is.
+/// How far a read is: what Indexing has built so far.
 enum Progress {
-    /// Parsed whole (a file held in memory): bytes done, of all.
-    Parsed { done: Arc<AtomicU64>, total: Arc<AtomicU64> },
-    /// Read through its Line Index.
     Indexed(Arc<Indexed>),
 }
 
 impl FileLoad {
     /// How far the read is, 0..=100.
     pub fn percent(&self) -> u8 {
-        let (done, total) = match &self.progress {
-            Progress::Parsed { done, total } => (done.load(Ordering::Relaxed), total.load(Ordering::Relaxed)),
-            Progress::Indexed(indexed) => indexed.progress(),
-        };
+        let Progress::Indexed(indexed) = &self.progress;
+        let (done, total) = indexed.progress();
         if total == 0 {
             return 0;
         }
@@ -66,10 +60,8 @@ impl FileLoad {
     /// What Indexing has built so far, for a file read through its Line
     /// Index.
     pub fn indexed(&self) -> Option<&Arc<Indexed>> {
-        match &self.progress {
-            Progress::Indexed(indexed) => Some(indexed),
-            Progress::Parsed { .. } => None,
-        }
+        let Progress::Indexed(indexed) = &self.progress;
+        Some(indexed)
     }
 }
 
@@ -77,22 +69,6 @@ impl Drop for FileLoad {
     fn drop(&mut self) {
         self.cancel.store(true, Ordering::Release);
     }
-}
-
-/// Read and parse the whole file at `path`, live from where it ends.
-fn read_file(name: &str, path: &str, done: &AtomicU64, total: &AtomicU64, cancel: &AtomicBool) -> Option<std::io::Result<ParsedFile>> {
-    let bytes = match std::fs::read(path) {
-        Ok(bytes) => bytes,
-        Err(e) => return Some(Err(e)),
-    };
-    total.store(bytes.len() as u64, Ordering::Relaxed);
-    let mut parsed = ParsedFile::from_bytes_with_progress(&bytes, |read| {
-        done.store(read as u64, Ordering::Relaxed);
-        !cancel.load(Ordering::Acquire)
-    })?;
-    done.store(bytes.len() as u64, Ordering::Relaxed);
-    parsed.live = Some(LiveBuffer::loaded_from_bytes(name, &bytes, parsed.entries.len()));
-    Some(Ok(parsed))
 }
 
 /// Read the file at `path` through its Line Index: Indexing builds it into
@@ -210,26 +186,18 @@ impl AppView {
             let cancel = Arc::new(AtomicBool::new(false));
             let read_cancel = cancel.clone();
             let name = file.display_name.clone();
-            let task = if self.index_local_files {
-                let (format_id, options) = self.index_options_for(&file);
-                let indexed = Arc::new(Indexed::default());
-                let budget = self.live.handle_budget.clone();
-                let tail = live.then(|| self.read_tail_while_indexing(&path, &options, &cancel, cx));
-                let progress = Progress::Indexed(indexed.clone());
-                let again = self.parsed_files.contains_key(&file.file_id);
-                let load = FileLoad { name: name.clone(), progress, tail, again, cancel: cancel.clone() };
-                self.loads.insert(file.file_id.clone(), load);
-                cx.background_executor().spawn(async move {
-                    let read = index_file(&path, options, indexed, budget, &read_cancel);
-                    read.map(|r| r.map(|parsed| ParsedFile { format_id, ..parsed }))
-                })
-            } else {
-                let (done, total) = (Arc::new(AtomicU64::new(0)), Arc::new(AtomicU64::new(0)));
-                let progress = Progress::Parsed { done: done.clone(), total: total.clone() };
-                let load = FileLoad { name: name.clone(), progress, tail: None, again: false, cancel: cancel.clone() };
-                self.loads.insert(file.file_id.clone(), load);
-                cx.background_executor().spawn(async move { read_file(&name, &path, &done, &total, &read_cancel) })
-            };
+            let (format_id, options) = self.index_options_for(&file);
+            let indexed = Arc::new(Indexed::default());
+            let budget = self.live.handle_budget.clone();
+            let tail = live.then(|| self.read_tail_while_indexing(&path, &options, &cancel, cx));
+            let progress = Progress::Indexed(indexed.clone());
+            let again = self.parsed_files.contains_key(&file.file_id);
+            let load = FileLoad { name: name.clone(), progress, tail, again, cancel: cancel.clone() };
+            self.loads.insert(file.file_id.clone(), load);
+            let task = cx.background_executor().spawn(async move {
+                let read = index_file(&path, options, indexed, budget, &read_cancel);
+                read.map(|r| r.map(|parsed| ParsedFile { format_id, ..parsed }))
+            });
             cx.spawn(async move |this, cx| {
                 let result = task.await;
                 this.update(cx, |this, cx| this.file_read(&file, &cancel, result, cx)).ok();

@@ -5,40 +5,28 @@ use crate::archive::{FileSource, read_source};
 use crate::column::FieldMaxChars;
 use crate::filter_index::FilterIndex;
 use crate::model::LogEntry;
-use crate::index::view_rows::pack;
-use crate::timeline;
 use crate::view_data::{ViewData, ViewFile};
 use crate::marker::TextMarker;
 use crate::workspace::log_space::{LogFile, LogSpace};
-use crate::live::{BreakMark, LiveBuffer};
+use crate::live::BreakMark;
 use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 use std::sync::Arc;
 
-/// Bytes of a file parsed at a time on each core.
-const PARSE_BLOCK: usize = 4 << 20;
 
-/// One file, parsed once and cached by `file_id`: the entries for the Parsed
-/// View and the text lines for the Raw View.
+/// One file, cached by `file_id`: read through its Line Index, so its text
+/// stays where it is (on disk, in a Remote Cache, or the bytes it was made
+/// from) and its rows are read again when shown.
 #[derive(Debug, Clone)]
 pub struct ParsedFile {
-    pub entries: Vec<LogEntry>,
     pub max_chars: FieldMaxChars,
-    /// Every line of the file as stored, empty lines included.
-    pub lines: Arc<Vec<gpui::SharedString>>,
     /// Breaks of a live file, by position of the line they are drawn above.
     pub raw_breaks: Arc<BTreeMap<usize, Arc<BreakMark>>>,
-    /// What a live file keeps besides its lines.
-    pub live: Option<LiveBuffer>,
     /// Why the file could not be read; it then counts as empty.
     pub load_error: Option<String>,
     /// Id of the Log Format the entries were read with (`None`: Auto-detect).
     pub format_id: Option<String>,
-    /// The entries the Live Window just trimmed off the front, until the
-    /// open view took their rows out (they are what its counts held).
-    pub trimmed_off: Vec<LogEntry>,
-    /// The file read through its Line Index: its entries are read again from
-    /// it when shown, and `entries` and `lines` hold none.
+    /// The file's Line Index.
     pub indexed: Option<Arc<crate::index::file::IndexedFile>>,
 }
 
@@ -48,30 +36,12 @@ pub fn split_lines(text: &str) -> Vec<gpui::SharedString> {
 }
 
 impl ParsedFile {
+    /// The lines of `bytes`, kept in memory, read through a Line Index.
     pub fn from_bytes(bytes: &[u8]) -> Self {
-        Self::from_bytes_with_progress(bytes, |_| true).expect("never stopped")
-    }
-
-    /// `from_bytes`, telling `progress` the bytes read now and then; `None`
-    /// when it answers false (stop).
-    pub fn from_bytes_with_progress(bytes: &[u8], progress: impl FnMut(usize) -> bool) -> Option<Self> {
-        let content = String::from_utf8_lossy(bytes);
-        let entries = crate::parser::text::parse_entries_parallel(&content, PARSE_BLOCK, progress)?;
-        let max_chars = FieldMaxChars::scan_entries(&entries);
-        let parsed = crate::parser::text::ParseResult { entries, max_chars };
-        // Every line is an entry: the Raw View's line is the entry's own text.
-        let lines = parsed.entries.iter().map(|e| e.raw_line.clone()).collect();
-        Some(Self {
-            entries: parsed.entries,
-            max_chars: parsed.max_chars,
-            lines: Arc::new(lines),
-            raw_breaks: Arc::default(),
-            live: None,
-            load_error: None,
-            format_id: None,
-            trimmed_off: Vec::new(),
-            indexed: None,
-        })
+        let source = Arc::new(crate::index::BytesSource::new(bytes.to_vec()));
+        let file = crate::index::file::IndexedFile::index_now(source, Default::default())
+            .expect("bytes in memory are always read");
+        Self::from_indexed(file)
     }
 
     /// A file read through its Line Index.
@@ -84,39 +54,37 @@ impl ParsedFile {
     pub fn file_entries(&self) -> crate::view_data::FileEntries<'_> {
         match &self.indexed {
             Some(file) => crate::view_data::FileEntries::Indexed(file),
-            None => crate::view_data::FileEntries::Held(&self.entries),
+            None => crate::view_data::FileEntries::Empty,
         }
     }
 
     /// The number of lines.
     pub fn len(&self) -> usize {
-        self.file_entries().len()
+        self.indexed.as_ref().map_or(0, |f| f.len())
     }
 
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
 
-    /// Read the entries again with the Log Format `format` of id `format_id`
-    /// (`None`: Auto-detect); a live file reads its new lines with it too.
-    pub fn reformat(&mut self, format_id: Option<String>, format: Option<Arc<crate::log_format::CompiledFormat>>) {
-        crate::parser::text::reread_entries(&mut self.entries, format.as_deref());
-        self.adopt_format(format_id, format);
+    /// Entry `n` (0-based), read through the Line Index.
+    pub fn entry(&self, n: usize) -> Option<Arc<LogEntry>> {
+        self.indexed.as_ref()?.entry(n)
     }
 
-    /// The entries were read again with a format: remember it, and read new
-    /// lines with it.
-    pub fn adopt_format(&mut self, format_id: Option<String>, format: Option<Arc<crate::log_format::CompiledFormat>>) {
-        self.max_chars = FieldMaxChars::scan_entries(&self.entries);
-        if let Some(live) = self.live.as_mut() {
-            live.set_format(format);
-        }
-        self.format_id = format_id;
+    /// The text of line `n` (0-based).
+    pub fn line(&self, n: usize) -> Option<gpui::SharedString> {
+        self.indexed.as_ref()?.line(n)
     }
 
-    /// The lines, to change them in place.
-    pub fn lines_mut(&mut self) -> &mut Vec<gpui::SharedString> {
-        Arc::make_mut(&mut self.lines)
+    /// Every entry, read now and copied: for tests and small files only.
+    pub fn entries(&self) -> Vec<LogEntry> {
+        (0..self.len()).filter_map(|n| self.entry(n)).map(|e| (*e).clone()).collect()
+    }
+
+    /// Every line's text, read now: for tests and small files only.
+    pub fn lines(&self) -> Vec<gpui::SharedString> {
+        (0..self.len()).filter_map(|n| self.line(n)).collect()
     }
 
     /// Move the Breaks at line positions `from` and below by `by` lines;
@@ -137,16 +105,29 @@ impl ParsedFile {
         Self::from_bytes(text.as_bytes())
     }
 
+    /// The file at `path`, read through its Line Index where it is.
     pub fn from_path(path: &Path) -> std::io::Result<Self> {
-        Self::from_source(FileSource::Disk(path))
+        let source = Arc::new(crate::index::DiskSource::on_demand(path, crate::index::HandleBudget::shared()));
+        let file = crate::index::file::IndexedFile::index_now(source, Default::default()).map_err(std::io::Error::other)?;
+        Ok(Self::from_indexed(file))
     }
 
     pub fn from_source(source: FileSource) -> std::io::Result<Self> {
-        Ok(Self::from_bytes(&read_source(source)?))
+        match source {
+            FileSource::Disk(path) => Self::from_path(path),
+            other => Ok(Self::from_bytes(&read_source(other)?)),
+        }
     }
 
+    /// A file with no lines.
     pub fn empty() -> Self {
-        Self::from_text("")
+        Self {
+            max_chars: FieldMaxChars::default(),
+            raw_breaks: Arc::default(),
+            load_error: None,
+            format_id: None,
+            indexed: None,
+        }
     }
 
     /// An empty file that could not be read, and why.
@@ -219,14 +200,7 @@ pub fn build_space_view(space: &LogSpace, parsed: &HashMap<String, ParsedFile>) 
     let empty = ParsedFile::empty();
     let files = space.ordered_files();
     let parsed_of: Vec<&ParsedFile> = files.iter().map(|f| parsed.get(&f.file_id).unwrap_or(&empty)).collect();
-    let (rows, effective_ts, no_timestamp) = if parsed_of.iter().any(|p| p.indexed.is_some()) {
-        merge_by_meta(&parsed_of)
-    } else {
-        let entry_lists: Vec<&[LogEntry]> = parsed_of.iter().map(|p| p.entries.as_slice()).collect();
-        let timeline = timeline::merge(&entry_lists);
-        let rows = timeline.rows.iter().map(|r| pack(r.file as usize, r.line as usize)).collect();
-        (rows, timeline.effective_ts, timeline.no_timestamp_files)
-    };
+    let (rows, effective_ts, no_timestamp) = merge_by_meta(&parsed_of);
     let mut view = ViewData {
         rows: crate::index::view_rows::ViewRows::Merged(rows),
         files: files.iter().map(|f| ViewFile::new(&f.file_id, Some(&f.display_name))).collect(),
@@ -252,12 +226,10 @@ fn union_field_names(files: &[&ParsedFile]) -> Vec<String> {
     let mut seen = std::collections::HashSet::new();
     let mut names = Vec::new();
     for file in files {
-        let in_file: Vec<String> = match &file.indexed {
-            Some(indexed) => {
-                let data = indexed.indexed.data.read().unwrap();
-                data.filter.field_columns().filter_map(|c| c.field()).map(|k| k.as_str().to_string()).collect()
-            }
-            None => timeline::union_field_names(&[file.entries.as_slice()]),
+        let Some(indexed) = &file.indexed else { continue };
+        let in_file: Vec<String> = {
+            let data = indexed.indexed.data.read().unwrap();
+            data.filter.field_columns().filter_map(|c| c.field()).map(|k| k.as_str().to_string()).collect()
         };
         for name in in_file {
             if seen.insert(name.clone()) {
@@ -268,9 +240,8 @@ fn union_field_names(files: &[&ParsedFile]) -> Vec<String> {
     names
 }
 
-/// The Filter columns of a Log Space's merged rows, from its files' own:
-/// a file read through its Line Index has them from Indexing, a held file's
-/// are detected from its entries.
+/// The Filter columns of a Log Space's merged rows, from its files' own,
+/// which Indexing built.
 fn merge_filter_indexes(
     files: &[&LogFile],
     parsed: &[&ParsedFile],
@@ -280,17 +251,12 @@ fn merge_filter_indexes(
 ) -> FilterIndex {
     use crate::filter_index::MergeFile;
     let guards: Vec<_> = parsed.iter().map(|p| p.indexed.as_ref().map(|f| f.indexed.data.read().unwrap())).collect();
-    let built: Vec<Option<FilterIndex>> =
-        parsed.iter().map(|p| p.indexed.is_none().then(|| FilterIndex::build(&p.entries))).collect();
+    let empty = FilterIndex::default();
     let merge: Vec<MergeFile> = files
         .iter()
         .enumerate()
         .map(|(i, f)| MergeFile {
-            index: match (&guards[i], &built[i]) {
-                (Some(data), _) => &data.filter,
-                (None, Some(index)) => index,
-                (None, None) => unreachable!("a file is held or indexed"),
-            },
+            index: guards[i].as_ref().map_or(&empty, |data| &data.filter),
             source: Some(f.display_name.as_str()),
         })
         .collect();
@@ -301,11 +267,11 @@ fn merge_filter_indexes(
             .get(pos)
             .filter(|m| m.flags & crate::index::meta::flags::OWN_TS != 0)
             .map(|m| seconds(m.ts_us)),
-        None => parsed[file].entries.get(pos).filter(|e| crate::filter_index::has_timestamp(e)).map(|e| e.timestamp),
+        None => None,
     };
     let continues = |file: usize, pos: usize| match &guards[file] {
         Some(data) => data.file.meta.get(pos).is_some_and(|m| m.parent_dist > 0),
-        None => parsed[file].entries.get(pos).is_some_and(|e| e.parent.is_some()),
+        None => false,
     };
     FilterIndex::merge_files(&merge, rows, field_order, effective_ts, own_ts, continues)
 }
@@ -318,9 +284,8 @@ fn merged_max_chars(files: &[&LogFile], parsed: &[&ParsedFile]) -> FieldMaxChars
         if p.is_empty() {
             continue;
         }
-        match &p.indexed {
-            Some(indexed) => max.merge(&indexed.indexed.data.read().unwrap().max_chars),
-            None => max.merge(&FieldMaxChars::scan_entries(&p.entries)),
+        if let Some(indexed) = &p.indexed {
+            max.merge(&indexed.indexed.data.read().unwrap().max_chars);
         }
         max.source = max.source.max(file.display_name.chars().count());
     }
@@ -329,41 +294,17 @@ fn merged_max_chars(files: &[&LogFile], parsed: &[&ParsedFile]) -> FieldMaxChars
 
 use crate::index::meta::seconds;
 
-/// Merge files of which some are read through their Line Index, with
-/// `Merger` on their `LineMeta`: the merged rows, the timestamp each sorts
-/// by (`NAN` for none), and the files with no timestamp at all.
+/// Merge the files by the `LineMeta` of their Line Index, with `Merger`:
+/// the merged rows, the timestamp each sorts by (`NAN` for none), and the
+/// files with no timestamp at all. A file not read has no lines.
 fn merge_by_meta(files: &[&ParsedFile]) -> (Vec<u64>, Vec<f64>, Vec<usize>) {
-    use crate::index::meta::{LineMeta, NO_TIME, micros};
     use crate::index::view_rows::{Lane, Merger, unpack};
-    // A held file's lines as a merge reads them: its effective timestamps,
-    // and which lines continue the one above.
-    let held: Vec<Option<(Vec<LineMeta>, Option<Vec<f64>>)>> = files
-        .iter()
-        .map(|p| {
-            p.indexed.is_none().then(|| {
-                let ts = timeline::effective_timestamps(&p.entries);
-                let metas = p
-                    .entries
-                    .iter()
-                    .enumerate()
-                    .map(|(i, e)| LineMeta {
-                        ts_us: ts.as_ref().map_or(NO_TIME, |ts| micros(ts[i])),
-                        parent_dist: u32::from(e.parent.is_some()),
-                        ..LineMeta::default()
-                    })
-                    .collect();
-                (metas, ts)
-            })
-        })
-        .collect();
     let guards: Vec<_> = files.iter().map(|p| p.indexed.as_ref().map(|f| f.indexed.data.read().unwrap())).collect();
-    let lanes: Vec<Lane> = files
+    let lanes: Vec<Lane> = guards
         .iter()
-        .enumerate()
-        .map(|(i, _)| match (&guards[i], &held[i]) {
-            (Some(data), _) => Lane { meta: data.file.meta.as_slice(), done: true },
-            (None, Some((metas, _))) => Lane { meta: metas, done: true },
-            (None, None) => Lane { meta: &[], done: true },
+        .map(|g| match g {
+            Some(data) => Lane { meta: data.file.meta.as_slice(), done: true },
+            None => Lane { meta: &[], done: true },
         })
         .collect();
     let mut merger = Merger::new(lanes.len());
@@ -377,11 +318,7 @@ fn merge_by_meta(files: &[&ParsedFile]) -> (Vec<u64>, Vec<f64>, Vec<usize>) {
             if untimed.contains(&file) {
                 return f64::NAN;
             }
-            match (&guards[file], &held[file]) {
-                (Some(data), _) => data.file.meta.get(pos).map_or(f64::NAN, |m| seconds(m.ts_us)),
-                (None, Some((_, Some(ts)))) => ts[pos],
-                _ => f64::NAN,
-            }
+            guards[file].as_ref().and_then(|data| data.file.meta.get(pos)).map_or(f64::NAN, |m| seconds(m.ts_us))
         })
         .collect();
     (rows, effective_ts, untimed)
@@ -394,11 +331,8 @@ pub fn build_file_view(file: &LogFile, parsed: &ParsedFile) -> BuiltView {
         files: vec![ViewFile::new(&file.file_id, None)],
     };
     view.set_markers([file]);
-    let index = match &parsed.indexed {
-        // Indexing built it as a build from every row would.
-        Some(indexed) => indexed.indexed.data.read().unwrap().filter.clone(),
-        None => FilterIndex::build(&view.bind_with(|_| Some(parsed.entries.as_slice()))),
-    };
+    // Indexing built it as a build from every row would.
+    let index = parsed.indexed.as_ref().map(|indexed| indexed.indexed.data.read().unwrap().filter.clone()).unwrap_or_default();
     BuiltView { max_chars: parsed.max_chars.clone(), index, no_timestamp_files: Vec::new(), view }
 }
 

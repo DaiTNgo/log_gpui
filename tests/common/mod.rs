@@ -78,24 +78,16 @@ pub fn open_app_in(cx: &mut TestAppContext, dir: tempfile::TempDir) -> Harness {
 
 /// Open `AppView` on a Static Log Space holding one file of `lines`.
 pub fn open_app_with_lines(cx: &mut TestAppContext, lines: &[String]) -> Harness {
-    open_app_with_lines_as(cx, lines, true, LogSpaceKind::Static)
+    open_app_with_lines_as(cx, lines, LogSpaceKind::Static)
 }
 
 /// `open_app_with_lines` in a Live Log Space: the file is followed.
 pub fn open_app_with_live_lines(cx: &mut TestAppContext, lines: &[String]) -> Harness {
-    open_app_with_lines_as(cx, lines, true, LogSpaceKind::Live)
+    open_app_with_lines_as(cx, lines, LogSpaceKind::Live)
 }
 
-/// `open_app_with_lines` with the file held in memory, as a Remote file is,
-/// instead of read through its Line Index: for tests that send a live
-/// source lines the file does not have.
-pub fn open_app_with_held_lines(cx: &mut TestAppContext, lines: &[String]) -> Harness {
-    open_app_with_lines_as(cx, lines, false, LogSpaceKind::Static)
-}
-
-fn open_app_with_lines_as(cx: &mut TestAppContext, lines: &[String], indexed: bool, kind: LogSpaceKind) -> Harness {
+fn open_app_with_lines_as(cx: &mut TestAppContext, lines: &[String], kind: LogSpaceKind) -> Harness {
     let mut h = open_app(cx);
-    h.view.update(&mut h.cx, |app, _| app.index_local_files = indexed);
     let path = h.dir.path().join("app.log");
     std::fs::write(&path, lines.join("\n")).unwrap();
     let source = ImportSource::Disk(path.to_string_lossy().into_owned());

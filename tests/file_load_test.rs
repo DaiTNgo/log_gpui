@@ -118,7 +118,7 @@ fn a_local_file_of_a_live_space_is_followed_through_its_line_index(cx: &mut Test
     h.cx.run_until_parked();
     h.view.read_with(&h.cx, |app, _| {
         let parsed = app.parsed_files.values().next().unwrap();
-        assert!(parsed.indexed.is_some() && parsed.entries.is_empty(), "read through its Line Index, not held");
+        assert!(parsed.indexed.is_some(), "read through its Line Index");
     });
     pump_until(&mut h, "the source is live", |app| {
         app.live_file_statuses().iter().all(|(_, s)| *s == log_gpui::live::SourceStatus::Live)

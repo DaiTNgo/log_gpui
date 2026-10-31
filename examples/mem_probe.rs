@@ -83,7 +83,7 @@ fn main() {
         (entries.len(), Box::new((entries, lines, view)) as Box<dyn std::any::Any>)
     } else {
         let parsed = ParsedFile::from_bytes(&bytes);
-        (parsed.entries.len(), Box::new(parsed) as Box<dyn std::any::Any>)
+        (parsed.entries().len(), Box::new(parsed) as Box<dyn std::any::Any>)
     };
     println!(
         "{n} lines, {:.1} MB file, parse {:?}, +{:.0} MB ({:.0} bytes/line), max RSS {:.0} MB, sizeof LogEntry {}",

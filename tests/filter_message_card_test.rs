@@ -3,7 +3,7 @@
 
 mod common;
 
-use common::{Harness, open_app_with_held_lines, open_app_with_lines};
+use common::{Harness, open_app_with_lines};
 use gpui::TestAppContext;
 use log_gpui::workspace::state::ContextSection;
 
@@ -41,18 +41,5 @@ fn message_is_picked_from_add_filter_and_takes_a_custom_value(cx: &mut TestAppCo
         assert_eq!(every_row.len(), 43);
         assert_eq!(*app.filter_pass, every_row);
         assert_eq!(app.unread_column("message"), None, "the message is not a column no longer read");
-    });
-}
-
-#[gpui::test]
-fn the_message_card_applies_at_once_to_a_held_file(cx: &mut TestAppContext) {
-    let mut h = open_app_with_held_lines(cx, &lines());
-    h.view.update(&mut h.cx, |app, cx| {
-        app.pick_filter_column("message", cx);
-        assert!(app.filter_add_expanded_custom("done 29", cx));
-        assert!(!app.filter_is_scanning());
-        let every_row = app.filter_state.evaluate(&app.filter_index, &app.rows());
-        assert_eq!(*app.filter_pass, every_row);
-        assert_eq!(app.filter_pass.len(), 10, "done 29 and done 290..299, less 294 (a timeout)");
     });
 }

@@ -88,7 +88,7 @@ fn logcat_level_letter_is_kept() {
 #[test]
 fn raw_and_parsed_agree_on_an_edited_line() {
     let parsed = ParsedFile::from_text("2026-10-18 10:00:01 err boom\n");
-    assert_eq!(parsed.entries[0].level_text(), "err");
+    assert_eq!(parsed.entries()[0].level_text(), "err");
 }
 
 // ─── Rows ────────────────────────────────────────────────────────────────────

@@ -8,7 +8,7 @@ use log_gpui::workspace::log_space::{LogSpace, LogSpaceKind};
 use std::collections::HashMap;
 
 fn entries(text: &str) -> Vec<LogEntry> {
-    ParsedFile::from_text(text).entries
+    ParsedFile::from_text(text).entries()
 }
 
 /// The merged rows as `(file index, line number)` pairs.
@@ -133,7 +133,7 @@ fn columns_are_united_by_name() {
         .count();
     assert_eq!(empty_rows, 1);
 
-    let names = union_field_names(&[&parsed["/a.log"].entries, &parsed["/b.log"].entries]);
+    let names = union_field_names(&[&parsed["/a.log"].entries(), &parsed["/b.log"].entries()]);
     assert!(names.contains(&"region".to_string()));
 }
 
@@ -142,7 +142,7 @@ fn the_first_files_column_order_comes_first() {
     let a = r#"{"time":"2026-09-05T10:00:00Z","zeta":"1","alpha":"1"}"#;
     let b = r#"{"time":"2026-09-05T10:00:01Z","beta":"1","zeta":"1"}"#;
     let (_, parsed) = space_with(&[("/a.log", a), ("/b.log", b)]);
-    let names = union_field_names(&[&parsed["/a.log"].entries, &parsed["/b.log"].entries]);
+    let names = union_field_names(&[&parsed["/a.log"].entries(), &parsed["/b.log"].entries()]);
     let pos = |n: &str| names.iter().position(|x| x == n).unwrap();
     assert!(pos("zeta") < pos("alpha") || pos("alpha") < pos("zeta")); // both from file one
     assert!(pos("alpha").max(pos("zeta")) < pos("beta"), "new columns come after: {names:?}");
@@ -210,7 +210,7 @@ fn markers_painted_on_a_file_show_in_the_merged_view_a_file_view_and_a_rebuild()
         ("/a.log", "2026-09-05 10:00:01 [INFO] [API] a\n2026-09-05 10:00:03 [INFO] [API] c\n"),
         ("/b.log", "2026-09-05 10:00:02 [INFO] [JOB] b\n"),
     ]);
-    let line = parsed["/b.log"].entries[0].raw_line.clone();
+    let line = parsed["/b.log"].entries()[0].raw_line.clone();
     let color = log_gpui::palette::HighlightColor::palette(
         log_gpui::palette::Hue::Blue,
         log_gpui::palette::Shade::Medium,

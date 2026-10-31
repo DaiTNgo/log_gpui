@@ -12,7 +12,6 @@ use super::AppView;
 use crate::column::FieldMaxChars;
 use crate::filter::FilterState;
 use crate::focus::FocusTabs;
-use crate::live::LiveBuffer;
 use crate::space_view::{BuiltView, EmptyCanvas, ParsedFile, build_file_view, build_space_view};
 use crate::archive::{ArchiveError, MAX_UNCOMPRESSED_BYTES, detect, read_source};
 use crate::workspace::log_space::{LogFile, LogSpace, LogSpaceKind};
@@ -220,11 +219,7 @@ impl AppView {
                 return;
             }
         };
-        let mut parsed = ParsedFile::from_bytes(&bytes);
-        if file.entry.is_none() {
-            parsed.live = Some(LiveBuffer::loaded_from_bytes(&file.display_name, &bytes, parsed.entries.len()));
-        }
-        self.parsed_files.insert(file.file_id.clone(), parsed);
+        self.parsed_files.insert(file.file_id.clone(), ParsedFile::from_bytes(&bytes));
     }
 
     /// Read the Archive Entries of a space that are not cached yet, once per

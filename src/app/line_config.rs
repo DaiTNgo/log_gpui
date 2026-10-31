@@ -5,7 +5,7 @@
 
 use super::AppView;
 use crate::extract::LineConfig;
-use gpui::{AppContext as _, Context};
+use gpui::Context;
 use std::sync::Arc;
 
 /// The `LineConfig` in use and the fields it was compiled from, to compile
@@ -17,8 +17,6 @@ pub struct LineCache {
     config: Arc<LineConfig>,
     /// Bumped by every change; a background read of an older one is dropped.
     pub generation: u64,
-    /// Whether the open view's lines are being read again.
-    pub reading: bool,
 }
 
 /// Why a column a Filter condition is on is not read.
@@ -101,77 +99,22 @@ impl AppView {
         }
     }
 
-    /// Read the Detected Fields of the rows just put in the view, and detect
-    /// their Filter columns.
+    /// The Detected Fields of the rows just put in the view: a file whose
+    /// Line Index was built with other fields is indexed again.
     pub(crate) fn read_detected_fields(&mut self) {
-        // A file read through its Line Index is read again from the file.
         self.read_indexed_again_if_stale();
-        let config = self.line_config();
-        let mut read = false;
-        for file in &self.view.files {
-            let Some(parsed) = self.parsed_files.get_mut(&*file.file_id) else { continue };
-            if config.is_empty() && parsed.entries.iter().all(|e| e.extra.is_empty()) {
-                continue;
-            }
-            config.apply(&mut parsed.entries);
-            read = true;
-        }
-        if read {
-            self.after_detected_fields_read();
-        }
     }
 
-    fn after_detected_fields_read(&mut self) {
-        self.filter_index.rebuild_fields(&self.view.bind(&self.parsed_files));
-        let fitted = crate::column::FieldMaxChars::scan_entries(&self.view.bind(&self.parsed_files));
-        self.column_layout.max_chars.fields = fitted.fields;
-    }
-
-    /// Read the open view's lines again with the changed fields, in the
-    /// background; the view stays usable meanwhile.
+    /// The Detected Fields changed: the open view's files are indexed again
+    /// with them, in the background; the view stays usable meanwhile.
     pub(crate) fn detected_fields_changed(&mut self, cx: &mut Context<Self>) {
         self.schedule_session_save(cx);
+        self.line_cache.generation += 1;
         if self.read_indexed_again_if_stale() {
             self.start_queued_loads(cx);
             self.rebuild_open_view_keeping_position(cx);
         }
-        let config = self.line_config();
-        self.line_cache.generation += 1;
-        let generation = self.line_cache.generation;
-        let rows = self.view.len();
-        let lines = crate::extract::snapshot(&self.view.bind(&self.parsed_files));
-        self.line_cache.reading = true;
+        self.apply_filters_and_refresh(cx);
         cx.notify();
-        cx.spawn(async move |this, cx| {
-            let read = cx.background_spawn(async move { config.read_snapshot(&lines) }).await;
-            this.update(cx, |this, cx| {
-                if this.line_cache.generation != generation {
-                    return;
-                }
-                this.line_cache.reading = false;
-                if this.view.len() == rows {
-                    // Each read goes to the line of its row, file by file.
-                    for (at, file) in this.view.files.iter().enumerate() {
-                        let Some(parsed) = this.parsed_files.get_mut(&*file.file_id) else { continue };
-                        for (row, extra) in this.view.rows.iter().zip(&read) {
-                            let (f, pos) = crate::index::view_rows::unpack(row);
-                            if f == at {
-                                if let Some(entry) = parsed.entries.get_mut(pos) {
-                                    entry.extra = extra.clone();
-                                }
-                            }
-                        }
-                    }
-                    this.after_detected_fields_read();
-                } else {
-                    // Live lines came meanwhile: read them all now.
-                    this.read_detected_fields();
-                }
-                this.apply_filters_and_refresh(cx);
-                cx.notify();
-            })
-            .ok();
-        })
-        .detach();
     }
 }

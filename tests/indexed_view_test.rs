@@ -133,7 +133,8 @@ fn merged_filter_columns_are_those_of_a_build_on_the_merged_rows() {
     let view = build_space_view(&space, &held);
     // The old way: every merged row, copied, built from scratch.
     let ordered = space.ordered_files();
-    let lists: Vec<&[LogEntry]> = ordered.iter().map(|f| held[&f.file_id].entries.as_slice()).collect();
+    let owned: Vec<Vec<LogEntry>> = ordered.iter().map(|f| held[&f.file_id].entries()).collect();
+    let lists: Vec<&[LogEntry]> = owned.iter().map(Vec::as_slice).collect();
     let timeline = log_gpui::timeline::merge(&lists);
     let fields = log_gpui::timeline::union_field_names(&lists);
     let rows = view.materialize(&held);
