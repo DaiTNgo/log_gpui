@@ -156,7 +156,8 @@
 - [x] 10.5 Ghi cache lỗi: báo một notice và ngừng đọc file đó; dòng đã có vẫn xem được.
   - Test: segment không ghi được thì notice, source đóng, view giữ dòng.
   - Đã làm: lỗi ghi đầu tiên dừng lô event; notice "<file> is not read any further: could not write its Remote Cache (…)"; source được đóng, trạng thái `Error`, và event nó còn gửi bị bỏ (`live.cache_failed`) cho tới khi cache của file đóng (đóng tab, tắt app). Test: `cached_remote_app_test::a_cache_that_cannot_be_written_stops_the_file_and_keeps_its_lines` (thư mục cache bị chặn ghi).
-- [ ] 10.6 Kết nối SSH: khi không còn tab đang mở nào có file của một Server (Remote File, Remote Command, Live Glob) thì đóng kết nối tới Server đó; chuyển tab vẫn giữ.
+- [x] 10.6 Kết nối SSH: khi không còn tab đang mở nào có file của một Server (Remote File, Remote Command, Live Glob) thì đóng kết nối tới Server đó; chuyển tab vẫn giữ.
   - Test: đóng tab Remote cuối cùng của `web1` thì session đóng; chuyển tab thì không.
+  - Đã làm: khi đóng tab (`close_tab_at`, `close_scope_at`), app đóng session tới các Server mà không tab đang mở nào dùng (`servers_in_open_tabs`: file và Live Glob của các tab, mọi project). Giữ lại: Server một Open in full đang đọc, Jump Host của Server đang dùng, và mọi Server khi một hộp thoại Remote đang mở. Test: `cached_remote_app_test::a_server_is_in_use_while_an_open_tab_shows_its_files` (tập Server đang dùng). Việc ngắt session thật chỉ kiểm được với sshd, chưa chạy.
 - [ ] 10.7 Cập nhật Settings và CONTEXT.md theo các mục trên (gộp với 9.5).
 

@@ -203,6 +203,59 @@ impl AppView {
         cache::sweep(&self.remote_cache_root(), &keep);
     }
 
+    /// The Servers whose files (Remote Files, Remote Commands, Live Globs)
+    /// an open tab shows, in any project.
+    pub fn servers_in_open_tabs(&self) -> std::collections::HashSet<String> {
+        use crate::workspace::working_set::TabTarget;
+        let mut servers = std::collections::HashSet::new();
+        for project in &self.workspace_state.projects {
+            for tab in project.working_set.tabs() {
+                let (space_id, only) = match &tab.target {
+                    TabTarget::LogSpace { space_id } => (space_id, None),
+                    TabTarget::FileView { space_id, file_id } => (space_id, Some(file_id)),
+                    TabTarget::InvestigationBoard { .. } => continue,
+                };
+                let Some(space) = project.log_space(space_id) else { continue };
+                for file in space.files.iter().filter(|f| only.is_none_or(|id| *id == f.file_id)) {
+                    if let Some(remote) = &file.remote {
+                        servers.insert(remote.server_id.clone());
+                    }
+                }
+                if only.is_none() {
+                    servers.extend(space.globs.iter().map(|g| g.server_id.clone()));
+                }
+            }
+        }
+        servers
+    }
+
+    /// The connections to Servers no open tab uses go (decision 10). A
+    /// Server an Open in full is reading from, or one a Remote dialog may be
+    /// browsing, keeps its connection. Switching tabs keeps every one.
+    pub(crate) fn release_servers_without_open_tabs(&mut self) {
+        let Some(hub) = self.remote.hub.clone() else { return };
+        if self.remote.picker.is_some() || self.remote.download.is_some() || self.remote.download_options.is_some() {
+            return;
+        }
+        let mut used = self.servers_in_open_tabs();
+        used.extend(self.live.copy_reads.values().map(|r| r.server_id.clone()));
+        // A Server reached through Jump Hosts keeps them connected too.
+        let hops: Vec<String> = used
+            .iter()
+            .filter_map(|id| self.remote.servers.chain(id).ok())
+            .flatten()
+            .map(|s| s.id.clone())
+            .collect();
+        used.extend(hops);
+        for server in &self.remote.servers.servers {
+            if used.contains(&server.id) {
+                continue;
+            }
+            let (sid, h) = (server.id.clone(), hub.clone());
+            hub.spawn(async move { h.drop_session(&sid).await });
+        }
+    }
+
     /// Every Remote Cache goes: the app quits, or opens (what an app that
     /// stopped short left behind). A cache another app window uses stays.
     pub(crate) fn remove_all_remote_caches(&mut self) {

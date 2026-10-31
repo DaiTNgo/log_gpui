@@ -325,6 +325,20 @@ fn caches_left_by_a_run_that_stopped_short_go_when_the_app_opens(cx: &mut TestAp
     drop(h);
 }
 
+/// Decision 10: switching tabs keeps the Server in use; closing its last
+/// tab leaves it unused, and its connection is closed (task 10.6).
+#[gpui::test]
+fn a_server_is_in_use_while_an_open_tab_shows_its_files(cx: &mut TestAppContext) {
+    let mut r = open(cx, 1_000);
+    let used = |r: &Remote| r.h.view.read_with(&r.h.cx, |app, _| app.servers_in_open_tabs().contains("srv-1"));
+    assert!(used(&r));
+    let remote = r.space_id();
+    r.open_other_space("Other", false);
+    assert!(used(&r), "a Dormant Tab keeps its Server");
+    r.close_tab_of(&remote);
+    assert!(!used(&r), "no open tab shows a file of srv-1");
+}
+
 /// Decision 10: a cache that cannot be written stops the file, with a
 /// notice; the lines it has stay (task 10.5).
 #[gpui::test]

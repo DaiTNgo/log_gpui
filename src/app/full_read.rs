@@ -52,6 +52,8 @@ pub struct CopyRead {
     pub progress: Option<(String, u64, u64)>,
     /// The folder this read writes.
     pub dir: PathBuf,
+    /// The Server it reads from.
+    pub server_id: String,
     /// Reload: the folder of the copy this read replaces.
     pub replaces: Option<PathBuf>,
     /// The first line numbers could not be counted.
@@ -243,6 +245,7 @@ impl AppView {
                 space_id,
                 progress: None,
                 dir,
+                server_id: request.server_id.clone(),
                 replaces,
                 numbers_unavailable: false,
                 finished: false,

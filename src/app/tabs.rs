@@ -594,8 +594,10 @@ impl AppView {
             // files, Filter and Markers.
         }
         self.restore_active_session(cx);
-        // The Remote Caches no open tab shows go with it.
+        // The Remote Caches and Server connections no open tab uses go
+        // with it.
         self.drop_unused_remote_caches();
+        self.release_servers_without_open_tabs();
         self.schedule_session_save(cx);
     }
 
@@ -619,8 +621,10 @@ impl AppView {
             proj.working_set.close_scope(scope, index);
         }
         self.restore_active_session(cx);
-        // The Remote Caches no open tab shows go with it.
+        // The Remote Caches and Server connections no open tab uses go
+        // with it.
         self.drop_unused_remote_caches();
+        self.release_servers_without_open_tabs();
         self.schedule_session_save(cx);
     }
 
