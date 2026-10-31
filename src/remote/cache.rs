@@ -745,11 +745,6 @@ pub fn list(root: &Path) -> Vec<CacheInfo> {
     found
 }
 
-/// Bytes the caches under `root` take.
-pub fn total_size(root: &Path) -> u64 {
-    size_of(root)
-}
-
 /// Remove the Server folders left empty.
 fn remove_empty_servers(root: &Path) {
     for server in std::fs::read_dir(root).into_iter().flatten().flatten() {
@@ -770,39 +765,5 @@ pub fn sweep(root: &Path, in_use: &std::collections::HashSet<PathBuf>, opened_be
     }
     remove_empty_servers(root);
     removed
-}
-
-/// What `trim_to_size` did.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Trimmed {
-    pub removed: usize,
-    /// Bytes the caches take after.
-    pub bytes: u64,
-}
-
-/// Remove caches under `root`, the one opened longest ago first, until
-/// they take at most `limit` bytes. The caches in `keep` (files of open
-/// tabs) and those another app window uses are never removed.
-pub fn trim_to_size(root: &Path, limit: u64, keep: &std::collections::HashSet<PathBuf>) -> Trimmed {
-    let mut caches = list(root);
-    let mut bytes: u64 = caches.iter().map(|c| c.bytes).sum();
-    let mut removed = 0;
-    caches.sort_by_key(|c| c.last_opened);
-    for info in caches {
-        if bytes <= limit {
-            break;
-        }
-        if keep.contains(&info.dir) {
-            continue;
-        }
-        if remove(&info.dir).is_ok() {
-            bytes = bytes.saturating_sub(info.bytes);
-            removed += 1;
-        }
-    }
-    if removed > 0 {
-        remove_empty_servers(root);
-    }
-    Trimmed { removed, bytes }
 }
 

@@ -280,35 +280,6 @@ fn a_cache_another_log_space_still_refers_to_stays(cx: &mut TestAppContext) {
     assert!(dir.is_dir(), "the other Log Space reads it next time");
 }
 
-#[gpui::test]
-fn over_the_limit_the_caches_of_other_files_go_and_the_open_one_stays(cx: &mut TestAppContext) {
-    let mut r = open(cx, 100_000);
-    r.tail(lines(0..2_000));
-    let open_dir = r.cache_dir();
-    // A cache of a file no tab shows, opened earlier.
-    let root = r.h.view.read_with(&r.h.cx, |app, _| app.remote_cache_root_for_test());
-    let target = log_gpui::remote::cache::CacheTarget::File { path: "/app/other.log".into() };
-    let other = log_gpui::remote::cache::dir_for(&root, "srv-1", &target);
-    {
-        let mut c = log_gpui::remote::cache::RemoteCache::open(&other, "srv-1", target, 1_000).unwrap();
-        let l = lines(0..2_000);
-        c.append(&l.iter().map(String::as_str).collect::<Vec<_>>()).unwrap();
-    }
-    r.h.view.update(&mut r.h.cx, |app, _| {
-        // The other file is in a Log Space too, so only the limit removes it.
-        let project = app.workspace_state.active_project_mut().unwrap();
-        let space = project.create_log_space("Other", LogSpaceKind::Live).unwrap();
-        space.add_remote_files(&[("srv-1".into(), "web1".into(), "/app/other.log".into())]).unwrap();
-        app.live.cache_limit = 10_000;
-        app.trim_remote_caches();
-        assert!(app.notice.as_deref().is_some_and(|n| n.contains("open tabs")), "{:?}", app.notice);
-    });
-    assert!(!other.exists(), "the cache no tab shows went");
-    assert!(open_dir.is_dir(), "the open tab's stayed");
-    r.append(lines(2_000..2_010));
-    r.h.view.read_with(&r.h.cx, |app, _| assert_eq!(app.rows_snapshot().len(), lines(0..2_010).len()));
-}
-
 // ── Remote Commands (task 6.1) ──────────────────────────────────────────────
 
 impl Remote {

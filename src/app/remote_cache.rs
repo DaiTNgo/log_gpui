@@ -155,8 +155,6 @@ fn cached_parsed(cached: &crate::live::cached::CachedFile) -> ParsedFile {
 
 /// A cache not opened for this long is removed at start.
 const STALE_AFTER_SECS: u64 = 14 * 24 * 60 * 60;
-/// The size of the caches is checked at most this often while lines come.
-const SIZE_CHECK_EVERY: std::time::Duration = std::time::Duration::from_secs(10);
 
 impl AppView {
     /// The cache folder of every Remote File and Remote Command a Log Space
@@ -173,11 +171,6 @@ impl AppView {
                 Some(cache::dir_for(&root, &server_id, &target))
             })
             .collect()
-    }
-
-    /// The caches of the files of open tabs: never removed to make room.
-    fn open_cache_dirs(&self) -> std::collections::HashSet<PathBuf> {
-        self.live.cached.values().map(|c| c.cache().dir().to_path_buf()).collect()
     }
 
     /// A file left its Log Space, its Log Space or Server was deleted, or
@@ -205,66 +198,4 @@ impl AppView {
         cache::sweep(&self.remote_cache_root(), &self.remote_cache_dirs_in_use(), Some(now.saturating_sub(STALE_AFTER_SECS)));
     }
 
-    /// Lines were written to a cache: at most every 10 s, the caches opened
-    /// longest ago go until all fit the limit.
-    pub(crate) fn check_remote_cache_size(&mut self) {
-        let now = std::time::Instant::now();
-        if self.live.cache_checked.is_some_and(|t| now.duration_since(t) < SIZE_CHECK_EVERY) {
-            return;
-        }
-        self.live.cache_checked = Some(now);
-        self.trim_remote_caches();
-    }
-
-    /// The caches opened longest ago go until all fit the limit. When only
-    /// the caches of open tabs are left and still go over, a notice says so
-    /// once.
-    pub fn trim_remote_caches(&mut self) {
-        let trimmed = cache::trim_to_size(&self.remote_cache_root(), self.live.cache_limit, &self.open_cache_dirs());
-        let over = trimmed.bytes > self.live.cache_limit;
-        if over && !self.live.cache_over_told {
-            self.notice = Some(format!(
-                "The Remote Cache of the open tabs takes {}, more than its limit of {}",
-                human_bytes(trimmed.bytes),
-                human_bytes(self.live.cache_limit)
-            ));
-        }
-        self.live.cache_over_told = over;
-    }
-
-    /// Bytes the Remote Caches take, for Settings.
-    pub fn remote_cache_size(&self) -> u64 {
-        cache::total_size(&self.remote_cache_root())
-    }
-
-    pub fn set_remote_cache_limit(&mut self, mb: u64, cx: &mut gpui::Context<Self>) {
-        self.workspace_state.remote_cache_limit_mb = mb.clamp(256, 1 << 20);
-        self.live.cache_limit = self.workspace_state.remote_cache_limit_mb << 20;
-        self.live.cache_over_told = false;
-        self.schedule_session_save(cx);
-        self.trim_remote_caches();
-        cx.notify();
-    }
-
-    /// "Clear Remote cache": every cache but those of open tabs goes; those
-    /// files are read from their Server again next time.
-    pub fn clear_remote_cache(&mut self, cx: &mut gpui::Context<Self>) {
-        let root = self.remote_cache_root();
-        let keep = self.open_cache_dirs();
-        for info in cache::list(&root) {
-            if !keep.contains(&info.dir) {
-                let _ = cache::remove(&info.dir);
-            }
-        }
-        cache::sweep(&root, &self.remote_cache_dirs_in_use(), None);
-        cx.notify();
-    }
-}
-
-fn human_bytes(bytes: u64) -> String {
-    if bytes >= 1 << 30 {
-        format!("{:.1} GB", bytes as f64 / f64::from(1u32 << 30))
-    } else {
-        format!("{} MB", bytes >> 20)
-    }
 }

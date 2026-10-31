@@ -260,25 +260,6 @@ fn a_cache_another_app_window_uses_is_left() {
 }
 
 #[test]
-fn over_the_limit_the_cache_opened_longest_ago_goes_first_but_not_an_open_one() {
-    let root = tempfile::tempdir().unwrap();
-    // About 100 KB each.
-    let open = cache_of(root.path(), "/open.log", 1_000, 1);
-    let oldest = cache_of(root.path(), "/oldest.log", 1_000, 2);
-    let middle = cache_of(root.path(), "/middle.log", 1_000, 3);
-    let newest = cache_of(root.path(), "/newest.log", 1_000, 4);
-    let keep: HashSet<_> = [open.clone()].into();
-    let t = cache::trim_to_size(root.path(), 250_000, &keep);
-    assert_eq!(t.removed, 2);
-    assert!(open.is_dir() && !oldest.exists() && !middle.exists() && newest.is_dir());
-    assert!(t.bytes <= 250_000 && t.bytes == cache::total_size(root.path()));
-    // Only the open one would have to go: it stays, over the limit.
-    let t = cache::trim_to_size(root.path(), 1, &[open.clone(), newest.clone()].into());
-    assert_eq!(t.removed, 0);
-    assert!(t.bytes > 1 && open.is_dir());
-}
-
-#[test]
 fn a_cache_with_no_meta_is_listed_and_removed_like_any() {
     let root = tempfile::tempdir().unwrap();
     let dir = cache_of(root.path(), "/a.log", 10, 1_000);
@@ -286,7 +267,7 @@ fn a_cache_with_no_meta_is_listed_and_removed_like_any() {
     let found = cache::list(root.path());
     assert_eq!((found.len(), found[0].last_opened), (1, 0));
     assert!(!cache::has_lines(&dir), "read as no cache");
-    assert_eq!(cache::trim_to_size(root.path(), 0, &HashSet::new()).removed, 1);
+    assert_eq!(cache::sweep(root.path(), &HashSet::new(), None), 1);
 }
 
 /// The output of each line of a Remote Command is kept beside its segment

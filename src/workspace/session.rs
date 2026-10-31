@@ -31,8 +31,6 @@ pub struct SessionManifest {
     pub live_glob_limit: usize,
     #[serde(default = "crate::workspace::state::default_glob_interval")]
     pub live_glob_interval: u64,
-    #[serde(default = "crate::workspace::state::default_remote_cache_limit_mb")]
-    pub remote_cache_limit_mb: u64,
     #[serde(default)]
     pub density: crate::density::Density,
     #[serde(default)]
@@ -138,7 +136,6 @@ impl SessionManifest {
             full_read_limit_lines: ws.full_read_limit_lines,
             live_glob_limit: ws.live_glob_limit,
             live_glob_interval: ws.live_glob_interval,
-            remote_cache_limit_mb: ws.remote_cache_limit_mb,
             density: ws.density,
             text_zoom: ws.text_zoom,
             show_minimap: ws.show_minimap,
@@ -179,7 +176,6 @@ impl SessionManifest {
         ws.full_read_limit_lines = self.full_read_limit_lines;
         ws.live_glob_limit = self.live_glob_limit;
         ws.live_glob_interval = self.live_glob_interval;
-        ws.remote_cache_limit_mb = self.remote_cache_limit_mb;
         ws.density = self.density;
         ws.text_zoom = self.text_zoom;
         ws.show_minimap = self.show_minimap;

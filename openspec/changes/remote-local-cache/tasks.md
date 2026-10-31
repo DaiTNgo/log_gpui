@@ -142,7 +142,8 @@
   - bỏ `last_opened` 14 ngày.
   - Kiểm lại 5.1 và 5.2 trong phạm vi một phiên rồi đánh dấu.
   - Test: chuyển tab rồi quay lại chỉ đọc phần mới; đóng tab xoá cache; cùng file ở hai tab thì đóng một tab cache vẫn còn; mở app không còn cache cũ.
-- [ ] 10.2 Bỏ giới hạn dung lượng: setting "Remote cache", nút "Clear Remote cache", `remote_cache_limit_mb` trong session, `check_remote_cache_size`/`trim_to_size` (task 8.3).
+- [x] 10.2 Bỏ giới hạn dung lượng: setting "Remote cache", nút "Clear Remote cache", `remote_cache_limit_mb` trong session, `check_remote_cache_size`/`trim_to_size` (task 8.3).
+  - Đã làm. Session cũ có `remote_cache_limit_mb` vẫn đọc được (field lạ bị bỏ qua). Test chạy: `remote_cache_test`, `cached_remote_app_test`, `session_test`.
 - [ ] 10.3 Bỏ Load more: Remote File và file local, `HoldMode::Extended`, Back to Live Window, setting "Load more step", `SourceCommand::LoadMore` và event `Older` ở source.
   - Full Read Limit chỉ còn cho Open in full.
 - [ ] 10.4 Bỏ "Load earlier generation": `SourceCommand::LoadEarlier`, event `Earlier`, nút trên Break. Break ở đầu khi còn Rotated File chỉ gợi ý Open in full.

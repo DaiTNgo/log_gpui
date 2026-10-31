@@ -118,12 +118,6 @@ pub struct LiveRuntime {
     /// The last lines a Remote Command's cache kept, until its source
     /// starts and runs it again below them.
     pub previous_run: HashMap<String, Vec<(crate::model::Stream, String)>>,
-    /// Most bytes all Remote Caches take together (decision 7).
-    pub cache_limit: u64,
-    /// When the size of the Remote Caches was last checked, and whether
-    /// the notice that only open tabs' caches are left was given.
-    pub cache_checked: Option<std::time::Instant>,
-    pub cache_over_told: bool,
     /// Local files that grew by more than one batch: indexed on soon
     /// (task 9.1), and whether that is scheduled.
     pub index_more: HashSet<String>,
@@ -167,9 +161,6 @@ impl LiveRuntime {
             resume_from: HashMap::new(),
             cached: HashMap::new(),
             previous_run: HashMap::new(),
-            cache_limit: crate::workspace::state::default_remote_cache_limit_mb() << 20,
-            cache_checked: None,
-            cache_over_told: false,
             index_more: HashSet::new(),
             index_more_scheduled: false,
             first_marks: HashMap::new(),
@@ -835,7 +826,6 @@ impl AppView {
             delta.appended = None;
         }
         self.refresh_cached_parsed(file_id);
-        self.check_remote_cache_size();
         delta
     }
 

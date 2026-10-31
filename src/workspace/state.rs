@@ -34,9 +34,6 @@ pub struct WorkspaceState {
     /// Seconds between two checks of a Live Glob's folder: an app setting.
     #[serde(default = "default_glob_interval")]
     pub live_glob_interval: u64,
-    /// Most MB all Remote Caches take together: an app setting.
-    #[serde(default = "default_remote_cache_limit_mb")]
-    pub remote_cache_limit_mb: u64,
     /// Row density of the log table: an app setting.
     #[serde(default)]
     pub density: crate::density::Density,
@@ -75,10 +72,6 @@ pub fn default_glob_interval() -> u64 {
 }
 
 /// Default Full Read Limit.
-pub fn default_remote_cache_limit_mb() -> u64 {
-    2048
-}
-
 pub fn default_full_read_limit() -> usize {
     2_000_000
 }
@@ -99,7 +92,6 @@ impl Default for WorkspaceState {
             full_read_limit_lines: default_full_read_limit(),
             live_glob_limit: default_glob_limit(),
             live_glob_interval: default_glob_interval(),
-            remote_cache_limit_mb: default_remote_cache_limit_mb(),
             density: Default::default(),
             text_zoom: 0,
             show_minimap: true,
