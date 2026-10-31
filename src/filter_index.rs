@@ -365,6 +365,45 @@ pub fn has_timestamp(entry: &LogEntry) -> bool {
 }
 
 impl FilterIndex {
+    /// The rows `rows` of a Remote Command read from disk came from these
+    /// outputs (`stream_of`), which Indexing could not know: their Stream
+    /// was missing until now. `is_parent` says which are Parent Lines, for
+    /// Coverage.
+    pub fn set_streams(
+        &mut self,
+        rows: std::ops::Range<usize>,
+        stream_of: impl Fn(usize) -> Option<crate::model::Stream>,
+        is_parent: impl Fn(usize) -> bool,
+    ) {
+        let Some(col) = self.columns.iter_mut().find(|c| matches!(c.source, Source::Stream)) else { return };
+        if col.overflow {
+            return;
+        }
+        col.row_ids.resize(col.rows, MISSING);
+        for row in rows {
+            let Some(stream) = stream_of(row) else { continue };
+            if col.row_ids.get(row) != Some(&MISSING) {
+                continue;
+            }
+            let raw = stream.as_str();
+            let id = match col.folded_ids.get(raw) {
+                Some(&id) => id,
+                None => {
+                    let id = col.values.len() as u16;
+                    col.values.push(ColumnValue { display: raw.to_string(), folded: raw.to_string(), count: 0 });
+                    col.folded_ids.insert(raw.to_string(), id);
+                    id
+                }
+            };
+            col.values[id as usize].count += 1;
+            col.spellings.entry(raw.to_string()).or_insert((id, 0)).1 += 1;
+            col.row_ids[row] = id;
+            if is_parent(row) {
+                col.covered += 1;
+            }
+        }
+    }
+
     /// Detect the columns and values of a whole file.
     pub fn build<R: Rows + ?Sized>(rows: &R) -> Self {
         let mut index = Self::default();

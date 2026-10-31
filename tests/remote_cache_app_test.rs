@@ -132,3 +132,52 @@ fn walk_lines(dir: &std::path::Path) -> usize {
     }
     n
 }
+
+/// A Remote Command's tab chosen again shows the output its last Run kept,
+/// under a Break "previous run", then runs the command again below it
+/// (task 6.1).
+#[gpui::test]
+fn a_remote_command_chosen_again_shows_its_last_run_and_runs_again_below(cx: &mut TestAppContext) {
+    let mut h = common::open_app(cx);
+    let Some(server_id) = add_server(&mut h) else { return };
+    let space = h.view.update(&mut h.cx, |app, cx| {
+        let project = app.workspace_state.active_project_mut().unwrap();
+        let space = project.create_log_space("Remote", LogSpaceKind::Live).unwrap();
+        space.add_remote_commands(&[(server_id.clone(), "web1".into(), "echo out; echo err >&2; sleep 30".into(), None)]).unwrap();
+        let id = space.id.clone();
+        app.open_log_space_tab(&id, cx);
+        id
+    });
+    let texts = |app: &log_gpui::app::AppView| app.rows_snapshot().iter().map(|e| (e.raw_line.to_string(), e.stream)).collect::<Vec<_>>();
+    wait_for(&mut h, "both lines", |app| app.view.len() == 2);
+
+    let other = h.dir.path().join("local.log");
+    std::fs::write(&other, numbered(1..=10)).unwrap();
+    h.view.update(&mut h.cx, |app, cx| {
+        app.create_log_space("Local", LogSpaceKind::Static, &[ImportSource::Disk(other.to_string_lossy().into_owned())], cx)
+    });
+    h.cx.run_until_parked();
+    h.view.update(&mut h.cx, |app, cx| {
+        let at = app.workspace_state.active_project().unwrap().working_set.tabs().iter().position(|t| t.target.space_id() == Some(space.as_str())).unwrap();
+        app.switch_to_tab(at, cx);
+    });
+    h.view.read_with(&h.cx, |app, _| {
+        let rows = app.rows_snapshot();
+        assert_eq!(rows.len(), 2, "shown at once");
+        assert!(rows[0].break_before.as_ref().unwrap().label.contains("previous run"));
+    });
+    wait_for(&mut h, "the command run again", |app| app.view.len() == 4);
+    h.view.read_with(&h.cx, |app, _| {
+        use log_gpui::model::Stream;
+        let mut have = texts(app);
+        // Each Run's two lines, in either order.
+        have[..2].sort_by_key(|(t, _)| t.clone());
+        have[2..].sort_by_key(|(t, _)| t.clone());
+        let run = vec![("err".to_string(), Some(Stream::Stderr)), ("out".to_string(), Some(Stream::Stdout))];
+        assert_eq!(have, [run.clone(), run].concat());
+        let rows = app.rows_snapshot();
+        let label = &rows[2].break_before.as_ref().expect("a Break above the new Run").label;
+        assert!(label.contains("run again"), "{label}");
+        assert_eq!((rows[2].index, rows[2].generation), (1, rows[0].generation + 1));
+    });
+}

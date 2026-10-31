@@ -17,39 +17,51 @@ const FILE_ID: &str = "remote:srv-1:/app/app.log";
 struct Remote {
     h: common::Harness,
     tx: async_channel::Sender<SourceEvent>,
+    id: String,
 }
 
 /// A Live Log Space of one Remote File, its source a fake the test feeds.
 fn open(cx: &mut TestAppContext, cached: bool, window: usize) -> Remote {
+    open_one(cx, cached, window, false)
+}
+
+/// The same with a Remote Command in place of the file.
+fn open_one(cx: &mut TestAppContext, cached: bool, window: usize, command: bool) -> Remote {
     let mut h = common::open_app(cx);
-    h.view.update(&mut h.cx, |app, cx| {
+    let file_id = h.view.update(&mut h.cx, |app, cx| {
         app.remote_cache_index = cached;
         app.live.window = window;
         let project = app.workspace_state.active_project_mut().unwrap();
         let space = project.create_log_space("Remote", LogSpaceKind::Live).unwrap();
-        space.add_remote_files(&[("srv-1".into(), "web1".into(), "/app/app.log".into())]).unwrap();
+        let file_id = if command {
+            space.add_remote_commands(&[("srv-1".into(), "web1".into(), "tail -f app.log".into(), None)]).unwrap().added[0].clone()
+        } else {
+            space.add_remote_files(&[("srv-1".into(), "web1".into(), "/app/app.log".into())]).unwrap();
+            FILE_ID.to_string()
+        };
         let id = space.id.clone();
         app.open_log_space_tab(&id, cx);
+        file_id
     });
     h.cx.run_until_parked();
     let (tx, events) = async_channel::unbounded();
     let (commands, _rx) = async_channel::unbounded();
     h.view.update(&mut h.cx, |app, _| {
         app.live.sources.insert(
-            FILE_ID.to_string(),
+            file_id.clone(),
             LiveSourceState {
                 handle: SourceHandle { events, commands },
                 seq: 1_000,
                 status: SourceStatus::Live,
                 name: "web1:/app/app.log".into(),
                 remote: true,
-                command: false,
+                command,
                 numbers_unavailable: false,
                 health: Default::default(),
             },
         );
     });
-    Remote { h, tx }
+    Remote { h, tx, id: file_id }
 }
 
 fn lines(range: std::ops::Range<usize>) -> Vec<String> {
@@ -83,14 +95,14 @@ impl Remote {
         self.send(SourceEvent::Append { bytes: bytes(&l), lines: l, streams: None });
     }
 
-    fn view(&self) -> (Vec<(usize, u32, String, Option<String>)>, Vec<usize>, Vec<usize>, Option<(usize, bool)>) {
+    fn view(&self) -> (Vec<(usize, u32, String, Option<String>, Option<log_gpui::model::Stream>)>, Vec<usize>, Vec<usize>, Option<(usize, bool)>) {
         self.h.view.read_with(&self.h.cx, |app: &AppView, _| {
             let rows = app
                 .rows_snapshot()
                 .iter()
-                .map(|e| (e.index, e.generation, e.raw_line.to_string(), e.break_before.as_ref().map(|m| m.label.clone())))
+                .map(|e| (e.index, e.generation, e.raw_line.to_string(), e.break_before.as_ref().map(|m| m.label.clone()), e.stream))
                 .collect();
-            let hold = app.hold_info(FILE_ID).map(|i| (i.lines, i.extended));
+            let hold = app.hold_info(&self.id).map(|i| (i.lines, i.extended));
             (rows, app.filter_pass.to_vec(), app.focus.search().matched_visible_indices.to_vec(), hold)
         })
     }
@@ -99,8 +111,12 @@ impl Remote {
 /// Run `steps` with the lines held in memory and through the cache, and
 /// compare the views after each.
 fn alike(cx: &mut TestAppContext, window: usize, steps: &[&dyn Fn(&mut Remote)]) {
-    let mut ram = open(cx, false, window);
-    let mut cached = open(&mut cx.clone(), true, window);
+    alike_one(cx, window, false, steps);
+}
+
+fn alike_one(cx: &mut TestAppContext, window: usize, command: bool, steps: &[&dyn Fn(&mut Remote)]) {
+    let mut ram = open_one(cx, false, window, command);
+    let mut cached = open_one(&mut cx.clone(), true, window, command);
     for (n, step) in steps.iter().enumerate() {
         step(&mut ram);
         step(&mut cached);
@@ -112,7 +128,7 @@ fn alike(cx: &mut TestAppContext, window: usize, steps: &[&dyn Fn(&mut Remote)])
         assert_eq!(a.3, b.3, "step {n}: what the file holds");
     }
     cached.h.view.read_with(&cached.h.cx, |app, _| {
-        let parsed = &app.parsed_files[FILE_ID];
+        let parsed = &app.parsed_files[&cached.id];
         assert!(parsed.indexed.is_some() && parsed.entries.is_empty() && parsed.lines.is_empty(), "no text in memory");
     });
 }
@@ -261,3 +277,52 @@ fn over_the_limit_the_caches_of_other_files_go_and_the_open_one_stays(cx: &mut T
     r.append(lines(2_000..2_010));
     r.h.view.read_with(&r.h.cx, |app, _| assert_eq!(app.rows_snapshot().len(), lines(0..2_010).len()));
 }
+
+// ── Remote Commands (task 6.1) ──────────────────────────────────────────────
+
+impl Remote {
+    /// Lines of a command's output, every third on stderr.
+    fn output(&mut self, l: Vec<String>) {
+        let streams: log_gpui::live::source::StreamMask = (0..l.len())
+            .map(|i| if i % 3 == 0 { log_gpui::model::Stream::Stderr } else { log_gpui::model::Stream::Stdout })
+            .collect();
+        self.send(SourceEvent::Append { bytes: Vec::new(), lines: l, streams: Some(streams) });
+    }
+}
+
+#[gpui::test]
+fn a_remote_command_through_its_cache_shows_what_it_shows_in_memory(cx: &mut TestAppContext) {
+    use log_gpui::live::source::RestartKind;
+    alike_one(
+        cx,
+        100,
+        true,
+        &[
+            &|r| r.output(lines(0..40)),
+            &|r| {
+                r.h.view.update(&mut r.h.cx, |app, cx| app.filter_toggle_value("stream", "stderr", cx));
+                r.h.cx.run_until_parked();
+            },
+            &|r| r.output(lines(40..60)),
+            &|r| r.send(SourceEvent::Break { kind: BreakKind::Exited(Some(1)) }),
+            &|r| r.send(SourceEvent::Break { kind: BreakKind::Restarted(RestartKind::OnExit) }),
+            &|r| r.output(lines(60..70)),
+            &|r| r.send(SourceEvent::Break { kind: BreakKind::Disconnected }),
+            &|r| r.send(SourceEvent::Break { kind: BreakKind::Resumed(36_000) }),
+            &|r| r.output(lines(70..80)),
+            &|r| r.send(SourceEvent::Break { kind: BreakKind::Skipped(5) }),
+            &|r| r.output(lines(85..90)),
+            &|r| r.send(SourceEvent::CommandChanged { from: "web1$ tail -f app.log".into(), to: "web1$ tail -f other.log".into() }),
+            &|r| r.output(lines(90..105)),
+            // Past the window: the oldest lines leave.
+            &|r| r.output(lines(105..205)),
+            &|r| {
+                let id = r.id.clone();
+                r.h.view.update(&mut r.h.cx, |app, cx| app.request_clear_file(&id, cx));
+                r.h.cx.run_until_parked();
+            },
+            &|r| r.output(lines(205..210)),
+        ],
+    );
+}
+

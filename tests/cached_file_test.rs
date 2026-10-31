@@ -245,3 +245,45 @@ fn closed_and_restored_the_lines_end_at_the_checkpoint() {
     assert_eq!((from.server_end, from.inode, from.head_hash, from.tail_hash), (end, Some(7), 1, 2));
     assert_eq!(f.held_start().offset, Some(0), "the oldest line is at the start of the file");
 }
+
+/// A Remote Command's output is kept when its tab is left, and shows again
+/// under a Break "previous run" with its streams; the command runs again
+/// below it as a new Generation (task 6.1).
+#[test]
+fn a_commands_last_run_shows_again_under_a_break_and_the_next_run_goes_below() {
+    use log_gpui::live::source::{RestartKind, StreamMask};
+    use log_gpui::model::Stream;
+    let dir = tempfile::tempdir().unwrap();
+    let target = CacheTarget::Command { command: "remote-cmd:srv-1:1".into() };
+    let at = dir_for(dir.path(), "commands", &target);
+    let cache = RemoteCache::open(&at, "commands", target.clone(), 20).unwrap();
+    let mut f = CachedFile::command("web1$ tail", cache, Default::default(), HandleBudget::new(64)).unwrap();
+    let out = lines(0..30);
+    let stderr = |i: usize| i % 4 == 0;
+    let mask: StreamMask = (0..out.len()).map(|i| if stderr(i) { Stream::Stderr } else { Stream::Stdout }).collect();
+    f.apply_append_streams(&out, &[], Some(&mask)).unwrap();
+    f.apply_break(BreakKind::Skipped(3), "10:00:00").unwrap();
+    f.apply_append_streams(&out[..2], &[], None).unwrap();
+    let held = f.len();
+    f.close_command("10:30:00").unwrap();
+
+    let cache = RemoteCache::open(&at, "commands", target, 20).unwrap();
+    let (mut f, previous) = CachedFile::restore_command("web1$ tail", cache, Default::default(), HandleBudget::new(64)).unwrap().unwrap();
+    assert_eq!(f.len(), held);
+    let file = f.file();
+    let first = file.entry(0).unwrap();
+    assert_eq!((first.index, first.stream), (1, Some(Stream::Stderr)));
+    assert_eq!(first.break_before.as_ref().unwrap().label, "web1$ tail previous run 10:30:00");
+    // Numbered on after the lines dropped while Paused.
+    let after_skip = file.entry(out.len()).unwrap();
+    assert_eq!(after_skip.index, out.len() + 4);
+    assert_eq!(previous.len(), held, "the whole Run, for resuming");
+    assert_eq!(previous[0], (Stream::Stderr, out[0].clone()));
+
+    f.apply_break(BreakKind::Restarted(RestartKind::Reopened(Some(36_000))), "10:31:00").unwrap();
+    f.apply_append_streams(&out[..1], &[], None).unwrap();
+    let file = f.file();
+    let new = file.entry(held).unwrap();
+    assert_eq!((new.index, new.generation), (1, 1));
+    assert_eq!(new.break_before.as_ref().unwrap().label, "web1$ tail run again 10:31:00, resumed from 10:00:00");
+}

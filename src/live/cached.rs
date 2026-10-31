@@ -4,11 +4,17 @@
 //! held in memory. It keeps what `LiveBuffer` keeps of a remote file (how
 //! its lines are numbered, its Generations, the Breaks between its lines,
 //! Load more and Clear), and gives the same rows.
+//!
+//! A Remote Command's output is kept the same way, with the output each
+//! line came from; each Run is a Generation, and the last one kept shows
+//! again under a Break "previous run" when its tab is chosen again.
 
 use super::buffer::{BreakMark, ClearMark, HeldStart, HoldMode, PROVISIONAL_BASE, Trimmed, size_text};
-use super::source::{BreakKind, EarlierFile, EarlierStart};
+use super::source::{BreakKind, EarlierFile, EarlierStart, RestartKind, StreamMask, clock_text};
 use crate::index::file::{GenerationStart, IndexedFile};
 use crate::index::indexing::IndexOptions;
+use crate::index::meta::Runs;
+use crate::model::Stream;
 use crate::index::{ChainSource, HandleBudget, LineSource};
 use crate::remote::cache::RemoteCache;
 use std::collections::BTreeMap;
@@ -66,7 +72,15 @@ pub struct CachedFile {
     inodes: Vec<(u32, Option<u64>)>,
     /// Breaks above lines, by (Generation, line number).
     marks: BTreeMap<(u32, usize), Arc<BreakMark>>,
+    /// A Remote Command, and the output each line held came from, by
+    /// position.
+    is_command: bool,
+    streams: Runs<Option<Stream>>,
 }
+
+/// Lines of the last Run handed to a Remote Command run again, to resume
+/// from the time of the last one.
+const PREVIOUS_LINES: usize = 1_000;
 
 impl CachedFile {
     /// A Remote File with nothing yet, its lines kept in `cache`.
@@ -93,7 +107,109 @@ impl CachedFile {
             clear_mark: None,
             inodes: Vec::new(),
             marks: BTreeMap::new(),
+            is_command: false,
+            streams: Runs::default(),
         })
+    }
+
+    /// The output of a Remote Command with nothing yet, kept in `cache`:
+    /// its lines are numbered from 1 in the order it printed them.
+    pub fn command(name: impl Into<String>, cache: RemoteCache, options: IndexOptions, budget: Arc<HandleBudget>) -> io::Result<Self> {
+        let mut file = Self::new(name, cache, options, budget)?;
+        file.cache.set_ended(None)?;
+        file.cache.set_first_line_no(0, 1)?;
+        file.is_command = true;
+        file.next_index = 1;
+        file.numbers_known = true;
+        file.place_marks();
+        Ok(file)
+    }
+
+    /// A Remote Command as its cache kept it: the output of its Runs below
+    /// a Break "previous run", and the last lines of the newest, oldest
+    /// first, for the command to resume from. `None` when nothing is kept.
+    pub fn restore_command(
+        name: impl Into<String>,
+        cache: RemoteCache,
+        options: IndexOptions,
+        budget: Arc<HandleBudget>,
+    ) -> io::Result<Option<(Self, Vec<(Stream, String)>)>> {
+        let name = name.into();
+        let meta = cache.meta();
+        let Some(newest) = meta.generations.last() else { return Ok(None) };
+        if cache.lines() == 0 {
+            return Ok(None);
+        }
+        let next_index = (newest.first_line_no + newest.lines() as u64) as usize;
+        let generation = meta.generations.iter().skip(1).filter(|g| !g.part).count() as u32;
+        let ended = meta.ended.clone();
+        let (chain, file, segments) = Self::index(&cache, &options, &budget, generation, &BTreeMap::new())?;
+        let mut restored = Self {
+            name,
+            cache,
+            budget,
+            options,
+            chain,
+            file,
+            segments,
+            generation,
+            next_index,
+            numbers_known: true,
+            tail_last_index: None,
+            next_offset: 0,
+            pending: None,
+            disconnected_at: None,
+            hold: HoldMode::Window,
+            clear_mark: None,
+            inodes: Vec::new(),
+            marks: BTreeMap::new(),
+            is_command: true,
+            streams: Runs::default(),
+        };
+        restored.streams = restored.streams_from_cache();
+        let gens = restored.cache.meta().generations.clone();
+        for (i, g) in gens.iter().enumerate().skip(1) {
+            if g.lines() > 0 && !g.part {
+                let label = format!("{} restarted", restored.name);
+                let kind = BreakKind::Restarted(RestartKind::Manual);
+                restored.marks.insert((restored.number_of(i), g.first_line_no as usize), Arc::new(BreakMark { kind, label }));
+            }
+        }
+        let when = ended.map(|t| format!(" {t}")).unwrap_or_default();
+        let label = format!("{} previous run{when}", restored.name);
+        restored.set_top_mark(BreakMark { kind: BreakKind::PreviousRun, label });
+        restored.place_marks();
+        let len = restored.len();
+        // The newest Generation: its last parts and the one they go on from.
+        let first_of_newest = gens.iter().rposition(|g| !g.part).unwrap_or(0);
+        let newest_from = len - gens[first_of_newest..].iter().map(|g| g.lines()).sum::<usize>();
+        let from = newest_from.max(len.saturating_sub(PREVIOUS_LINES));
+        let previous = (from..len)
+            .filter_map(|i| {
+                let line = restored.file.line(i)?;
+                Some((restored.streams.get(i).flatten().unwrap_or(Stream::Stdout), line.to_string()))
+            })
+            .collect();
+        Ok(Some((restored, previous)))
+    }
+
+    pub fn is_command(&self) -> bool {
+        self.is_command
+    }
+
+    /// The output of each line held, from the cache.
+    fn streams_from_cache(&self) -> Runs<Option<Stream>> {
+        let mut runs = Runs::default();
+        for (i, code) in self.cache.streams().into_iter().enumerate() {
+            runs.set(i, crate::remote::cache::stream_of(code));
+        }
+        runs
+    }
+
+    /// The tab of a Remote Command is left at `time`: everything held is
+    /// kept, shown under a Break "previous run" next time.
+    pub fn close_command(mut self, time: &str) -> io::Result<()> {
+        self.cache.set_ended(Some(time.to_string()))
     }
 
     /// A Remote File as its cache kept it when its tab was left: its lines,
@@ -135,6 +251,8 @@ impl CachedFile {
             clear_mark: None,
             inodes: vec![(cp.generation, cp.inode)],
             marks: BTreeMap::new(),
+            is_command: false,
+            streams: Runs::default(),
         };
         // A Break "rotated" between the Generations kept.
         let gens = restored.cache.meta().generations.clone();
@@ -206,10 +324,11 @@ impl CachedFile {
 
     // ── Generations and positions ───────────────────────────────────────────
 
-    /// The source's number of the Generation at index `i` of the cache.
+    /// The source's number of the Generation at index `i` of the cache: a
+    /// part has the number of the one before.
     fn number_of(&self, i: usize) -> u32 {
-        let n = self.cache.meta().generations.len();
-        self.generation.saturating_sub((n - 1 - i) as u32)
+        let later = self.cache.meta().generations.iter().skip(i + 1).filter(|g| !g.part).count();
+        self.generation.saturating_sub(later as u32)
     }
 
     /// Index in the cache of the newest Generation.
@@ -228,19 +347,20 @@ impl CachedFile {
     fn layout(&self) -> (Vec<GenerationStart>, BTreeMap<usize, Arc<BreakMark>>) {
         let mut starts = Vec::new();
         let mut at = 0;
-        let mut by_number: BTreeMap<u32, (usize, usize, usize)> = BTreeMap::new();
+        let mut by_number: BTreeMap<u32, Vec<(usize, usize, usize)>> = BTreeMap::new();
         for (i, g) in self.cache.meta().generations.iter().enumerate() {
             let number = self.number_of(i);
             starts.push(GenerationStart { pos: at, first_number: g.first_line_no as usize, generation: number, mark: None });
-            by_number.insert(number, (at, g.first_line_no as usize, g.lines()));
+            by_number.entry(number).or_default().push((at, g.first_line_no as usize, g.lines()));
             at += g.lines();
         }
         let marks = self
             .marks
             .iter()
             .filter_map(|((generation, line), mark)| {
-                let (pos, first, count) = by_number.get(generation)?;
-                (*line >= *first && *line < first + count).then(|| (pos + line - first, mark.clone()))
+                let parts = by_number.get(generation)?;
+                let (pos, first, _) = parts.iter().find(|(_, first, count)| *line >= *first && *line < first + count)?;
+                Some((pos + line - first, mark.clone()))
             })
             .collect();
         (starts, marks)
@@ -269,6 +389,9 @@ impl CachedFile {
     fn rebuild(&mut self) -> io::Result<()> {
         let (chain, file, segments) = Self::index(&self.cache, &self.options, &self.budget, self.generation, &self.marks)?;
         (self.chain, self.file, self.segments) = (chain, file, segments);
+        if self.is_command {
+            self.streams = self.streams_from_cache();
+        }
         self.place_marks();
         Ok(())
     }
@@ -278,6 +401,9 @@ impl CachedFile {
         let (starts, marks) = self.layout();
         self.file.set_generations(starts);
         self.file.set_marks(marks);
+        if self.is_command {
+            self.file.set_streams(self.streams.clone());
+        }
     }
 
     /// Lines were added at the end: index them, or read everything again
@@ -325,6 +451,10 @@ impl CachedFile {
     /// Lines at the end of the newest Generation, numbered on from
     /// `next_index`; a pending Break goes above the first.
     fn push(&mut self, lines: &[String], bytes: &[u32]) -> io::Result<std::ops::Range<usize>> {
+        self.push_streams(lines, bytes, None)
+    }
+
+    fn push_streams(&mut self, lines: &[String], bytes: &[u32], streams: Option<&StreamMask>) -> io::Result<std::ops::Range<usize>> {
         let from = self.len();
         if lines.is_empty() {
             return Ok(from..from);
@@ -337,7 +467,16 @@ impl CachedFile {
             self.cache.set_first_line_no(newest, self.next_index as u64)?;
         }
         let refs: Vec<&str> = lines.iter().map(String::as_str).collect();
-        self.cache.append_with(&refs, bytes)?;
+        if self.is_command {
+            let of = |i: usize| streams.and_then(|s| s.get(i));
+            let codes: Vec<u8> = (0..lines.len()).map(|i| crate::remote::cache::stream_code(of(i))).collect();
+            self.cache.append_streams(&refs, bytes, &codes)?;
+            for i in 0..lines.len() {
+                self.streams.set(from + i, of(i));
+            }
+        } else {
+            self.cache.append_with(&refs, bytes)?;
+        }
         self.next_index += lines.len();
         self.next_offset += bytes.iter().map(|b| u64::from(*b)).sum::<u64>();
         Ok(from..self.len())
@@ -378,6 +517,17 @@ impl CachedFile {
         Ok(Applied { appended: Some(range), ..Applied::default() })
     }
 
+    /// New lines of a Remote Command at the end, with the output each came
+    /// from.
+    pub fn apply_append_streams(&mut self, lines: &[String], bytes: &[u32], streams: Option<&StreamMask>) -> io::Result<Applied> {
+        let range = self.push_streams(lines, bytes, streams)?;
+        if range.is_empty() {
+            return Ok(Applied::default());
+        }
+        self.grow()?;
+        Ok(Applied { appended: Some(range), ..Applied::default() })
+    }
+
     /// The real number of the last line of the tail is known.
     pub fn apply_total(&mut self, total: Option<usize>) -> io::Result<Option<isize>> {
         let (Some(total), Some(last)) = (total, self.tail_last_index) else { return Ok(None) };
@@ -403,31 +553,79 @@ impl CachedFile {
     }
 
     /// The file is not continuous here: a Break above the next line, and a
-    /// new Generation after a rotation, truncation or deletion. Remote Files
-    /// only: a command's Breaks are `LiveBuffer`'s.
+    /// new Generation after a rotation, truncation or deletion, or a Remote
+    /// Command run again. The labels are `LiveBuffer::apply_break`'s.
     pub fn apply_break(&mut self, kind: BreakKind, time: &str) -> io::Result<()> {
-        match kind {
+        let name = self.name.clone();
+        let label = match kind {
             BreakKind::Disconnected => {
                 self.disconnected_at = Some(time.to_string());
                 return Ok(());
             }
             BreakKind::Reconnected => {
                 let since = self.disconnected_at.take().unwrap_or_else(|| time.to_string());
-                self.add_pending(BreakMark { kind, label: format!("{} disconnected {since} – reconnected {time}", self.name) });
-                return Ok(());
+                format!("{name} disconnected {since} – reconnected {time}")
             }
-            _ => {}
-        }
+            BreakKind::Resumed(seconds) => {
+                let since = self.disconnected_at.take().unwrap_or_else(|| time.to_string());
+                format!("{name} disconnected {since} – reconnected {time}, resumed from {}", clock_text(seconds))
+            }
+            BreakKind::Exited(code) => {
+                let how = match code {
+                    Some(code) => format!("exited ({code})"),
+                    None => "exited (killed)".to_string(),
+                };
+                format!("{name} {how} {time}")
+            }
+            BreakKind::Skipped(count) => {
+                // The numbers of the dropped lines are not given again: the
+                // lines after them are a part of their own.
+                self.next_index += count as usize;
+                let newest = self.newest();
+                if self.cache.meta().generations[newest].lines() > 0 {
+                    self.cache.begin_part(self.next_index as u64)?;
+                    self.rebuild()?;
+                }
+                format!("{name} {} {time}", kind.label())
+            }
+            BreakKind::Restarted(why) => match why {
+                RestartKind::Manual | RestartKind::OnExit => format!("{name} restarted {time}"),
+                RestartKind::AfterDisconnect => {
+                    let since = self.disconnected_at.take().unwrap_or_else(|| time.to_string());
+                    format!("{name} disconnected {since} – reconnected {time}, command restarted, lines may be missing or repeated")
+                }
+                RestartKind::ResumeFailed => {
+                    format!("{name} restarted {time}, resume not supported, lines may be missing or repeated")
+                }
+                RestartKind::Reopened(from) => super::buffer::reopened_label(&name, time, from),
+            },
+            _ => format!("{name} {} {time}", kind.label()),
+        };
         if kind.starts_generation() {
-            self.generation += 1;
-            self.next_index = 1;
-            self.next_offset = 0;
-            self.numbers_known = true;
-            self.tail_last_index = None;
-            self.cache.begin_generation(1)?;
-            self.rebuild()?;
+            self.begin_generation()?;
         }
-        self.add_pending(BreakMark { kind, label: format!("{} {} {time}", self.name, kind.label()) });
+        self.add_pending(BreakMark { kind, label });
+        Ok(())
+    }
+
+    /// The lines after this are a new Generation, numbered from 1.
+    fn begin_generation(&mut self) -> io::Result<()> {
+        self.generation += 1;
+        self.next_index = 1;
+        self.next_offset = 0;
+        self.numbers_known = true;
+        self.tail_last_index = None;
+        self.cache.begin_generation(1)?;
+        self.rebuild()
+    }
+
+    /// The Remote Command was edited: the Break names both commands, and
+    /// the lines after it are a new Generation.
+    pub fn apply_command_changed(&mut self, from: &str, to: &str, time: &str) -> io::Result<()> {
+        self.begin_generation()?;
+        self.name = to.to_string();
+        self.disconnected_at = None;
+        self.add_pending(BreakMark { kind: BreakKind::CommandChanged, label: format!("command changed {time}: {from} → {to}") });
         Ok(())
     }
 

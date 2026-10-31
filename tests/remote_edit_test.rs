@@ -353,13 +353,17 @@ fn editing_a_remote_command_keeps_lines_and_markers_breaks_and_starts_a_new_run(
     wait_for(&mut h, |app| lines(app, &id).len() == 3);
     h.view.read_with(&h.cx, |app, _| {
         let parsed = &app.parsed_files[&file_id];
-        let texts: Vec<&str> = parsed.lines.iter().map(|l| l.as_ref()).collect();
+        let texts = lines(app, &file_id);
         assert!(texts[0].contains("api one") && texts[1].contains("api two") && texts[2].contains("worker one"), "{texts:?}");
         let label = &parsed.raw_breaks.values().next().expect("a Break").label;
         assert!(label.contains("command changed"), "{label}");
         assert!(label.contains("'api'") && label.contains("'worker'"), "{label}");
-        assert_eq!(parsed.entries[2].index, 1, "a new Run counts from line 1");
-        assert!(parsed.entries[2].generation > parsed.entries[1].generation);
+        let entry = |i: usize| match &parsed.indexed {
+            Some(file) => (*file.entry(i).unwrap()).clone(),
+            None => parsed.entries[i].clone(),
+        };
+        assert_eq!(entry(2).index, 1, "a new Run counts from line 1");
+        assert!(entry(2).generation > entry(1).generation);
         let file = space(app, &space_id).file(&file_id).unwrap();
         assert_eq!(file.display_name, format!("web1$ {}", command("worker")));
         assert_eq!(file.markers.len(), 1, "the Marker on the old line stays");

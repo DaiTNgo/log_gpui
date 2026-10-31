@@ -130,6 +130,12 @@ Mở lại thì output của lần chạy trước hiện ngay từ cache, dư�
 
 Output mới là Generation tiếp theo. Clear bỏ các segment của lệnh; số dòng vẫn đếm tiếp như bây giờ.
 
+Điều chỉnh khi làm (task 2.2, 6.1):
+- Cache của một Remote Command được đặt theo file id (`commands/cmd-<fnv của file id>/`), không theo câu lệnh hay Server. Edit… đổi câu lệnh hoặc Server nhưng giữ file id, và output cũ phải ở lại trên view như đường RAM.
+- `seg-<k>.stream` dùng 1 byte mỗi dòng thay vì 1 bit, để ghi nối và cắt theo dòng giống `.lens`.
+- Dòng bị bỏ khi Paused (Break Skipped) không có trong cache; các dòng sau đó là một "part" của cùng Generation, đánh số tiếp sau khoảng trống.
+- Khi mở lại, source chạy lệnh theo kế hoạch `Reopened`: Command Preset chưa sửa thì resume từ thời gian dòng cuối mà cache giữ; nếu không thì chạy như đã gõ. Break là `Restarted(Reopened(..))`, mở Generation mới.
+
 ### 7. Quy tắc dọn cache (đã duyệt trong proposal)
 
 - **Xoá ngay:** khi file rời Log Space, khi Log Space bị xoá, khi Edit… làm file thành file khác, hoặc khi Server bị xoá.

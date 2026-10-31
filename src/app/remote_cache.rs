@@ -29,14 +29,12 @@ impl AppView {
         self.remote_cache_root()
     }
 
-    /// The cache folder of the Remote File `file_id`: `None` for anything
-    /// else (a Remote Command, a local file).
+    /// The cache folder of the Remote File or Remote Command `file_id`:
+    /// `None` for a local file.
     fn remote_cache_dir(&self, file_id: &str) -> Option<(PathBuf, String, CacheTarget)> {
         let file = self.workspace_state.projects.iter().flat_map(|p| p.log_spaces.iter()).find_map(|s| s.file(file_id))?;
-        let remote = file.remote.as_ref()?;
-        let RemoteTarget::File { path } = &remote.target else { return None };
-        let target = CacheTarget::File { path: path.clone() };
-        Some((cache::dir_for(&self.remote_cache_root(), &remote.server_id, &target), remote.server_id.clone(), target))
+        let (server_id, target) = cache_key(file_id, file.remote.as_ref()?);
+        Some((cache::dir_for(&self.remote_cache_root(), &server_id, &target), server_id, target))
     }
 
     /// Write what the Remote File `file_id` holds, up to its last
@@ -189,6 +187,43 @@ impl AppView {
         Some(parsed)
     }
 
+    /// The Remote Command `file_id` read through its Remote Cache: the
+    /// output of its last Run kept, its command run again below it, or
+    /// nothing yet. `None` when the cache cannot be used.
+    pub(crate) fn open_cached_remote_command(&mut self, file_id: &str, name: &str) -> Option<ParsedFile> {
+        if !self.remote_cache_enabled || !self.remote_cache_index {
+            return None;
+        }
+        let (dir, server_id, target) = self.remote_cache_dir(file_id)?;
+        let file = self.workspace_state.projects.iter().flat_map(|p| p.log_spaces.iter()).find_map(|s| s.file(file_id)).cloned()?;
+        let (_, options) = self.index_options_for(&file);
+        let budget = self.live.handle_budget.clone();
+        let lines = self.cache_segment_lines();
+        let cache = RemoteCache::open(&dir, &server_id, target.clone(), lines).ok()?;
+        let cached = match crate::live::cached::CachedFile::restore_command(name, cache, options.clone(), budget.clone()) {
+            Ok(Some((cached, previous))) => {
+                self.live.previous_run.insert(file_id.to_string(), previous);
+                let generation = cached.generation;
+                if let Some(project) = self.active_project_mut() {
+                    for space in &mut project.log_spaces {
+                        if let Some(f) = space.file_mut(file_id) {
+                            f.generation = generation;
+                        }
+                    }
+                }
+                cached
+            }
+            Ok(None) => {
+                let cache = RemoteCache::open(&dir, &server_id, target, lines).ok()?;
+                crate::live::cached::CachedFile::command(name, cache, options, budget).ok()?
+            }
+            Err(_) => return None,
+        };
+        let parsed = cached_parsed(&cached);
+        self.live.cached.insert(file_id.to_string(), cached);
+        Some(parsed)
+    }
+
     /// The Remote File's lines as the view reads them now.
     pub(crate) fn refresh_cached_parsed(&mut self, file_id: &str) {
         let Some(cached) = self.live.cached.get(file_id) else { return };
@@ -200,9 +235,9 @@ impl AppView {
     /// The tab of the Remote File is left: its cache ends at its last
     /// Checkpoint, for next time.
     pub(crate) fn close_cached(&mut self, file_id: &str) {
-        if let Some(cached) = self.live.cached.remove(file_id)
-            && let Err(e) = cached.close()
-        {
+        let Some(cached) = self.live.cached.remove(file_id) else { return };
+        let closed = if cached.is_command() { cached.close_command(&super::live::now_label()) } else { cached.close() };
+        if let Err(e) = closed {
             self.notice = Some(format!("Could not keep the lines of {file_id}: {e}"));
         }
     }
@@ -214,6 +249,19 @@ impl AppView {
         }
     }
 }
+
+/// Which cache a remote file has: a Remote File by its Server and path; a
+/// Remote Command by its file id, which stays when the command is edited
+/// (its output stays, below a Break, as when it is held in memory).
+fn cache_key(file_id: &str, remote: &crate::workspace::log_space::RemoteRef) -> (String, CacheTarget) {
+    match &remote.target {
+        RemoteTarget::File { path } => (remote.server_id.clone(), CacheTarget::File { path: path.clone() }),
+        RemoteTarget::Command { .. } => (COMMANDS.to_string(), CacheTarget::Command { command: file_id.to_string() }),
+    }
+}
+
+/// The folder of the caches of Remote Commands, in place of a Server's.
+const COMMANDS: &str = "commands";
 
 /// A `ParsedFile` reading the lines of `cached` through its Line Index.
 fn cached_parsed(cached: &crate::live::cached::CachedFile) -> ParsedFile {
@@ -245,12 +293,8 @@ impl AppView {
             .flat_map(|p| p.log_spaces.iter())
             .flat_map(|s| s.files.iter())
             .filter_map(|f| {
-                let remote = f.remote.as_ref()?;
-                let target = match &remote.target {
-                    RemoteTarget::File { path } => CacheTarget::File { path: path.clone() },
-                    RemoteTarget::Command { command, .. } => CacheTarget::Command { command: command.clone() },
-                };
-                Some(cache::dir_for(&root, &remote.server_id, &target))
+                let (server_id, target) = cache_key(&f.file_id, f.remote.as_ref()?);
+                Some(cache::dir_for(&root, &server_id, &target))
             })
             .collect()
     }

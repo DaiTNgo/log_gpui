@@ -16,6 +16,10 @@ pub enum RestartKind {
     AfterDisconnect,
     /// Resuming by time failed: the command runs as it was written.
     ResumeFailed,
+    /// The tab was chosen again or the app opened: the command runs again
+    /// below the output its Remote Cache kept, resumed from the time of its
+    /// last line (seconds into the day) or as written.
+    Reopened(Option<u32>),
 }
 
 /// Why the lines of a file stop being continuous.
@@ -73,6 +77,9 @@ pub enum BreakKind {
     /// The Remote Command was edited: the lines after the Break are the new
     /// command's, a new Generation. The Break names both commands.
     CommandChanged,
+    /// Above the output of an earlier Run of a Remote Command, kept in its
+    /// Remote Cache.
+    PreviousRun,
 }
 
 impl BreakKind {
@@ -102,6 +109,7 @@ impl BreakKind {
             BreakKind::OlderNotRead => "older lines were not read",
             BreakKind::BeforeStartTime => "lines before the Starting Time loaded",
             BreakKind::CommandChanged => "command changed",
+            BreakKind::PreviousRun => "previous run",
         }
     }
 

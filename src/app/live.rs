@@ -123,8 +123,12 @@ pub struct LiveRuntime {
     /// Where a Remote File restored from its cache reads on from, until its
     /// source starts.
     pub resume_from: HashMap<String, crate::live::remote::ResumeFrom>,
-    /// Remote Files read through their Remote Cache (stage 2).
+    /// Remote Files and Remote Commands read through their Remote Cache
+    /// (stage 2).
     pub cached: HashMap<String, crate::live::cached::CachedFile>,
+    /// The last lines a Remote Command's cache kept, until its source
+    /// starts and runs it again below them.
+    pub previous_run: HashMap<String, Vec<(crate::model::Stream, String)>>,
     /// Most bytes all Remote Caches take together (decision 7).
     pub cache_limit: u64,
     /// When the size of the Remote Caches was last checked, and whether
@@ -177,6 +181,7 @@ impl LiveRuntime {
             checkpoints: HashMap::new(),
             resume_from: HashMap::new(),
             cached: HashMap::new(),
+            previous_run: HashMap::new(),
             cache_limit: crate::workspace::state::default_remote_cache_limit_mb() << 20,
             cache_checked: None,
             cache_over_told: false,
@@ -410,7 +415,8 @@ impl AppView {
                             )
                         }
                         RemoteTarget::Command { .. } => {
-                            self.spawn_command_source(&remote.server_id, &remote.target, &file.name, cx)
+                            let previous = self.live.previous_run.remove(&file_id).unwrap_or_default();
+                            self.spawn_command_source(&remote.server_id, &remote.target, &file.name, previous, cx)
                         }
                     };
                     match spawned {
@@ -986,7 +992,7 @@ impl AppView {
                     cached.set_inode(inode);
                     Ok(Default::default())
                 }
-                SourceEvent::Append { lines, bytes, .. } => cached.apply_append(&lines, &bytes),
+                SourceEvent::Append { lines, bytes, streams } => cached.apply_append_streams(&lines, &bytes, streams.as_ref()),
                 SourceEvent::TotalLines(total) => {
                     if total.is_none()
                         && let Some(source) = self.live.sources.get_mut(file_id)
@@ -1032,8 +1038,18 @@ impl AppView {
                     }
                     Ok(Default::default())
                 }
-                // A Remote File has no Runs and no edits of a command.
-                SourceEvent::Run { .. } | SourceEvent::CommandChanged { .. } => Ok(Default::default()),
+                SourceEvent::Run { .. } => Ok(Default::default()),
+                SourceEvent::CommandChanged { from, to } => {
+                    let applied = cached.apply_command_changed(&from, &to, &time);
+                    self.begin_generation_for(file_id);
+                    if let Some(old) = self.live.release_after_replace.remove(file_id) {
+                        self.release_unused_server(&old);
+                    }
+                    if let Some(source) = self.live.sources.get_mut(file_id) {
+                        source.name = to;
+                    }
+                    applied.map(|_| crate::live::cached::Applied { structural: true, ..Default::default() })
+                }
             };
             match applied {
                 Ok(applied) => {

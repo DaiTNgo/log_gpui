@@ -875,6 +875,7 @@ impl LiveBuffer {
                         "{} restarted {time}, resume not supported, lines may be missing or repeated",
                         self.name
                     ),
+                    RestartKind::Reopened(from) => reopened_label(&self.name, time, from),
                 };
                 self.begin_generation_state();
                 self.add_pending(BreakMark { kind, label });
@@ -1222,5 +1223,14 @@ mod byte_lens_tests {
         b.resize(4, 7);
         assert_eq!(b.total(), 40);
         assert_eq!(b.total(), b.iter().map(|x| u64::from(*x)).sum::<u64>());
+    }
+}
+
+/// The Break above the output of a Remote Command run again below what its
+/// Remote Cache kept.
+pub fn reopened_label(name: &str, time: &str, resumed_from: Option<u32>) -> String {
+    match resumed_from {
+        Some(seconds) => format!("{name} run again {time}, resumed from {}", clock_text(seconds)),
+        None => format!("{name} run again {time}, lines may be missing or repeated"),
     }
 }

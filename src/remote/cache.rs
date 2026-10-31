@@ -99,6 +99,10 @@ pub struct GenerationMeta {
     /// The Rotated File it was read from, for an earlier Generation.
     #[serde(default)]
     pub rotated_name: Option<String>,
+    /// The same Generation as the one before, numbered on after lines that
+    /// were never kept (a Remote Command's output dropped while Paused).
+    #[serde(default)]
+    pub part: bool,
 }
 
 impl GenerationMeta {
@@ -302,7 +306,18 @@ impl RemoteCache {
             segments: Vec::new(),
             checkpoint: Checkpoint::default(),
             rotated_name: None,
+            part: false,
         });
+        self.save()
+    }
+
+    /// The newest Generation goes on from line `first_line_no`, after
+    /// lines that were never kept: a part of it with its own numbering.
+    pub fn begin_part(&mut self, first_line_no: u64) -> io::Result<()> {
+        self.begin_generation(first_line_no)?;
+        if let Some(g) = self.meta.generations.last_mut() {
+            g.part = true;
+        }
         self.save()
     }
 
@@ -324,6 +339,7 @@ impl RemoteCache {
                 segments: Vec::new(),
                 checkpoint: Checkpoint::default(),
                 rotated_name: Some(name.to_string()),
+                part: false,
             },
         );
         // Its lines' numbers are given: not moved by the prepend.
@@ -586,6 +602,7 @@ impl RemoteCache {
                 segments: vec![SegmentMeta { id: 0, lines: snap.lines.len(), bytes, skip_lines: 0, skip_bytes: 0 }],
                 checkpoint: snap.checkpoint.clone(),
                 rotated_name: None,
+                part: false,
             });
         }
         self.meta.extended = extended;

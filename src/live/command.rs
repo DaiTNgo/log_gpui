@@ -51,6 +51,10 @@ pub struct RemoteCommandSource {
     /// `<server>$ <command>`.
     pub name: String,
     pub window: usize,
+    /// The last lines of the Run its Remote Cache kept, oldest first: the
+    /// command runs again below them, resumed from the time of the last
+    /// one when it can be. Empty: nothing kept, the first Run.
+    pub previous: Vec<(Stream, String)>,
 }
 
 impl LineSource for RemoteCommandSource {
@@ -90,6 +94,8 @@ enum Plan {
     /// The user edited the command: the new one runs as written. Its Break
     /// was already sent when the edit was applied.
     Replaced,
+    /// Below the output of an earlier Run kept in the Remote Cache.
+    Reopened,
 }
 
 /// What a wait ended with.
@@ -162,6 +168,8 @@ struct State {
     started: bool,
     /// The connection was lost since the last Run started.
     was_disconnected: bool,
+    /// The first Run goes below the output of an earlier one.
+    reopened: bool,
 }
 
 impl State {
@@ -276,10 +284,17 @@ impl RemoteCommandSource {
             queue: VecDeque::new(),
             dropped: 0,
             splitters: [LineSplitter::new(), LineSplitter::new()],
-            resume: self.preset.clone().map(ResumePoint::new),
+            resume: self.preset.clone().map(|preset| {
+                let mut point = ResumePoint::new(preset);
+                for (stream, line) in &self.previous {
+                    point.record(*stream, line);
+                }
+                point
+            }),
             resume_disabled: false,
             started: false,
             was_disconnected: false,
+            reopened: !self.previous.is_empty(),
         };
         let mut backoff = Duration::from_secs(1);
         let mut failing_since: Option<Instant> = None;
@@ -454,9 +469,12 @@ impl RemoteCommandSource {
             Plan::Manual
         } else if st.started {
             Plan::AfterDisconnect
+        } else if st.reopened {
+            Plan::Reopened
         } else {
             Plan::First
         };
+        st.reopened = false;
         if st.restart_pending {
             st.restart_pending = false;
             self.reset_resume(st);
@@ -585,6 +603,24 @@ impl RemoteCommandSource {
             Plan::First | Plan::Replaced => as_written(None),
             Plan::Manual => as_written(Some(BreakKind::Restarted(RestartKind::Manual))),
             Plan::ResumeFailed => as_written(Some(BreakKind::Restarted(RestartKind::ResumeFailed))),
+            Plan::Reopened => {
+                let resumable = st.resume.as_ref().filter(|_| !st.resume_disabled).and_then(|rp| {
+                    rp.command().map(|command| (command, rp.last_seconds_of_day().unwrap_or(0)))
+                });
+                match resumable {
+                    Some((command, seconds)) => {
+                        if let Some(rp) = st.resume.as_mut() {
+                            rp.begin_resume();
+                        }
+                        let kind = BreakKind::Restarted(RestartKind::Reopened(Some(seconds)));
+                        RunStart { command, resumed: true, deferred_break: Some(kind) }
+                    }
+                    None => {
+                        self.reset_resume(st);
+                        as_written(Some(BreakKind::Restarted(RestartKind::Reopened(None))))
+                    }
+                }
+            }
             Plan::OnExit | Plan::AfterDisconnect => {
                 let resumable = st.resume.as_ref().filter(|_| !st.resume_disabled).and_then(|rp| {
                     rp.command().map(|command| (command, rp.last_seconds_of_day().unwrap_or(0)))

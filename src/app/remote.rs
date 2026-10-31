@@ -491,6 +491,7 @@ impl AppView {
         server_id: &str,
         target: &RemoteTarget,
         name: &str,
+        previous: Vec<(crate::model::Stream, String)>,
         cx: &mut Context<Self>,
     ) -> Option<crate::live::SourceHandle> {
         let RemoteTarget::Command { command, preset, restart_on_exit } = target else { return None };
@@ -506,6 +507,7 @@ impl AppView {
                 restart_on_exit: *restart_on_exit,
                 name: name.to_string(),
                 window: self.live.window,
+                previous,
             }
             .spawn(),
         )

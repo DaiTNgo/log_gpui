@@ -50,6 +50,25 @@ impl Env {
             restart_on_exit,
             name: format!("web1$ {command}"),
             window,
+            previous: Vec::new(),
+        }
+        .spawn()
+    }
+
+    /// `start` below the last lines of an earlier Run, kept in its Remote
+    /// Cache.
+    fn start_after(&self, command: &str, preset: Option<PresetFields>, previous: Vec<(Stream, String)>) -> SourceHandle {
+        let (restart_on_exit, window) = (false, 100_000);
+        RemoteCommandSource {
+            hub: self.hub.clone(),
+            servers: Arc::new(Mutex::new(self.store.clone())),
+            server_id: self.server_id.clone(),
+            command: command.to_string(),
+            preset,
+            restart_on_exit,
+            name: format!("web1$ {command}"),
+            window,
+            previous,
         }
         .spawn()
     }
@@ -539,5 +558,37 @@ fn replace_onto_another_server_runs_there_and_the_break_names_both() {
     );
     let lines = lines_until(&h, exited(Some(0)));
     assert_eq!(lines, vec![(Stream::Stdout, "from-web2".to_string())]);
+    h.close();
+}
+
+// ── Run again below a Remote Cache (task 6.1) ──────────────────────────────
+
+#[test]
+fn an_unedited_preset_reopened_resumes_from_the_last_line_its_cache_kept() {
+    let Some(env) = env() else { return };
+    let log = "docker-reopen.log";
+    let _ = std::fs::remove_file(format!("{}/fake/{log}", env.dir));
+    env.append_fake(log, &[&format!("{T1} one"), &format!("{T2} two"), &format!("{T3} three"), &format!("{T4} four")]);
+    let fields = PresetFields::docker("reopen");
+    let command = fields.command();
+    // The cache kept the Run up to "three".
+    let previous = vec![(Stream::Stdout, format!("{T2} two")), (Stream::Stdout, format!("{T3} three"))];
+    let h = env.start_after(&command, Some(fields), previous);
+    let run = next(&h, |e| matches!(e, SourceEvent::Run { .. }));
+    assert_eq!(run, SourceEvent::Run { command: format!("docker logs -f --timestamps --since {T3} 'reopen'") });
+    let reopened = next(&h, |e| matches!(e, SourceEvent::Break { .. }));
+    assert_eq!(reopened, SourceEvent::Break { kind: BreakKind::Restarted(RestartKind::Reopened(Some(3 * 3600 + 2 * 60 + 3))) });
+    let SourceEvent::Append { lines, .. } = next(&h, is_append) else { unreachable!() };
+    assert_eq!(lines, vec![format!("{T4} four")], "only what came after");
+    h.close();
+}
+
+#[test]
+fn a_typed_command_reopened_runs_as_typed_below_a_break() {
+    let Some(env) = env() else { return };
+    let h = env.start_after("echo hello; sleep 30", None, vec![(Stream::Stdout, "hello".into())]);
+    next(&h, is_break(BreakKind::Restarted(RestartKind::Reopened(None))));
+    let SourceEvent::Append { lines, .. } = next(&h, is_append) else { unreachable!() };
+    assert_eq!(lines, vec!["hello"]);
     h.close();
 }

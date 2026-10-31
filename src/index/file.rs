@@ -36,6 +36,8 @@ pub struct IndexedFile {
     marks: Mutex<std::collections::BTreeMap<usize, Arc<crate::live::BreakMark>>>,
     /// The output each line of a Remote Command came from, by position.
     streams: Mutex<super::meta::Runs<Option<crate::model::Stream>>>,
+    /// Lines whose output the Filter's index has.
+    streams_filled: Mutex<usize>,
 }
 
 /// Most bytes `IndexedFile::extend` indexes in one call.
@@ -121,6 +123,7 @@ impl IndexedFile {
             chain: None,
             marks: Mutex::default(),
             streams: Mutex::default(),
+            streams_filled: Mutex::default(),
         }
     }
 
@@ -145,6 +148,7 @@ impl IndexedFile {
             chain: self.chain.clone(),
             marks: Mutex::new(self.marks.lock().unwrap().clone()),
             streams: Mutex::new(self.streams.lock().unwrap().clone()),
+            streams_filled: Mutex::new(*self.streams_filled.lock().unwrap()),
         }
     }
 
@@ -224,7 +228,22 @@ impl IndexedFile {
     }
 
     /// The output each line of a Remote Command came from, by position.
+    /// The lines indexed since are given theirs in the Filter's index too.
     pub fn set_streams(&self, streams: super::meta::Runs<Option<crate::model::Stream>>) {
+        {
+            let mut data = self.indexed.data.write().unwrap();
+            let mut filled = self.streams_filled.lock().unwrap();
+            let len = data.file.len();
+            if *filled < len {
+                let data = &mut *data;
+                let meta = &data.file.meta;
+                data.filter.set_streams(*filled..len, |n| streams.get(n).flatten(), |n| meta.get(n).is_some_and(|m| m.parent_of(n).is_none()));
+                if !streams.runs().is_empty() {
+                    data.max_chars.stream = data.max_chars.stream.max("stdout".len());
+                }
+                *filled = len;
+            }
+        }
         *self.streams.lock().unwrap() = streams;
         self.cache.lock().unwrap().forget_file(0);
     }

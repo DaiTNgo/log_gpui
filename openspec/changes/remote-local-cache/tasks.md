@@ -83,10 +83,17 @@
 
 ## 6. Remote Command
 
-- [ ] 6.1 Mỗi lần chạy là một Generation trong `cmd-<hash>/`, có stream.
+- [x] 6.1 Mỗi lần chạy là một Generation trong `cmd-<hash>/`, có stream.
   - Mở lại thì output lần trước hiện ngay dưới Break "previous run HH:MM", rồi lệnh chạy theo Resume By Time hoặc Restart.
   - Clear bỏ các segment, số dòng đếm tiếp.
   - Test: `remote_command_space_test` chạy với cache bật.
+  - Đã làm:
+    - Cache của Remote Command nằm ở `remote-cache/commands/cmd-<fnv của file id>/`, theo file id chứ không theo câu lệnh, nên Edit… giữ output cũ dưới Break "command changed" như đường RAM.
+    - `CachedFile::command` / `restore_command` / `close_command`; các Break riêng của lệnh (Exited, Restarted, Resumed, Skipped, ClockWentBack, CommandChanged) có cùng nhãn như `LiveBuffer`.
+    - Skipped (dòng bị bỏ lúc Paused) mở một "part" của cùng Generation (`GenerationMeta.part`), đánh số tiếp sau khoảng trống.
+    - Mở lại: Break "previous run HH:MM:SS" ở dòng đầu. Source nhận tới 1.000 dòng cuối của lần chạy (`RemoteCommandSource.previous`): Command Preset chưa sửa thì resume theo thời gian dòng cuối, không thì chạy như đã gõ; cả hai mở Generation mới dưới Break `Restarted(Reopened)` ("run again HH:MM:SS…").
+    - Filter theo stream: stream được điền vào Filter index của file sau khi index (`FilterIndex::set_streams`).
+    - Test: `cached_remote_app_test` (so với đường RAM, kể cả Filter theo stream), `cached_file_test` (đóng rồi mở lại), `remote_command_source_test` (mở lại: preset resume, lệnh gõ tay chạy lại) và `remote_cache_app_test` (sshd: chọn lại tab). Với sshd: 1363 qua, 8 hỏng; test resume mới hỏng khi chạy song song vì test khác cắt session (`drop_sessions`), cùng loại với 7 test đã chập chờn trước; chạy riêng binary đó với `--test-threads=1` thì 22/22 qua.
 
 ## 7. Remote Copy qua Line Index
 
