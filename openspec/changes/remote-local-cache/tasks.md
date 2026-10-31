@@ -69,8 +69,8 @@
   - Test:
     - `cached_remote_app_test`: không cần sshd. Cùng chuỗi event thì view (rows, Break, Filter, Match, `hold_info`) giống đường RAM, và không có text trong memory.
     - `remote_cache_app_test` (sshd thử): với cờ bật, quay lại tab chỉ đọc 5 dòng mới.
-- [ ] 4.7 Ghi cache lỗi (đĩa đầy) thì báo một lần, và file đó quay về giữ dòng trong `BytesSource` cho tới khi đóng tab.
-  - Hiện tại: lỗi ghi chỉ hiện thành notice. Chưa có đường quay về giữ dòng trong memory.
+- [x] 4.7 Ghi cache lỗi (đĩa đầy) thì báo một lần, và file đó quay về giữ dòng trong `BytesSource` cho tới khi đóng tab.
+  - Thay bằng task 10.5 (decision 10): báo và ngừng đọc, không quay về RAM.
 
 ## 5. Mở lại từ cache
 
@@ -79,6 +79,7 @@
   - view hiện dòng với số dòng thật và Marker;
   - source khởi động bằng `Resume` từ Checkpoint cuối, không `open_tail`.
   - Test: quay lại tab chỉ đọc phần mới từ Server; mở lại app hiện dòng trước khi kết nối xong.
+  - Decision 10: chỉ còn "chọn lại Dormant Tab"; mở app không còn cache. Kiểm lại phần đã làm ở 4.x và đánh dấu ở task 10.1.
 - [ ] 5.2 Marker của Generation cũ không còn bị reset khi source khởi động lại (`start_missing_sources`, `src/app/live.rs:392`). Chúng khớp theo `generations_ago` của cache.
 
 ## 6. Remote Command
@@ -129,5 +130,25 @@
 - [ ] 9.5 Cập nhật CONTEXT.md:
   - thêm thuật ngữ Remote Cache;
   - sửa Live Window;
-  - sửa L10 (dòng nhận được giữ trên đĩa giữa các lần mở);
+  - sửa L10 (dòng nhận được giữ trên đĩa trong phiên app, mất khi đóng tab hoặc tắt app);
+  - Load more, Back to Live Window, Load earlier generation không còn (decision 10);
   - bỏ ngoại lệ Remote ở quy tắc 43.
+
+## 10. Cache trong phiên app, không vượt Live Window (decision 10)
+
+- [ ] 10.1 Vòng đời cache:
+  - chuyển tab giữ cache (như hiện tại); xoá cache của file khi không còn tab đang mở nào chứa nó;
+  - tắt app xoá mọi cache; mở app xoá mọi thư mục còn sót trong `remote-cache/`;
+  - bỏ `last_opened` 14 ngày.
+  - Kiểm lại 5.1 và 5.2 trong phạm vi một phiên rồi đánh dấu.
+  - Test: chuyển tab rồi quay lại chỉ đọc phần mới; đóng tab xoá cache; cùng file ở hai tab thì đóng một tab cache vẫn còn; mở app không còn cache cũ.
+- [ ] 10.2 Bỏ giới hạn dung lượng: setting "Remote cache", nút "Clear Remote cache", `remote_cache_limit_mb` trong session, `check_remote_cache_size`/`trim_to_size` (task 8.3).
+- [ ] 10.3 Bỏ Load more: Remote File và file local, `HoldMode::Extended`, Back to Live Window, setting "Load more step", `SourceCommand::LoadMore` và event `Older` ở source.
+  - Full Read Limit chỉ còn cho Open in full.
+- [ ] 10.4 Bỏ "Load earlier generation": `SourceCommand::LoadEarlier`, event `Earlier`, nút trên Break. Break ở đầu khi còn Rotated File chỉ gợi ý Open in full.
+- [ ] 10.5 Ghi cache lỗi: báo một notice và ngừng đọc file đó; dòng đã có vẫn xem được.
+  - Test: segment không ghi được thì notice, source đóng, view giữ dòng.
+- [ ] 10.6 Kết nối SSH: khi không còn tab đang mở nào có file của một Server (Remote File, Remote Command, Live Glob) thì đóng kết nối tới Server đó; chuyển tab vẫn giữ.
+  - Test: đóng tab Remote cuối cùng của `web1` thì session đóng; chuyển tab thì không.
+- [ ] 10.7 Cập nhật Settings và CONTEXT.md theo các mục trên (gộp với 9.5).
+

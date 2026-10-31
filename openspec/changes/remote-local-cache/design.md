@@ -153,13 +153,29 @@ Output mới là Generation tiếp theo. Clear bỏ các segment của lệnh; s
 
 `ParsedFile::from_remote_copy` đổi thành `IndexedFile` trên `ChainSource` gồm các file `gen-*.log`, đánh số bằng `first_line_no` của từng Generation (decision 3). Không còn đường nào đọc cả file vào `entries`. Nhờ vậy task 12.1 của `line-offset-index` làm được trọn.
 
+### 10. Cache chỉ sống trong phiên app; không vượt Live Window (chốt 2026-10-31)
+
+Mục tiêu của cache là giảm memory, không phải giữ log lâu dài. Các quyết định dưới đây thay các phần liên quan của decision 5, 7 và 8 và mục rủi ro "Đĩa đầy".
+
+- **Vòng đời cache:**
+  - Chuyển sang tab khác (Dormant Tab): cache giữ trên đĩa, RAM của file được trả lại. Quay lại tab thì dòng hiện ngay và chỉ đọc phần mới (Checkpoint và Resume vẫn dùng trong phiên).
+  - Cache của một file bị xoá khi không còn tab đang mở nào chứa file đó (đóng tab, kể cả tab của Log Space hay File View).
+  - Tắt app: xoá mọi cache. Mở app: xoá mọi thư mục còn sót trong `remote-cache/` (app tắt đột ngột). Không có "mở lại app thấy dòng cũ".
+  - Bỏ `last_opened` 14 ngày, giới hạn 2 GB, setting và nút "Clear Remote cache", việc kiểm dung lượng mỗi 10 s.
+- **Remote Command:** quay lại tab trong cùng phiên vẫn thấy output lần chạy trước dưới Break "previous run", lệnh chạy lại bên dưới (decision 6). Đóng tab hoặc tắt app thì mất.
+- **Live Window:** giữ mặc định 1.000.000 dòng (decision 8, task 9.1).
+- **Không vượt Live Window:** bỏ Load more (Remote và file local), chế độ giữ thêm (`HoldMode::Extended`), Back to Live Window, setting "Load more step", và "Load earlier generation". Break ở đầu khi còn Rotated File chỉ gợi ý Open in full. Muốn xem xa hơn Live Window thì dùng Open in full (Remote Copy, vẫn lưu bền như cũ).
+- **Ghi cache lỗi (đĩa đầy):** báo một notice và ngừng đọc file đó; các dòng đã có vẫn xem được. Không quay về giữ dòng trong RAM. Thay task 4.7.
+- **Kết nối SSH:** chuyển tab thì giữ kết nối như hiện tại. Khi không còn tab đang mở nào có file (Remote File, Remote Command, Live Glob) của một Server, app đóng kết nối tới Server đó.
+- **Remote Copy:** không đổi, lưu tới khi file hoặc Log Space của nó bị xoá.
+
 ## Risks / Trade-offs
 
-- **[Rủi ro] Đĩa đầy hoặc ghi lỗi.** → `RemoteCache` báo lỗi một lần qua notice. File đó quay về giữ dòng trong một `BytesSource` trong RAM (`index::BytesSource` đã có) cho tới khi đóng tab. View không bao giờ mất dòng.
+- **[Rủi ro] Đĩa đầy hoặc ghi lỗi.** → Báo một notice và ngừng đọc file đó; dòng đã có vẫn xem được (decision 10).
 - **[Rủi ro] Index lại khi chèn lên trên hoặc cắt làm view nháy, hoặc chậm với 2 triệu dòng.** → Index lại ở nền, view giữ rows cũ cho tới khi xong (như 6.3). Đo bằng `perf_probe`; nếu trên 100 ms với Live Window mặc định thì làm bản cắt tại chỗ (decision 3).
 - **[Rủi ro] Hash khớp nhưng file đã khác ở giữa** (bị sửa ở giữa, không đụng đầu và cuối). → Chấp nhận, như file local. Log thường chỉ được ghi thêm.
 - **[Rủi ro] Hai cửa sổ app, hoặc hai Log Space, dùng chung một Remote File.** → Một `RemoteCache` cho mỗi `file_id` trong tiến trình. Hai tiến trình app: cache có lock file `lock` (pid). Tiến trình thứ hai không dùng cache và chạy kiểu RAM như hiện tại.
-- **[Đánh đổi] Cache chứa log của Server trên máy người dùng**, có thể nhạy cảm. → Thư mục nằm trong `<app data>`, quyền 0700. Settings có nút "Clear Remote cache".
+- **[Đánh đổi] Cache chứa log của Server trên máy người dùng**, có thể nhạy cảm. → Thư mục nằm trong `<app data>`, quyền 0700, và chỉ sống trong phiên app (decision 10).
 - **[Rủi ro] Server không có `stat` qua exec, nên không biết inode.** → So kích thước cộng hai hash. Rotate có thể hiện thành "truncated", như hiện nay (`remote.rs:401`).
 
 ## Migration Plan
