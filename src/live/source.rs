@@ -52,12 +52,10 @@ pub enum BreakKind {
     Skipped(u32),
     /// The user cleared the file.
     Cleared,
-    /// An earlier Generation, a Rotated File, can be loaded above the oldest
-    /// line held. Drawn at the top of the lines of the file, with a button.
+    /// An earlier Generation, a Rotated File, is on the Server above the
+    /// oldest line held: Open in full reads it. Drawn at the top of the
+    /// lines of the file, with a button.
     EarlierAvailable,
-    /// Like `EarlierAvailable`, but the Live Window is full: only Open in
-    /// full can read it.
-    EarlierWindowFull,
     /// The lines since the Starting Time do not fit the Live Window.
     StartTimeOverflow,
     /// The read of a Remote Copy was cancelled; the lines end here.
@@ -93,7 +91,7 @@ impl BreakKind {
             BreakKind::ClockWentBack => "server clock went back, lines may be repeated",
             BreakKind::Skipped(_) => "older lines left the window",
             BreakKind::Cleared => "cleared",
-            BreakKind::EarlierAvailable | BreakKind::EarlierWindowFull => "earlier generation",
+            BreakKind::EarlierAvailable => "earlier generation",
             BreakKind::StartTimeOverflow => "lines since the Starting Time do not fit the Live Window",
             BreakKind::ReadCancelled => "read cancelled",
             BreakKind::ReadLimit => "stopped at Full Read Limit",
@@ -371,9 +369,6 @@ pub enum SourceCommand {
     SetWindow(usize),
     /// Stop reading older lines and never refill: the app dropped what it held.
     Clear,
-    /// Load the lines of the next Rotated File above the oldest line held:
-    /// at most `room` lines (what the Live Window has left).
-    LoadEarlier { room: usize },
     /// Try again now (after Disconnected or an error the user has fixed).
     Reconnect,
     /// Run a Remote Command again from its start, ending the Run in progress.

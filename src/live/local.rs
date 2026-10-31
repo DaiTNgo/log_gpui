@@ -148,7 +148,6 @@ impl LocalFileSource {
                     Ok(SourceCommand::SetWindow(_))
                 | Ok(SourceCommand::Reconnect)
                 | Ok(SourceCommand::Clear)
-                | Ok(SourceCommand::LoadEarlier { .. })
                 | Ok(SourceCommand::Restart)
                 | Ok(SourceCommand::Replace { .. })
                 | Ok(SourceCommand::SetRestartOnExit(_)) => {}

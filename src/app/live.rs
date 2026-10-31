@@ -81,8 +81,6 @@ pub struct LiveRuntime {
     pub release_after_replace: HashMap<String, String>,
     /// The next Rotated File each file could load above its lines.
     pub earlier: HashMap<String, crate::live::source::EarlierFile>,
-    /// Files with a Rotated File being loaded.
-    pub loading_earlier: HashSet<String>,
     /// Long reads under way, by file.
     pub progress: HashMap<String, crate::live::source::ReadProgress>,
     /// Remote Copies being read, by file.
@@ -141,7 +139,6 @@ impl LiveRuntime {
             next_source_seq: 0,
             release_after_replace: HashMap::new(),
             earlier: HashMap::new(),
-            loading_earlier: HashSet::new(),
             progress: HashMap::new(),
             copy_reads: HashMap::new(),
             globs: super::globs::GlobRuntime::new(),
@@ -665,7 +662,6 @@ impl AppView {
     fn apply_cached_events(&mut self, file_id: &str, events: Vec<SourceEvent>) -> FileDelta {
         let mut delta = FileDelta::default();
         let window = self.live.window;
-        let full_read_limit = self.live.full_read_limit;
         let time = now_label();
         let mut failed = None;
         for event in events {
@@ -679,16 +675,11 @@ impl AppView {
             let applied = match event {
                 SourceEvent::Tail { lines, bytes, end_offset, .. } => cached.apply_tail(&lines, &bytes, end_offset),
                 SourceEvent::Backfill { lines, bytes, .. } => cached.apply_backfill(&lines, &bytes),
-                SourceEvent::Earlier { start, lines, bytes, last_line_no, reached_start } => {
-                    if reached_start || start.is_none() && lines.is_empty() {
-                        self.live.loading_earlier.remove(file_id);
-                    }
+                SourceEvent::Earlier { start, lines, bytes, last_line_no, .. } => {
                     cached.apply_earlier(start.as_ref(), &lines, &bytes, last_line_no)
                 }
                 SourceEvent::EarlierAvailable(file) => {
-                    self.live.loading_earlier.remove(file_id);
-                    let full = cached.len() >= full_read_limit;
-                    let set = cached.set_earlier_available(file.as_ref(), full);
+                    let set = cached.set_earlier_available(file.as_ref());
                     match file {
                         Some(file) => self.live.earlier.insert(file_id.to_string(), file),
                         None => self.live.earlier.remove(file_id),

@@ -483,7 +483,6 @@ impl AppView {
     /// Files and Load More under way.
     pub(crate) fn forget_live_state(&mut self, file_id: &str) {
         self.live.earlier.remove(file_id);
-        self.live.loading_earlier.remove(file_id);
         self.live.progress.remove(file_id);
     }
 

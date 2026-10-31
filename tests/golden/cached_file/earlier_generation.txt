@@ -1,7 +1,7 @@
 total 330: shift Some(-1099511627495)
 ## offered
 held start HeldStart { generation: 0, line_no: 1, offset: Some(15511) }, top bytes 14489, at start true
-  -- Load earlier generation (app.log.1, 4.0 KB)
+  -- Earlier generation: app.log.1, 4.0 KB
 1 g0 2026-09-05 10:00:00 [INFO] [api] request 0
 2 g0     at Handler.run(Handler.java:0)
 3 g0 2026-09-05 10:00:01 [INFO] [api] request 1

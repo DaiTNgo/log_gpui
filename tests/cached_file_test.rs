@@ -185,7 +185,7 @@ fn an_earlier_generation_goes_above_the_file_held_from_its_first_line() {
     f.total(n);
     // Backfill to the start of the file, then a Rotated File above.
     f.backfill(&all[..n - 50]);
-    f.cached.set_earlier_available(Some(&EarlierFile { name: "app.log.1".into(), size: 4096, compressed: false }), false).unwrap();
+    f.cached.set_earlier_available(Some(&EarlierFile { name: "app.log.1".into(), size: 4096, compressed: false })).unwrap();
     f.same("offered");
     let earlier = lines(1000..1040);
     let start = EarlierStart { name: "app.log.1".into(), modified: Some("2026-09-04 23:59:00".into()) };

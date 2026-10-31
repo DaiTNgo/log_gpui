@@ -117,8 +117,6 @@ struct Ctl {
     paused: bool,
     /// The app dropped what it held: stop reading older lines for good.
     clear: bool,
-    /// The app asked for the next Rotated File: how many lines fit.
-    load_earlier: Option<usize>,
 }
 
 /// What a command means for the loop that handles it.
@@ -130,7 +128,7 @@ enum Flow {
 
 impl Ctl {
     fn new(window: usize) -> Self {
-        Self { window, paused: false, clear: false, load_earlier: None }
+        Self { window, paused: false, clear: false }
     }
 
     fn apply(&mut self, command: SourceCommand) -> Flow {
@@ -143,7 +141,6 @@ impl Ctl {
             // For a Remote Command only.
             SourceCommand::Restart | SourceCommand::SetRestartOnExit(_) | SourceCommand::Replace { .. } => {}
             SourceCommand::Clear => self.clear = true,
-            SourceCommand::LoadEarlier { room } => self.load_earlier = Some(room),
         }
         Flow::Go
     }
@@ -510,21 +507,6 @@ impl RemoteFileSource {
                 mem.no_refill = true;
                 mem.loaded = 0;
                 backfill_ready = false;
-            }
-            if let Some(room) = ctl.load_earlier.take() {
-                match self.load_earlier(&sftp, session, mem, events, room, false).await {
-                    Ok(()) => {}
-                    Err(Kind::Lost) => return Served::Lost,
-                    Err(Kind::Denied) => {
-                        let _ = events.try_send(SourceEvent::Progress(None));
-                        let _ = events.try_send(SourceEvent::EarlierAvailable(None));
-                    }
-                    Err(Kind::Missing | Kind::Other(_)) => {
-                        let _ = events.try_send(SourceEvent::Progress(None));
-                        let _ = events.try_send(SourceEvent::Problem("could not read the earlier generation".into()));
-                        let _ = events.try_send(SourceEvent::EarlierAvailable(None));
-                    }
-                }
             }
             if ctl.paused {
                 if !self.sleep_with_commands(REMOTE_POLL_INTERVAL, commands, ctl).await {

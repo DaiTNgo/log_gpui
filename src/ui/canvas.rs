@@ -1011,7 +1011,6 @@ impl RowEnv {
             (break_has_actions(mark.kind) && entry.stream.is_none()).then(|| BreakActions {
                 view: self.view.clone(),
                 file_id,
-                kind: mark.kind,
                 id: vis_pos,
             })
         });
@@ -1077,7 +1076,6 @@ pub(crate) fn hidden_match_mark(id: ElementId, tip: String, colors: &CanvasColor
 pub(crate) struct BreakActions {
     pub view: gpui::Entity<crate::app::AppView>,
     pub file_id: String,
-    pub kind: crate::live::BreakKind,
     /// Tells the buttons of two Breaks apart.
     pub id: usize,
 }
@@ -1091,7 +1089,6 @@ fn break_has_actions(kind: crate::live::BreakKind) -> bool {
         BreakKind::LeftWindow
             | BreakKind::Cleared
             | BreakKind::EarlierAvailable
-            | BreakKind::EarlierWindowFull
             | BreakKind::StartTimeOverflow
     )
 }
@@ -1131,27 +1128,7 @@ pub(crate) fn render_break(
 ) -> gpui::AnyElement {
     let buttons: Vec<gpui::AnyElement> = actions
         .map(|a| {
-            use crate::live::BreakKind;
-            if matches!(a.kind, BreakKind::EarlierAvailable | BreakKind::EarlierWindowFull | BreakKind::StartTimeOverflow) {
-                let (view, file) = (a.view.clone(), a.file_id.clone());
-                let full = a.kind != BreakKind::EarlierAvailable;
-                return vec![break_button(
-                    ElementId::from(gpui::SharedString::from(format!("break-earlier-{}-{}", a.file_id, a.id))),
-                    if full { "Open in full…" } else { "Load" },
-                    colors,
-                    move |cx| {
-                        let id = file.clone();
-                        view.update(cx, |this, cx| {
-                            if full {
-                                this.request_open_in_full(&id, cx);
-                            } else {
-                                this.load_earlier(&id, cx);
-                            }
-                        });
-                    },
-                )];
-            }
-            // Older lines than the Live Window holds: Open in full reads them.
+            // Lines the Live Window does not hold: Open in full reads them.
             let (view, file) = (a.view.clone(), a.file_id.clone());
             vec![break_button(
                 ElementId::from(gpui::SharedString::from(format!("break-full-{}-{}", a.file_id, a.id))),

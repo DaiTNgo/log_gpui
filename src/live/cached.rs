@@ -28,7 +28,6 @@ fn is_top_mark(kind: BreakKind) -> bool {
         kind,
         BreakKind::LeftWindow
             | BreakKind::EarlierAvailable
-            | BreakKind::EarlierWindowFull
             | BreakKind::StartTimeOverflow
     )
 }
@@ -675,23 +674,19 @@ impl CachedFile {
         }
     }
 
-    /// The Break at the top that offers the next Rotated File.
-    pub fn set_earlier_available(&mut self, file: Option<&EarlierFile>, window_full: bool) -> io::Result<()> {
+    /// The Break at the top that says the next Rotated File is on the
+    /// Server, for Open in full.
+    pub fn set_earlier_available(&mut self, file: Option<&EarlierFile>) -> io::Result<()> {
         match file {
             Some(file) => {
                 if self.top_mark().is_none() && self.top().is_some() {
-                    let size = size_text(file.size);
-                    let (kind, label) = if window_full {
-                        (BreakKind::EarlierWindowFull, format!("Live Window is full; earlier generation: {}, {size}", file.name))
-                    } else {
-                        (BreakKind::EarlierAvailable, format!("Load earlier generation ({}, {size})", file.name))
-                    };
-                    self.set_top_mark(BreakMark { kind, label });
+                    let label = format!("Earlier generation: {}, {}", file.name, size_text(file.size));
+                    self.set_top_mark(BreakMark { kind: BreakKind::EarlierAvailable, label });
                 }
             }
             None => {
                 if let Some(top) = self.top()
-                    && self.marks.get(&top).is_some_and(|m| matches!(m.kind, BreakKind::EarlierAvailable | BreakKind::EarlierWindowFull))
+                    && self.marks.get(&top).is_some_and(|m| m.kind == BreakKind::EarlierAvailable)
                 {
                     self.marks.remove(&top);
                 }

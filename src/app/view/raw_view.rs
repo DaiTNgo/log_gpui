@@ -47,8 +47,8 @@ impl AppView {
         )
         .absolute()
         .size_full();
-        // Read-only sections are one list over their files' lines; a
-        // scratch file opened as a File View is edited in an editor.
+        // Read-only sections are one list over their files' lines; scratch
+        // files are edited in editors.
         let body = if sections.iter().any(|s| s.editable) {
             self.render_scratch_sections(sections, cx)
         } else {

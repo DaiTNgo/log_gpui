@@ -1,7 +1,7 @@
 //! Rotated Files read as earlier Generations. Needs a local sshd (see
 //! `remote_hub_test.rs`): `SSH_TEST_DIR`, `SSH_TEST_PORT`.
 
-use log_gpui::live::{LineSource, RemoteFileSource, SourceCommand, SourceEvent, SourceHandle};
+use log_gpui::live::{LineSource, RemoteFileSource, SourceEvent, SourceHandle};
 use log_gpui::remote::*;
 use std::io::Write;
 use std::time::SystemTime;
@@ -147,34 +147,6 @@ fn a_small_plain_rotated_file_is_read_whole_and_the_next_one_is_offered() {
 }
 
 #[test]
-fn a_compressed_newest_rotated_file_is_not_read_until_asked() {
-    let Some(env) = env() else { return };
-    let d = env.dir.path();
-    std::fs::write(d.join("app.log"), numbered(1..=300)).unwrap();
-    std::fs::write(d.join("app.log-20261018.gz"), gzip(&numbered(1..=5_000))).unwrap();
-    let (h, _) = env.source("app.log", 1_000);
-    let events = collect_until(&h, |e| matches!(e, SourceEvent::EarlierAvailable(_)));
-    assert!(!events.iter().any(|e| matches!(e, SourceEvent::Earlier { .. })));
-    let SourceEvent::EarlierAvailable(Some(file)) = events.last().unwrap() else { panic!("{events:?}") };
-    assert_eq!(file.name, "app.log-20261018.gz");
-    assert!(file.size > 0);
-    h.send(SourceCommand::LoadEarlier { room: 700 });
-    let events = collect_until(&h, |e| matches!(e, SourceEvent::EarlierAvailable(_)));
-    let SourceEvent::Earlier { start, lines, last_line_no, reached_start, .. } =
-        events.iter().find(|e| matches!(e, SourceEvent::Earlier { .. })).unwrap()
-    else {
-        unreachable!()
-    };
-    assert_eq!(start.as_ref().unwrap().name, "app.log-20261018.gz");
-    assert_eq!(lines.len(), 700);
-    assert_eq!(lines.first().unwrap(), "line 4301");
-    assert_eq!(lines.last().unwrap(), "line 5000");
-    assert_eq!(*last_line_no, Some(5_000));
-    assert!(!reached_start);
-    h.close();
-}
-
-#[test]
 fn a_file_that_already_fills_the_window_reads_nothing_of_the_rotated_one() {
     let Some(env) = env() else { return };
     let d = env.dir.path();
@@ -187,55 +159,6 @@ fn a_file_that_already_fills_the_window_reads_nothing_of_the_rotated_one() {
     while let Ok(e) = h.events.try_recv() {
         assert!(!matches!(e, SourceEvent::Earlier { .. } | SourceEvent::EarlierAvailable(_)), "{e:?}");
     }
-    h.close();
-}
-
-#[test]
-fn every_compression_kind_is_read_by_its_first_bytes_not_its_name() {
-    let Some(env) = env() else { return };
-    let kinds: [(&str, &[u8]); 4] = [
-        ("zst", include_bytes!("../src/remote/testdata/t.zst")),
-        ("xz", include_bytes!("../src/remote/testdata/t.xz")),
-        ("bz2", include_bytes!("../src/remote/testdata/t.bz2")),
-        ("1", include_bytes!("../src/remote/testdata/t.gz")),
-    ];
-    for (ext, bytes) in kinds {
-        let d = tempfile::tempdir().unwrap();
-        std::fs::write(d.path().join("app.log"), "2026-10-19 10:00:00 INFO now\n").unwrap();
-        // `.1` is really gzip: compressed, so it is only read when asked.
-        let rotated = if ext == "1" { "app.log.1".to_string() } else { format!("app.log.1.{ext}") };
-        std::fs::write(d.path().join(&rotated), bytes).unwrap();
-        let env2 = Env { dir: d, hub: env.hub.clone(), store: env.store.clone(), server_id: env.server_id.clone() };
-        let (h, _) = env2.source("app.log", 1_000);
-        collect_until(&h, |e| matches!(e, SourceEvent::EarlierAvailable(Some(_))));
-        h.send(SourceCommand::LoadEarlier { room: 100 });
-        let events = collect_until(&h, |e| matches!(e, SourceEvent::Earlier { .. }));
-        let SourceEvent::Earlier { lines, last_line_no, reached_start, .. } = events.last().unwrap() else {
-            unreachable!()
-        };
-        assert_eq!(lines, &["first line", "second line", "third line"], "{rotated}");
-        assert_eq!(*last_line_no, Some(3));
-        assert!(*reached_start);
-        h.close();
-    }
-}
-
-#[test]
-fn an_unsupported_compression_is_reported_and_not_read() {
-    let Some(env) = env() else { return };
-    let d = env.dir.path();
-    std::fs::write(d.join("app.log"), numbered(1..=5)).unwrap();
-    let mut lz4 = vec![0x04, 0x22, 0x4d, 0x18, 0x64, 0x40];
-    lz4.extend_from_slice(&[0; 40]);
-    std::fs::write(d.join("app.log.1.lz4"), &lz4).unwrap();
-    // `.lz4` is not a rotation suffix the app knows; `app.log.1` with lz4 bytes is.
-    std::fs::write(d.join("app.log.1"), &lz4).unwrap();
-    let (h, _) = env.source("app.log", 1_000);
-    let events = collect_until(&h, |e| matches!(e, SourceEvent::EarlierAvailable(_)));
-    assert!(!events.iter().any(|e| matches!(e, SourceEvent::Earlier { .. })));
-    h.send(SourceCommand::LoadEarlier { room: 100 });
-    let events = collect_until(&h, |e| matches!(e, SourceEvent::EarlierAvailable(_)));
-    assert!(events.iter().any(|e| matches!(e, SourceEvent::Problem(m) if m.contains("not supported"))));
     h.close();
 }
 

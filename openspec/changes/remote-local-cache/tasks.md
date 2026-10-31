@@ -148,7 +148,9 @@
   - Full Read Limit chỉ còn cho Open in full.
   - Đã làm: bỏ thêm hộp "Load more (custom number)", lệnh bàn phím Load More và Back to Live Window, Break `StartOfLoaded`/`Changed`/`BeforeStartTime` (chỉ Load more tạo ra), `local_older.rs`, phần đọc ngược của Remote source cho Load more. Nút trên Break "older lines left the window" giờ là Open in full. "N lines held" chỉ còn số dòng.
   - Test: bỏ 6 test Load more trong `remote_source_test` và test `offers_load_more`; test so golden của Load more đổi thành `clear_and_earlier` và `earlier_generation`, golden ghi từ code hiện tại (không còn đường cũ để đối chiếu). Đã chạy các test liên quan (cache, keymap, live controls, session, status bar…), không chạy test sshd.
-- [ ] 10.4 Bỏ "Load earlier generation": `SourceCommand::LoadEarlier`, event `Earlier`, nút trên Break. Break ở đầu khi còn Rotated File chỉ gợi ý Open in full.
+- [x] 10.4 Bỏ "Load earlier generation": `SourceCommand::LoadEarlier`, event `Earlier`, nút trên Break. Break ở đầu khi còn Rotated File chỉ gợi ý Open in full.
+  - Đã làm: bỏ `SourceCommand::LoadEarlier`, `load_earlier` ở app và `loading_earlier`; gộp `EarlierWindowFull` vào `EarlierAvailable` với nhãn "Earlier generation: app.log.1, 38 MB" và nút Open in full. Event `Earlier` vẫn giữ vì source tự đọc Rotated File khi mở với Starting Time (không phải do người dùng bấm).
+  - Test: bỏ 3 test sshd trong `remote_rotated_test` chỉ đi qua `LoadEarlier` (đọc Rotated File nén, nhận dạng nén theo byte đầu, nén không hỗ trợ); phần giải nén đó vẫn dùng khi mở với Starting Time nhưng chưa có test riêng. Nhãn Break trong golden đổi theo. Đã chạy các test liên quan, không chạy test sshd.
 - [ ] 10.5 Ghi cache lỗi: báo một notice và ngừng đọc file đó; dòng đã có vẫn xem được.
   - Test: segment không ghi được thì notice, source đóng, view giữ dòng.
 - [ ] 10.6 Kết nối SSH: khi không còn tab đang mở nào có file của một Server (Remote File, Remote Command, Live Glob) thì đóng kết nối tới Server đó; chuyển tab vẫn giữ.

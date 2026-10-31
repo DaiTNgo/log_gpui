@@ -1,6 +1,6 @@
 //! Logic: Raw View. Each file of the open Log Space is a collapsible File
 //! Section showing its text line by line. Read-only files are one
-//! virtualized list (`raw_list`); a scratch file opened as a File View is
+//! virtualized list (`raw_list`); a scratch file is
 //! edited in an editor and saved by itself after a pause.
 //!
 //! Raw View ignores Filter, so Search here looks at every line of every
@@ -202,8 +202,8 @@ impl AppView {
             .filter(|f| only.is_none_or(|id| id == f.file_id))
             .map(|f| {
                 let scratch = space.kind == LogSpaceKind::Scratch;
-                // Only a File View edits; a Log Space's Raw View just shows the files.
-                let editable = scratch && only.is_some();
+                // Scratch files are edited in the Raw View, of a Log Space or a File View.
+                let editable = scratch;
                 let lines = match self.raw.texts.get(&f.file_id) {
                     Some(text) if scratch => crate::raw_view::RawLines::Held(
                         self.raw

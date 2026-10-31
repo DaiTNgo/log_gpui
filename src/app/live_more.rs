@@ -171,25 +171,6 @@ impl AppView {
         cx.notify();
     }
 
-    /// Load the next Rotated File above the lines the file holds, as many
-    /// lines as the Live Window has room for.
-    pub fn load_earlier(&mut self, file_id: &str, cx: &mut Context<Self>) {
-        if self.live.loading_earlier.contains(file_id) {
-            return;
-        }
-        // Only what the Live Window has room for.
-        let Some(cached) = self.live.cached.get(file_id) else { return };
-        let room = self.live.window.saturating_sub(cached.len());
-        if room == 0 {
-            self.request_open_in_full(file_id, cx);
-            return;
-        }
-        let Some(source) = self.live.sources.get(file_id) else { return };
-        source.handle.send(SourceCommand::LoadEarlier { room });
-        self.live.loading_earlier.insert(file_id.to_string());
-        cx.notify();
-    }
-
     // ── Settings ────────────────────────────────────────────────────────────
 
     pub fn set_full_read_limit(&mut self, lines: usize, cx: &mut Context<Self>) {

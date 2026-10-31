@@ -188,7 +188,7 @@ impl State {
             SourceCommand::Replace { .. } => {}
             // The app drops the lines it holds; the command goes on, numbers
             // keep counting. A command has no older lines to load.
-            SourceCommand::Clear | SourceCommand::LoadEarlier { .. } => {}
+            SourceCommand::Clear => {}
             SourceCommand::Pause => self.paused = true,
             SourceCommand::Resume => {
                 self.paused = false;
