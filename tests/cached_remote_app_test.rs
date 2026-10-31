@@ -213,7 +213,7 @@ fn clear_and_an_earlier_file_show_what_they_should(cx: &mut TestAppContext) {
     );
 }
 
-// ── Cleanup (task 8) ────────────────────────────────────────────────────────
+// ── Cleanup (tasks 8 and 10.1) ──────────────────────────────────────────────
 
 impl Remote {
     fn space_id(&self) -> String {
@@ -256,20 +256,73 @@ fn a_deleted_log_space_takes_the_caches_of_its_files_along(cx: &mut TestAppConte
     assert!(!dir.exists());
 }
 
+impl Remote {
+    /// Open a tab of a new Live Log Space named `name`, holding the same
+    /// Remote File when `with_file`.
+    fn open_other_space(&mut self, name: &str, with_file: bool) -> String {
+        let id = self.h.view.update(&mut self.h.cx, |app, cx| {
+            let project = app.workspace_state.active_project_mut().unwrap();
+            let space = project.create_log_space(name, LogSpaceKind::Live).unwrap();
+            if with_file {
+                space.add_remote_files(&[("srv-1".into(), "web1".into(), "/app/app.log".into())]).unwrap();
+            }
+            let id = space.id.clone();
+            app.open_log_space_tab(&id, cx);
+            id
+        });
+        self.h.cx.run_until_parked();
+        id
+    }
+
+    /// Close the tab of Log Space `space_id`.
+    fn close_tab_of(&mut self, space_id: &str) {
+        self.h.view.update(&mut self.h.cx, |app, cx| {
+            let tabs = app.workspace_state.active_project().unwrap().working_set.tabs();
+            let at = tabs.iter().position(|t| t.target.space_id() == Some(space_id)).unwrap();
+            app.close_tab_at(at, cx);
+        });
+        self.h.cx.run_until_parked();
+    }
+}
+
+/// Decision 10: another tab keeps the cache, closing the tab drops it.
 #[gpui::test]
-fn a_cache_another_log_space_still_refers_to_stays(cx: &mut TestAppContext) {
+fn switching_tabs_keeps_the_cache_and_closing_the_tab_drops_it(cx: &mut TestAppContext) {
+    let mut r = open(cx, 1_000);
+    r.tail(lines(0..50));
+    let dir = r.cache_dir();
+    let remote = r.space_id();
+    r.open_other_space("Other", false);
+    assert!(dir.is_dir(), "a Dormant Tab keeps its cache");
+    r.close_tab_of(&remote);
+    assert!(!dir.exists(), "no open tab shows the file: its cache goes");
+}
+
+#[gpui::test]
+fn a_cache_another_open_tab_shows_stays_until_that_tab_closes(cx: &mut TestAppContext) {
     let mut r = open(cx, 1_000);
     r.tail(lines(0..50));
     let dir = r.cache_dir();
     let first = r.space_id();
-    r.h.view.update(&mut r.h.cx, |app, _| {
-        let project = app.workspace_state.active_project_mut().unwrap();
-        let space = project.create_log_space("Remote 2", LogSpaceKind::Live).unwrap();
-        space.add_remote_files(&[("srv-1".into(), "web1".into(), "/app/app.log".into())]).unwrap();
-    });
-    r.h.view.update(&mut r.h.cx, |app, cx| app.remove_file_from_space(&first, FILE_ID, cx));
-    r.h.cx.run_until_parked();
-    assert!(dir.is_dir(), "the other Log Space reads it next time");
+    let second = r.open_other_space("Remote 2", true);
+    r.close_tab_of(&first);
+    assert!(dir.is_dir(), "the tab of the other Log Space still shows it");
+    r.close_tab_of(&second);
+    assert!(!dir.exists());
+}
+
+#[gpui::test]
+fn caches_left_by_a_run_that_stopped_short_go_when_the_app_opens(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let root = log_gpui::remote::cache::root_in(dir.path());
+    let target = log_gpui::remote::cache::CacheTarget::File { path: "/app/app.log".into() };
+    let left = log_gpui::remote::cache::dir_for(&root, "srv-1", &target);
+    let mut cache = log_gpui::remote::cache::RemoteCache::open(&left, "srv-1", target, 100).unwrap();
+    cache.append(&["2026-09-05 10:00:00 [INFO] left over"]).unwrap();
+    drop(cache);
+    let h = common::open_app_in(cx, dir);
+    assert!(!left.exists(), "nothing is kept from a run before");
+    drop(h);
 }
 
 // ── Remote Commands (task 6.1) ──────────────────────────────────────────────

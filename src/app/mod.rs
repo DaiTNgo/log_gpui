@@ -625,6 +625,9 @@ impl AppView {
         this.column_layout.update_density(this.text_scale());
         this.show_minimap = this.workspace_state.show_minimap;
         this.raw.soft_wrap = this.workspace_state.raw_soft_wrap;
+        // Remote Caches live only while the app runs: what a run that
+        // stopped short left goes before any tab opens.
+        this.remove_all_remote_caches();
         this.restore_active_session(cx);
         // Remote Copies no Log Space holds any more (the app closed in the
         // middle of removing one) are cleared away.
@@ -632,8 +635,6 @@ impl AppView {
         // So are Archive Entries cut off while being unpacked, or held by
         // no Log Space.
         crate::archive_cache::sweep(&this.archive_cache_root(), &this.archive_dirs_in_use());
-        // Remote Caches no file refers to, or not opened for 14 days.
-        this.sweep_remote_caches_at_start();
         this.start_live_pump(cx);
         this
     }

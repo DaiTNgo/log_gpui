@@ -127,8 +127,9 @@ impl AppView {
             for source in this.live.sources.values() {
                 source.handle.close();
             }
-            // What the Remote Files hold is kept for the next time.
+            // Remote Caches live only while the app runs.
             this.close_all_cached();
+            this.remove_all_remote_caches();
             let hub = quit_hub.clone();
             let executor = cx.background_executor().clone();
             async move {

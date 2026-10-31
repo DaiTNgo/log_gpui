@@ -203,71 +203,63 @@ fn a_generation_held_from_its_middle_numbers_its_lines_as_on_the_server() {
     assert_eq!(entries.position_of(4000, 0), None, "not held");
 }
 
-// ── Cleanup (task 8) ────────────────────────────────────────────────────────
+// ── Cleanup (tasks 8 and 10.1) ──────────────────────────────────────────────
 
 use log_gpui::remote::cache;
 use std::collections::HashSet;
 
-/// A cache of `n` lines of about 100 bytes for `path`, last opened at `at`.
-fn cache_of(root: &std::path::Path, path: &str, n: usize, at: u64) -> std::path::PathBuf {
+/// A cache of `n` lines of about 100 bytes for `path`.
+fn cache_of(root: &std::path::Path, path: &str, n: usize) -> std::path::PathBuf {
     let target = CacheTarget::File { path: path.into() };
     let dir = dir_for(root, "srv-1", &target);
     let mut c = RemoteCache::open(&dir, "srv-1", target, 1_000).unwrap();
     let l: Vec<String> = (0..n).map(|i| format!("{i:>99}")).collect();
     c.append(&refs(&l)).unwrap();
-    drop(c);
-    let meta_path = dir.join(cache::META_FILE);
-    let mut meta: serde_json::Value = serde_json::from_slice(&std::fs::read(&meta_path).unwrap()).unwrap();
-    meta["last_opened"] = at.into();
-    std::fs::write(&meta_path, serde_json::to_vec(&meta).unwrap()).unwrap();
     dir
 }
 
 #[test]
-fn the_sweep_removes_caches_nobody_refers_to_and_those_not_opened_for_long() {
+fn the_sweep_keeps_only_the_caches_of_open_tabs() {
     let root = tempfile::tempdir().unwrap();
-    let kept = cache_of(root.path(), "/a.log", 10, 1_000);
-    let unused = cache_of(root.path(), "/b.log", 10, 1_000);
-    let old = cache_of(root.path(), "/c.log", 10, 10);
-    let in_use: HashSet<_> = [kept.clone(), old.clone()].into();
-    assert_eq!(cache::sweep(root.path(), &in_use, None), 1);
-    assert!(kept.is_dir() && old.is_dir() && !unused.exists());
-    assert_eq!(cache::sweep(root.path(), &in_use, Some(500)), 1, "not opened since 500");
-    assert!(kept.is_dir() && !old.exists());
-    // No file refers to any: the Server's folder goes too.
-    cache::sweep(root.path(), &HashSet::new(), None);
+    let kept = cache_of(root.path(), "/a.log", 10);
+    let unused = cache_of(root.path(), "/b.log", 10);
+    let in_use: HashSet<_> = [kept.clone()].into();
+    assert_eq!(cache::sweep(root.path(), &in_use), 1);
+    assert!(kept.is_dir() && !unused.exists());
+    // No open tab shows any (the app quits): the Server's folder goes too.
+    cache::sweep(root.path(), &HashSet::new());
     assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 0);
 }
 
 #[test]
 fn a_folder_that_is_not_a_cache_is_never_removed() {
     let root = tempfile::tempdir().unwrap();
-    let dir = cache_of(root.path(), "/a.log", 10, 1_000);
+    let dir = cache_of(root.path(), "/a.log", 10);
     std::fs::write(dir.join("notes.txt"), "mine").unwrap();
     assert!(cache::remove(&dir).is_err());
-    assert_eq!(cache::sweep(root.path(), &HashSet::new(), None), 0);
+    assert_eq!(cache::sweep(root.path(), &HashSet::new()), 0);
     assert!(dir.join("notes.txt").exists());
 }
 
 #[test]
 fn a_cache_another_app_window_uses_is_left() {
     let root = tempfile::tempdir().unwrap();
-    let dir = cache_of(root.path(), "/a.log", 10, 1_000);
+    let dir = cache_of(root.path(), "/a.log", 10);
     // pid 1 runs on every Unix.
     std::fs::write(dir.join("lock"), "1").unwrap();
-    assert_eq!(cache::sweep(root.path(), &HashSet::new(), None), 0);
+    assert_eq!(cache::sweep(root.path(), &HashSet::new()), 0);
     assert!(dir.is_dir());
 }
 
 #[test]
 fn a_cache_with_no_meta_is_listed_and_removed_like_any() {
     let root = tempfile::tempdir().unwrap();
-    let dir = cache_of(root.path(), "/a.log", 10, 1_000);
+    let dir = cache_of(root.path(), "/a.log", 10);
     std::fs::remove_file(dir.join(cache::META_FILE)).unwrap();
     let found = cache::list(root.path());
-    assert_eq!((found.len(), found[0].last_opened), (1, 0));
+    assert_eq!(found.len(), 1);
     assert!(!cache::has_lines(&dir), "read as no cache");
-    assert_eq!(cache::sweep(root.path(), &HashSet::new(), None), 1);
+    assert_eq!(cache::sweep(root.path(), &HashSet::new()), 1);
 }
 
 /// The output of each line of a Remote Command is kept beside its segment

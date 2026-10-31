@@ -117,8 +117,6 @@ pub struct CacheMeta {
     pub target: CacheTarget,
     /// Oldest first.
     pub generations: Vec<GenerationMeta>,
-    /// Seconds since the epoch the cache was last opened.
-    pub last_opened: u64,
     /// A Remote Command: when the Run kept here was left (`HH:MM`).
     #[serde(default)]
     pub ended: Option<String>,
@@ -131,10 +129,6 @@ pub struct RemoteCache {
     meta: CacheMeta,
     /// Lines a segment takes before the next one starts.
     segment_lines: usize,
-}
-
-fn now_secs() -> u64 {
-    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs())
 }
 
 fn locked() -> io::Error {
@@ -186,13 +180,11 @@ impl RemoteCache {
                 server_id: server_id.to_string(),
                 target,
                 generations: Vec::new(),
-                last_opened: 0,
                 ended: None,
             },
         };
         let mut cache = Self { dir: dir.to_path_buf(), meta, segment_lines: segment_lines.max(1) };
         cache.recover()?;
-        cache.meta.last_opened = now_secs();
         cache.save()?;
         Ok(cache)
     }
@@ -665,15 +657,12 @@ pub fn read_meta(dir: &Path) -> io::Result<CacheMeta> {
     serde_json::from_slice(&bytes).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
 }
 
-// ── Cleanup (decision 7) ────────────────────────────────────────────────────
+// ── Cleanup (decisions 7 and 10) ────────────────────────────────────────────
 
 /// One cache folder found on disk.
 #[derive(Debug, Clone)]
 pub struct CacheInfo {
     pub dir: PathBuf,
-    pub bytes: u64,
-    /// 0 when its `meta.json` is missing or broken.
-    pub last_opened: u64,
 }
 
 /// Whether another app process uses the cache in `dir` now.
@@ -682,19 +671,6 @@ fn used_by_another(dir: &Path) -> bool {
         .ok()
         .and_then(|text| text.trim().parse::<u32>().ok())
         .is_some_and(|pid| pid != std::process::id() && alive(pid))
-}
-
-fn size_of(dir: &Path) -> u64 {
-    std::fs::read_dir(dir)
-        .into_iter()
-        .flatten()
-        .flatten()
-        .map(|e| match e.metadata() {
-            Ok(m) if m.is_dir() => size_of(&e.path()),
-            Ok(m) => m.len(),
-            Err(_) => 0,
-        })
-        .sum()
 }
 
 /// Remove the cache in `dir`. Only a folder holding nothing but what a cache
@@ -728,8 +704,7 @@ pub fn list(root: &Path) -> Vec<CacheInfo> {
         for entry in std::fs::read_dir(&server).into_iter().flatten().flatten() {
             let dir = entry.path();
             if dir.is_dir() {
-                let last_opened = read_meta(&dir).map_or(0, |m| m.last_opened);
-                found.push(CacheInfo { bytes: size_of(&dir), dir, last_opened });
+                found.push(CacheInfo { dir });
             }
         }
     }
@@ -743,14 +718,13 @@ fn remove_empty_servers(root: &Path) {
     }
 }
 
-/// Remove the caches under `root` no file refers to (`in_use`), and those
-/// last opened before `opened_before` (seconds since the epoch). Returns
-/// how many.
-pub fn sweep(root: &Path, in_use: &std::collections::HashSet<PathBuf>, opened_before: Option<u64>) -> usize {
+/// Remove the caches under `root` but those in `keep` (the files of open
+/// tabs; empty: every one). A cache another app window uses stays. Returns
+/// how many went.
+pub fn sweep(root: &Path, keep: &std::collections::HashSet<PathBuf>) -> usize {
     let mut removed = 0;
     for info in list(root) {
-        let stale = opened_before.is_some_and(|t| info.last_opened < t);
-        if (!in_use.contains(&info.dir) || stale) && remove(&info.dir).is_ok() {
+        if !keep.contains(&info.dir) && remove(&info.dir).is_ok() {
             removed += 1;
         }
     }

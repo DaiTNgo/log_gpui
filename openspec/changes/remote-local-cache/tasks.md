@@ -74,13 +74,14 @@
 
 ## 5. Mở lại từ cache
 
-- [ ] 5.1 Chọn lại Dormant Tab và mở app: nếu Remote File có cache thì
+- [x] 5.1 Chọn lại Dormant Tab và mở app: nếu Remote File có cache thì
   - index cache ở nền (như file local);
   - view hiện dòng với số dòng thật và Marker;
   - source khởi động bằng `Resume` từ Checkpoint cuối, không `open_tail`.
   - Test: quay lại tab chỉ đọc phần mới từ Server; mở lại app hiện dòng trước khi kết nối xong.
-  - Decision 10: chỉ còn "chọn lại Dormant Tab"; mở app không còn cache. Kiểm lại phần đã làm ở 4.x và đánh dấu ở task 10.1.
-- [ ] 5.2 Marker của Generation cũ không còn bị reset khi source khởi động lại (`start_missing_sources`, `src/app/live.rs:392`). Chúng khớp theo `generations_ago` của cache.
+  - Decision 10: chỉ còn "chọn lại Dormant Tab"; mở app không còn cache. Đã làm ở 4.x: `open_cached` mở lại cache, `CachedFile::restore` đánh số như trên Server, source chạy `Resume` từ Checkpoint (`resume_from`). Test: `remote_cache_app_test` (sshd, chạy ở các lượt trước), `cached_file_test::closed_and_restored…`.
+- [x] 5.2 Marker của Generation cũ không còn bị reset khi source khởi động lại (`start_missing_sources`, `src/app/live.rs:392`). Chúng khớp theo `generations_ago` của cache.
+  - Đã làm ở 4.x: `start_missing_sources` chỉ bỏ Marker của Generation cũ khi không resume từ cache; `open_cached` đặt `LogFile.generation` theo cache.
 
 ## 6. Remote Command
 
@@ -136,12 +137,13 @@
 
 ## 10. Cache trong phiên app, không vượt Live Window (decision 10)
 
-- [ ] 10.1 Vòng đời cache:
+- [x] 10.1 Vòng đời cache:
   - chuyển tab giữ cache (như hiện tại); xoá cache của file khi không còn tab đang mở nào chứa nó;
   - tắt app xoá mọi cache; mở app xoá mọi thư mục còn sót trong `remote-cache/`;
   - bỏ `last_opened` 14 ngày.
   - Kiểm lại 5.1 và 5.2 trong phạm vi một phiên rồi đánh dấu.
   - Test: chuyển tab rồi quay lại chỉ đọc phần mới; đóng tab xoá cache; cùng file ở hai tab thì đóng một tab cache vẫn còn; mở app không còn cache cũ.
+  - Đã làm: chỉ giữ cache của file nằm trong tab đang mở (mọi project; tab Log Space giữ các file của nó, File View giữ file của nó). Dọn khi đóng tab (`close_tab_at`, `close_scope_at`) và ở các chỗ file rời app như trước. Tắt app và trước khi mở lại tab lúc khởi động: xoá hết (`remove_all_remote_caches`). Bỏ `last_opened` và 14 ngày. Test mới trong `cached_remote_app_test`: chuyển tab giữ cache, đóng tab xoá; tab khác cùng file giữ tới khi tab đó đóng; cache còn sót bị xoá khi mở app. Đã chạy các test tab, session, cache liên quan.
 - [x] 10.2 Bỏ giới hạn dung lượng: setting "Remote cache", nút "Clear Remote cache", `remote_cache_limit_mb` trong session, `check_remote_cache_size`/`trim_to_size` (task 8.3).
   - Đã làm. Session cũ có `remote_cache_limit_mb` vẫn đọc được (field lạ bị bỏ qua). Test chạy: `remote_cache_test`, `cached_remote_app_test`, `session_test`.
 - [x] 10.3 Bỏ Load more: Remote File và file local, `HoldMode::Extended`, Back to Live Window, setting "Load more step", `SourceCommand::LoadMore` và event `Older` ở source.

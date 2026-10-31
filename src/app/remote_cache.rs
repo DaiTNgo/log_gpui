@@ -151,51 +151,60 @@ fn cached_parsed(cached: &crate::live::cached::CachedFile) -> ParsedFile {
     }
 }
 
-// ── Cleanup (decision 7) ────────────────────────────────────────────────────
-
-/// A cache not opened for this long is removed at start.
-const STALE_AFTER_SECS: u64 = 14 * 24 * 60 * 60;
+// ── Cleanup (decision 10) ───────────────────────────────────────────────────
 
 impl AppView {
-    /// The cache folder of every Remote File and Remote Command a Log Space
-    /// of any project holds.
+    /// The cache folder of every Remote File and Remote Command an open tab
+    /// shows, in any project: a Log Space tab shows its files, a File View
+    /// its file. Only these caches are kept.
     pub(crate) fn remote_cache_dirs_in_use(&self) -> std::collections::HashSet<PathBuf> {
+        use crate::workspace::working_set::TabTarget;
         let root = self.remote_cache_root();
-        self.workspace_state
-            .projects
-            .iter()
-            .flat_map(|p| p.log_spaces.iter())
-            .flat_map(|s| s.files.iter())
-            .filter_map(|f| {
-                let (server_id, target) = cache_key(&f.file_id, f.remote.as_ref()?);
-                Some(cache::dir_for(&root, &server_id, &target))
-            })
-            .collect()
+        let mut dirs = std::collections::HashSet::new();
+        for project in &self.workspace_state.projects {
+            for tab in project.working_set.tabs() {
+                let (space_id, only) = match &tab.target {
+                    TabTarget::LogSpace { space_id } => (space_id, None),
+                    TabTarget::FileView { space_id, file_id } => (space_id, Some(file_id)),
+                    TabTarget::InvestigationBoard { .. } => continue,
+                };
+                let Some(space) = project.log_space(space_id) else { continue };
+                for file in space.files.iter().filter(|f| only.is_none_or(|id| *id == f.file_id)) {
+                    let Some(remote) = file.remote.as_ref() else { continue };
+                    let (server_id, target) = cache_key(&file.file_id, remote);
+                    dirs.insert(cache::dir_for(&root, &server_id, &target));
+                }
+            }
+        }
+        dirs
     }
 
-    /// A file left its Log Space, its Log Space or Server was deleted, or
-    /// Edit… made it another file: the caches nothing refers to any more
-    /// go. A file read through a cache that is not its own any more stops
-    /// reading it first.
+    /// A tab was closed, a file left its Log Space, its Log Space or Server
+    /// was deleted, or Edit… made it another file: the caches no open tab
+    /// shows go. A file read through a cache that is not its own any more
+    /// stops reading it first.
     pub(crate) fn drop_unused_remote_caches(&mut self) {
+        let keep = self.remote_cache_dirs_in_use();
         let stale: Vec<String> = self
             .live
             .cached
             .iter()
-            .filter(|(id, c)| self.remote_cache_dir(id).map(|d| d.0).as_deref() != Some(c.cache().dir()))
+            .filter(|(id, c)| {
+                let own = self.remote_cache_dir(id).map(|d| d.0);
+                own.as_deref() != Some(c.cache().dir()) || !keep.contains(c.cache().dir())
+            })
             .map(|(id, _)| id.clone())
             .collect();
         for id in stale {
             self.live.cached.remove(&id);
         }
-        cache::sweep(&self.remote_cache_root(), &self.remote_cache_dirs_in_use(), None);
+        cache::sweep(&self.remote_cache_root(), &keep);
     }
 
-    /// At start: the caches no file refers to, and those not opened for 14
-    /// days, go.
-    pub(crate) fn sweep_remote_caches_at_start(&mut self) {
-        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
-        cache::sweep(&self.remote_cache_root(), &self.remote_cache_dirs_in_use(), Some(now.saturating_sub(STALE_AFTER_SECS)));
+    /// Every Remote Cache goes: the app quits, or opens (what an app that
+    /// stopped short left behind). A cache another app window uses stays.
+    pub(crate) fn remove_all_remote_caches(&mut self) {
+        self.live.cached.clear();
+        cache::sweep(&self.remote_cache_root(), &Default::default());
     }
-
 }
