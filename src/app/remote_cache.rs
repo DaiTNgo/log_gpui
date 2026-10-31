@@ -111,6 +111,7 @@ impl AppView {
     /// The tab of the Remote File is left: its cache ends at its last
     /// Checkpoint, for next time.
     pub(crate) fn close_cached(&mut self, file_id: &str) {
+        self.live.cache_failed.remove(file_id);
         let Some(cached) = self.live.cached.remove(file_id) else { return };
         let closed = if cached.is_command() { cached.close_command(&super::live::now_label()) } else { cached.close() };
         if let Err(e) = closed {
@@ -197,6 +198,7 @@ impl AppView {
             .collect();
         for id in stale {
             self.live.cached.remove(&id);
+            self.live.cache_failed.remove(&id);
         }
         cache::sweep(&self.remote_cache_root(), &keep);
     }
@@ -205,6 +207,7 @@ impl AppView {
     /// stopped short left behind). A cache another app window uses stays.
     pub(crate) fn remove_all_remote_caches(&mut self) {
         self.live.cached.clear();
+        self.live.cache_failed.clear();
         cache::sweep(&self.remote_cache_root(), &Default::default());
     }
 }

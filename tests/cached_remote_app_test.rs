@@ -325,6 +325,48 @@ fn caches_left_by_a_run_that_stopped_short_go_when_the_app_opens(cx: &mut TestAp
     drop(h);
 }
 
+/// Decision 10: a cache that cannot be written stops the file, with a
+/// notice; the lines it has stay (task 10.5).
+#[gpui::test]
+fn a_cache_that_cannot_be_written_stops_the_file_and_keeps_its_lines(cx: &mut TestAppContext) {
+    use std::os::unix::fs::PermissionsExt as _;
+    let mut r = open(cx, 1_000);
+    r.tail(lines(0..50));
+    let rows = r.view().0.len();
+    // Nothing in its folder can be written any more, as on a full disk.
+    let set_mode = |dir: &std::path::Path, mode: u32| {
+        for entry in walk(dir) {
+            std::fs::set_permissions(&entry, std::fs::Permissions::from_mode(if entry.is_dir() { mode | 0o100 } else { mode })).unwrap();
+        }
+    };
+    let dir = r.cache_dir();
+    set_mode(&dir, 0o444);
+    r.append(lines(50..60));
+    set_mode(&dir, 0o644);
+    r.h.view.read_with(&r.h.cx, |app, _| {
+        let notice = app.notice.clone().unwrap_or_default();
+        assert!(notice.contains("not read any further"), "{notice}");
+        assert!(matches!(app.live.sources[FILE_ID].status, log_gpui::live::SourceStatus::Error(_)));
+    });
+    assert_eq!(r.view().0.len(), rows, "the lines it had stay");
+    // What the source still sends is not read.
+    r.append(lines(60..70));
+    assert_eq!(r.view().0.len(), rows, "read no further");
+}
+
+/// Every folder and file under `dir`, folders after what they hold.
+fn walk(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+    let mut out = Vec::new();
+    for entry in std::fs::read_dir(dir).unwrap().flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            out.extend(walk(&path));
+        }
+        out.push(path);
+    }
+    out
+}
+
 // ── Remote Commands (task 6.1) ──────────────────────────────────────────────
 
 impl Remote {

@@ -153,8 +153,9 @@
 - [x] 10.4 Bỏ "Load earlier generation": `SourceCommand::LoadEarlier`, event `Earlier`, nút trên Break. Break ở đầu khi còn Rotated File chỉ gợi ý Open in full.
   - Đã làm: bỏ `SourceCommand::LoadEarlier`, `load_earlier` ở app và `loading_earlier`; gộp `EarlierWindowFull` vào `EarlierAvailable` với nhãn "Earlier generation: app.log.1, 38 MB" và nút Open in full. Event `Earlier` vẫn giữ vì source tự đọc Rotated File khi mở với Starting Time (không phải do người dùng bấm).
   - Test: bỏ 3 test sshd trong `remote_rotated_test` chỉ đi qua `LoadEarlier` (đọc Rotated File nén, nhận dạng nén theo byte đầu, nén không hỗ trợ); phần giải nén đó vẫn dùng khi mở với Starting Time nhưng chưa có test riêng. Nhãn Break trong golden đổi theo. Đã chạy các test liên quan, không chạy test sshd.
-- [ ] 10.5 Ghi cache lỗi: báo một notice và ngừng đọc file đó; dòng đã có vẫn xem được.
+- [x] 10.5 Ghi cache lỗi: báo một notice và ngừng đọc file đó; dòng đã có vẫn xem được.
   - Test: segment không ghi được thì notice, source đóng, view giữ dòng.
+  - Đã làm: lỗi ghi đầu tiên dừng lô event; notice "<file> is not read any further: could not write its Remote Cache (…)"; source được đóng, trạng thái `Error`, và event nó còn gửi bị bỏ (`live.cache_failed`) cho tới khi cache của file đóng (đóng tab, tắt app). Test: `cached_remote_app_test::a_cache_that_cannot_be_written_stops_the_file_and_keeps_its_lines` (thư mục cache bị chặn ghi).
 - [ ] 10.6 Kết nối SSH: khi không còn tab đang mở nào có file của một Server (Remote File, Remote Command, Live Glob) thì đóng kết nối tới Server đó; chuyển tab vẫn giữ.
   - Test: đóng tab Remote cuối cùng của `web1` thì session đóng; chuyển tab thì không.
 - [ ] 10.7 Cập nhật Settings và CONTEXT.md theo các mục trên (gộp với 9.5).

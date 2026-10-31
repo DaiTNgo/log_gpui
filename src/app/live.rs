@@ -108,6 +108,9 @@ pub struct LiveRuntime {
     pub resume_from: HashMap<String, crate::live::remote::ResumeFrom>,
     /// Remote Files and Remote Commands read through their Remote Cache.
     pub cached: HashMap<String, crate::live::cached::CachedFile>,
+    /// Files whose Remote Cache could not be written: read no further while
+    /// their cache is open (what their source still sends is dropped).
+    pub cache_failed: HashSet<String>,
     /// The last lines a Remote Command's cache kept, until its source
     /// starts and runs it again below them.
     pub previous_run: HashMap<String, Vec<(crate::model::Stream, String)>>,
@@ -150,6 +153,7 @@ impl LiveRuntime {
             local_deleted: HashSet::new(),
             resume_from: HashMap::new(),
             cached: HashMap::new(),
+            cache_failed: HashSet::new(),
             previous_run: HashMap::new(),
             index_more: HashSet::new(),
             index_more_scheduled: false,
@@ -588,6 +592,10 @@ impl AppView {
     /// and what is left of it waits for the next pump.
     fn drain_events(&mut self, file_id: &str) -> Vec<SourceEvent> {
         let Some(source) = self.live.sources.get(file_id) else { return Vec::new() };
+        if self.live.cache_failed.contains(file_id) {
+            while source.handle.events.try_recv().is_ok() {}
+            return Vec::new();
+        }
         let incoming = source.handle.events.clone();
         let mut events = Vec::new();
         let mut taken = 0usize;
@@ -773,10 +781,14 @@ impl AppView {
                         });
                     }
                 }
-                Err(e) => failed = Some(e),
+                Err(e) => {
+                    // What comes after this event cannot be written either.
+                    failed = Some(e);
+                    break;
+                }
             }
         }
-        if let Some(cached) = self.live.cached.get_mut(file_id) {
+        if let Some(cached) = self.live.cached.get_mut(file_id).filter(|_| failed.is_none()) {
             let limit = window;
             match cached.trim_to_window(limit) {
                 Ok(Some(trimmed)) => {
@@ -788,7 +800,7 @@ impl AppView {
             }
         }
         if let Some(e) = failed {
-            self.notice = Some(format!("Could not keep the lines of {file_id}: {e}"));
+            self.stop_reading_after_cache_error(file_id, &e);
         }
         // Rows were inserted above or dropped: the appended range means
         // nothing then, the view is built again.
@@ -797,6 +809,22 @@ impl AppView {
         }
         self.refresh_cached_parsed(file_id);
         delta
+    }
+
+    /// The Remote Cache of `file_id` could not be written (the disk is
+    /// full, …): a notice says so and the file is read no further; the
+    /// lines it has stay (decision 10). Its source stays, closed, so it is
+    /// not started again while the tab is open.
+    fn stop_reading_after_cache_error(&mut self, file_id: &str, error: &std::io::Error) {
+        let why = format!("could not write its Remote Cache ({error})");
+        let name = self.live.sources.get(file_id).map_or_else(|| file_id.to_string(), |s| s.name.clone());
+        self.notice = Some(format!("{name} is not read any further: {why}"));
+        if let Some(source) = self.live.sources.get_mut(file_id) {
+            source.handle.close();
+            source.status = SourceStatus::Error(why);
+        }
+        self.live.backlog.remove(file_id);
+        self.live.cache_failed.insert(file_id.to_string());
     }
 
     /// Events of a local file read through its Line Index. Its source only
