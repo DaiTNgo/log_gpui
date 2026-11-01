@@ -1,7 +1,15 @@
 ## ADDED Requirements
 
 ### Requirement: Làn dưới Time Histogram
-Hệ thống SHALL vẽ các làn ngay dưới Time Histogram, trong cùng dải và trên cùng trục thời gian. Zoom, khung vùng đang xem và dải Time Range của Time Histogram SHALL trải qua cả các làn. Mỗi làn SHALL là một giá trị của cột Lane By, có tên ở đầu làn. Trong mỗi cột thời gian, làn SHALL có một vạch khi có ít nhất một Parent Line của giá trị đó; vạch tô màu theo level cao nhất trong cột đó: Error/Fatal đỏ, Warn cam, còn lại xám. Thu gọn dải SHALL ẩn cả các làn.
+Hệ thống SHALL vẽ các làn trong một dải riêng (dải Swimlane) ngay dưới Time Histogram, trên cùng trục thời gian. Dải Swimlane SHALL bật/tắt riêng bằng nút "Lanes" (nhớ cho mọi view như nút Histogram), SHALL hiện được cả khi Time Histogram tắt, và SHALL có nút thu gọn riêng; thu gọn chỉ còn header. Zoom, khung vùng đang xem và dải Time Range của Time Histogram SHALL trải qua cả các làn. Mỗi làn SHALL là một giá trị của cột Lane By, có tên ở đầu làn. Trong mỗi cột thời gian, làn SHALL có một vạch khi có ít nhất một Parent Line của giá trị đó; vạch tô màu theo level cao nhất trong cột đó: Error/Fatal đỏ, Warn cam, còn lại xám. Khi dải Swimlane tắt, hệ thống SHALL NOT đếm làn.
+
+#### Scenario: Tắt làn, giữ histogram
+- **WHEN** người dùng tắt nút "Lanes"
+- **THEN** dải Swimlane biến mất, Time Histogram vẫn hiện và lấy lại phần lề của cột tên làn
+
+#### Scenario: Tắt histogram, giữ làn
+- **WHEN** người dùng tắt nút "Histogram" trong khi nút "Lanes" đang bật
+- **THEN** dải Swimlane vẫn hiện các làn, kèm thời điểm đầu và cuối của trục ở header
 
 #### Scenario: Hai service
 - **WHEN** Lane By là `service`, `db` có dòng Error lúc `10:30` và `api` có dòng Error lúc `10:31`
@@ -12,7 +20,7 @@ Hệ thống SHALL vẽ các làn ngay dưới Time Histogram, trong cùng dải
 - **THEN** các làn cũng chỉ hiện `10:20`–`10:50`
 
 ### Requirement: Lane By
-Dải SHALL có menu "Lane by" ở đầu, liệt kê "Không chia" và mọi Filterable Column của view, kể cả Source Column và Log Name Column. Chọn "Không chia" SHALL ẩn mọi làn. Cột vượt giới hạn giá trị riêng biệt của Filter SHALL hiện trong menu ở dạng không chọn được, kèm lý do. Lane By SHALL được nhớ theo view, như Filter.
+Dải Swimlane SHALL có menu "Lane by" ở đầu, liệt kê "Không chia" và mọi Filterable Column của view, kể cả Source Column và Log Name Column. Chọn "Không chia" SHALL ẩn mọi làn. Cột vượt giới hạn giá trị riêng biệt của Filter SHALL hiện trong menu ở dạng không chọn được, kèm lý do. Lane By SHALL được nhớ theo view, như Filter.
 
 #### Scenario: Chọn cột
 - **WHEN** người dùng chọn Lane by `thread`
@@ -42,11 +50,11 @@ Khi view chưa từng chọn Lane By: nếu Log Space có từ hai giá trị Lo
 - **THEN** Lane By là "Không chia"
 
 ### Requirement: Giới hạn số làn
-Hệ thống SHALL hiện tối đa 8 làn, là những giá trị có nhiều Parent Line nhất trong toàn view, xếp theo số dòng giảm dần. Mọi giá trị còn lại SHALL gom vào một làn "Khác (n giá trị)" ở cuối.
+Hệ thống SHALL hiện tối đa 8 làn, là những giá trị có nhiều Parent Line nhất trong toàn view, xếp theo số dòng giảm dần. Mọi giá trị còn lại SHALL gom vào một làn "Other · n" ở cuối.
 
 #### Scenario: Nhiều thread
 - **WHEN** Lane By là `thread` và cột có 300 giá trị
-- **THEN** có 8 làn của 8 thread nhiều dòng nhất và một làn "Khác (292 giá trị)"
+- **THEN** có 8 làn của 8 thread nhiều dòng nhất và một làn "Other · 292"
 
 ### Requirement: Dòng không có giá trị
 Continuation Line SHALL nằm cùng làn với Parent Line của nó và SHALL NOT tự tạo vạch. Parent Line không có giá trị ở cột Lane By SHALL vào làn "(trống)". Làn này đứng ngay trước "Khác" và chỉ hiện khi có dòng như vậy.
@@ -60,7 +68,7 @@ Continuation Line SHALL nằm cùng làn với Parent Line của nó và SHALL N
 - **THEN** cả 41 dòng thuộc làn `db`, và làn "(trống)" không xuất hiện vì chúng
 
 ### Requirement: Tương tác với làn
-Bấm tên một làn SHALL thêm giá trị của làn đó vào Filter của cột Lane By, như tích giá trị đó trong sidebar Filter. Bấm tên làn "Khác" hoặc "(trống)" SHALL NOT đổi Filter. Bấm một vạch SHALL đặt dòng hiện tại của view thành dòng đầu tiên của giá trị đó trong cột thời gian đó, và SHALL NOT thu hẹp gì.
+Bấm tên một làn SHALL thêm giá trị của làn đó vào Filter của cột Lane By, như tích giá trị đó trong sidebar Filter. Bấm lại tên một làn đang được tích SHALL bỏ tích giá trị đó, và tên làn đang được tích SHALL được tô nổi. Bấm tên làn "Khác" hoặc "(trống)" SHALL NOT đổi Filter. Rê chuột lên một làn SHALL hiện ở header của dải tên làn, khoảng thời gian, số Parent Line và level cao nhất trong cột đó. Làn của Source Column hoặc Log Name Column SHALL có tên theo màu của file; vạch chỉ có dòng không phải Warn/Error SHALL là một vạch mảnh, nhạt. Bấm một vạch SHALL đặt dòng hiện tại của view thành dòng đầu tiên của giá trị đó trong cột thời gian đó, và SHALL NOT thu hẹp gì.
 
 #### Scenario: Lọc theo làn
 - **WHEN** người dùng bấm tên làn `order-service`

@@ -11,6 +11,16 @@ use gpui::Context;
 /// Field Columns the menu suggests, after MODULE, first found first.
 const SUGGESTED_FIELDS: [&str; 6] = ["service", "module", "component", "thread", "host", "pod"];
 
+/// What the pointer is over on the Swimlanes: a lane in a column, its
+/// Parent Lines there and the highest class of them.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LaneHover {
+    pub lane: Lane,
+    pub col: usize,
+    pub lines: usize,
+    pub class: u8,
+}
+
 /// A column in the "Lane by" menu.
 #[derive(Debug, Clone, PartialEq)]
 pub struct LaneChoice {
@@ -123,25 +133,106 @@ impl AppView {
                 .map_or_else(String::new, |v| v.display.clone()),
             Lane::Empty => "(empty)".to_string(),
             Lane::Other => {
+                // Short enough for the names' room; the tooltip says more.
                 let n = self.histogram.shown.lanes.as_ref().map_or(0, |l| l.set.other_count);
-                let noun = if n == 1 { "value" } else { "values" };
-                format!("Other ({} {noun})", crate::app::format_count(n))
+                format!("Other · {}", crate::app::format_count(n))
             }
         }
     }
 
+    /// The full name of a lane, for its tooltip.
+    pub fn lane_title(&self, lane: Lane) -> String {
+        match lane {
+            Lane::Other => {
+                let n = self.histogram.shown.lanes.as_ref().map_or(0, |l| l.set.other_count);
+                let noun = if n == 1 { "value" } else { "values" };
+                format!("Other: {} {noun} with no lane of their own", crate::app::format_count(n))
+            }
+            Lane::Empty => "Lines with no value in this column".to_string(),
+            lane => self.lane_name(lane),
+        }
+    }
+
+    /// The color of a file a lane stands for, when the lanes split by the
+    /// Source or Log Name Column: the tint its rows have in the list.
+    pub fn lane_tint(&self, lane: Lane, dark: bool) -> Option<gpui::Hsla> {
+        let Lane::Value(_) = lane else { return None };
+        let key = self.histogram.lanes_for.as_deref()?;
+        let name = self.lane_name(lane);
+        let space = self.active_space()?;
+        let file = space.files.iter().find(|f| match key {
+            "source" => f.display_name == name,
+            "log_name" => crate::rotation_name::log_name(&f.display_name) == name,
+            _ => false,
+        })?;
+        Some(crate::ui::canvas::source_tint(space.source_tint_index(&file.file_id)?, dark))
+    }
+
+    /// Whether a lane's value is ticked in the Filter of its column.
+    pub fn lane_ticked(&self, lane: Lane) -> bool {
+        let (Lane::Value(_), Some(key)) = (lane, self.histogram.lanes_for.as_deref()) else { return false };
+        let folded = crate::unicode_text::fold(&self.lane_name(lane));
+        self.filter_state.is_value_ticked(key, &folded)
+    }
+
     /// A lane's name was clicked: its value is ticked in the Filter of the
-    /// column, as ticking it in the Filter sidebar (in Hide Mode it hides
-    /// it). "Other" and "(empty)" do nothing.
+    /// column, or unticked when it was, as its checkbox in the Filter
+    /// sidebar does (in Hide Mode, ticked hides it). "Other" and "(empty)"
+    /// do nothing.
     pub fn lane_name_clicked(&mut self, lane: Lane, cx: &mut Context<Self>) {
         let Lane::Value(_) = lane else { return };
         let Some(key) = self.histogram.lanes_for.clone() else { return };
         let value = self.lane_name(lane);
-        let folded = crate::unicode_text::fold(&value);
-        let ticked = self.filter_state.column(&key).is_some_and(|c| c.values.contains(&folded));
-        if !value.is_empty() && !ticked {
+        if !value.is_empty() {
             self.filter_toggle_value(&key, &value, cx);
         }
+    }
+
+    /// The pointer is at time `at` over `lane`: say what is there, its
+    /// lines counted once each time it moves to another column.
+    pub fn lane_hover_at(&mut self, lane: Lane, at: f64, cx: &mut Context<Self>) {
+        let Some(col) = self.histogram.shown.grid.and_then(|g| g.column_of(at)) else { return self.lane_hover_clear(cx) };
+        if self.histogram.lane_hover.as_ref().is_some_and(|h| h.lane == lane && h.col == col) {
+            return;
+        }
+        let class = self
+            .histogram
+            .shown
+            .lanes
+            .as_ref()
+            .and_then(|l| l.level(lane).get(col).copied())
+            .unwrap_or(0);
+        let lines = if class == 0 { 0 } else { self.lane_rows_in(lane, col).count() };
+        self.histogram.lane_hover = Some(LaneHover { lane, col, lines, class });
+        cx.notify();
+    }
+
+    /// The pointer left the Swimlanes.
+    pub fn lane_hover_clear(&mut self, cx: &mut Context<Self>) {
+        if self.histogram.lane_hover.take().is_some() {
+            cx.notify();
+        }
+    }
+
+    /// What the pointer is over, as the Swimlane strip says it:
+    /// "db.log · 10:30:00–10:31:00 · 12 lines · Error".
+    pub fn lane_hover_text(&self) -> Option<String> {
+        let hover = self.histogram.lane_hover.as_ref()?;
+        let grid = self.histogram.shown.grid?;
+        let step = self.histogram.axis.as_ref().map_or(th::Step(1.0), |a| a.step);
+        let anchor = self.filter_index.anchor_day();
+        let (from, to) = th::format_time_range(grid.start_of(hover.col), grid.start_of(hover.col + 1), anchor, step);
+        let name = self.lane_name(hover.lane);
+        if hover.lines == 0 {
+            return Some(format!("{name} · {from}–{to} · no lines"));
+        }
+        let lines = if hover.lines == 1 { "1 line".to_string() } else { format!("{} lines", crate::app::format_count(hover.lines)) };
+        let level = match hover.class {
+            3 => " · Error",
+            2 => " · Warn",
+            _ => "",
+        };
+        Some(format!("{name} · {from}–{to} · {lines}{level}"))
     }
 
     /// A lane's bar in column `col` was clicked: go to the first Parent
@@ -154,17 +245,29 @@ impl AppView {
 
     /// The first Parent Line of `lane` in column `col` of the counted grid.
     pub fn first_row_of_lane(&self, lane: Lane, col: usize) -> Option<usize> {
+        self.lane_rows_in(lane, col).next()
+    }
+
+    /// The Parent Lines of `lane` in column `col` of the counted grid, in
+    /// order.
+    fn lane_rows_in(&self, lane: Lane, col: usize) -> Box<dyn Iterator<Item = usize> + '_> {
         let buckets = &self.histogram.shown;
-        let (grid, lanes) = (buckets.grid?, buckets.lanes.as_ref()?);
-        let column = self.filter_index.column(self.histogram.lanes_for.as_deref()?)?;
-        let (start, end) = (grid.start_of(col), grid.start_of(col + 1));
-        let ts = self.filter_index.effective_ts();
-        let sorted = self.view_times_ascend();
-        let from = if sorted { th::first_row_at(ts, start, true)? } else { 0 };
-        let rows = self.rows();
-        (from..ts.len())
-            .take_while(|&r| !sorted || ts[r] < end)
-            .filter(|&r| ts[r] >= start && ts[r] < end && !rows.continues(r))
-            .find(|&r| column.id_of_row(r).is_some_and(|id| lanes.holds(lane, id)))
+        let found = (|| {
+            let (grid, lanes) = (buckets.grid?, buckets.lanes.as_ref()?);
+            let column = self.filter_index.column(self.histogram.lanes_for.as_deref()?)?;
+            let (start, end) = (grid.start_of(col), grid.start_of(col + 1));
+            let ts = self.filter_index.effective_ts();
+            let sorted = self.view_times_ascend();
+            let from = if sorted { th::first_row_at(ts, start, true)? } else { 0 };
+            let rows = self.rows();
+            Some((from..ts.len())
+                .take_while(move |&r| !sorted || ts[r] < end)
+                .filter(move |&r| ts[r] >= start && ts[r] < end && !rows.continues(r))
+                .filter(move |&r| column.id_of_row(r).is_some_and(|id| lanes.holds(lane, id))))
+        })();
+        match found {
+            Some(rows) => Box::new(rows),
+            None => Box::new(std::iter::empty()),
+        }
     }
 }

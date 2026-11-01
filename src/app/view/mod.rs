@@ -105,7 +105,8 @@ impl Render for AppView {
             })
         };
 
-        let histogram = self.render_time_histogram(colors, cx);
+        let histogram = self.render_time_histogram(colors.clone(), cx);
+        let lanes = self.render_swimlanes(colors, cx);
 
         let viewport_height = f32::from(window.viewport_size().height);
         let focus_pane =
@@ -230,6 +231,7 @@ impl Render for AppView {
                             .children(go_to_bar)
                             .children(detected_hint)
                             .children(histogram)
+                            .children(lanes)
                             .child(log_canvas)
                             .child(notice),
                     )

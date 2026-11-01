@@ -3,9 +3,9 @@
 //! minimap. From the bottom up: the Time Range's background, the columns
 //! (all lines dim under a Filter, the lines passing it solid), the ticks of
 //! the columns with a Match, and the frame of the part the list shows.
-//! Under the columns, on the same axis, the Swimlanes (openspec change
-//! `add-swimlane`, decision 6): a row of bars per value, with the names in
-//! a gutter on the left that the columns line up with.
+//! Under it, a strip of its own on the same axis, the Swimlanes (openspec
+//! change `add-swimlane`, decision 6): a row of bars per value, with the
+//! names on the left; the histogram keeps the same room so both line up.
 
 use crate::app::AppView;
 use crate::app::time_histogram::HistogramDrag;
@@ -19,7 +19,8 @@ use gpui::{
 };
 use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::menu::{DropdownMenu as _, PopupMenuItem};
-use gpui_component::Sizable as _;
+use gpui_component::{ActiveTheme as _, Sizable as _};
+use gpui_kit::assets::IconName;
 use std::cell::Cell;
 use std::ops::Range;
 use std::rc::Rc;
@@ -37,10 +38,10 @@ const EDGE_PX: f32 = 4.0;
 /// Height of a Swimlane, and of its bar in it.
 const LANE_HEIGHT: f32 = 14.0;
 const LANE_BAR: f32 = 8.0;
+/// Height of a lane's mark where it has only lines of no note.
+const LANE_QUIET: f32 = 2.0;
 /// Width of the lane names on the left; the columns start after it.
 const NAMES_WIDTH: f32 = 90.0;
-/// A name longer than this may be cut: it has a tooltip.
-const NAME_CHARS: usize = 14;
 
 /// The "Lane by" menu.
 pub struct LaneMenu {
@@ -51,8 +52,8 @@ pub struct LaneMenu {
     pub suggested: Option<String>,
 }
 
-/// What one histogram strip shows.
-pub struct HistogramProps {
+/// What both strips are drawn on: the view's axis and what lies over it.
+pub struct StripProps {
     pub view: Entity<AppView>,
     pub axis: TimeAxis,
     pub buckets: Arc<Buckets>,
@@ -63,12 +64,42 @@ pub struct HistogramProps {
     /// While files are read: the time read so far; the axis after it is dim.
     pub indexed_to: Option<f64>,
     pub colors: CanvasColors,
-    pub collapsed: bool,
-    /// Receives where the columns are drawn.
+    /// Receives where the strip's axis is drawn.
     pub bounds_sink: Rc<Cell<Bounds<Pixels>>>,
-    /// The Swimlanes drawn, and their names.
-    pub lanes: Vec<(Lane, String)>,
-    pub lane_menu: LaneMenu,
+}
+
+/// What the Time Histogram strip shows.
+pub struct HistogramProps {
+    pub strip: StripProps,
+    pub collapsed: bool,
+    /// The Swimlane strip is shown under it: keep the room of its names on
+    /// the left, so both axes line up.
+    pub gutter: bool,
+}
+
+/// A lane as its name shows it.
+pub struct LaneRow {
+    pub lane: Lane,
+    pub name: String,
+    /// What its tooltip says.
+    pub title: String,
+    /// The color of the file it stands for, by Source or Log Name.
+    pub tint: Option<gpui::Hsla>,
+    /// Its value is ticked in the Filter.
+    pub ticked: bool,
+}
+
+/// What the Swimlane strip shows.
+pub struct LanesProps {
+    pub strip: StripProps,
+    pub collapsed: bool,
+    /// The lanes drawn, in order.
+    pub lanes: Vec<LaneRow>,
+    pub menu: LaneMenu,
+    /// The Time Histogram is hidden: the strip shows the axis's times.
+    pub show_times: bool,
+    /// What the pointer is over, said in the header.
+    pub hover: Option<String>,
 }
 
 /// Where time `t` is across `bounds` showing `visible`.
@@ -160,11 +191,11 @@ fn paint_lanes(
     top: f32,
     colors: &CanvasColors,
 ) {
-    let fills = [colors.muted.opacity(0.55), colors.warning, colors.danger];
+    let fills = [colors.muted.opacity(0.35), colors.warning, colors.danger];
     for (i, lane) in order.iter().enumerate() {
         let y0 = top + i as f32 * LANE_HEIGHT;
         window.paint_quad(gpui::fill(rect(f32::from(bounds.origin.x), y0, f32::from(bounds.right()), y0 + 0.5), colors.border.opacity(0.5)));
-        let bar = y0 + (LANE_HEIGHT - LANE_BAR) / 2.0;
+        let mid = y0 + LANE_HEIGHT / 2.0;
         for (col, &level) in lanes.level(*lane).iter().enumerate() {
             if level == 0 {
                 continue;
@@ -172,7 +203,10 @@ fn paint_lanes(
             let x0 = x_of(grid.start_of(col), visible, bounds).max(f32::from(bounds.origin.x));
             let x1 = x_of(grid.start_of(col + 1), visible, bounds).min(f32::from(bounds.right()));
             let x1 = if x1 - x0 > 3.0 { x1 - 1.0 } else { x1.max(x0 + 1.0) };
-            window.paint_quad(gpui::fill(rect(x0, bar, x1, bar + LANE_BAR), fills[usize::from(level - 1).min(2)]));
+            // Lines of no note are a thin quiet mark, so a Warn or an Error
+            // stands out at a glance.
+            let half = if level == 1 { LANE_QUIET / 2.0 } else { LANE_BAR / 2.0 };
+            window.paint_quad(gpui::fill(rect(x0, mid - half, x1, mid + half), fills[usize::from(level - 1).min(2)]));
         }
     }
 }
@@ -194,34 +228,24 @@ fn paint_range(window: &mut Window, range: (Option<f64>, Option<f64>), visible: 
     }
 }
 
-pub fn render(props: HistogramProps, cx: &App) -> gpui::AnyElement {
-    let HistogramProps {
-        view,
-        axis,
-        buckets,
-        time_range,
-        drag_range,
-        indexed_to,
-        colors,
-        collapsed,
-        bounds_sink,
-        lanes,
-        lane_menu,
-    } = props;
+/// The area of a strip drawn on the axis, `height` tall: the Time Range's
+/// background, `body`, the part not read yet dimmed and the frame of the
+/// part the list shows; ⌘ + scroll zooms, a press, drag or click goes to the
+/// histogram's handlers. With `lanes`, a press says which lane it is on.
+fn axis_area(
+    strip: &StripProps,
+    id: &'static str,
+    height: f32,
+    lanes: Option<Rc<Vec<Lane>>>,
+    body: impl Fn(&Bounds<Pixels>, &mut Window) + 'static,
+) -> gpui::Stateful<gpui::Div> {
+    let StripProps { view, axis, time_range, drag_range, indexed_to, colors, bounds_sink, .. } = strip;
+    let (time_range, drag_range, indexed_to) = (*time_range, *drag_range, *indexed_to);
     let visible = axis.visible.clone();
-    let grid = buckets.grid.unwrap_or_else(|| axis.grid());
-    let bars = if collapsed { FOLDED_HEIGHT } else { BARS_HEIGHT };
-    // A folded strip has no lanes.
-    let lanes = if collapsed || buckets.lanes.is_none() { Vec::new() } else { lanes };
-    let order: Rc<Vec<Lane>> = Rc::new(lanes.iter().map(|(l, _)| *l).collect());
-    let height = bars + order.len() as f32 * LANE_HEIGHT;
-
     let paint_view = view.clone();
     let sink = bounds_sink.clone();
     let paint_visible = visible.clone();
     let paint_colors = colors.clone();
-    let paint_buckets = buckets.clone();
-    let paint_order = order.clone();
     let canvas = gpui::canvas(
         |_, _, _| (),
         move |bounds, _, window, cx| {
@@ -234,15 +258,10 @@ pub fn render(props: HistogramProps, cx: &App) -> gpui::AnyElement {
             }
             let colors = &paint_colors;
             let visible = &paint_visible;
-            let bars_bottom = f32::from(bounds.origin.y) + bars;
-            let (top, bottom) = (f32::from(bounds.origin.y) + 2.0, bars_bottom - TICK_HEIGHT - 1.0);
             if let Some(range) = drag_range.map(|(a, b)| (Some(a), Some(b))).or(time_range) {
                 paint_range(window, range, visible, &bounds, colors, drag_range.is_some());
             }
-            paint_columns(window, &paint_buckets, &grid, visible, &bounds, (top, bottom), colors);
-            if let Some(lanes) = paint_buckets.lanes.as_ref().filter(|_| !paint_order.is_empty()) {
-                paint_lanes(window, lanes, &paint_order, &grid, visible, &bounds, bars_bottom, colors);
-            }
+            body(&bounds, window);
             if let Some(read_to) = indexed_to.filter(|t| *t < visible.end) {
                 // Not counted yet: dim.
                 let x = x_of(read_to, visible, &bounds).max(f32::from(bounds.origin.x));
@@ -250,7 +269,6 @@ pub fn render(props: HistogramProps, cx: &App) -> gpui::AnyElement {
                     rect(x, f32::from(bounds.origin.y), f32::from(bounds.right()), f32::from(bounds.bottom())),
                     colors.background.opacity(0.6),
                 ));
-                window.paint_quad(gpui::fill(rect(x, bottom - 1.0, f32::from(bounds.right()), bottom), colors.muted.opacity(0.4)));
             }
             if let Some(sight) = paint_view.read(cx).histogram_in_sight() {
                 let x0 = x_of(sight.start, visible, &bounds).max(f32::from(bounds.origin.x));
@@ -269,13 +287,13 @@ pub fn render(props: HistogramProps, cx: &App) -> gpui::AnyElement {
     .absolute()
     .size_full();
 
-    let mut columns = div().id("time_histogram").relative().flex_1().min_w_0().h(px(height)).child(canvas);
+    let mut area = div().id(id).relative().flex_1().min_w_0().h(px(height)).child(canvas);
     // ⌘ + scroll zooms around the pointer.
     {
         let view = view.clone();
         let sink = bounds_sink.clone();
         let visible = visible.clone();
-        columns = columns.on_scroll_wheel(move |event, window, cx| {
+        area = area.on_scroll_wheel(move |event, window, cx| {
             if !event.modifiers.platform {
                 return;
             }
@@ -286,40 +304,66 @@ pub fn render(props: HistogramProps, cx: &App) -> gpui::AnyElement {
             view.update(cx, |this, cx| this.histogram_zoom(at, factor, cx));
         });
     }
-    {
-        let span = visible.end - visible.start;
-        let edge = move |sink: &Bounds<Pixels>| f64::from(EDGE_PX / f32::from(sink.size.width).max(1.0)) * span;
-        let (v_down, v_move, v_up, v_up_out) = (view.clone(), view.clone(), view.clone(), view.clone());
-        let (s_down, s_move) = (bounds_sink.clone(), bounds_sink.clone());
-        let (vis_down, vis_move) = (visible.clone(), visible.clone());
-        let down_order = order.clone();
-        columns = columns
-            .cursor_crosshair()
-            .on_mouse_down(MouseButton::Left, move |event, _, cx| {
-                let bounds = s_down.get();
-                let at = time_at(event.position.x, &vis_down, &bounds);
-                let x = f32::from(event.position.x);
-                // Below the columns: the lane pressed on.
-                let below = f32::from(event.position.y) - f32::from(bounds.origin.y) - bars;
-                let lane = (below >= 0.0).then(|| down_order.get((below / LANE_HEIGHT) as usize).copied()).flatten();
-                v_down.update(cx, |this, cx| this.histogram_mouse_down(at, x, edge(&bounds), lane, cx));
-            })
-            .on_mouse_move(move |event, _, cx| {
-                if event.pressed_button != Some(MouseButton::Left) {
-                    return;
+    let span = visible.end - visible.start;
+    let edge = move |sink: &Bounds<Pixels>| f64::from(EDGE_PX / f32::from(sink.size.width).max(1.0)) * span;
+    let (v_down, v_move, v_up, v_up_out, v_leave) = (view.clone(), view.clone(), view.clone(), view.clone(), view.clone());
+    let (s_down, s_move) = (bounds_sink.clone(), bounds_sink.clone());
+    let (vis_down, vis_move) = (visible.clone(), visible);
+    let move_lanes = lanes.clone();
+    let lane_at = |order: &[Lane], y: Pixels, bounds: &Bounds<Pixels>| {
+        let below = f32::from(y) - f32::from(bounds.origin.y);
+        (below >= 0.0).then(|| order.get((below / LANE_HEIGHT) as usize).copied()).flatten()
+    };
+    area.cursor_crosshair()
+        .when(lanes.is_some(), |d| {
+            d.on_hover(move |hovered, _, cx| {
+                if !*hovered {
+                    v_leave.update(cx, |this, cx| this.lane_hover_clear(cx));
                 }
-                let at = time_at(event.position.x, &vis_move, &s_move.get());
-                let x = f32::from(event.position.x);
-                v_move.update(cx, |this, cx| {
-                    if this.histogram.drag.is_some() {
-                        this.histogram_mouse_drag(at, x, cx)
-                    }
-                });
             })
-            .on_mouse_up(MouseButton::Left, move |_, _, cx| v_up.update(cx, |this, cx| this.histogram_mouse_up(cx)))
-            .on_mouse_up_out(MouseButton::Left, move |_, _, cx| v_up_out.update(cx, |this, cx| this.histogram_mouse_up(cx)));
-    }
+        })
+        .on_mouse_down(MouseButton::Left, move |event, _, cx| {
+            let bounds = s_down.get();
+            let at = time_at(event.position.x, &vis_down, &bounds);
+            let x = f32::from(event.position.x);
+            let lane = lanes.as_ref().and_then(|order| lane_at(order, event.position.y, &bounds));
+            v_down.update(cx, |this, cx| this.histogram_mouse_down(at, x, edge(&bounds), lane, cx));
+        })
+        .on_mouse_move(move |event, _, cx| {
+            let bounds = s_move.get();
+            let at = time_at(event.position.x, &vis_move, &bounds);
+            if event.pressed_button != Some(MouseButton::Left) {
+                // Over a lane: say what is there.
+                let lane = move_lanes.as_ref().and_then(|order| lane_at(order, event.position.y, &bounds));
+                if let Some(lane) = lane {
+                    v_move.update(cx, |this, cx| this.lane_hover_at(lane, at, cx));
+                } else if move_lanes.is_some() {
+                    v_move.update(cx, |this, cx| this.lane_hover_clear(cx));
+                }
+                return;
+            }
+            let x = f32::from(event.position.x);
+            v_move.update(cx, |this, cx| {
+                if this.histogram.drag.is_some() {
+                    this.histogram_mouse_drag(at, x, cx)
+                }
+            });
+        })
+        .on_mouse_up(MouseButton::Left, move |_, _, cx| v_up.update(cx, |this, cx| this.histogram_mouse_up(cx)))
+        .on_mouse_up_out(MouseButton::Left, move |_, _, cx| v_up_out.update(cx, |this, cx| this.histogram_mouse_up(cx)))
+}
 
+/// The Time Histogram strip: its labels, then its columns.
+pub fn render(props: HistogramProps, _cx: &App) -> gpui::AnyElement {
+    let HistogramProps { strip, collapsed, gutter } = props;
+    let bars = if collapsed { FOLDED_HEIGHT } else { BARS_HEIGHT };
+    let grid = strip.buckets.grid.unwrap_or_else(|| strip.axis.grid());
+    let (buckets, visible, colors) = (strip.buckets.clone(), strip.axis.visible.clone(), strip.colors.clone());
+    let columns = axis_area(&strip, "time_histogram", bars, None, move |bounds, window| {
+        let (top, bottom) = (f32::from(bounds.origin.y) + 2.0, f32::from(bounds.bottom()) - TICK_HEIGHT - 1.0);
+        paint_columns(window, &buckets, &grid, &visible, bounds, (top, bottom), &colors);
+    });
+    let colors = &strip.colors;
     div()
         .w_full()
         .flex()
@@ -327,48 +371,132 @@ pub fn render(props: HistogramProps, cx: &App) -> gpui::AnyElement {
         .border_b_1()
         .border_color(colors.border)
         .bg(colors.background)
-        .child(labels(&view, &axis, &buckets, collapsed, &colors, &lane_menu, !lanes.is_empty(), cx))
+        .child(labels(&strip, collapsed, gutter))
         .child(
             div()
                 .px(px(8.0))
                 .flex()
                 .flex_row()
-                .when(!lanes.is_empty(), |row| row.child(lane_names(&view, &lanes, bars, &colors)))
+                .when(gutter, |row| row.child(div().w(px(NAMES_WIDTH)).flex_shrink_0()))
                 .child(columns),
         )
         .into_any_element()
 }
 
-/// The gutter of lane names, level with the lanes: clicking a value's name
-/// ticks it in the Filter.
-fn lane_names(view: &Entity<AppView>, lanes: &[(Lane, String)], bars: f32, colors: &CanvasColors) -> impl IntoElement {
-    let mut names = div().w(px(NAMES_WIDTH)).flex_shrink_0().flex().flex_col().child(div().h(px(bars)));
-    for (i, (lane, name)) in lanes.iter().enumerate() {
-        let (lane, name) = (*lane, name.clone());
+/// The Swimlane strip under the histogram, on the same axis: a header with
+/// the "Lane by" menu and its own fold toggle, then a row of bars per lane
+/// with the names on the left.
+pub fn render_lanes(props: LanesProps, cx: &App) -> gpui::AnyElement {
+    let LanesProps { strip, collapsed, lanes, menu, show_times, hover } = props;
+    let colors = strip.colors.clone();
+    let order: Rc<Vec<Lane>> = Rc::new(lanes.iter().map(|l| l.lane).collect());
+    let small = |text: String| div().text_size(px(10.0)).text_color(colors.muted).child(text);
+    let span = strip.axis.visible.end - strip.axis.visible.start;
+    let mut header = div()
+        .h(px(LABELS_HEIGHT))
+        .px(px(8.0))
+        .flex()
+        .flex_row()
+        .items_center()
+        .gap(px(10.0))
+        .child(div().w(px(NAMES_WIDTH - 10.0)).flex_shrink_0().child(lane_by_button(&strip.view, &menu)));
+    header = if show_times { header.child(small(label(strip.axis.visible.start, span))) } else { header };
+    header = header.child(div().flex_1());
+    if let Some(text) = hover {
+        header = header.child(div().text_size(px(10.0)).text_color(cx.theme().foreground).truncate().child(text));
+    }
+    if show_times {
+        header = header.child(small(label(strip.axis.visible.end, span)));
+    }
+    let v = strip.view.clone();
+    header = header.child(fold_button("lanes_fold", collapsed, move |cx| v.update(cx, |this, cx| this.toggle_lanes_collapsed(cx))));
+    let mut out = div().w_full().flex().flex_col().border_b_1().border_color(colors.border).bg(colors.background).child(header);
+    if collapsed {
+        return out.into_any_element();
+    }
+    match (strip.buckets.lanes.as_ref(), lanes.is_empty()) {
+        (Some(_), false) => {
+            let grid = strip.buckets.grid.unwrap_or_else(|| strip.axis.grid());
+            let (buckets, visible, paint_colors, paint_order) =
+                (strip.buckets.clone(), strip.axis.visible.clone(), colors.clone(), order.clone());
+            let height = order.len() as f32 * LANE_HEIGHT + 2.0;
+            let area = axis_area(&strip, "swimlanes", height, Some(order), move |bounds, window| {
+                if let Some(lanes) = buckets.lanes.as_ref() {
+                    let top = f32::from(bounds.origin.y) + 1.0;
+                    paint_lanes(window, lanes, &paint_order, &grid, &visible, bounds, top, &paint_colors);
+                }
+            });
+            out = out.child(
+                div()
+                    .px(px(8.0))
+                    .pb(px(2.0))
+                    .flex()
+                    .flex_row()
+                    .child(lane_names(&strip.view, &lanes, &colors, cx))
+                    .child(area),
+            );
+        }
+        _ => {
+            // No lanes: say why, and what the menu suggests.
+            let text = match &menu.suggested {
+                Some(key) => {
+                    let name = menu.choices.iter().find(|c| &c.key == key).map_or(key.as_str(), |c| c.label.as_str());
+                    format!("No split. Lane by {name} to see each one on its own row.")
+                }
+                None => "No split. Choose a column in Lane by.".to_string(),
+            };
+            out = out.child(div().px(px(8.0)).pb(px(4.0)).child(small(text)));
+        }
+    }
+    out.into_any_element()
+}
+
+/// The gutter of lane names, level with the lanes: a value's name in the
+/// color of its file when it stands for one, marked when ticked in the
+/// Filter; clicking it ticks or unticks it there.
+fn lane_names(view: &Entity<AppView>, lanes: &[LaneRow], colors: &CanvasColors, cx: &App) -> impl IntoElement {
+    let mut names = div().w(px(NAMES_WIDTH)).flex_shrink_0().flex().flex_col().pt(px(1.0));
+    for (i, row) in lanes.iter().enumerate() {
+        let lane = row.lane;
         let is_value = matches!(lane, Lane::Value(_));
         let v = view.clone();
-        let tip = (name.chars().count() > NAME_CHARS).then(|| name.clone());
+        let title = row.title.clone();
+        let text = if is_value { row.tint.unwrap_or(cx.theme().foreground) } else { colors.muted };
         names = names.child(
             div()
                 .id(("lane_name", i))
                 .h(px(LANE_HEIGHT))
+                .pl(px(4.0))
                 .pr(px(6.0))
                 .flex()
                 .items_center()
-                .text_size(px(10.0))
-                .text_color(if is_value { colors.header_fg } else { colors.muted })
-                .child(div().min_w_0().truncate().child(name))
+                .rounded(px(3.0))
+                .text_size(px(11.0))
+                .text_color(text)
+                .when(row.ticked, |d| d.bg(colors.info.opacity(0.18)).font_weight(gpui::FontWeight::SEMIBOLD))
+                .child(div().min_w_0().truncate().child(row.name.clone()))
                 .when(is_value, |d| {
                     d.cursor_pointer()
-                        .hover(|s| s.underline())
+                        .hover(|s| s.bg(colors.info.opacity(0.10)))
                         .on_click(move |_, _, cx| v.update(cx, |this, cx| this.lane_name_clicked(lane, cx)))
                 })
-                .when_some(tip, |d, tip| {
-                    d.tooltip(move |window, cx| gpui_component::tooltip::Tooltip::new(tip.clone()).build(window, cx))
+                .tooltip(move |window, cx| {
+                    let tip = if is_value { format!("{title}: click to filter by it") } else { title.clone() };
+                    gpui_component::tooltip::Tooltip::new(tip).build(window, cx)
                 }),
         );
     }
     names
+}
+
+/// The fold toggle of a strip: a chevron with room to press.
+fn fold_button(id: &'static str, collapsed: bool, toggle: impl Fn(&mut App) + 'static) -> impl IntoElement {
+    Button::new(id)
+        .ghost()
+        .xsmall()
+        .icon(if collapsed { IconName::ChevronRight } else { IconName::ChevronDown })
+        .tooltip(if collapsed { "Open" } else { "Fold" })
+        .on_click(move |_, _, cx| toggle(cx))
 }
 
 /// The "Lane by" button and its menu: "No split", then every Filterable
@@ -418,17 +546,8 @@ fn lane_by_button(view: &Entity<AppView>, menu: &LaneMenu) -> impl IntoElement {
 
 /// The row above the columns: the axis's first and last time, the lines
 /// with no time, "Show all" while zoomed, and the fold toggle.
-#[allow(clippy::too_many_arguments)]
-fn labels(
-    view: &Entity<AppView>,
-    axis: &TimeAxis,
-    buckets: &Buckets,
-    collapsed: bool,
-    colors: &CanvasColors,
-    lane_menu: &LaneMenu,
-    has_lanes: bool,
-    _cx: &App,
-) -> impl IntoElement {
+fn labels(strip: &StripProps, collapsed: bool, gutter: bool) -> impl IntoElement {
+    let StripProps { view, axis, buckets, colors, .. } = strip;
     let span = axis.visible.end - axis.visible.start;
     let small = |text: String| div().text_size(px(10.0)).text_color(colors.muted).child(text);
     let link = |id: &'static str, text: String| {
@@ -441,9 +560,9 @@ fn labels(
         .flex_row()
         .items_center()
         .gap(px(10.0))
-        // Over the lane names when there are lanes, so the first time sits
-        // above the first column.
-        .child(div().when(has_lanes, |d| d.w(px(NAMES_WIDTH - 10.0)).flex_shrink_0()).child(lane_by_button(view, lane_menu)))
+        // Over the lane names' room, so the first time sits above the first
+        // column.
+        .when(gutter, |d| d.child(div().w(px(NAMES_WIDTH - 10.0)).flex_shrink_0()))
         .child(small(label(axis.visible.start, span)))
         .child(div().flex_1());
     if buckets.untimed > 0 {
@@ -456,20 +575,9 @@ fn labels(
         let v = view.clone();
         row = row.child(link("histogram_show_all", "Show all".into()).on_click(move |_, _, cx| v.update(cx, |this, cx| this.histogram_show_all(cx))));
     }
-    {
-        let v = view.clone();
-        let text = if collapsed { "▾" } else { "▴" };
-        row = row.child(
-            div()
-                .id("histogram_fold")
-                .text_size(px(10.0))
-                .text_color(colors.muted)
-                .cursor_pointer()
-                .child(text)
-                .on_click(move |_, _, cx| v.update(cx, |this, cx| this.toggle_histogram_collapsed(cx))),
-        );
-    }
-    row.child(small(label(axis.visible.end, span)))
+    let row = row.child(small(label(axis.visible.end, span)));
+    let v = view.clone();
+    row.child(fold_button("histogram_fold", collapsed, move |cx| v.update(cx, |this, cx| this.toggle_histogram_collapsed(cx))))
 }
 
 /// The Time Range a drag under way would set, to draw while dragging.

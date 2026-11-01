@@ -48,7 +48,9 @@ Tập 8 làn được chọn sau lượt duyệt từ `lane_total` (giảm dần
 `lane_by: LaneBy` với `LaneBy = None | Column(ColumnKey) | Default`. Giá trị này được lưu cạnh Filter của view trong `src/workspace/state.rs`. `Default` được giải mỗi khi view dựng lại: dùng Log Name Column khi cột này có từ hai giá trị, nếu không thì `None`. Gợi ý trong menu lấy cột đầu tiên theo thứ tự: MODULE, rồi Field Column có tên (so không phân biệt hoa thường) `service`, `module`, `component`, `thread`, `host`, `pod`. Cột đã chọn mà không còn trong view (ví dụ đổi Log Format) thì quay về `Default`.
 
 ### D6. Vẽ và bố cục
-Các làn cao 14px mỗi làn, vẽ dưới các cột histogram. Tên làn nằm trong một cột cố định khoảng 90px ở bên trái, cắt bớt kèm tooltip đầy đủ, và cùng cột đó được dùng làm lề trái cho histogram để hai trục thẳng hàng. Trong một cột thời gian, vạch rộng bằng cột. Menu "Lane by" là popover ở góc trên trái của dải.
+Các làn nằm trong một dải riêng ngay dưới Time Histogram (dải Swimlane), bật/tắt riêng bằng nút "Lanes" trên toolbar (`show_lanes`, nhớ cho mọi view như `show_histogram`), thu gọn riêng, và hiện được cả khi histogram tắt. Hai dải vẽ trên cùng `TimeAxis`: Time Range, khung vùng đang xem, ⌘ + cuộn và kéo/bấm dùng chung một đoạn code (`axis_area`). Mỗi làn cao 14px. Tên làn nằm trong cột cố định khoảng 90px ở bên trái, cắt bớt kèm tooltip; khi dải Swimlane hiện, histogram giữ cùng khoảng lề đó để hai trục thẳng hàng. Menu "Lane by" ở góc trên trái của dải Swimlane. Làn chỉ được đếm khi dải Swimlane hiện.
+
+*Đã cân nhắc:* vẽ làn trong cùng dải với histogram (bản đầu). Bỏ vì người dùng muốn bật/tắt và thu gọn làn độc lập với histogram.
 
 ### D7. Bấm tên làn
 Gọi cùng đường với tích một giá trị trong sidebar Filter: thêm `value_id` vào tập đã tích của cột, rồi `apply_filter_change`. Nếu cột đang ở Hide Mode, thao tác này cũng làm theo Hide Mode như sidebar, và kết quả là ẩn giá trị đó. Chấp nhận như vậy cho nhất quán.

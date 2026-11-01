@@ -107,6 +107,31 @@ fn clicking_a_bar_goes_to_the_lanes_first_line_there_and_a_name_filters(cx: &mut
     });
     let ticked = h.view.read_with(&h.cx, |app, _| app.filter_state.column("log_name").map(|c| c.values.len()));
     assert_eq!(ticked, Some(1));
+    h.view.read_with(&h.cx, |app, _| {
+        assert!(app.lane_ticked(db), "the name shows it is ticked");
+        assert!(app.lane_tint(db, true).is_some(), "a Log Name lane has its file's color");
+    });
+
+    // Clicked again, the value is unticked.
+    h.view.update(&mut h.cx, |app, cx| app.lane_name_clicked(db, cx));
+    h.cx.run_until_parked();
+    h.view.read_with(&h.cx, |app, _| {
+        assert!(!app.lane_ticked(db));
+        assert!(app.filter_state.column("log_name").is_none_or(|c| c.values.is_empty()));
+    });
+}
+
+#[gpui::test]
+fn hovering_a_lane_says_what_is_there(cx: &mut TestAppContext) {
+    let mut h = common::open_app(cx);
+    services(&mut h);
+    let db = h.view.read_with(&h.cx, |app, _| app.histogram.shown.lanes.as_ref().unwrap().order()[1]);
+    h.view.update(&mut h.cx, |app, cx| app.lane_hover_at(db, TEN + 30.0 * 60.0 + 1.0, cx));
+    let text = h.view.read_with(&h.cx, |app, _| app.lane_hover_text()).expect("a hover text");
+    assert!(text.starts_with("db.log · 10:30:00"), "{text}");
+    assert!(text.ends_with("1 line · Error"), "{text}");
+    h.view.update(&mut h.cx, |app, cx| app.lane_hover_clear(cx));
+    assert_eq!(h.view.read_with(&h.cx, |app, _| app.lane_hover_text()), None);
 }
 
 #[gpui::test]
@@ -166,17 +191,43 @@ fn a_file_view_has_no_lanes_by_default(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn the_strip_draws_its_lanes_beside_their_names(cx: &mut TestAppContext) {
+fn the_swimlanes_are_a_strip_of_their_own(cx: &mut TestAppContext) {
     let mut h = common::open_app(cx);
     services(&mut h);
-    h.cx.simulate_resize(gpui::size(gpui::px(1400.0), gpui::px(900.0)));
-    h.cx.run_until_parked();
+    let draw = |h: &mut Harness, w: f32| {
+        h.cx.simulate_resize(gpui::size(gpui::px(w), gpui::px(900.0)));
+        h.cx.run_until_parked();
+    };
     let width = |h: &mut Harness| h.view.read_with(&h.cx, |app, _| f32::from(app.histogram.bounds.get().size.width));
-    let with_lanes = width(&mut h);
-    assert!(with_lanes > 0.0, "the columns were painted");
-    h.view.update(&mut h.cx, |app, cx| app.set_lane_by(LaneBy::None, cx));
-    h.cx.simulate_resize(gpui::size(gpui::px(1401.0), gpui::px(900.0)));
-    h.cx.run_until_parked();
-    // The lane names take the room on the left only while there are lanes.
-    assert!(width(&mut h) > with_lanes + 80.0, "{} vs {with_lanes}", width(&mut h));
+    let lanes_width = |h: &mut Harness| h.view.read_with(&h.cx, |app, _| f32::from(app.histogram.lanes_bounds.get().size.width));
+    draw(&mut h, 1400.0);
+    // Both strips drawn, their axes the same width: they line up.
+    let (histogram, lanes) = (width(&mut h), lanes_width(&mut h));
+    assert!(histogram > 0.0 && (histogram - lanes).abs() < 1.0, "{histogram} vs {lanes}");
+
+    // Lanes off: the histogram stays, takes back the room of the names, and
+    // no lanes are counted.
+    h.view.update(&mut h.cx, |app, cx| app.set_show_lanes(false, cx));
+    draw(&mut h, 1401.0);
+    h.view.read_with(&h.cx, |app, _| {
+        assert!(app.histogram_shown() && !app.lanes_shown());
+        assert!(app.histogram.shown.lanes.is_none());
+    });
+    assert!(width(&mut h) > histogram + 80.0, "{} vs {histogram}", width(&mut h));
+
+    // Histogram off, lanes on: the lanes still count and draw on the axis.
+    h.view.update(&mut h.cx, |app, cx| {
+        app.set_show_lanes(true, cx);
+        app.set_show_histogram(false, cx);
+    });
+    draw(&mut h, 1402.0);
+    h.view.read_with(&h.cx, |app, _| {
+        assert!(!app.histogram_shown() && app.lanes_shown());
+        assert_eq!(lane_names(app), ["api.log", "db.log"]);
+    });
+    assert!(lanes_width(&mut h) > 0.0);
+
+    // Each strip folds on its own.
+    h.view.update(&mut h.cx, |app, cx| app.toggle_lanes_collapsed(cx));
+    h.view.read_with(&h.cx, |app, _| assert!(app.histogram.lanes_collapsed && !app.histogram.collapsed));
 }

@@ -38,7 +38,7 @@
 ## 6. Vẽ và tương tác
 
 - [x] 6.1 Vẽ làn dưới histogram: 14px mỗi làn, vạch theo level cao nhất, cột tên khoảng 90px dùng chung làm lề trái cho histogram
-- [x] 6.2 Zoom, khung vùng đang xem và dải Time Range trải qua cả các làn; thu gọn dải thì ẩn làn
+- [x] 6.2 Zoom, khung vùng đang xem và dải Time Range trải qua cả các làn; dải Swimlane riêng: nút "Lanes", thu gọn riêng, hiện được khi tắt histogram
 - [x] 6.3 Menu "Lane by" (popover góc trên trái) với "Không chia", gợi ý, cột không chọn được
 - [x] 6.4 Bấm tên làn → tích giá trị trong Filter của cột (theo Hide Mode như sidebar); "Khác" và "(trống)" không làm gì
 - [x] 6.5 Bấm vạch → dòng đầu tiên của giá trị đó trong cột thời gian đó, `Origin::Jump`
