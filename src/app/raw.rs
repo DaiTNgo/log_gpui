@@ -330,6 +330,12 @@ impl AppView {
             if self.raw.editors.contains_key(&section.file_id) {
                 continue;
             }
+            // The file is still being read: an editor made now would be empty
+            // and its empty text kept (and saved over the file). The frame
+            // after the read makes it.
+            if !self.raw.texts.contains_key(&section.file_id) && !self.parsed_files.contains_key(&section.file_id) {
+                continue;
+            }
             let text = self
                 .raw
                 .texts
