@@ -36,7 +36,7 @@
 
 ## 5. Focus Pane và Focus Window
 
-- [x] 5.1 Không có histogram trong Focus Pane và Focus Window (D2, D8)
+- [x] 5.1 Focus Pane và Focus Window không có dải riêng (D9); test scenario "Focus Pane" và "Focus Window"
 
 ## 6. Nút bật/tắt
 

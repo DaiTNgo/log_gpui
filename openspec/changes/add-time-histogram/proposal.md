@@ -6,7 +6,8 @@
 
 **Time Histogram**
 - Dải ngang mới phía trên list. Mỗi cột là số Parent Line trong một khoảng thời gian, tô theo level: Error/Fatal đỏ, Warn cam, còn lại xám. Continuation Line không được đếm.
-- Dải hiện ở mọi view mà các dòng có thời gian và có ít nhất một dòng có giờ: Log Space, File View. Không hiện ở Raw View, ở view không có dòng nào có giờ, hay trong Focus Pane và Focus Window: dải của view đã cho thấy dòng qua Filter ở dạng đậm.
+- Dải hiện ở mọi view mà các dòng có thời gian và có ít nhất một dòng có giờ: Log Space, File View. Không hiện ở Raw View hay ở view không có dòng nào có giờ.
+- Focus Pane và Focus Window không có histogram riêng: phần đậm trên dải chính đã là các dòng Focus Tab đang liệt kê.
 - Độ rộng cột tự chọn theo các bước 1s, 5s, 10s, 30s, 1m, 5m, 15m, 1h, 6h, 1d. ⌘ + cuộn để zoom, có nút "Xem toàn bộ". Zoom không lọc dòng nào.
 - Khi có Filter: cột mờ là tổng số dòng, phần đậm là số dòng qua Filter. Khoảng có Match của Search được đánh dấu bằng vạch dưới cột.
 - Khung viền cho biết list chính đang hiện khoảng thời gian nào, và chạy theo khi cuộn.

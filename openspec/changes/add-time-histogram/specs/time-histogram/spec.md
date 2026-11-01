@@ -1,7 +1,7 @@
 ## ADDED Requirements
 
 ### Requirement: View đủ điều kiện có Time Histogram
-Hệ thống SHALL hiện Time Histogram, một dải ngang phía trên danh sách dòng, ở mọi view mà các dòng có thời gian theo từng dòng và có ít nhất một dòng có giờ: Log Space và File View. Hệ thống SHALL NOT hiện Time Histogram ở Raw View, ở view không có dòng nào có giờ, hay trong Focus Pane và Focus Window. Dải SHALL thu gọn được.
+Hệ thống SHALL hiện Time Histogram, một dải ngang phía trên danh sách dòng, ở mọi view mà các dòng có thời gian theo từng dòng và có ít nhất một dòng có giờ: Log Space và File View. Hệ thống SHALL NOT hiện Time Histogram ở Raw View, ở Focus Pane, ở Focus Window, hoặc ở view không có dòng nào có giờ. Dải SHALL thu gọn được.
 
 #### Scenario: Log Space có giờ
 - **WHEN** người dùng mở Log Space có `api.log` và `db.log`, cả hai đều có timestamp, và Histogram đang bật
@@ -16,8 +16,12 @@ Hệ thống SHALL hiện Time Histogram, một dải ngang phía trên danh sá
 - **THEN** Time Histogram không hiện
 
 #### Scenario: Focus Pane
-- **WHEN** Focus Pane đang mở dưới một Log Space có Time Histogram
-- **THEN** Focus Pane không có Time Histogram riêng; những dòng nó liệt kê qua Filter hiện ở dạng đậm trên dải của view
+- **WHEN** Focus Pane đang mở dưới một Log Space có giờ, và Histogram đang bật
+- **THEN** Time Histogram chỉ hiện phía trên danh sách dòng chính, Focus Pane không có dải riêng
+
+#### Scenario: Focus Window
+- **WHEN** người dùng chuyển Focus Tab sang Focus Window, và Histogram đang bật
+- **THEN** Focus Window không có Time Histogram, còn dải của view chính vẫn hiện
 
 ### Requirement: Cột đếm Parent Line theo level
 Mỗi cột của Time Histogram SHALL là số Parent Line có thời gian hiệu lực trong khoảng của cột đó, chia theo level: Error và Fatal màu đỏ, Warn màu cam, các level còn lại và dòng không có level màu xám. Continuation Line SHALL NOT được đếm.

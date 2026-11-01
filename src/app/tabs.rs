@@ -451,6 +451,8 @@ impl AppView {
         self.view = built.view;
         self.filter_index = built.index;
         self.filter_state = filter;
+        // A view opens with its Filter applied, even one paused before.
+        self.filter_state.paused = false;
         self.filter_ui.picker_open = false;
         self.filter_ui.expanded = None;
         self.filter_ui.inputs_dirty = true;

@@ -16,6 +16,7 @@ Minimap (`src/ui/canvas.rs`) đã vẽ bằng `gpui::canvas` + `paint_quad`, tô
 **Non-Goals:**
 - Swimlane, Stream Column, chia theo cột (change sau).
 - Histogram cho Raw View.
+- Histogram riêng trong Focus Pane hay Focus Window (xem D9).
 - Tô màu theo Highlight Rule hay theo cột khác ngoài level.
 
 ## Decisions
@@ -31,7 +32,7 @@ Với file đã Indexing, mỗi file chỉ khoá `data.read()` một lần cho c
 *Đã cân nhắc:* dựng sẵn nhiều tầng độ phân giải (pyramid). Bỏ vì một lượt duyệt `Vec<f64>` 10 triệu dòng chỉ mất khoảng chục ms trên background, trong khi pyramid làm Live và Filter phức tạp hơn nhiều.
 
 ### D2. Trục thuộc về view, không thuộc về từng dải
-`TimeAxis { full: Range<f64>, visible: Range<f64>, step: Step }` nằm trong trạng thái của view. Focus Pane và Focus Window không có histogram riêng: khi có Filter, dải của view đã vẽ đậm các dòng qua Filter, nên một dải thứ hai chỉ lặp lại thông tin đó. `step` được chọn từ bảng bước cố định, theo `visible.len() / (width_px / 5)`. Swimlane sau này cũng sẽ đọc `TimeAxis` này.
+`TimeAxis { full: Range<f64>, visible: Range<f64>, step: Step }` nằm trong trạng thái của view. `step` được chọn từ bảng bước cố định, theo `visible.len() / (width_px / 5)`. Swimlane sau này cũng sẽ đọc `TimeAxis` này.
 
 ### D3. Tính lại hay cộng dồn
 - Tính lại toàn bộ trên background (`cx.spawn` → `background_executor().spawn` → `this.update`, giống `start_preparing` trong Live) khi: đổi `visible`/`step`, đổi Filter, đổi Search Expression, đổi tập dòng của view, hoặc trục `full` phải giãn ra. Mỗi lần tính có một số thế hệ; kết quả cũ hơn trạng thái hiện tại thì bỏ.
@@ -64,7 +65,14 @@ Dùng `HH:MM:SS` (thêm phần lẻ giây khi `step` nhỏ hơn 1 giây) khi c�
 Thêm `show_histogram: bool` (mặc định `true`) vào `workspace_state`, đặt cạnh `show_minimap` và lưu trong `src/workspace/session.rs`. Nhóm nút trên thanh công cụ gọi `set_show_histogram` / `set_show_minimap`, và hai Command mới trong Command Palette cũng gọi hai hàm đó. Bỏ dòng "Show minimap" trong `src/ui/settings.rs`. Giá trị `show_minimap` đã lưu vẫn được đọc như cũ.
 
 ### D8. Điều kiện hiện
-Một view có histogram khi `show_histogram` đang bật, view không phải Raw View, và `FilterIndex.timed_lines() > 0`. Focus Pane và Focus Window không có histogram (D2).
+Một view có histogram khi `show_histogram` đang bật, view không phải Raw View, và `FilterIndex.timed_lines() > 0`. Focus Pane và Focus Window không có histogram (D9).
+
+### D9. Focus Pane và Focus Window không có histogram riêng
+Focus Pane là con của root trong `src/app/view/mod.rs`, nằm dưới cả hàng sidebar | main column | context sidebar, nên rộng hết cửa sổ. Dải chính chỉ rộng bằng main column. Cùng `TimeAxis` vì vậy không có nghĩa là cùng pixel: khi context sidebar mở, cùng một thời điểm nằm ở hai vị trí x khác nhau trên hai dải. Không vẽ histogram trong Pane. Phần đậm (dòng qua Filter) trên dải chính đã cho thấy những gì Pane đang liệt kê, ngay trên cùng một trục với tổng số dòng.
+
+Focus Window cũng không có dải, để Focus Tab trông như nhau dù ở trong Pane hay đã tách ra cửa sổ riêng, và để chỉ có một nơi vẽ histogram (view chính). Muốn xem phân bố theo thời gian thì xem dải của view chính.
+
+*Đã cân nhắc:* (a) vẽ dải trong Pane theo đúng x và bề rộng của main column. Bỏ vì phải truyền bounds của main column xuống Pane, và phần thụt hai bên trông lạc chỗ. (b) chuyển Focus Pane vào trong main column. Bỏ vì như vậy đổi bố cục của cả hai sidebar (`pane_taken`), quá rộng so với change này.
 
 ## Risks / Trade-offs
 

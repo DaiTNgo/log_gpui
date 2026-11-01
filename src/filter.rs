@@ -39,6 +39,23 @@ impl ColumnFilter {
     pub fn has_value(&self, folded: &str) -> bool {
         self.values.iter().any(|v| v == folded)
     }
+
+    /// A one-line summary of the column's condition, as its Filter card
+    /// shows it: `level: error, warn`, `not module: DB`, `message: contains “timeout”`;
+    /// past two values, `+N`.
+    /// `display` gives a Filter Value as the column shows it.
+    pub fn chip_text(&self, label: &str, display: impl Fn(&str) -> String) -> String {
+        const SHOWN: usize = 2;
+        let mut values: Vec<String> = self.values.iter().map(|v| display(v)).collect();
+        values.extend(self.custom.iter().map(|c| format!("contains “{c}”")));
+        let extra = values.len().saturating_sub(SHOWN);
+        values.truncate(SHOWN);
+        let mut text = format!("{}{label}: {}", if self.hide { "not " } else { "" }, values.join(", "));
+        if extra > 0 {
+            text.push_str(&format!(" +{extra}"));
+        }
+        text
+    }
 }
 
 /// From/To bounds on `timestamp`, as typed. An empty bound is unbounded.
@@ -109,6 +126,10 @@ pub struct FilterState {
     pub columns: Vec<ColumnFilter>,
     #[serde(default)]
     pub time_range: TimeRange,
+    /// The conditions are kept but not applied: the Focus Pane lists every
+    /// line. Any change to a condition applies them again. Not saved.
+    #[serde(skip)]
+    pub paused: bool,
 }
 
 impl FilterState {
@@ -118,6 +139,11 @@ impl FilterState {
 
     pub fn is_empty(&self) -> bool {
         !self.time_range.is_active() && self.columns.iter().all(|c| !c.is_active())
+    }
+
+    /// Whether the Filter narrows the rows: it has a condition and is not paused.
+    pub fn is_applied(&self) -> bool {
+        !self.paused && !self.is_empty()
     }
 
     /// Number of active conditions: columns with a condition, plus the Time Range.
@@ -131,6 +157,8 @@ impl FilterState {
     }
 
     fn column_mut(&mut self, key: &str) -> &mut ColumnFilter {
+        // Changing a condition applies the Filter again.
+        self.paused = false;
         if let Some(pos) = self.columns.iter().position(|c| c.column == key) {
             return &mut self.columns[pos];
         }
@@ -175,6 +203,7 @@ impl FilterState {
     }
 
     pub fn remove_custom(&mut self, key: &str, text: &str) {
+        self.paused = false;
         if let Some(col) = self.columns.iter_mut().find(|c| c.column == key) {
             col.custom.retain(|c| c != text);
         }
@@ -188,15 +217,38 @@ impl FilterState {
 
     /// Remove every condition of one column.
     pub fn clear_column(&mut self, key: &str) {
+        self.paused = false;
         self.columns.retain(|c| c.column != key);
     }
 
     pub fn set_time_range(&mut self, from: &str, to: &str) {
+        self.paused = false;
         self.time_range = TimeRange { from: from.trim().to_string(), to: to.trim().to_string() };
     }
 
     pub fn clear(&mut self) {
         *self = Self::default();
+    }
+
+    /// Show only (or with `hide`, hide) the rows whose `key` is `value`, from
+    /// a selection: a Custom Value (contains) when `custom`, else a Filter
+    /// Value. A condition of the same mode gets the value added; one of the
+    /// other mode is replaced.
+    pub fn apply_from_selection(&mut self, key: &str, value: &str, custom: bool, hide: bool) {
+        let col = self.column_mut(key);
+        if col.hide != hide {
+            col.values.clear();
+            col.custom.clear();
+            col.hide = hide;
+        }
+        if custom {
+            self.add_custom(key, value);
+        } else {
+            let folded = unicode_text::fold(value);
+            if !self.is_value_ticked(key, &folded) {
+                self.toggle_value(key, value);
+            }
+        }
     }
 
     /// The indices of the rows that pass the Filter.
@@ -221,6 +273,9 @@ impl FilterState {
     /// value, for those rows to pass as well: a Scan reads it for lines
     /// read from disk.
     pub fn evaluate_split(&self, index: &FilterIndex, len: usize, start: usize) -> (Vec<usize>, Vec<TextCondition>) {
+        if self.paused {
+            return ((start..len).collect(), Vec::new());
+        }
         let mut visible = Vec::with_capacity(len.saturating_sub(start));
         let stale = index.rows() != len;
         let mut by_ids: Vec<(&ColumnFilter, CompiledColumn)> = Vec::new();

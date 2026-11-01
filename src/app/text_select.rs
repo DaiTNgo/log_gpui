@@ -5,7 +5,7 @@
 use super::AppView;
 use crate::text_selection::{TextPos, TextSelection};
 use crate::ui::canvas::horizontal_scroll_x;
-use crate::ui::cells::{Hit, TextCell, byte_for_hit, cell_text, hit_cell};
+use crate::ui::cells::{Hit, byte_for_hit, hit_cell};
 use gpui::{Context, Pixels, Point, ScrollStrategy, Window, point, px};
 use std::time::Duration;
 
@@ -13,22 +13,6 @@ use std::time::Duration;
 const AUTOSCROLL_STEP_X: f32 = 24.0;
 /// Time between two steps of the automatic scroll.
 const AUTOSCROLL_INTERVAL: Duration = Duration::from_millis(40);
-
-/// What a right-click landed on, kept for the context menu.
-#[derive(Debug, Clone, PartialEq)]
-pub struct CellTarget {
-    /// Position of the row among the rows shown.
-    pub row: usize,
-    /// Byte of the stored line under the pointer.
-    pub byte: usize,
-    /// The cell under the pointer, when it has text.
-    pub cell: Option<TextCell>,
-    /// Where the pointer was, for opening the color bar next to it.
-    pub at: Point<Pixels>,
-    /// The column and value a rule made from this cell would use. `None` on
-    /// TIMESTAMP and on a `_`.
-    pub column_value: Option<(String, String)>,
-}
 
 impl AppView {
     /// Where a pointer at window position `at` is in the rows: the row (kept
@@ -79,16 +63,16 @@ impl AppView {
         cx.notify();
     }
 
-    /// The mouse button was released: a drag leaves a selection (with the
-    /// color bar next to it), a plain click leaves none.
-    pub fn finish_text_selection(&mut self, at: Point<Pixels>, cx: &mut Context<Self>) {
+    /// The mouse button was released: a drag leaves a selection, a plain
+    /// click leaves none. No color bar opens: the Selection Menu offers it.
+    pub fn finish_text_selection(&mut self, cx: &mut Context<Self>) {
         if !self.selecting {
             return;
         }
         self.selecting = false;
         self.autoscroll_dir = (0, 0);
         match self.text_selection {
-            Some(sel) if !sel.is_empty() => self.open_mark_bar(at, cx),
+            Some(sel) if !sel.is_empty() => {}
             _ => self.text_selection = None,
         }
         cx.notify();
@@ -196,57 +180,5 @@ impl AppView {
         if let Some(text) = self.selected_text() {
             cx.write_to_clipboard(gpui::ClipboardItem::new_string(text));
         }
-    }
-
-    /// What a right-click at `at` landed on.
-    pub fn cell_target_at(&self, at: Point<Pixels>, window: &Window, cx: &gpui::App) -> Option<CellTarget> {
-        let (pos, hit) = self.text_pos_at(at, window, cx)?;
-        let entry_ix = *self.visible_indices.get(pos.row)?;
-        let entry = self.rows().get(entry_ix)?;
-        let mut cell = None;
-        let mut column_value = None;
-        match hit {
-            Hit::Text { cell: c, .. } => {
-                if let Some((text, _)) = cell_text(&entry, c) {
-                    cell = Some(c);
-                    column_value = match c {
-                        TextCell::Timestamp | TextCell::Raw => None,
-                        TextCell::Level | TextCell::Module | TextCell::Field(_) => {
-                            Some((c.column_key().to_string(), text.to_string()))
-                        }
-                        // MESSAGE takes the selected text as a Custom Value.
-                        TextCell::Message => self
-                            .selected_text()
-                            .map(|t| t.trim().to_string())
-                            .filter(|t| !t.is_empty() && !t.contains('\n'))
-                            .map(|t| (c.column_key().to_string(), t)),
-                    };
-                }
-            }
-            Hit::Source => {
-                column_value = self
-                    .rows()
-                    .source(entry_ix)
-                    .filter(|s| !s.is_empty())
-                    .map(|s| ("source".to_string(), s.to_string()));
-            }
-            _ => {}
-        }
-        Some(CellTarget { row: pos.row, byte: pos.byte, cell, at, column_value })
-    }
-
-    /// Remember what a right-click landed on for the menu that opens. A click
-    /// outside the selection drops the selection first.
-    pub fn on_cell_right_click(&mut self, at: Point<Pixels>, window: &Window, cx: &mut Context<Self>) {
-        let target = self.cell_target_at(at, window, cx);
-        if let (Some(t), Some(sel)) = (&target, self.text_selection) {
-            let inside = sel.range_in_row(t.row, usize::MAX).is_some_and(|r| r.contains(&t.byte))
-                || sel.covers_row(t.row) && sel.ordered().0.row != sel.ordered().1.row;
-            if !inside {
-                self.text_selection = None;
-            }
-        }
-        self.cell_target = target;
-        cx.notify();
     }
 }

@@ -298,7 +298,12 @@ impl AppView {
         columns
     }
 
+    /// "+" on the Highlights header: the New rule form. One already open
+    /// keeps what was entered.
     pub fn open_rule_form(&mut self, cx: &mut Context<Self>) {
+        if self.rule_form.is_some() {
+            return;
+        }
         let color = next_rule_color(self.highlight_rules().len());
         self.rule_form = Some(RuleForm { column: None, values: Vec::new(), custom: Vec::new(), color, error: None });
         cx.notify();

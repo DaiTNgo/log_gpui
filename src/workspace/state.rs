@@ -19,6 +19,8 @@ pub struct WorkspaceState {
     /// a tab.
     #[serde(default)]
     pub focus_pane: FocusPaneState,
+    #[serde(default)]
+    pub context_layout: ContextSidebarLayout,
     /// Newest lines kept for each Remote File: an app setting.
     #[serde(default = "default_live_window")]
     pub live_window: usize,
@@ -103,6 +105,7 @@ impl Default for WorkspaceState {
             projects: Vec::new(),
             active_project_id: None,
             focus_pane: FocusPaneState::default(),
+            context_layout: ContextSidebarLayout::default(),
             live_window: default_live_window(),
             full_read_limit_lines: default_full_read_limit(),
             live_glob_limit: default_glob_limit(),
@@ -261,6 +264,74 @@ pub const DEFAULT_DRAWER_WIDTH: f32 = 240.0;
 pub const MIN_DRAWER_WIDTH: f32 = 180.0;
 pub const MAX_DRAWER_WIDTH: f32 = 500.0;
 pub const CONTEXT_SIDEBAR_WIDTH: f32 = 320.0;
+pub const MIN_CONTEXT_SIDEBAR_WIDTH: f32 = 280.0;
+pub const MAX_CONTEXT_SIDEBAR_WIDTH: f32 = 560.0;
+/// The Inspector's share of the context sidebar's height at first.
+pub const DEFAULT_INSPECTOR_SHARE: f32 = 0.45;
+/// Neither the sections above the splitter nor the Inspector get shorter.
+pub const MIN_CONTEXT_PART_HEIGHT: f32 = 120.0;
+
+/// What the Inspector shows of the selected line.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum InspectorMode {
+    /// The columns of the line, one per row.
+    #[default]
+    Fields,
+    /// The stored text, Continuation Lines included.
+    Raw,
+}
+
+fn default_context_width() -> f32 {
+    CONTEXT_SIDEBAR_WIDTH
+}
+
+fn default_inspector_share() -> f32 {
+    DEFAULT_INSPECTOR_SHARE
+}
+
+/// The size of the right context sidebar and how its Inspector shows a
+/// line; saved with the workspace.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ContextSidebarLayout {
+    #[serde(default = "default_context_width")]
+    pub width: f32,
+    /// The Inspector's share of the sidebar's height, under the splitter.
+    #[serde(default = "default_inspector_share")]
+    pub inspector_share: f32,
+    #[serde(default)]
+    pub inspector_mode: InspectorMode,
+}
+
+impl Default for ContextSidebarLayout {
+    fn default() -> Self {
+        Self { width: CONTEXT_SIDEBAR_WIDTH, inspector_share: DEFAULT_INSPECTOR_SHARE, inspector_mode: InspectorMode::Fields }
+    }
+}
+
+impl ContextSidebarLayout {
+    pub fn set_width(&mut self, width: f32) {
+        self.width = width.clamp(MIN_CONTEXT_SIDEBAR_WIDTH, MAX_CONTEXT_SIDEBAR_WIDTH);
+    }
+
+    /// Put the splitter so the Inspector is `inspector` pixels of a sidebar
+    /// `total` pixels high, leaving each part at least `MIN_CONTEXT_PART_HEIGHT`.
+    pub fn set_inspector_height(&mut self, inspector: f32, total: f32) {
+        if total <= 2.0 * MIN_CONTEXT_PART_HEIGHT {
+            return;
+        }
+        let h = inspector.clamp(MIN_CONTEXT_PART_HEIGHT, total - MIN_CONTEXT_PART_HEIGHT);
+        self.inspector_share = h / total;
+    }
+
+    /// The Inspector's height in a sidebar `total` pixels high.
+    pub fn inspector_height(&self, total: f32) -> f32 {
+        let h = self.inspector_share.clamp(0.0, 1.0) * total;
+        if total <= 2.0 * MIN_CONTEXT_PART_HEIGHT {
+            return h;
+        }
+        h.clamp(MIN_CONTEXT_PART_HEIGHT, total - MIN_CONTEXT_PART_HEIGHT)
+    }
+}
 
 pub const DEFAULT_FOCUS_PANE_HEIGHT: f32 = 240.0;
 pub const MIN_FOCUS_PANE_HEIGHT: f32 = 80.0;
