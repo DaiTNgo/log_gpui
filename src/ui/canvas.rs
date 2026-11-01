@@ -603,7 +603,7 @@ impl LogCanvas {
                             })
                             .on_mouse_down(MouseButton::Right, move |event, window, cx| {
                                 v_right.update(cx, |this, cx| {
-                                    this.on_cell_right_click(event.position, window, cx)
+                                    this.on_parsed_right_click(event.position, window, cx)
                                 });
                             })
                             .on_mouse_move(move |event, window, cx| {
@@ -613,14 +613,14 @@ impl LogCanvas {
                                     });
                                 }
                             })
-                            .on_mouse_up(MouseButton::Left, move |event, _window, cx| {
+                            .on_mouse_up(MouseButton::Left, move |_, _window, cx| {
                                 v_up.update(cx, |this, cx| {
-                                    this.finish_text_selection(event.position, cx)
+                                    this.finish_text_selection(cx)
                                 });
                             })
-                            .on_mouse_up_out(MouseButton::Left, move |event, _window, cx| {
+                            .on_mouse_up_out(MouseButton::Left, move |_, _window, cx| {
                                 v_up_out.update(cx, |this, cx| {
-                                    this.finish_text_selection(event.position, cx)
+                                    this.finish_text_selection(cx)
                                 });
                             })
                             .child(
@@ -636,7 +636,7 @@ impl LogCanvas {
                             )
                             .child(list)
                             .context_menu(move |menu, _window, cx| {
-                                crate::ui::cell_menu::cell_menu(menu, &view_menu, cx)
+                                crate::ui::selection_menu::selection_menu(menu, &view_menu, cx)
                             })
                     })
                     .when(state.show_minimap, |el| el.child(minimap))

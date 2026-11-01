@@ -136,7 +136,7 @@ fn color_selection_opens_the_bar_for_a_selection_in_the_read_only_list(cx: &mut 
     h.cx.run_until_parked();
     h.view.update(&mut h.cx, |app, cx| app.toggle_view_mode(cx));
     draw(&mut h);
-    // Drag across line 1, then close the bar it opened.
+    // Drag across line 1: no bar opens (the Selection Menu offers it).
     let (from, to) = h.view.read_with(&h.cx, |app, _| {
         let b = app.raw.list_bounds.get();
         let row_h = app.text_scale().row_height();
@@ -145,11 +145,7 @@ fn color_selection_opens_the_bar_for_a_selection_in_the_read_only_list(cx: &mut 
     h.cx.simulate_mouse_down(from, MouseButton::Left, Modifiers::none());
     h.cx.simulate_mouse_move(to, MouseButton::Left, Modifiers::none());
     h.cx.simulate_mouse_up(to, MouseButton::Left, Modifiers::none());
-    assert!(matches!(bar(&h), Some(ColorTarget::RawMark { .. })), "a drag still opens it here");
-    h.view.update(&mut h.cx, |app, cx| {
-        app.color_bar = None;
-        cx.notify();
-    });
+    assert_eq!(bar(&h), None, "a drag opens nothing");
     run(&mut h, Command::ColorSelection);
     assert!(matches!(bar(&h), Some(ColorTarget::RawMark { .. })));
 }

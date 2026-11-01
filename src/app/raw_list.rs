@@ -228,8 +228,8 @@ impl AppView {
         cx.notify();
     }
 
-    /// The button was released: a drag leaves the selection with the bar
-    /// to paint it; a click makes the line the current one, and on a
+    /// The button was released: a drag leaves the selection (the Selection
+    /// Menu paints it); a click makes the line the current one, and on a
     /// Marker or a Text Highlight opens the bar to change it.
     pub fn finish_raw_selection(&mut self, at: Point<Pixels>, cx: &mut Context<Self>) {
         if !std::mem::take(&mut self.raw.list_selecting) {
@@ -237,9 +237,6 @@ impl AppView {
         }
         let Some(sel) = self.raw.list_selection else { return };
         if !sel.is_empty() {
-            if let Some(target) = self.raw_list_mark_target() {
-                self.color_bar = Some(ColorBar::new(at, target));
-            }
             cx.notify();
             return;
         }

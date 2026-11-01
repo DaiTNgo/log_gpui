@@ -1,5 +1,4 @@
 pub mod canvas;
-pub mod cell_menu;
 pub mod cells;
 pub mod command_palette;
 pub mod context_sidebar;
@@ -13,6 +12,7 @@ pub mod phrase_chips;
 pub mod platform;
 pub mod project_node;
 pub mod project_switcher;
+pub mod selection_menu;
 pub mod settings;
 pub mod sidebar;
 pub mod sidebar_group;

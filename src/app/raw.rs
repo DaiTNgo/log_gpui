@@ -353,7 +353,7 @@ impl AppView {
                 .get(&section.file_id)
                 .cloned()
                 .unwrap_or_else(|| section.lines.all().join("\n"));
-            let state = cx.new(|cx| EditorState::new(window, cx).scroll_beyond_last_line(Some(0)));
+            let state = cx.new(|cx| EditorState::new(window, cx).scroll_beyond_last_line(Some(0)).context_menu(false));
             state.update(cx, |state, cx| {
                 state.set_value(text.clone(), window, cx);
                 state.set_soft_wrap(self.raw.soft_wrap, window, cx);

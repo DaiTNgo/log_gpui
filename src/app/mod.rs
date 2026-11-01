@@ -42,6 +42,7 @@ mod projects;
 pub mod rename;
 mod search;
 mod selection;
+pub mod selection_menu;
 mod spaces;
 pub mod text_select;
 mod tabs;
@@ -195,8 +196,8 @@ pub struct AppView {
     pub phrase_menu: Option<(gpui::Point<gpui::Pixels>, String, bool)>,
     pub color_picker: Entity<ColorPickerState>,
     /// The custom color of the Phrase menu; its hue becomes the Phrase's hue.
-    /// What the last right-click landed on, for the context menu.
-    pub cell_target: Option<text_select::CellTarget>,
+    /// What the last right-click landed on, for the Selection Menu.
+    pub selection_menu: Option<selection_menu::SelectionTarget>,
     /// The "+ Add rule" form of the Highlights section.
     pub rule_form: Option<highlights::RuleForm>,
     pub rule_input: Entity<InputState>,
@@ -584,7 +585,7 @@ impl AppView {
             value_sample: Default::default(),
             phrase_menu: None,
             color_picker,
-            cell_target: None,
+            selection_menu: None,
             rule_form: None,
             rule_input,
             rule_search,
