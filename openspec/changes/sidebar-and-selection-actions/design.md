@@ -68,7 +68,7 @@ Thêm `#[serde(skip)] paused: bool`. Khi `paused`, bộ lọc coi như rỗng, F
 Phương án khác: lưu cờ. Không chọn, vì mở lại một view thấy đủ dòng trong khi sidebar vẫn ghi có Filter sẽ gây nhầm.
 
 **7. Sidebar: vùng cuộn ở trên, Inspector ở dưới, ngăn bằng thanh chia.**
-Filter / Highlights / Columns nằm chung một vùng cuộn. Inspector nằm ngoài vùng cuộn, cao `inspector_height` (mặc định 45% chiều cao, tối thiểu 120px), kéo thanh chia để đổi. Cạnh trái sidebar kéo được để đổi `width` (280–560px, mặc định 320px). Cả hai giá trị lưu trong `ContextSidebarState`, có default khi đọc session cũ. Gập Inspector thì vùng cuộn chiếm hết. Ở Raw View chỉ có Inspector, như hiện nay.
+Filter / Highlights / Columns nằm chung một vùng cuộn. Inspector nằm ngoài vùng cuộn, cao `inspector_height` (mặc định 45% chiều cao, tối thiểu 120px), kéo thanh chia để đổi. Cạnh trái sidebar kéo được để đổi `width` (280–560px, mặc định 320px). Cả hai giá trị lưu trong `ContextSidebarLayout` (trường `context_layout` của `WorkspaceState`, ghi cùng session như `focus_pane`), có default khi đọc session cũ. `ContextSidebarState` không được lưu nên không dùng nó. Chiều cao Inspector lưu dưới dạng tỉ lệ (`inspector_share`) để không phụ thuộc chiều cao cửa sổ. Gập Inspector thì vùng cuộn chiếm hết. Ở Raw View chỉ có Inspector, như hiện nay.
 
 **8. Section dạng tóm tắt.**
 - Header: tên section, phần tóm tắt bên phải ("2 active", "2 rules", "6 of 9 shown") và nút "+" (hoặc 🔍 ở Columns).
@@ -88,7 +88,7 @@ Hàm `render_value_picker(column, ticked, input, on_toggle, on_add)` dùng cho t
 - **Raw** là editor chỉ đọc hiện nay.
 - Mỗi field có ba nút hiện khi hover: Show only, Hide (theo quy tắc ở quyết định 4, coi như chọn trọn ô) và Highlight rows (mở form New rule đã điền sẵn).
 - Dòng không parse được, hoặc dòng của Raw View không có Log Format, chỉ có Raw.
-- Chế độ được nhớ trong `ContextSidebarState`.
+- Chế độ được nhớ trong `ContextSidebarLayout`, cùng chỗ với độ rộng.
 - ↑↓ chọn dòng trước/sau trong view đang hiện, đi qua `selected_row_pos` có sẵn.
 
 **12. Bảng màu của form New rule: 8 màu và nút "…".**
@@ -97,14 +97,14 @@ Hàm `render_value_picker(column, ticked, input, on_toggle, on_add)` dùng cho t
 ## Risks / Trade-offs
 
 - **Người dùng quen thanh màu tự bật thấy mất tính năng.** → "Mark here" vẫn chỉ cần một bước sau chuột phải. ⌘⇧H vẫn mở thanh. Ghi vào release notes.
-- **Editor scratch (`gpui_component::input::Editor`) có thể đã có menu chuột phải riêng.** → Kiểm tra trước (task 2.1). Nếu có thì gắn Selection Menu vào khung bọc editor và chặn menu mặc định. Nếu không chặn được thì editor scratch chỉ có ⌘⇧H.
+- **Editor scratch (`gpui_component::input::Editor`) có menu chuột phải riêng, là menu native của hệ điều hành (`NativeMenu`), không vẽ được hàng ô màu.** → Đã kiểm tra (task 2.1): tạo `EditorState` với `.context_menu(false)` để tắt menu đó, rồi gắn Selection Menu (`ContextMenuExt`) vào khung bọc editor. Khi menu tắt, chuột phải không dời con trỏ, nên Selection Menu đọc vùng chọn hoặc vị trí con trỏ hiện có.
 - **Menu dài (tới 10 mục).** → Mục chỉ hiện khi dùng được: lọc chỉ ở Parsed View, "Highlight rows" chỉ khi chọn trọn ô, "Remove" chỉ khi có màu dưới con trỏ.
 - **Mâu thuẫn với các change chưa archive.** → Archive `scratch-color-bar-on-demand` trước khi bắt đầu (task 1.1). Requirement Inspector trong `add-focus-pane` được thay ở đây; khi archive `add-focus-pane` phải giữ bản của change này.
 - **Preset Time Range trên view live.** → Preset chỉ tính một lần lúc bấm, không trượt theo dòng mới. Chip ghi rõ giờ bắt đầu.
 
 ## Migration Plan
 
-Không có migration dữ liệu. `ContextSidebarState` thêm `width`, `inspector_height` và `inspector_mode`, có default. Session cũ đọc được bình thường. Muốn rollback thì revert commit; các trường thừa bị bỏ qua khi đọc.
+Không có migration dữ liệu. `WorkspaceState` và session thêm `context_layout` (`width`, `inspector_share`, `inspector_mode`), có default. Session cũ đọc được bình thường. Muốn rollback thì revert commit; các trường thừa bị bỏ qua khi đọc.
 
 ## Open Questions
 
