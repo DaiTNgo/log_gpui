@@ -10,7 +10,7 @@ Minimap (`src/ui/canvas.rs`) đã vẽ bằng `gpui::canvas` + `paint_quad`, tô
 
 **Goals:**
 - Đếm theo khoảng thời gian chỉ từ dữ liệu đã có trong bộ nhớ, trên background, không đọc lại file.
-- Dùng chung trục giữa view chính và Focus Pane, và đủ chung để swimlane sau này chỉ cần thêm làn bên dưới.
+- Trục đủ chung để swimlane sau này chỉ cần thêm làn bên dưới.
 - Kéo chọn đi qua đúng đường của Time Range đang có, không có cơ chế lọc thứ hai.
 
 **Non-Goals:**
@@ -31,7 +31,7 @@ Với file đã Indexing, mỗi file chỉ khoá `data.read()` một lần cho c
 *Đã cân nhắc:* dựng sẵn nhiều tầng độ phân giải (pyramid). Bỏ vì một lượt duyệt `Vec<f64>` 10 triệu dòng chỉ mất khoảng chục ms trên background, trong khi pyramid làm Live và Filter phức tạp hơn nhiều.
 
 ### D2. Trục thuộc về view, không thuộc về từng dải
-`TimeAxis { full: Range<f64>, visible: Range<f64>, step: Step }` nằm trong trạng thái của view. Histogram của view chính và của Focus Pane đều đọc cùng `TimeAxis`; Focus Pane chỉ thay tập dòng (danh sách của Focus Tab) khi đếm. `step` được chọn từ bảng bước cố định, theo `visible.len() / (width_px / 5)`. Swimlane sau này cũng sẽ đọc `TimeAxis` này.
+`TimeAxis { full: Range<f64>, visible: Range<f64>, step: Step }` nằm trong trạng thái của view. Focus Pane và Focus Window không có histogram riêng: khi có Filter, dải của view đã vẽ đậm các dòng qua Filter, nên một dải thứ hai chỉ lặp lại thông tin đó. `step` được chọn từ bảng bước cố định, theo `visible.len() / (width_px / 5)`. Swimlane sau này cũng sẽ đọc `TimeAxis` này.
 
 ### D3. Tính lại hay cộng dồn
 - Tính lại toàn bộ trên background (`cx.spawn` → `background_executor().spawn` → `this.update`, giống `start_preparing` trong Live) khi: đổi `visible`/`step`, đổi Filter, đổi Search Expression, đổi tập dòng của view, hoặc trục `full` phải giãn ra. Mỗi lần tính có một số thế hệ; kết quả cũ hơn trạng thái hiện tại thì bỏ.
@@ -64,7 +64,7 @@ Dùng `HH:MM:SS` (thêm phần lẻ giây khi `step` nhỏ hơn 1 giây) khi c�
 Thêm `show_histogram: bool` (mặc định `true`) vào `workspace_state`, đặt cạnh `show_minimap` và lưu trong `src/workspace/session.rs`. Nhóm nút trên thanh công cụ gọi `set_show_histogram` / `set_show_minimap`, và hai Command mới trong Command Palette cũng gọi hai hàm đó. Bỏ dòng "Show minimap" trong `src/ui/settings.rs`. Giá trị `show_minimap` đã lưu vẫn được đọc như cũ.
 
 ### D8. Điều kiện hiện
-Một view có histogram khi `show_histogram` đang bật, view không phải Raw View, và `FilterIndex.timed_lines() > 0`. Focus Pane và Focus Window dùng cùng điều kiện, nhưng đếm trên danh sách dòng của Focus Tab.
+Một view có histogram khi `show_histogram` đang bật, view không phải Raw View, và `FilterIndex.timed_lines() > 0`. Focus Pane và Focus Window không có histogram (D2).
 
 ## Risks / Trade-offs
 

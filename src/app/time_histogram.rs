@@ -1,0 +1,547 @@
+//! Logic: the Time Histogram of the open view (openspec change
+//! `add-time-histogram`): its axis, its counts done on a worker thread, and
+//! what clicking and dragging on it does.
+//!
+//! Every path that changes what the histogram counts (rows, Filter, the
+//! Matches, the Focus Tab's lines, the axis) ends in `refresh_histogram`,
+//! which compares what the last count was for with what there is now: rows
+//! only added at the end are added to the columns, anything else is counted
+//! again on a worker thread.
+
+use super::AppView;
+use super::focus::Origin;
+use crate::index::file::IndexedFile;
+use crate::index::view_rows::ViewRows;
+use crate::time_histogram::{self as th, Buckets, RowFacts, TimeAxis};
+use crate::workspace::working_set::{TabTarget, ViewMode};
+use gpui::Context;
+use std::ops::Range;
+use std::rc::Rc;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+
+/// Lines arriving redraw the histogram at most this often.
+const APPEND_EVERY: Duration = Duration::from_millis(500);
+
+/// Width assumed before the histogram was first drawn.
+const DEFAULT_WIDTH: f32 = 800.0;
+
+/// What a count was for: when it differs from what there is now, count again.
+#[derive(Debug, Clone, PartialEq)]
+struct CountKey {
+    rows_epoch: u64,
+    rows: usize,
+    /// The Filter result (its list and length), with a Filter in effect.
+    pass: Option<(usize, usize)>,
+    matches: (usize, usize),
+    grid: th::Grid,
+    full: Range<f64>,
+}
+
+impl CountKey {
+    /// Whether `self` only has more rows than `before`, added at the end,
+    /// with the same lists grown in place.
+    fn only_appended_to(&self, before: &CountKey) -> bool {
+        self.rows_epoch == before.rows_epoch
+            && self.rows > before.rows
+            && self.grid == before.grid
+            && self.full == before.full
+            && self.matches.0 == before.matches.0
+            && self.matches.1 >= before.matches.1
+            && match (self.pass, before.pass) {
+                (Some(now), Some(then)) => now.0 == then.0 && now.1 >= then.1,
+                (None, None) => true,
+                _ => false,
+            }
+    }
+}
+
+/// A drag on the histogram, in times on the axis.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum HistogramDrag {
+    /// Pressed, not moved yet: a click unless it moves.
+    Pressed { at: f64, x: f32, inside_range: bool },
+    /// Choosing a new Time Range.
+    Select { from: f64, to: f64 },
+    /// Moving one edge of the Time Range; the other stays.
+    Edge { fixed: f64, moving: f64 },
+    /// Moving the whole Time Range by the distance from `grab`.
+    Move { range: (f64, f64), grab: f64, now: f64 },
+}
+
+/// The Time Histogram of the open view.
+pub struct HistogramState {
+    /// The axis of the view, shared by its histogram and the Focus Pane's.
+    pub axis: Option<TimeAxis>,
+    /// The tab the axis is for: another tab starts from its own whole span.
+    axis_for: Option<TabTarget>,
+    /// The counts of the view's rows.
+    pub shown: Arc<Buckets>,
+    /// Each row's class (`time_histogram::class_of`), built with the counts.
+    classes: Arc<Vec<u8>>,
+    /// `rows_epoch` the classes are for.
+    classes_epoch: Option<u64>,
+    /// What the shown counts are for, and what the count under way is for.
+    counted: Option<CountKey>,
+    asked: Option<CountKey>,
+    /// The newest count asked for, and the newest shown.
+    generation: u64,
+    applied: u64,
+    /// When appended lines were last added, and whether a later redraw is
+    /// waiting.
+    appended_at: Option<Instant>,
+    append_waiting: bool,
+    /// Where the view's histogram was drawn, written while painting.
+    pub bounds: Rc<std::cell::Cell<gpui::Bounds<gpui::Pixels>>>,
+    /// While files are read: the time the read lines reach. The axis after
+    /// it is drawn dim.
+    pub indexed_to: Option<f64>,
+    pub drag: Option<HistogramDrag>,
+    /// The strip is folded to its thin form.
+    pub collapsed: bool,
+}
+
+impl Default for HistogramState {
+    fn default() -> Self {
+        Self {
+            axis: None,
+            axis_for: None,
+            shown: Arc::default(),
+            classes: Arc::default(),
+            classes_epoch: None,
+            counted: None,
+            asked: None,
+            generation: 0,
+            applied: 0,
+            appended_at: None,
+            append_waiting: false,
+            bounds: Rc::default(),
+            indexed_to: None,
+            drag: None,
+            collapsed: false,
+        }
+    }
+}
+
+/// The class of every row of `rows`, from the files' line metadata: each
+/// file is locked once for the whole pass.
+fn build_classes(rows: &ViewRows, files: &[Option<Arc<IndexedFile>>]) -> Vec<u8> {
+    let guards: Vec<_> = files.iter().map(|f| f.as_ref().map(|f| f.indexed.data.read().unwrap())).collect();
+    rows.iter()
+        .map(|packed| {
+            let (file, pos) = crate::index::view_rows::unpack(packed);
+            match guards.get(file).and_then(|g| g.as_ref()).and_then(|d| d.file.meta.get(pos)) {
+                Some(m) => th::class_of(Some(m.level()), m.parent_dist > 0),
+                None => th::class_of(None, false),
+            }
+        })
+        .collect()
+}
+
+fn list_key<T>(list: &Arc<Vec<T>>) -> (usize, usize) {
+    (Arc::as_ptr(list) as usize, list.len())
+}
+
+impl AppView {
+    /// Whether the open view has a Time Histogram (decision 8): it is on,
+    /// the view is a Parsed View of log lines, and a line has a time.
+    pub fn histogram_shown(&self) -> bool {
+        self.workspace_state.show_histogram
+            && self.view_mode != ViewMode::Raw
+            && self.active_tab_is_log_file()
+            && self.empty_canvas().is_none()
+            && self.filter_index.timed_lines() > 0
+    }
+
+    fn histogram_width(&self) -> f32 {
+        let w = f32::from(self.histogram.bounds.get().size.width);
+        if w > 0.0 { w } else { DEFAULT_WIDTH }
+    }
+
+    /// The span of the view's times, and while files are read, how far
+    /// they are.
+    fn histogram_span(&self) -> Option<(Range<f64>, Option<f64>)> {
+        let (first, last) = self.filter_index.time_span()?;
+        // A file still read: the axis reaches as far as the part read so far
+        // suggests the whole will.
+        let reading: Vec<u8> = self
+            .view
+            .files
+            .iter()
+            .filter_map(|f| self.loads.get(&*f.file_id))
+            .map(|l| l.percent())
+            .collect();
+        if reading.is_empty() {
+            return Some((th::pad_span(first..last), None));
+        }
+        let percent = (reading.iter().map(|&p| u32::from(p)).sum::<u32>() / reading.len() as u32).clamp(1, 100);
+        let end = first + (last - first) * 100.0 / f64::from(percent);
+        Some((th::pad_span(first..end.max(last)), Some(last)))
+    }
+
+    /// Bring the histogram up to date with the view: grow the axis to the
+    /// rows' times, add rows appended at the end, or count again on a
+    /// worker thread. Cheap when nothing changed.
+    pub fn refresh_histogram(&mut self, cx: &mut Context<Self>) {
+        if !self.histogram_shown() {
+            return;
+        }
+        let Some((span, indexed_to)) = self.histogram_span() else { return };
+        self.histogram.indexed_to = indexed_to;
+        let width = self.histogram_width();
+        let target = self.active_target();
+        let axis = match self.histogram.axis.take() {
+            Some(mut axis) if self.histogram.axis_for == target => {
+                if span.start < axis.full.start || span.end > axis.full.end {
+                    let shows_all = axis.shows_all();
+                    let grown = th::grow_full(&th::grow_full(&axis.full, span.start), span.end);
+                    // While reading, the axis is the estimate itself.
+                    axis.full = if indexed_to.is_some() { span.start.min(grown.start)..span.end } else { grown };
+                    let visible = if shows_all { axis.full.clone() } else { axis.visible.clone() };
+                    axis.set_visible(visible, width);
+                } else if th::Step::for_width(&axis.visible, width) != axis.step {
+                    let visible = axis.visible.clone();
+                    axis.set_visible(visible, width);
+                }
+                axis
+            }
+            _ => {
+                self.histogram.axis_for = target;
+                self.histogram.counted = None;
+                self.histogram.asked = None;
+                self.histogram.drag = None;
+                TimeAxis::new(span, width)
+            }
+        };
+        let key = CountKey {
+            rows_epoch: self.rows_epoch,
+            rows: self.view.len(),
+            pass: (!self.filter_state.is_empty()).then(|| list_key(&self.filter_pass)),
+            matches: list_key(&self.focus.search().matched_visible_indices),
+            grid: axis.grid(),
+            full: axis.full.clone(),
+        };
+        self.histogram.axis = Some(axis);
+        if self.histogram.asked.as_ref() == Some(&key) {
+            return;
+        }
+        if let Some(counted) = self.histogram.counted.clone().filter(|c| key.only_appended_to(c)) {
+            if self.histogram.asked.as_ref() == Some(&counted) {
+                self.histogram_append(counted, key, cx);
+                return;
+            }
+        }
+        self.schedule_histogram_recount(key, cx);
+    }
+
+    /// Rows were added after those counted (`counted`): add them to the
+    /// columns, at most twice a second; count again when one falls outside
+    /// the axis.
+    fn histogram_append(&mut self, counted: CountKey, key: CountKey, cx: &mut Context<Self>) {
+        let now = Instant::now();
+        if let Some(at) = self.histogram.appended_at.filter(|at| now.duration_since(*at) < APPEND_EVERY) {
+            if !self.histogram.append_waiting {
+                self.histogram.append_waiting = true;
+                let wait = APPEND_EVERY - now.duration_since(at);
+                cx.spawn(async move |this, cx| {
+                    cx.background_executor().timer(wait).await;
+                    this.update(cx, |this, cx| {
+                        this.histogram.append_waiting = false;
+                        this.refresh_histogram(cx);
+                        cx.notify();
+                    })
+                    .ok();
+                })
+                .detach();
+            }
+            return;
+        }
+        let from = counted.rows;
+        if self.histogram.classes.len() != from || self.histogram.classes_epoch != Some(self.rows_epoch) {
+            return self.schedule_histogram_recount(key, cx);
+        }
+        let added: Vec<u8> = {
+            let rows = self.rows();
+            (from..key.rows).map(|r| th::class_of(rows.level(r), rows.continues(r))).collect()
+        };
+        Arc::make_mut(&mut self.histogram.classes).extend(added);
+        let pass = key.pass.map(|_| {
+            let at = self.filter_pass.partition_point(|&r| r < from);
+            &self.filter_pass[at..]
+        });
+        let matches = &self.focus.search().matched_visible_indices;
+        let matches = &matches[matches.partition_point(|&r| r < from)..];
+        let facts = RowFacts { ts: self.filter_index.effective_ts(), class: &self.histogram.classes };
+        let Some(axis) = self.histogram.axis.as_ref() else { return };
+        let appended = Arc::make_mut(&mut self.histogram.shown).append(facts, axis, from, pass, matches);
+        if appended.is_err() {
+            return self.schedule_histogram_recount(key, cx);
+        }
+        self.histogram.appended_at = Some(now);
+        self.histogram.counted = Some(key.clone());
+        self.histogram.asked = Some(key);
+        cx.notify();
+    }
+
+    /// Count everything again on a worker thread, for `key`. A count asked
+    /// for after it makes its result stale.
+    fn schedule_histogram_recount(&mut self, key: CountKey, cx: &mut Context<Self>) {
+        let Some(axis) = self.histogram.axis.clone() else { return };
+        self.histogram.generation += 1;
+        let generation = self.histogram.generation;
+        self.histogram.asked = Some(key.clone());
+        let ts = self.filter_index.effective_ts().clone();
+        // The classes are built again when the rows changed other than at the end.
+        let classes = (self.histogram.classes_epoch == Some(self.rows_epoch) && self.histogram.classes.len() == key.rows)
+            .then(|| self.histogram.classes.clone());
+        let rebuild = classes.is_none().then(|| {
+            let files: Vec<Option<Arc<IndexedFile>>> = self
+                .view
+                .files
+                .iter()
+                .map(|f| self.parsed_files.get(&*f.file_id).and_then(|p| p.indexed.clone()))
+                .collect();
+            (self.view.rows.clone(), files)
+        });
+        let pass = key.pass.map(|_| self.filter_pass.clone());
+        let matches = self.focus.search().matched_visible_indices.clone();
+        let epoch = self.rows_epoch;
+        cx.spawn(async move |this, cx| {
+            let counted = cx
+                .background_executor()
+                .spawn(async move {
+                    let classes = classes.unwrap_or_else(|| {
+                        let (rows, files) = rebuild.expect("rows to build the classes from");
+                        Arc::new(build_classes(&rows, &files))
+                    });
+                    let facts = RowFacts { ts: &ts, class: &classes };
+                    let shown = th::count_buckets(facts, &axis, pass.as_deref().map(Vec::as_slice), &matches);
+                    (classes, shown)
+                })
+                .await;
+            this.update(cx, |this, cx| this.histogram_counted(generation, epoch, key, counted, cx)).ok();
+        })
+        .detach();
+    }
+
+    /// A count is done. It is shown unless a newer one was shown already or
+    /// it is not on the axis's columns any more.
+    fn histogram_counted(
+        &mut self,
+        generation: u64,
+        epoch: u64,
+        key: CountKey,
+        (classes, shown): (Arc<Vec<u8>>, Buckets),
+        cx: &mut Context<Self>,
+    ) {
+        let h = &mut self.histogram;
+        if generation <= h.applied || h.axis.as_ref().map(|a| a.grid()) != Some(key.grid) || epoch != self.rows_epoch {
+            return;
+        }
+        h.applied = generation;
+        h.classes = classes;
+        h.classes_epoch = Some(epoch);
+        h.shown = Arc::new(shown);
+        h.counted = Some(key);
+        if generation == h.generation {
+            // Rows that came while counting are added now.
+            h.asked = h.counted.clone();
+            self.refresh_histogram(cx);
+        }
+        cx.notify();
+    }
+
+    /// The histogram strip of the view, when it has one.
+    pub fn render_time_histogram(
+        &self,
+        colors: crate::ui::canvas::CanvasColors,
+        cx: &mut Context<Self>,
+    ) -> Option<gpui::AnyElement> {
+        if !self.histogram_shown() {
+            return None;
+        }
+        let axis = self.histogram.axis.clone()?;
+        let props = crate::ui::time_histogram::HistogramProps {
+            view: cx.entity(),
+            axis,
+            buckets: self.histogram.shown.clone(),
+            time_range: self.histogram_time_range(),
+            drag_range: crate::ui::time_histogram::drag_preview(self),
+            indexed_to: self.histogram.indexed_to,
+            colors,
+            collapsed: self.histogram.collapsed,
+            bounds_sink: self.histogram.bounds.clone(),
+        };
+        Some(crate::ui::time_histogram::render(props, cx))
+    }
+
+    /// The rows in sight in the list, as the span of their times: the frame
+    /// of the part shown. Their times may go back (a File View): the
+    /// earliest and latest of them.
+    pub fn histogram_in_sight(&self) -> Option<Range<f64>> {
+        let row_height = self.text_scale().row_height();
+        let height = f32::from(self.canvas_bounds.get().size.height);
+        let in_sight = if height > 0.0 { (height / row_height).ceil() as usize } else { 0 };
+        let top = self.scroll_handle.0.borrow().base_handle.logical_scroll_top().0;
+        let ts = self.filter_index.effective_ts();
+        let end = (top + in_sight.max(1)).min(ts.len());
+        th::span_of(ts.get(top..end)?)
+    }
+
+    /// Show the part of the axis from `visible` (zoom); nothing else changes.
+    pub fn histogram_set_visible(&mut self, visible: Range<f64>, cx: &mut Context<Self>) {
+        let width = self.histogram_width();
+        if let Some(axis) = self.histogram.axis.as_mut() {
+            axis.set_visible(visible, width);
+        }
+        self.refresh_histogram(cx);
+        cx.notify();
+    }
+
+    /// Zoom by `factor` around the time `at` (⌘ + scroll).
+    pub fn histogram_zoom(&mut self, at: f64, factor: f64, cx: &mut Context<Self>) {
+        let width = self.histogram_width();
+        if let Some(axis) = self.histogram.axis.as_mut() {
+            axis.zoom(at, factor, width);
+        }
+        self.refresh_histogram(cx);
+        cx.notify();
+    }
+
+    /// "Show all": the whole axis.
+    pub fn histogram_show_all(&mut self, cx: &mut Context<Self>) {
+        if let Some(full) = self.histogram.axis.as_ref().map(|a| a.full.clone()) {
+            self.histogram_set_visible(full, cx);
+        }
+    }
+
+    /// Fold the strip, or open it again.
+    pub fn toggle_histogram_collapsed(&mut self, cx: &mut Context<Self>) {
+        self.histogram.collapsed = !self.histogram.collapsed;
+        cx.notify();
+    }
+
+    /// The Time Range as times, when one is set.
+    pub fn histogram_time_range(&self) -> Option<(Option<f64>, Option<f64>)> {
+        let range = &self.filter_state.time_range;
+        range.is_active().then(|| range.bounds(self.filter_index.anchor_day()))
+    }
+
+    /// Jump to the first row at or after `time`: a column was clicked. The
+    /// Filter and the Focus Pane stay as they are.
+    pub fn histogram_jump_to(&mut self, time: f64, cx: &mut Context<Self>) {
+        let Some(row) = th::first_row_at(self.filter_index.effective_ts(), time, self.view_times_ascend()) else { return };
+        self.histogram_jump_to_row(row, cx);
+    }
+
+    /// Jump to the first line with no time (the label in the corner).
+    pub fn histogram_jump_to_untimed(&mut self, cx: &mut Context<Self>) {
+        if let Some(row) = self.histogram.shown.first_untimed {
+            self.histogram_jump_to_row(row, cx);
+        }
+    }
+
+    fn histogram_jump_to_row(&mut self, row: usize, cx: &mut Context<Self>) {
+        if let Some(line) = self.line_ref_of_entry(row) {
+            self.set_current_line(line, Origin::Jump, cx);
+        }
+    }
+
+    /// Set the Time Range to `from`..`to` from the histogram: written in the
+    /// From and To fields as the user would type it, then applied as typing
+    /// it would be.
+    pub fn histogram_set_time_range(&mut self, from: f64, to: f64, cx: &mut Context<Self>) {
+        let (from, to) = (from.min(to), from.max(to));
+        let step = self.histogram.axis.as_ref().map_or(th::Step(1.0), |a| a.step);
+        let (from, to) = th::format_time_range(from, to, self.filter_index.anchor_day(), step);
+        self.set_time_range_text(&from, &to, cx);
+    }
+
+    /// Clear the Time Range (a click outside it on the histogram).
+    pub fn histogram_clear_time_range(&mut self, cx: &mut Context<Self>) {
+        self.set_time_range_text("", "", cx);
+    }
+
+    fn set_time_range_text(&mut self, from: &str, to: &str, cx: &mut Context<Self>) {
+        // A typed edit waiting for its pause is replaced.
+        self.time_range_generation += 1;
+        self.filter_state.set_time_range(from, to);
+        self.filter_ui.inputs_dirty = true;
+        self.apply_filter_change(cx);
+    }
+
+    /// The mouse went down on the histogram at time `at`, `x` pixels from
+    /// its left. Near an edge of the Time Range it takes that edge, inside
+    /// it the whole range; else it is a click until it moves.
+    pub fn histogram_mouse_down(&mut self, at: f64, x: f32, edge_px: f64, cx: &mut Context<Self>) {
+        let range = self.histogram_time_range();
+        self.histogram.drag = Some(match range {
+            Some((Some(from), Some(to))) if (at - from).abs() <= edge_px => HistogramDrag::Edge { fixed: to, moving: at },
+            Some((Some(from), Some(to))) if (at - to).abs() <= edge_px => HistogramDrag::Edge { fixed: from, moving: at },
+            Some((from, to)) => {
+                let inside = from.is_none_or(|f| at >= f) && to.is_none_or(|t| at <= t);
+                HistogramDrag::Pressed { at, x, inside_range: inside }
+            }
+            None => HistogramDrag::Pressed { at, x, inside_range: false },
+        });
+        cx.notify();
+    }
+
+    /// The mouse moved to time `at` (`x` pixels from the left) while down.
+    pub fn histogram_mouse_drag(&mut self, at: f64, x: f32, cx: &mut Context<Self>) {
+        let Some(drag) = self.histogram.drag else { return };
+        self.histogram.drag = Some(match drag {
+            HistogramDrag::Pressed { at: start, x: x0, inside_range } if (x - x0).abs() > 3.0 => {
+                match (inside_range, self.histogram_time_range()) {
+                    (true, Some((Some(from), Some(to)))) => HistogramDrag::Move { range: (from, to), grab: start, now: at },
+                    _ => HistogramDrag::Select { from: start, to: at },
+                }
+            }
+            HistogramDrag::Pressed { .. } => drag,
+            HistogramDrag::Select { from, .. } => HistogramDrag::Select { from, to: at },
+            HistogramDrag::Edge { fixed, .. } => HistogramDrag::Edge { fixed, moving: at },
+            HistogramDrag::Move { range, grab, .. } => HistogramDrag::Move { range, grab, now: at },
+        });
+        cx.notify();
+    }
+
+    /// The mouse went up: a drag sets the Time Range once; a click jumps to
+    /// its column, or clears the Time Range when outside it.
+    pub fn histogram_mouse_up(&mut self, cx: &mut Context<Self>) {
+        let Some(drag) = self.histogram.drag.take() else { return };
+        match self.histogram_drag_range(drag) {
+            Some((from, to)) => self.histogram_set_time_range(from, to, cx),
+            None => {
+                let HistogramDrag::Pressed { at, inside_range, .. } = drag else { return };
+                if self.histogram_time_range().is_some() && !inside_range {
+                    self.histogram_clear_time_range(cx);
+                } else if let Some(grid) = self.histogram.axis.as_ref().map(|a| a.grid()) {
+                    let start = grid.column_of(at).map_or(at, |c| grid.start_of(c));
+                    self.histogram_jump_to(start, cx);
+                }
+            }
+        }
+        cx.notify();
+    }
+
+    /// The Time Range a drag makes, on whole columns: none for a click.
+    pub fn histogram_drag_range(&self, drag: HistogramDrag) -> Option<(f64, f64)> {
+        let axis = self.histogram.axis.as_ref()?;
+        let step = axis.step.seconds();
+        let floor = |t: f64| (t / step).floor() * step;
+        let ceil = |t: f64| (t / step).ceil() * step;
+        let (from, to) = match drag {
+            HistogramDrag::Pressed { .. } => return None,
+            HistogramDrag::Select { from, to } => (floor(from.min(to)), ceil(from.max(to))),
+            HistogramDrag::Edge { fixed, moving } => {
+                let moving = (moving / step).round() * step;
+                (fixed.min(moving), fixed.max(moving))
+            }
+            HistogramDrag::Move { range, grab, now } => {
+                let by = ((now - grab) / step).round() * step;
+                (range.0 + by, range.1 + by)
+            }
+        };
+        (to > from).then_some((from, to))
+    }
+}

@@ -17,3 +17,4 @@ pub mod settings;
 pub mod sidebar;
 pub mod sidebar_group;
 pub mod space_menu;
+pub mod time_histogram;

@@ -87,8 +87,30 @@ fn main() {
     time("visible_indices rebuild", || (0..entries.len()).collect::<Vec<usize>>());
 
     drop((parsed, entries, index, text));
+    histogram_probe(10_000_000);
     app_probe(n);
     tab_switch_probe(n);
+}
+
+/// The Time Histogram's count over `n` rows (target: under 30 ms for 10M),
+/// from the per-row arrays the view holds: no line is read.
+fn histogram_probe(n: usize) {
+    use log_gpui::model::LogLevel;
+    use log_gpui::time_histogram::{RowFacts, TimeAxis, class_of, count_buckets};
+    let start = 1_788_566_400.0;
+    // A day of lines; every tenth row a Continuation Line.
+    let ts: Vec<f64> = (0..n).map(|i| start + (i as f64) * 86_400.0 / n as f64).collect();
+    let levels = [LogLevel::Info, LogLevel::Debug, LogLevel::Warn, LogLevel::Error];
+    let class: Vec<u8> = (0..n).map(|i| class_of(Some(levels[i % 4]), i % 10 == 9)).collect();
+    let pass: Vec<usize> = (0..n).filter(|i| i % 4 == 3).collect();
+    let matches: Vec<usize> = (0..n).step_by(997).collect();
+    let axis = TimeAxis::new(start..start + 86_400.0, 1200.0);
+    let rows = RowFacts { ts: &ts, class: &class };
+    time(&format!("histogram count_buckets {}M", n / 1_000_000), || count_buckets(rows, &axis, None, &matches));
+    let b = time(&format!("histogram count_buckets {}M + Filter", n / 1_000_000), || {
+        count_buckets(rows, &axis, Some(&pass), &matches)
+    });
+    println!("  {} columns of {}s", b.counts.len(), axis.step.seconds());
 }
 
 fn live_line(i: usize) -> String {

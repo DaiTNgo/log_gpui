@@ -23,6 +23,8 @@ pub enum Command {
     ToggleFindFilter,
     ToggleSearchHighlight,
     ToggleSyntaxColor,
+    ToggleHistogram,
+    ToggleMinimap,
     CopyFocusLines,
     SaveFocusLines,
     ShowHighlights,
@@ -61,7 +63,7 @@ pub enum Command {
 
 impl Command {
     /// In the order the Command Palette and the Keymap settings list them.
-    pub const ALL: [Command; 43] = [
+    pub const ALL: [Command; 45] = [
         Command::ToggleSearch,
         Command::NextMatch,
         Command::PrevMatch,
@@ -71,6 +73,8 @@ impl Command {
         Command::ToggleFindFilter,
         Command::ToggleSearchHighlight,
         Command::ToggleSyntaxColor,
+        Command::ToggleHistogram,
+        Command::ToggleMinimap,
         Command::CopyFocusLines,
         Command::SaveFocusLines,
         Command::ShowHighlights,
@@ -135,6 +139,8 @@ impl Command {
                 ("focus_pane.toggle_search_highlight", "Focus Pane: Toggle Search Highlight", &[])
             }
             Command::ToggleSyntaxColor => ("view.toggle_syntax_color", "View: Toggle Syntax Color", &[]),
+            Command::ToggleHistogram => ("view.toggle_histogram", "View: Show Time Histogram", &[]),
+            Command::ToggleMinimap => ("view.toggle_minimap", "View: Show Minimap", &[]),
             Command::CopyFocusLines => ("focus_pane.copy_lines", "Focus Pane: Copy All Lines", &[]),
             Command::SaveFocusLines => ("focus_pane.save_lines", "Focus Pane: Save Lines As…", &[]),
             Command::ShowHighlights => ("highlights.open", "Highlights: Open Highlight Rules", &["cmd-shift-m"]),

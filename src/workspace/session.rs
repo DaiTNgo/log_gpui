@@ -36,6 +36,8 @@ pub struct SessionManifest {
     pub text_zoom: i8,
     #[serde(default = "crate::workspace::state::default_true")]
     pub show_minimap: bool,
+    #[serde(default = "crate::workspace::state::default_true")]
+    pub show_histogram: bool,
     #[serde(default = "crate::workspace::state::default_warm_tab_budget")]
     pub warm_tab_budget_mb: u32,
     #[serde(default = "crate::workspace::state::default_true")]
@@ -151,6 +153,7 @@ impl SessionManifest {
             theme: ws.theme,
             text_zoom: ws.text_zoom,
             show_minimap: ws.show_minimap,
+            show_histogram: ws.show_histogram,
             warm_tab_budget_mb: ws.warm_tab_budget_mb,
             phrase_colors: ws.phrase_colors,
             phrase_hues: ws.phrase_hues.clone(),
@@ -197,6 +200,7 @@ impl SessionManifest {
         ws.theme = self.theme;
         ws.text_zoom = self.text_zoom;
         ws.show_minimap = self.show_minimap;
+        ws.show_histogram = self.show_histogram;
         ws.warm_tab_budget_mb = self.warm_tab_budget_mb;
         ws.phrase_colors = self.phrase_colors;
         ws.phrase_hues = self.phrase_hues;
@@ -371,6 +375,25 @@ mod tests {
             ws2.project("e-commerce-core").unwrap().color,
             ProjectColorAccent::Green
         );
+    }
+
+    #[test]
+    fn histogram_and_minimap_switches_are_kept_and_default_on() {
+        let mut ws = WorkspaceState::new();
+        ws.create_project("Payment Service", ProjectColorAccent::Blue);
+        ws.show_minimap = false;
+        ws.show_histogram = false;
+        let json = SessionManifest::from_workspace(&ws).to_json().unwrap();
+        let ws2 = SessionManifest::from_json(&json).unwrap().into_workspace();
+        assert!(!ws2.show_minimap && !ws2.show_histogram);
+
+        // Saved before the Histogram button, with the minimap turned off in
+        // Settings: the Minimap button stays off, the Histogram is on.
+        let mut old: serde_json::Value = serde_json::from_str(&json).unwrap();
+        old.as_object_mut().unwrap().remove("show_histogram");
+        let ws3 = SessionManifest::from_json(&old.to_string()).unwrap().into_workspace();
+        assert!(!ws3.show_minimap);
+        assert!(ws3.show_histogram);
     }
 
     #[test]

@@ -45,6 +45,7 @@ mod selection;
 mod spaces;
 pub mod text_select;
 mod tabs;
+pub mod time_histogram;
 mod view;
 mod view_settings;
 mod workspace_items;
@@ -213,6 +214,8 @@ pub struct AppView {
     pub text_zoom: i8,
     /// Whether the minimap shows beside the log table.
     pub show_minimap: bool,
+    /// The Time Histogram of the open view: its axis and counts.
+    pub histogram: time_histogram::HistogramState,
     pub column_layout: ColumnLayoutState,
     /// Live reading: sources, Follow and Pause.
     pub live: live::LiveRuntime,
@@ -489,13 +492,13 @@ impl AppView {
             if matches!(event, InputEvent::Change) {
                 cx.notify();
             }
+        })
+        .detach();
         // Pointing at a color in the picker previews it on the selection, as pointing at a swatch does.
         cx.observe(&color_picker, |this: &mut Self, picker, cx| {
             let state = picker.read(cx);
             let hovered = state.preview().filter(|p| Some(*p) != state.value());
             this.preview_bar_color(hovered.map(color::color_from_hsla), cx);
-        })
-        .detach();
         })
         .detach();
         let inspector_editor = cx.new(|cx| {
@@ -594,6 +597,7 @@ impl AppView {
             density: Density::Compact,
             text_zoom: 0,
             show_minimap: true,
+            histogram: Default::default(),
             column_layout,
             live: live::LiveRuntime::new(),
             refreshes: RefreshCounts::default(),

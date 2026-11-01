@@ -6,8 +6,7 @@
 
 **Time Histogram**
 - Dải ngang mới phía trên list. Mỗi cột là số Parent Line trong một khoảng thời gian, tô theo level: Error/Fatal đỏ, Warn cam, còn lại xám. Continuation Line không được đếm.
-- Dải hiện ở mọi view mà các dòng có thời gian và có ít nhất một dòng có giờ: Log Space, File View, Focus Pane, Focus Window. Không hiện ở Raw View hay ở view không có dòng nào có giờ.
-- Histogram của Focus Pane dùng chung trục thời gian với view chính.
+- Dải hiện ở mọi view mà các dòng có thời gian và có ít nhất một dòng có giờ: Log Space, File View. Không hiện ở Raw View, ở view không có dòng nào có giờ, hay trong Focus Pane và Focus Window: dải của view đã cho thấy dòng qua Filter ở dạng đậm.
 - Độ rộng cột tự chọn theo các bước 1s, 5s, 10s, 30s, 1m, 5m, 15m, 1h, 6h, 1d. ⌘ + cuộn để zoom, có nút "Xem toàn bộ". Zoom không lọc dòng nào.
 - Khi có Filter: cột mờ là tổng số dòng, phần đậm là số dòng qua Filter. Khoảng có Match của Search được đánh dấu bằng vạch dưới cột.
 - Khung viền cho biết list chính đang hiện khoảng thời gian nào, và chạy theo khi cuộn.
@@ -36,7 +35,6 @@
 - Code:
   - `src/app/view/mod.rs` (thêm dải vào bố cục, thêm nhóm nút vào thanh công cụ)
   - module UI mới cho Time Histogram, vẽ bằng `gpui::canvas` như minimap trong `src/ui/canvas.rs`
-  - `src/ui/focus_pane.rs`
   - `src/app/filter.rs` (`apply_rows_appended`, Time Range)
   - `src/filter.rs` (`set_time_range`)
   - `src/app/go_to.rs` (nhảy tới thời điểm)

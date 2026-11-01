@@ -342,8 +342,9 @@ pub struct FilterIndex {
     pub columns: Vec<ColumnIndex>,
     rows: usize,
     /// Timestamp of each row, inherited from the nearest row above that has
-    /// one; `NAN` before the first timestamp.
-    effective_ts: Vec<f64>,
+    /// one; `NAN` before the first timestamp. Shared, so a count on a
+    /// worker thread reads it without a copy.
+    effective_ts: std::sync::Arc<Vec<f64>>,
     first_ts: Option<f64>,
     min_entry: Option<(f64, String)>,
     max_entry: Option<(f64, String)>,
@@ -444,7 +445,7 @@ impl FilterIndex {
         }
         index.append(entries);
         if effective_ts.len() == index.rows {
-            index.effective_ts = effective_ts.to_vec();
+            index.effective_ts = std::sync::Arc::new(effective_ts.to_vec());
         }
         index
     }
@@ -563,7 +564,7 @@ impl FilterIndex {
             let Some(entry) = new_rows.get(row) else { continue };
             self.push_row(&entry, new_rows.source(row));
             if untimed(row) {
-                if let Some(last) = self.effective_ts.last_mut() {
+                if let Some(last) = std::sync::Arc::make_mut(&mut self.effective_ts).last_mut() {
                     *last = f64::NAN;
                 }
             }
@@ -590,7 +591,7 @@ impl FilterIndex {
             col.truncate(keep, removed);
         }
         self.rows = keep;
-        self.effective_ts.truncate(keep);
+        std::sync::Arc::make_mut(&mut self.effective_ts).truncate(keep);
         self.first_ts = self.effective_ts.iter().copied().find(|t| !t.is_nan());
         self.parent_row = parent_row;
         self.forget_counts(removed);
@@ -623,7 +624,7 @@ impl FilterIndex {
         let before = dropped.partition_point(|&p| p <= parent_at_or_before);
         self.parent_row = parent_at_or_before.saturating_sub(before);
         self.rows = kept.len();
-        remove_positions(&mut self.effective_ts, dropped);
+        remove_positions(std::sync::Arc::make_mut(&mut self.effective_ts), dropped);
         self.first_ts = self.effective_ts.iter().copied().find(|t| !t.is_nan());
         self.forget_counts(removed);
         // The earliest and latest time are those of the rows left (rows are
@@ -666,7 +667,7 @@ impl FilterIndex {
             if entry.parent.is_none() {
                 self.timed_lines += 1;
             }
-            self.effective_ts.push(entry.timestamp);
+            std::sync::Arc::make_mut(&mut self.effective_ts).push(entry.timestamp);
             if self.first_ts.is_none() {
                 self.first_ts = Some(entry.timestamp);
             }
@@ -677,7 +678,7 @@ impl FilterIndex {
                 self.max_entry = Some((entry.timestamp, entry.time_str().to_string()));
             }
         } else {
-            self.effective_ts.push(prev);
+            std::sync::Arc::make_mut(&mut self.effective_ts).push(prev);
         }
         self.rows += 1;
     }
@@ -693,6 +694,16 @@ impl FilterIndex {
     /// Timestamp of `row` as seen by the Time Range filter.
     pub fn effective_timestamp(&self, row: usize) -> Option<f64> {
         self.effective_ts.get(row).copied().filter(|t| !t.is_nan())
+    }
+
+    /// The timestamp of every row (`NAN` for a row with none), shared.
+    pub fn effective_ts(&self) -> &std::sync::Arc<Vec<f64>> {
+        &self.effective_ts
+    }
+
+    /// The earliest and latest timestamp of the rows.
+    pub fn time_span(&self) -> Option<(f64, f64)> {
+        Some((self.min_entry.as_ref()?.0, self.max_entry.as_ref()?.0))
     }
 
     /// Start of the (naive UTC) day of the first timestamped row. A time of

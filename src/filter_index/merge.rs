@@ -96,7 +96,7 @@ impl FilterIndex {
                 !continues(file, pos)
             })
             .unwrap_or(0);
-        index.effective_ts = effective_ts;
+        index.effective_ts = std::sync::Arc::new(effective_ts);
         index
     }
 }

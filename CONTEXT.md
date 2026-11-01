@@ -343,8 +343,12 @@ A per-column switch that turns a column's Filter Values and Custom Values from "
 _Avoid_: Exclude, negate.
 
 **Time Range**:
-A From/To bound on the `timestamp` column, typed in any time form the app can read from log lines. An empty bound means no limit on that side. It is the only way to filter on `timestamp`.
+A From/To bound on the `timestamp` column, typed in any time form the app can read from log lines, or set by dragging on the Time Histogram (which writes the same text in From and To). An empty bound means no limit on that side. It is the only way to filter on `timestamp`.
 _Avoid_: Date filter, time slider.
+
+**Time Histogram**:
+The strip above the list of a view whose lines have times (Log Space, File View; not the Raw View, the Focus Pane or the Focus Window): one column per span of time counting the Parent Lines in it, Error/Fatal red, Warn orange, the rest grey. Under a Filter, all lines show dim and those passing it solid; a tick marks a column with a Match. A click jumps to the first line of the column; a drag sets the Time Range (ADR-0017). Lines with no time are not drawn, only counted in a label. Turned on and off for every view by the Histogram button.
+_Avoid_: Timeline, sparkline, volume chart.
 
 **Field Column**:
 A column of the Parsed View besides TIMESTAMP, LEVEL, MODULE and MESSAGE that shows a named field read from the line: a JSON key, a field of a Log Format, or a Detected Field turned on. Its cell is a stretch of the line's text.

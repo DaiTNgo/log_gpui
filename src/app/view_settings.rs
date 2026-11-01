@@ -129,6 +129,14 @@ impl AppView {
         cx.notify();
     }
 
+    /// Whether the Time Histogram shows above the list: for every view.
+    pub fn set_show_histogram(&mut self, show: bool, cx: &mut Context<Self>) {
+        self.workspace_state.show_histogram = show;
+        self.schedule_session_save(cx);
+        self.refresh_histogram(cx);
+        cx.notify();
+    }
+
     /// Search Highlight: whether the Focus Pane paints Search Matches. One
     /// setting for every Focus Tab and Focus Pane.
     pub fn set_show_search_highlight(&mut self, show: bool, cx: &mut Context<Self>) {

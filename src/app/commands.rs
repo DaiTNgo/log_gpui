@@ -37,6 +37,8 @@ impl AppView {
             Command::ToggleSearchHighlight => self.toggle_search_highlight(cx),
             Command::ToggleValueColors => self.toggle_value_colors(cx),
             Command::ToggleSyntaxColor => self.toggle_syntax_color(cx),
+            Command::ToggleHistogram => self.set_show_histogram(!self.workspace_state.show_histogram, cx),
+            Command::ToggleMinimap => self.set_show_minimap(!self.show_minimap, cx),
             Command::ToggleFilter => self.toggle_filter_builder(cx),
             Command::GoNextError => self.jump_to_next_error(cx),
             Command::GoPrevError => self.jump_to_prev_error(cx),

@@ -457,13 +457,14 @@ impl FilterIndex {
             col.push_chunk(local, &cont, &parent_rows);
         }
 
+        let effective_ts = std::sync::Arc::make_mut(&mut self.effective_ts);
         for ts in &chunk.timestamps {
             if ts.is_nan() {
-                let prev = self.effective_ts.last().copied().unwrap_or(f64::NAN);
-                self.effective_ts.push(prev);
+                let prev = effective_ts.last().copied().unwrap_or(f64::NAN);
+                effective_ts.push(prev);
             } else {
                 self.timed_lines += 1;
-                self.effective_ts.push(*ts);
+                effective_ts.push(*ts);
                 self.first_ts.get_or_insert(*ts);
             }
         }
