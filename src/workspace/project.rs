@@ -75,7 +75,11 @@ pub struct Project {
     /// order (the first rule that matches a row paints it).
     #[serde(default)]
     pub highlight_rules: Vec<HighlightRule>,
-    /// The colors used most recently for Markers and Highlight Rules.
+    /// Text Highlights shared by every Log Space of the project.
+    #[serde(default)]
+    pub text_highlights: Vec<crate::text_highlight::TextHighlight>,
+    /// The colors used most recently for Markers, Text Highlights and
+    /// Highlight Rules.
     #[serde(default)]
     pub recent_colors: RecentColors,
     /// The Columns section: the columns the Focus Pane shows.
@@ -99,6 +103,7 @@ impl Project {
             working_set: WorkingSet::new(),
             investigation_cases: Vec::new(),
             highlight_rules: Vec::new(),
+            text_highlights: Vec::new(),
             recent_colors: RecentColors::new(),
             columns: Default::default(),
             format_choices: Default::default(),

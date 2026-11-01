@@ -78,7 +78,7 @@ fn a_drag_selects_text_to_paint_a_marker(cx: &mut TestAppContext) {
     let Some(ColorTarget::RawMark { pieces, .. }) = target else { panic!("the bar to paint it: {target:?}") };
     assert_eq!(pieces.iter().map(|(line, range, _)| (*line, range.clone())).collect::<Vec<_>>(), [(2, 20..31), (3, 0..24)]);
 
-    h.view.update(&mut h.cx, |app, cx| app.apply_bar_color(HighlightColor::palette(Hue::Red, Shade::Medium), cx));
+    h.view.update(&mut h.cx, |app, cx| app.apply_bar_color(HighlightColor::palette(Hue::Red, Shade::Medium), false, cx));
     h.view.read_with(&h.cx, |app, _| {
         let file = &app.workspace_state.active_project().unwrap().log_spaces.last().unwrap().files[0];
         assert_eq!(file.markers.len(), 2, "a Marker on each line");

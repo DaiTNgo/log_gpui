@@ -1,5 +1,6 @@
-//! Context menu of a cell in the Parsed View: color commands and "Log
-//! Format…" of the cell's file. There is no command to filter from here.
+//! Context menu of a cell in the Parsed View: color commands (of the Marker
+//! and of the Text Highlight under the pointer, apart) and "Log Format…" of
+//! the cell's file. There is no command to filter from here.
 //! Also the menu of the Focus Pane's lines.
 
 use crate::app::AppView;
@@ -11,6 +12,7 @@ pub fn cell_menu(menu: PopupMenu, view: &Entity<AppView>, cx: &App) -> PopupMenu
     let Some(target) = this.cell_target.clone() else { return menu };
     let has_selection = this.text_selection.is_some_and(|s| !s.is_empty());
     let marker = this.marker_under(target.row, target.byte);
+    let highlight = this.text_highlight_under(target.row, target.byte);
 
     let mut menu = menu;
     let mark_view = view.clone();
@@ -32,6 +34,19 @@ pub fn cell_menu(menu: PopupMenu, view: &Entity<AppView>, cx: &App) -> PopupMenu
             }))
             .item(PopupMenuItem::new("Remove marker").on_click(move |_, _, app| {
                 remove_view.update(app, |this, cx| this.remove_marker_under(row, byte, cx));
+            }));
+    }
+    if let Some(key) = highlight {
+        let (change_view, remove_view) = (view.clone(), view.clone());
+        let change_key = key.clone();
+        menu = menu
+            .item(PopupMenuItem::separator())
+            .item(PopupMenuItem::new("Change highlight color").on_click(move |_, _, app| {
+                let key = change_key.clone();
+                change_view.update(app, |this, cx| this.open_text_highlight_bar(key, at, cx));
+            }))
+            .item(PopupMenuItem::new("Remove highlight").on_click(move |_, _, app| {
+                remove_view.update(app, |this, cx| this.remove_text_highlight(&key, cx));
             }));
     }
     if this.log_format_target_of_row(target.row).is_some() {

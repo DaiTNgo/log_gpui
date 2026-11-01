@@ -58,6 +58,8 @@ impl Render for AppView {
         let go_to_bar = self.render_go_to_bar(cx);
         let detected_hint = self.render_detected_hint_bar(cx);
 
+        self.refresh_text_paint(cx);
+
         // 5. Center: Raw View, Parsed View (the Log Canvas) or an empty state.
         let has_files = self.active_space().is_some_and(|s| !s.files.is_empty());
         let colors = self.canvas_colors(cx);
@@ -95,6 +97,8 @@ impl Render for AppView {
                     .collect(),
                 reading_fields: !self.loads.is_empty(),
                 source_tints: Arc::new(self.source_tints(colors.dark)),
+                text_highlights: self.th_matcher.clone(),
+                value_colors: self.value_colors.clone(),
             })
         };
 
@@ -127,6 +131,7 @@ impl Render for AppView {
         let download_panel = self.render_download(cx);
         let full_dialog = self.render_open_in_full(cx);
         let download_options = self.render_download_options(cx);
+        self.sync_bar_count(cx);
         let color_bar = self.render_color_bar(cx);
         let phrase_menu = self.render_phrase_menu(false, cx);
         let notice = self.render_notice(cx);

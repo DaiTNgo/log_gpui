@@ -129,6 +129,10 @@ pub struct CanvasViewState<'a> {
     pub reading_fields: bool,
     /// The tint of each Source File by `file_id`; empty for one file.
     pub source_tints: Arc<std::collections::HashMap<Arc<str>, gpui::Hsla>>,
+    /// The Text Highlights of the project.
+    pub text_highlights: Arc<crate::text_highlight::HighlightMatcher>,
+    /// Value Colors; `None` while they are off.
+    pub value_colors: Option<Arc<crate::value_color::ValueColors>>,
 }
 
 pub struct LogCanvas;
@@ -267,6 +271,8 @@ impl LogCanvas {
             row_height,
             font_size,
             source_tints: state.source_tints.clone(),
+            text_highlights: state.text_highlights.clone(),
+            value_colors: state.value_colors.clone(),
         };
 
         let list = uniform_list(
@@ -780,6 +786,8 @@ struct RowEnv {
     row_height: f32,
     font_size: f32,
     source_tints: Arc<std::collections::HashMap<Arc<str>, gpui::Hsla>>,
+    text_highlights: Arc<crate::text_highlight::HighlightMatcher>,
+    value_colors: Option<Arc<crate::value_color::ValueColors>>,
 }
 
 impl RowEnv {
@@ -877,10 +885,13 @@ impl RowEnv {
         let anchored_width = self.layout.sticky_partition_width();
         let scroll_x = horizontal_scroll_x(&self.scroll_handle);
         let source_tint = file_id.and_then(|id| self.source_tints.get(id)).copied();
+        let text_highlights = self.text_highlights.ranges(&entry.raw_line);
         let cell_ctx = CellCtx {
             colors: &colors,
             entry: &entry,
             markers: entries.markers(entry_ix),
+            text_highlights: &text_highlights,
+            value_colors: self.value_colors.as_deref(),
             source: entries.source(entry_ix),
             search_ranges: &[],
             find_ranges: &[],
@@ -1355,6 +1366,10 @@ pub(crate) struct CellCtx<'a> {
     pub entry: &'a LogEntry,
     /// The Markers painted on the line.
     pub markers: &'a [crate::marker::TextMarker],
+    /// The Text Highlights painted on the line, in bytes of the stored line.
+    pub text_highlights: &'a [crate::text_highlight::HighlightRange],
+    /// Value Colors of the identifier cells; `None` while they are off.
+    pub value_colors: Option<&'a crate::value_color::ValueColors>,
     /// The name of the line's Source File, in a Log Space.
     pub source: Option<&'a str>,
     /// Matches of Search in the message text.
@@ -1379,8 +1394,9 @@ fn hsla_of(rgb: u32) -> gpui::Hsla {
     gpui::rgb(rgb).into()
 }
 
-/// The text of one cell, with Markers, Search Matches and the text selection
-/// painted on it. A Continuation Line's other cells show a dim `_`.
+/// The text of one cell, with its Value Color, Text Highlights, Markers,
+/// Search Matches and the text selection painted on it, bottom to top. A
+/// Continuation Line's other cells show a dim `_`.
 pub(crate) fn render_text_cell(ctx: &CellCtx, cell: TextCell) -> gpui::AnyElement {
     if shows_placeholder(ctx.entry, cell) {
         return div()
@@ -1392,6 +1408,29 @@ pub(crate) fn render_text_cell(ctx: &CellCtx, cell: TextCell) -> gpui::AnyElemen
         return div().into_any_element();
     };
     let mut layers: Vec<Layer> = Vec::new();
+    // The Value Color only colors text; any paint above with a background
+    // brings its own text color.
+    let value_field = match cell {
+        TextCell::Module => Some(None),
+        TextCell::Field(key) => Some(Some(key)),
+        _ => None,
+    };
+    if let (Some(colors), Some(field)) = (ctx.value_colors, value_field)
+        && let Some(rgb) = colors.rgb(field, text)
+    {
+        layers.push(Layer { range: 0..text.len(), background: None, color: Some(hsla_of(rgb)) });
+    }
+    if let Some(span) = &span {
+        for h in ctx.text_highlights {
+            if let Some(part) = clip_to_span(&h.range, span) {
+                layers.push(Layer {
+                    range: part.start - span.start..part.end - span.start,
+                    background: Some(hsla_of(h.color.rgb(ctx.tone))),
+                    color: Some(hsla_of(text_rgb(h.color.text_tone(ctx.tone)))),
+                });
+            }
+        }
+    }
     if matches!(cell, TextCell::Message | TextCell::Raw) {
         for &(s, e) in ctx.search_ranges {
             layers.push(Layer {

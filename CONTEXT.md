@@ -196,8 +196,16 @@ _Avoid_: Passive marker, auto marker.
 A condition on the values of one column paired with a color. In the Parsed View, rows that meet it are shown in that color for as long as the rule is on.
 _Avoid_: Marker, color rule, keyword highlight.
 
+**Text Highlight**:
+A stretch of text and a color, kept by the Project: every place in any line where that text appears, ignoring letter case, gets that color behind it, in every view and every Log Space of the Project, new live lines included. Made from the color bar of a selection with "Everywhere" (or Alt+click), recolored and removed from the context menu of any place it paints; removing it removes it everywhere. A Marker shows one place the user found; a Text Highlight helps find every place.
+_Avoid_: Keyword highlight, quick highlight, Marker.
+
+**Value Color**:
+The text color the app gives each value of an identifier column in the Parsed View and the Focus Pane, worked out from the value itself, so the same value always has the same color in every file and every session. Every column has one except the timestamp, message/payload and level columns and columns of numbers, booleans or JSON. The user cannot change or switch it per column or value, only turn Value Colors off for the whole app. It colors text, never a background, and gives way to the text color chosen for a Marker or Text Highlight under it.
+_Avoid_: Hash color, auto color, identifier highlight.
+
 **Highlight Palette**:
-The fixed set of colors offered for Markers and Highlight Rules, each hue in several shades, next to a free color picker.
+The fixed set of colors offered for Markers, Text Highlights and Highlight Rules, each hue in several shades, next to a free color picker.
 _Avoid_: Color list, swatches.
 
 ### Lines

@@ -3,7 +3,7 @@
 
 use super::AppView;
 use super::highlights_panel::swatch;
-use crate::app::color::{ColorBar, ColorTarget};
+use crate::app::color::{ColorBar, ColorTarget, MarkScope, short_text};
 use crate::palette::{HighlightColor, Hue, Shade, Tone};
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
@@ -12,14 +12,64 @@ use gpui::{
 };
 use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::color_picker::ColorPicker;
-use gpui_component::{ActiveTheme as _, Selectable as _, Sizable as _, h_flex, v_flex};
+use gpui_component::{ActiveTheme as _, Disableable as _, Selectable as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::assets::IconName;
 
 impl AppView {
     fn bar_swatch(&self, id: String, color: &HighlightColor, tone: Tone, size: f32, cx: &mut Context<Self>) -> gpui::AnyElement {
         let pick = color.clone();
+        let paints_selection = self.color_bar.as_ref().is_some_and(|b| b.paints_selection());
         swatch(ElementId::from(id), color, tone, size)
-            .on_click(cx.listener(move |this, _, _window, cx| this.apply_bar_color(pick.clone(), cx)))
+            .on_click(cx.listener(move |this, event: &gpui::ClickEvent, _window, cx| {
+                this.apply_bar_color(pick.clone(), event.modifiers().alt, cx)
+            }))
+            .when(paints_selection, |s| {
+                s.tooltip(|window, cx| {
+                    gpui_component::tooltip::Tooltip::new("Alt+click: highlight everywhere").build(window, cx)
+                })
+            })
+            .into_any_element()
+    }
+
+    /// "This line only" | "Everywhere “text” · N": where a color for the
+    /// selection goes.
+    fn render_scope_toggle(&self, bar: &ColorBar, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let text = self.bar_everywhere_text();
+        let everywhere_label = match (&text, bar.count) {
+            (Some(t), Some(n)) => format!("Everywhere “{}” · {n}", short_text(t, 24)),
+            (Some(t), None) => format!("Everywhere “{}”", short_text(t, 24)),
+            (None, _) => "Everywhere".to_string(),
+        };
+        let can_everywhere = text.is_some();
+        let everywhere = Button::new("bar-scope-everywhere")
+            .outline()
+            .xsmall()
+            .label(everywhere_label)
+            .selected(bar.scope == MarkScope::Everywhere)
+            .disabled(!can_everywhere)
+            .on_click(cx.listener(|this, _, _window, cx| this.set_bar_scope(MarkScope::Everywhere, cx)));
+        let everywhere = if can_everywhere {
+            everywhere.into_any_element()
+        } else {
+            div()
+                .id("bar-scope-everywhere-tip")
+                .child(everywhere)
+                .tooltip(|window, cx| {
+                    gpui_component::tooltip::Tooltip::new("Select text within one line").build(window, cx)
+                })
+                .into_any_element()
+        };
+        h_flex()
+            .gap_1()
+            .child(
+                Button::new("bar-scope-line")
+                    .outline()
+                    .xsmall()
+                    .label("This line only")
+                    .selected(bar.scope == MarkScope::Line)
+                    .on_click(cx.listener(|this, _, _window, cx| this.set_bar_scope(MarkScope::Line, cx))),
+            )
+            .child(everywhere)
             .into_any_element()
     }
 
@@ -64,6 +114,10 @@ impl AppView {
             }
             _ => None,
         };
+        let highlight_removal = match &bar.target {
+            ColorTarget::RecolorTextHighlight { key, .. } => Some(key.clone()),
+            _ => None,
+        };
 
         let mut swatches = h_flex().gap_1().items_center();
         if !is_rule {
@@ -98,7 +152,21 @@ impl AppView {
                         })),
                 );
             }
+            if let Some(key) = highlight_removal {
+                swatches = swatches.child(
+                    Button::new("bar-remove-highlight")
+                        .ghost()
+                        .xsmall()
+                        .icon(IconName::Close)
+                        .label("Remove highlight")
+                        .on_click(cx.listener(move |this, _, _window, cx| {
+                            this.color_bar = None;
+                            this.remove_text_highlight(&key, cx);
+                        })),
+                );
+            }
         }
+        let scope = bar.paints_selection().then(|| self.render_scope_toggle(&bar, cx));
 
         let theme = cx.theme();
         let mut panel = v_flex()
@@ -115,6 +183,7 @@ impl AppView {
             .shadow_lg()
             .occlude()
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .children(scope)
             .child(swatches);
         if is_rule || bar.palette_open {
             panel = panel.child(self.render_palette_grid(&bar, cx));

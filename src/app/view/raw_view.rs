@@ -87,6 +87,7 @@ impl AppView {
         let current_match = self.raw.matches.get(self.raw.current).copied();
         let current_line = self.current_line();
         let selection = self.raw.list_selection;
+        let text_highlights = self.th_matcher.clone();
         let flash = self.raw.list_flash.clone().filter(|(_, _, at)| at.elapsed() < crate::ui::canvas::ROW_FLASH);
         // The Markers of each section's file, by line.
         let files: Vec<Option<crate::workspace::log_space::LogFile>> = sections
@@ -126,6 +127,17 @@ impl AppView {
                             let text = section.lines.get(line).unwrap_or_default();
                             let len = text.len();
                             let mut layers: Vec<(std::ops::Range<usize>, gpui::HighlightStyle)> = Vec::new();
+                            // Text Highlights under the Matches, Markers over both.
+                            for h in text_highlights.ranges(&text) {
+                                layers.push((
+                                    h.range,
+                                    gpui::HighlightStyle {
+                                        background_color: Some(gpui::rgb(h.color.rgb(tone)).into()),
+                                        color: Some(gpui::rgb(crate::palette::text_rgb(h.color.text_tone(tone))).into()),
+                                        ..Default::default()
+                                    },
+                                ));
+                            }
                             if let Some(matcher) = &matcher {
                                 let is_current = current_match.is_some_and(|m| m.section == si && m.line == line);
                                 for p in crate::ui::canvas::line_match_paints(matcher, &text, is_current, phrase_fills.as_deref(), shared) {

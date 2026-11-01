@@ -99,6 +99,15 @@ impl AppView {
         marker_at(self.rows().markers(entry_ix), byte).cloned()
     }
 
+    /// The key of the Text Highlight painting a byte of a row, if any.
+    pub fn text_highlight_under(&self, vis_pos: usize, byte: usize) -> Option<String> {
+        let &entry_ix = self.visible_indices.get(vis_pos)?;
+        let entry = self.rows().get(entry_ix)?;
+        crate::text_highlight::HighlightMatcher::new(self.text_highlights())
+            .key_at(&entry.raw_line, byte)
+            .map(str::to_string)
+    }
+
     /// Remove the whole Marker under a byte of a row.
     pub fn remove_marker_under(&mut self, vis_pos: usize, byte: usize, cx: &mut Context<Self>) {
         let Some(&entry_ix) = self.visible_indices.get(vis_pos) else { return };

@@ -142,6 +142,19 @@ impl AppView {
         self.set_show_search_highlight(show, cx);
     }
 
+    /// Value Colors: whether identifier values get their color in the
+    /// Parsed View and the Focus Pane. One app setting.
+    pub fn set_show_value_colors(&mut self, show: bool, cx: &mut Context<Self>) {
+        self.workspace_state.show_value_colors = show;
+        self.schedule_session_save(cx);
+        cx.notify();
+    }
+
+    pub fn toggle_value_colors(&mut self, cx: &mut Context<Self>) {
+        let show = !self.workspace_state.show_value_colors;
+        self.set_show_value_colors(show, cx);
+    }
+
     /// Whether Search Matches are painted per Phrase (the Settings toggle).
     /// The Canvas, minimap, Focus Pane and Raw View read it here.
     pub fn phrase_colors(&self) -> bool {

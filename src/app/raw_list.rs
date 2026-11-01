@@ -230,7 +230,7 @@ impl AppView {
 
     /// The button was released: a drag leaves the selection with the bar
     /// to paint it; a click makes the line the current one, and on a
-    /// Marker opens the bar to change it.
+    /// Marker or a Text Highlight opens the bar to change it.
     pub fn finish_raw_selection(&mut self, at: Point<Pixels>, cx: &mut Context<Self>) {
         if !std::mem::take(&mut self.raw.list_selecting) {
             return;
@@ -249,7 +249,7 @@ impl AppView {
                 })
                 .collect();
             if !pieces.is_empty() {
-                self.color_bar = Some(ColorBar { pos: at, target: ColorTarget::RawMark { file_id, pieces }, palette_open: false });
+                self.color_bar = Some(ColorBar::new(at, ColorTarget::RawMark { file_id, pieces }));
             }
             cx.notify();
             return;
@@ -265,10 +265,12 @@ impl AppView {
             .active_project()
             .and_then(|p| p.log_spaces.iter().find_map(|s| s.file(&file_id)))
             .is_some_and(|f| f.markers_on_line(line).iter().any(|m| m.range.start <= byte && byte < m.range.end));
+        let line_text = section.lines.get(line - 1).map(|t| t.to_string()).unwrap_or_default();
         if on_marker {
-            let line_text = section.lines.get(line - 1).map(|t| t.to_string()).unwrap_or_default();
             let target = ColorTarget::RawRecolor { file_id, line, line_text, byte };
-            self.color_bar = Some(ColorBar { pos: at, target, palette_open: false });
+            self.color_bar = Some(ColorBar::new(at, target));
+        } else if let Some(key) = crate::text_highlight::HighlightMatcher::new(self.text_highlights()).key_at(&line_text, byte) {
+            self.color_bar = Some(ColorBar::new(at, ColorTarget::RecolorTextHighlight { key: key.to_string(), raw: true }));
         }
         cx.notify();
     }

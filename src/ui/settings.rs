@@ -72,6 +72,7 @@ struct Values {
     glob_interval: u64,
     minimap: bool,
     search_highlight: bool,
+    value_colors: bool,
     phrase_colors: bool,
     wrap: bool,
     density: Density,
@@ -99,6 +100,7 @@ pub fn open_settings_dialog(view: Entity<AppView>, window: &mut Window, cx: &mut
                     glob_interval: v.live.glob_interval,
                     minimap: v.show_minimap,
                     search_highlight: v.workspace_state.show_search_highlight,
+                    value_colors: v.workspace_state.show_value_colors,
                     phrase_colors: v.phrase_colors(),
                     wrap: v.raw.soft_wrap,
                     density: v.density,
@@ -516,6 +518,7 @@ fn rows_of(section: SettingsSection, view: &Entity<AppView>, v: &Values, cx: &Ap
             let (text_pt, zoom) = v.text_size;
             let v_phrase_colors = view.clone();
             let v_highlight = view.clone();
+            let v_value_colors = view.clone();
             let densities = [
                 (Density::Comfortable, "Comfortable"),
                 (Density::Compact, "Compact"),
@@ -631,6 +634,18 @@ fn rows_of(section: SettingsSection, view: &Entity<AppView>, v: &Values, cx: &Ap
                         .on_click(move |checked: &bool, window, app| {
                             let on = *checked;
                             v_highlight.update(app, |this, cx| this.set_show_search_highlight(on, cx));
+                            window.refresh();
+                        })
+                        .into_any_element(),
+                },
+                Row {
+                    title: "Value Colors",
+                    description: "Give each value of an identifier column (thread, host, request id…) its own text color, the same in every file. Times, levels, messages, numbers, booleans and JSON keep the plain color.",
+                    control: Switch::new("show-value-colors")
+                        .checked(v.value_colors)
+                        .on_click(move |checked: &bool, window, app| {
+                            let on = *checked;
+                            v_value_colors.update(app, |this, cx| this.set_show_value_colors(on, cx));
                             window.refresh();
                         })
                         .into_any_element(),

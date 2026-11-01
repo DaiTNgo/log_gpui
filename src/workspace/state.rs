@@ -65,6 +65,10 @@ pub struct WorkspaceState {
     /// app setting.
     #[serde(default = "default_true")]
     pub show_search_highlight: bool,
+    /// Whether the Parsed View and the Focus Pane give identifier values
+    /// their Value Color: an app setting.
+    #[serde(default = "default_true")]
+    pub show_value_colors: bool,
 }
 
 /// Default Live Window.
@@ -107,6 +111,7 @@ impl Default for WorkspaceState {
             phrase_rgbs: Default::default(),
             raw_soft_wrap: true,
             show_search_highlight: true,
+            show_value_colors: true,
         }
     }
 }
@@ -143,6 +148,7 @@ impl WorkspaceState {
             working_set,
             investigation_cases: Vec::new(),
             highlight_rules: Vec::new(),
+            text_highlights: Vec::new(),
             recent_colors: Default::default(),
             columns: Default::default(),
             format_choices: Default::default(),

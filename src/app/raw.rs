@@ -663,13 +663,13 @@ impl AppView {
     }
 
     /// The Raw View's bar follows the editors' selection: text selected in a
-    /// file shows the bar to paint it; the caret inside a Marker shows it to
-    /// change or remove that Marker. Called while rendering.
+    /// file shows the bar to paint it; the caret inside a Marker or a Text
+    /// Highlight shows it to change or remove that one. Called while rendering.
     pub fn sync_raw_color_bar(&mut self, window: &Window, cx: &mut Context<Self>) {
         use crate::app::color::{ColorBar, ColorTarget};
         let raw_open = matches!(
             self.color_bar.as_ref().map(|b| &b.target),
-            Some(ColorTarget::RawMark { .. } | ColorTarget::RawRecolor { .. })
+            Some(ColorTarget::RawMark { .. } | ColorTarget::RawRecolor { .. } | ColorTarget::RecolorTextHighlight { raw: true, .. })
         );
         if self.view_mode != ViewMode::Raw {
             if raw_open {
@@ -723,13 +723,13 @@ impl AppView {
                     .active_project()
                     .and_then(|p| p.log_spaces.iter().find_map(|s| s.file(&section.file_id)))
                     .is_some_and(|f| f.markers_on_line(line).iter().any(|m| m.range.start <= byte && byte < m.range.end));
+                let line_text = section.lines.get(line - 1).map(|t| t.to_string()).unwrap_or_default();
                 if under {
-                    wanted = Some(ColorTarget::RawRecolor {
-                        file_id: section.file_id.clone(),
-                        line,
-                        line_text: section.lines.get(line - 1).map(|t| t.to_string()).unwrap_or_default(),
-                        byte,
-                    });
+                    wanted = Some(ColorTarget::RawRecolor { file_id: section.file_id.clone(), line, line_text, byte });
+                    break;
+                }
+                if let Some(key) = crate::text_highlight::HighlightMatcher::new(self.text_highlights()).key_at(&line_text, byte) {
+                    wanted = Some(ColorTarget::RecolorTextHighlight { key: key.to_string(), raw: true });
                     break;
                 }
             }
@@ -738,7 +738,7 @@ impl AppView {
             (Some(target), Some(bar)) if bar.target == target => {}
             (Some(target), bar) => {
                 let palette_open = bar.is_some_and(|b| b.palette_open);
-                self.color_bar = Some(ColorBar { pos, target, palette_open });
+                self.color_bar = Some(ColorBar { palette_open, ..ColorBar::new(pos, target) });
             }
             (None, Some(_)) if raw_open => self.color_bar = None,
             _ => {}
@@ -891,7 +891,8 @@ impl AppView {
         .detach();
     }
 
-    /// Highlight every Match in the scratch editors; the current one stronger.
+    /// Paint the scratch editors: Text Highlights, every Match (the current
+    /// one stronger) and Markers, bottom to top.
     pub(crate) fn update_raw_highlights(&mut self, cx: &mut Context<Self>) {
         let sections = self.raw_sections();
         let matcher = self.focus.search().matcher.clone();
@@ -925,9 +926,27 @@ impl AppView {
                 Some((section.file_id.clone(), kept))
             })
             .collect();
+        let text_highlights = crate::text_highlight::HighlightMatcher::new(self.text_highlights());
         for (si, section) in sections.iter().enumerate() {
             let Some(editor) = self.raw.editors.get_mut(&section.file_id) else { continue };
             let mut decorations = Vec::new();
+            // Text Highlights under the Matches.
+            if !text_highlights.is_empty() {
+                let mut offset = 0usize;
+                for line in section.lines.all().iter() {
+                    for h in text_highlights.ranges(line) {
+                        decorations.push(TextDecoration::new(
+                            offset + h.range.start..offset + h.range.end,
+                            HighlightStyle {
+                                background_color: Some(gpui::rgb(h.color.rgb(tone)).into()),
+                                color: Some(gpui::rgb(text_rgb(h.color.text_tone(tone))).into()),
+                                ..Default::default()
+                            },
+                        ));
+                    }
+                    offset += line.len() + 1;
+                }
+            }
             if let Some(matcher) = &matcher {
                 let mut offset = 0usize;
                 for (li, line) in section.lines.all().iter().enumerate() {

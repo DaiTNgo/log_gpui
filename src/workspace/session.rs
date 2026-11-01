@@ -48,6 +48,8 @@ pub struct SessionManifest {
     pub raw_soft_wrap: bool,
     #[serde(default = "crate::workspace::state::default_true")]
     pub show_search_highlight: bool,
+    #[serde(default = "crate::workspace::state::default_true")]
+    pub show_value_colors: bool,
 }
 
 /// Project-level snapshot inside a session manifest.
@@ -61,6 +63,8 @@ pub struct ProjectSnapshot {
     pub investigation_cases: Vec<crate::workspace::investigation::InvestigationCase>,
     #[serde(default)]
     pub highlight_rules: Vec<crate::highlight::HighlightRule>,
+    #[serde(default)]
+    pub text_highlights: Vec<crate::text_highlight::TextHighlight>,
     #[serde(default)]
     pub recent_colors: crate::palette::RecentColors,
     #[serde(default)]
@@ -123,6 +127,7 @@ impl SessionManifest {
                 working_set: p.working_set.clone(),
                 investigation_cases: p.investigation_cases.clone(),
                 highlight_rules: p.highlight_rules.clone(),
+                text_highlights: p.text_highlights.clone(),
                 recent_colors: p.recent_colors.clone(),
                 columns: p.columns.clone(),
                 format_choices: p.format_choices.clone(),
@@ -150,6 +155,7 @@ impl SessionManifest {
             phrase_rgbs: ws.phrase_rgbs.clone(),
             raw_soft_wrap: ws.raw_soft_wrap,
             show_search_highlight: ws.show_search_highlight,
+            show_value_colors: ws.show_value_colors,
         }
     }
 
@@ -165,6 +171,7 @@ impl SessionManifest {
                 working_set: p.working_set,
                 investigation_cases: p.investigation_cases,
                 highlight_rules: p.highlight_rules,
+                text_highlights: p.text_highlights,
                 recent_colors: p.recent_colors,
                 columns: p.columns,
                 format_choices: p.format_choices,
@@ -193,6 +200,7 @@ impl SessionManifest {
         ws.phrase_rgbs = self.phrase_rgbs;
         ws.raw_soft_wrap = self.raw_soft_wrap;
         ws.show_search_highlight = self.show_search_highlight;
+        ws.show_value_colors = self.show_value_colors;
         ws
     }
 
@@ -359,5 +367,37 @@ mod tests {
             ws2.project("e-commerce-core").unwrap().color,
             ProjectColorAccent::Green
         );
+    }
+
+    #[test]
+    fn text_highlights_and_value_colors_round_trip_and_default_when_missing() {
+        use crate::palette::{HighlightColor, Hue, Shade};
+        let mut ws = WorkspaceState::new();
+        ws.create_project("Payment Service", ProjectColorAccent::Blue);
+        ws.switch_project("payment-service").unwrap();
+        let color = HighlightColor::palette(Hue::Purple, Shade::Medium);
+        crate::text_highlight::add_text_highlight(
+            &mut ws.active_project_mut().unwrap().text_highlights,
+            "conn-7f3a",
+            color.clone(),
+        );
+        ws.show_value_colors = false;
+
+        let json = SessionManifest::from_workspace(&ws).to_json().unwrap();
+        let ws2 = SessionManifest::from_json(&json).unwrap().into_workspace();
+        let kept = &ws2.project("payment-service").unwrap().text_highlights;
+        assert_eq!(kept.len(), 1);
+        assert_eq!((kept[0].text.as_str(), &kept[0].color), ("conn-7f3a", &color));
+        assert!(!ws2.show_value_colors);
+
+        // A session saved before either existed opens with none and Value Colors on.
+        let mut old: serde_json::Value = serde_json::from_str(&json).unwrap();
+        old.as_object_mut().unwrap().remove("show_value_colors");
+        for p in old["projects"].as_array_mut().unwrap() {
+            p.as_object_mut().unwrap().remove("text_highlights");
+        }
+        let ws3 = SessionManifest::from_json(&old.to_string()).unwrap().into_workspace();
+        assert!(ws3.project("payment-service").unwrap().text_highlights.is_empty());
+        assert!(ws3.show_value_colors);
     }
 }

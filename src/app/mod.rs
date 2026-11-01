@@ -26,6 +26,7 @@ pub mod loading;
 pub mod warm;
 pub mod open_in_full;
 mod marking;
+pub mod text_paint;
 mod persist;
 pub mod remote;
 pub mod remote_command;
@@ -176,6 +177,14 @@ pub struct AppView {
     pub rule_counts: HashMap<u64, usize>,
     /// The floating bar of colors (or the palette of a rule).
     pub color_bar: Option<color::ColorBar>,
+    /// The count running for the bar's "Everywhere", and what it was for.
+    pub bar_count: Option<(color::ColorTarget, Arc<std::sync::atomic::AtomicBool>)>,
+    /// The Text Highlights of the active project, ready to paint this frame.
+    pub th_matcher: Arc<crate::text_highlight::HighlightMatcher>,
+    /// Value Colors for this frame; `None` while they are off.
+    pub value_colors: Option<Arc<crate::value_color::ValueColors>>,
+    /// The sample telling which Field Columns get a Value Color.
+    pub value_sample: text_paint::ValueSample,
     /// The hue menu of a Phrase of a search field: where it opened, the Phrase key, and whether
     /// it opened in the Focus window.
     pub phrase_menu: Option<(gpui::Point<gpui::Pixels>, String, bool)>,
@@ -470,7 +479,7 @@ impl AppView {
             window,
             |this: &mut Self, _, event: &ColorPickerEvent, _window, cx| {
                 if let ColorPickerEvent::Change(Some(color)) = event {
-                    this.apply_bar_color(color::color_from_hsla(*color), cx);
+                    this.apply_bar_color(color::color_from_hsla(*color), false, cx);
                 }
             },
         )
@@ -555,6 +564,10 @@ impl AppView {
             highlight_paints: Arc::default(),
             rule_counts: HashMap::new(),
             color_bar: None,
+            bar_count: None,
+            th_matcher: Arc::default(),
+            value_colors: None,
+            value_sample: Default::default(),
             phrase_menu: None,
             color_picker,
             cell_target: None,
