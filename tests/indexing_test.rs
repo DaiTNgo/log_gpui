@@ -155,7 +155,7 @@ fn a_log_format_is_read_while_indexing() {
 fn a_column_overflows_while_indexing() {
     let mut text = String::new();
     for i in 0..1500 {
-        text += &format!("2026-09-05 10:00:{:02} [INFO] [t{}] id={i} in {}\n", i % 60, i % 600, i % 3);
+        text += &format!("2026-09-05 10:00:{:02} [INFO] [t{}] id={i} in {}\n", i % 60, i % 1200, i % 3);
     }
     let config = Arc::new(LineConfig::new(&["id".to_string(), "in".to_string()]));
     let options = IndexOptions { config, block_bytes: Some(4096), ..Default::default() };

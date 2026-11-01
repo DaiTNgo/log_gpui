@@ -10,7 +10,7 @@ use crate::columns::MESSAGE_KEY;
 use crate::filter_index::{ColumnIndex, MAX_DISTINCT};
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
-    div, px, Context, ElementId, InteractiveElement, IntoElement, ParentElement, SharedString,
+    div, px, uniform_list, Context, ElementId, InteractiveElement, IntoElement, ParentElement, SharedString,
     StatefulInteractiveElement, Styled,
 };
 use gpui_component::button::{Button, ButtonGroup, ButtonVariants as _};
@@ -131,70 +131,64 @@ impl AppView {
     fn render_value_list(&self, col: &ColumnIndex, cx: &mut Context<Self>) -> gpui::AnyElement {
         let view = cx.entity();
         let query = crate::unicode_text::fold(self.filter_ui.search_input.read(cx).value().trim());
-        let mut list = v_flex().w_full().gap_0p5();
-        for (vix, value) in col.values.iter().enumerate() {
-            if !query.is_empty() && !value.folded.contains(&query) {
-                continue;
-            }
-            let key = col.key.clone();
-            let folded = value.folded.clone();
-            let checked = self.filter_state.is_value_ticked(&col.key, &value.folded);
-            let view = view.clone();
-            list = list.child(value_row(
-                Checkbox::new(ElementId::from(format!("filter-val-{}-{}", col.key, vix)))
-                    .label(SharedString::from(value.display.clone()))
-                    .checked(checked)
-                    .on_click(move |_, _window, app| {
-                        let (key, folded) = (key.clone(), folded.clone());
-                        view.update(app, |this, cx| this.filter_toggle_value(&key, &folded, cx));
-                    }),
-                value.count,
-                cx,
-            ));
-        }
-        // A ticked value whose last line left the Live Window stays, with 0.
-        let missing: Vec<String> = self
-            .filter_state
-            .column(&col.key)
-            .map(|c| {
-                c.values
-                    .iter()
-                    .filter(|v| query.is_empty() || v.contains(&query))
-                    .filter(|v| !col.values.iter().any(|x| &x.folded == *v))
-                    .cloned()
-                    .collect()
+        let mut rows: Vec<ValueRow> = col
+            .values
+            .iter()
+            .enumerate()
+            .filter(|(_, v)| query.is_empty() || v.folded.contains(&query))
+            .map(|(vix, v)| ValueRow {
+                id: format!("filter-val-{}-{}", col.key, vix),
+                label: v.display.clone(),
+                folded: v.folded.clone(),
+                count: v.count,
+                checked: self.filter_state.is_value_ticked(&col.key, &v.folded),
             })
-            .unwrap_or_default();
-        for (i, folded) in missing.into_iter().enumerate() {
-            let key = col.key.clone();
-            let view = view.clone();
-            let toggled = folded.clone();
-            list = list.child(value_row(
-                Checkbox::new(ElementId::from(format!("filter-val-{}-missing-{}", col.key, i)))
-                    .label(SharedString::from(folded))
-                    .checked(true)
-                    .on_click(move |_, _window, app| {
-                        let (key, folded) = (key.clone(), toggled.clone());
-                        view.update(app, |this, cx| this.filter_toggle_value(&key, &folded, cx));
-                    }),
-                0,
-                cx,
-            ));
+            .collect();
+        // A ticked value whose last line left the Live Window stays, with 0.
+        if let Some(c) = self.filter_state.column(&col.key) {
+            let missing = c
+                .values
+                .iter()
+                .filter(|v| query.is_empty() || v.contains(&query))
+                .filter(|v| !col.values.iter().any(|x| &x.folded == *v));
+            rows.extend(missing.enumerate().map(|(i, folded)| ValueRow {
+                id: format!("filter-val-{}-missing-{}", col.key, i),
+                label: folded.clone(),
+                folded: folded.clone(),
+                count: 0,
+                checked: true,
+            }));
         }
+        let key = col.key.clone();
+        let no_match = !query.is_empty() && self.value_list_is_empty(col, &query);
         let many = col.values.len() >= VALUE_LIST_FIXED_FROM;
-        // Capped, and fixed once the list is long: ticking or searching must
-        // not push the sections below it around.
-        let scroller = div()
-            .id(ElementId::from(format!("filter-vals-{}", col.key)))
+        let list = if many {
+            // Fixed once the list is long, so ticking or searching does not
+            // push the sections below it around; only the rows in sight are
+            // built (a column may have up to `MAX_DISTINCT` values).
+            let count = rows.len();
+            let rows = std::rc::Rc::new(rows);
+            uniform_list(SharedString::from(format!("filter-vals-{}", col.key)), count, move |range, _window, cx| {
+                range.map(|i| value_row(&rows[i], &key, &view, cx)).collect::<Vec<_>>()
+            })
             .w_full()
-            .when(many, |d| d.h(px(VALUE_LIST_MAX_HEIGHT)))
-            .max_h(px(VALUE_LIST_MAX_HEIGHT))
-            .overflow_y_scroll()
+            .h(px(VALUE_LIST_MAX_HEIGHT))
+            .into_any_element()
+        } else {
+            let list = v_flex().w_full().gap_0p5().children(rows.iter().map(|r| value_row(r, &key, &view, cx)));
+            div()
+                .id(ElementId::from(format!("filter-vals-{}", col.key)))
+                .w_full()
+                .max_h(px(VALUE_LIST_MAX_HEIGHT))
+                .overflow_y_scroll()
+                .child(list)
+                .into_any_element()
+        };
+        v_flex()
+            .w_full()
             .child(list)
-            .when(!query.is_empty() && self.value_list_is_empty(col, &query), |d| {
-                d.child(div().text_xs().text_color(cx.theme().muted_foreground).child("No value matches."))
-            });
-        scroller.into_any_element()
+            .when(no_match, |d| d.child(div().text_xs().text_color(cx.theme().muted_foreground).child("No value matches.")))
+            .into_any_element()
     }
 
     fn value_list_is_empty(&self, col: &ColumnIndex, query: &str) -> bool {
@@ -420,9 +414,29 @@ impl AppView {
 }
 
 /// A value of the list: its checkbox, and its number of lines on the right.
-fn value_row(checkbox: Checkbox, count: usize, cx: &gpui::App) -> gpui::AnyElement {
+/// A row of a Filter column's value list: a value to tick, and its lines.
+struct ValueRow {
+    id: String,
+    label: String,
+    folded: String,
+    count: usize,
+    checked: bool,
+}
+
+fn value_row(row: &ValueRow, key: &str, view: &gpui::Entity<AppView>, cx: &gpui::App) -> gpui::AnyElement {
+    let (key, folded, view) = (key.to_string(), row.folded.clone(), view.clone());
+    let checkbox = Checkbox::new(ElementId::from(SharedString::from(row.id.clone())))
+        .label(SharedString::from(row.label.clone()))
+        .checked(row.checked)
+        .on_click(move |_, _window, app| {
+            view.update(app, |this, cx| this.filter_toggle_value(&key, &folded, cx));
+        });
+    let (count, selector) = (row.count, row.id.clone());
+    // One height for every row: the long list lays rows out by the first.
     h_flex()
+        .debug_selector(move || selector)
         .w_full()
+        .h(px(22.0))
         .gap_2()
         .items_center()
         .child(div().flex_1().min_w(px(0.0)).child(checkbox))

@@ -171,10 +171,11 @@ impl AppView {
                         })),
                 )
             })
-            // What shows around the list: the Time Histogram above it, the
-            // minimap beside it. Remembered for every view.
+            // What shows around the list: the Time Histogram and the
+            // Swimlanes above it, the minimap beside it. Remembered for every view.
             .when(is_log && !raw_mode, |this| {
-                let (histogram, minimap) = (self.workspace_state.show_histogram, self.show_minimap);
+                let (histogram, lanes, minimap) =
+                    (self.workspace_state.show_histogram, self.workspace_state.show_lanes, self.show_minimap);
                 this.child(
                     h_flex()
                         .gap_0p5()
@@ -186,6 +187,15 @@ impl AppView {
                                 .selected(histogram)
                                 .tooltip("Show time histogram")
                                 .on_click(cx.listener(move |this, _, _, cx| this.set_show_histogram(!histogram, cx))),
+                        )
+                        .child(
+                            Button::new("show-lanes")
+                                .ghost()
+                                .small()
+                                .label("Lanes")
+                                .selected(lanes)
+                                .tooltip("Show swimlanes")
+                                .on_click(cx.listener(move |this, _, _, cx| this.set_show_lanes(!lanes, cx))),
                         )
                         .child(
                             Button::new("show-minimap")

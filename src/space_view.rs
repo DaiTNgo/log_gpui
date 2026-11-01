@@ -301,6 +301,7 @@ fn merged_max_chars(files: &[&LogFile], parsed: &[&ParsedFile]) -> FieldMaxChars
             max.merge(&indexed.indexed.data.read_recursive().max_chars);
         }
         max.source = max.source.max(file.display_name.chars().count());
+        max.log_name = max.log_name.max(crate::rotation_name::log_name(&file.display_name).chars().count());
     }
     max
 }

@@ -85,6 +85,15 @@ fn main() {
             space.focus.search_mut().query = query;
         }
     }
+    // `SEED_LOG_NAME` turns the Log Name Column on; `SEED_LANE_BY=thread`
+    // splits the Swimlanes by that column (`none` for no split).
+    if let Some(space) = project.log_space_mut(&space_id) {
+        space.log_name_column = std::env::var("SEED_LOG_NAME").is_ok();
+        if let Ok(key) = std::env::var("SEED_LANE_BY") {
+            use log_gpui::time_histogram::LaneBy;
+            space.lane_by = if key == "none" { LaneBy::None } else { LaneBy::Column(key) };
+        }
+    }
     let mut session = TabSessionState::new();
     if std::env::var("SEED_RAW").is_ok() {
         session.mode = log_gpui::workspace::working_set::ViewMode::Raw;

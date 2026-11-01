@@ -1,98 +1,12 @@
-//! Telling a Rotated File by its name: `<name>.<N>`, `<name>-<YYYYMMDD>` or
-//! `<name>-<YYYY-MM-DD>`, with or without a compression suffix. It is an
-//! earlier Generation of the file `<name>`, not a file of its own.
+//! Rotated Files on a Server: listing them over SFTP. Telling one by its
+//! name is in [`crate::rotation_name`], shared with the Log Name Column.
 
 use super::browse::{dirname, join, list_dir};
 use super::compress::{Compression, MAGIC_BYTES};
 use russh_sftp::client::SftpSession;
 use tokio::io::AsyncReadExt;
 
-const COMPRESSION: [&str; 5] = ["gz", "bz2", "xz", "zst", "Z"];
-
-/// Where a rotation sits in the sequence of its file, by its name.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RotationKey {
-    /// `<name>.<N>`: a bigger number is older.
-    Number(u64),
-    /// A date as `YYYYMMDDhhmmss` (a date alone has zeros for the time): a
-    /// bigger date is newer.
-    Date(u64),
-}
-
-impl RotationKey {
-    /// Ascending is newest first.
-    fn newest_first(self) -> i128 {
-        match self {
-            RotationKey::Number(n) => n as i128,
-            RotationKey::Date(d) => -(d as i128),
-        }
-    }
-}
-
-/// The name a Rotated File was rotated from, by its name alone. `None` when
-/// the name does not look like a rotation of anything.
-pub fn rotated_base(name: &str) -> Option<&str> {
-    rotation(name).map(|(base, _)| base)
-}
-
-/// The name a Rotated File was rotated from, and where it sits in the
-/// sequence.
-pub fn rotation(name: &str) -> Option<(&str, RotationKey)> {
-    let mut stem = name;
-    if let Some((rest, ext)) = stem.rsplit_once('.') {
-        if COMPRESSION.contains(&ext) {
-            stem = rest;
-        }
-    }
-    let (base, key) = strip_rotation_suffix(stem)?;
-    (!base.is_empty()).then_some((base, key))
-}
-
-fn all_digits(s: &str) -> bool {
-    !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit())
-}
-
-fn strip_rotation_suffix(stem: &str) -> Option<(&str, RotationKey)> {
-    // `<name>.<N>`
-    if let Some((base, n)) = stem.rsplit_once('.') {
-        if all_digits(n) {
-            return Some((base, RotationKey::Number(n.parse().ok()?)));
-        }
-    }
-    // `<name>-<YYYY-MM-DD>` or `<name>.<YYYY-MM-DD>`
-    if stem.len() > 11 {
-        let (base, tail) = stem.split_at(stem.len() - 11);
-        let date = tail.strip_prefix('-').or_else(|| tail.strip_prefix('.'));
-        if let Some(date) = date {
-            let parts: Vec<&str> = date.split('-').collect();
-            if parts.len() == 3
-                && parts[0].len() == 4
-                && parts[1].len() == 2
-                && parts[2].len() == 2
-                && parts.iter().all(|p| all_digits(p))
-            {
-                let day: u64 = parts.concat().parse().ok()?;
-                return Some((base, RotationKey::Date(day * 1_000_000)));
-            }
-        }
-    }
-    // `<name>-<YYYYMMDD>` or `<name>-<YYYYMMDDhhmmss>`
-    for len in [14usize, 8] {
-        if stem.len() > len + 1 {
-            let (base, tail) = stem.split_at(stem.len() - len - 1);
-            if let Some(date) = tail.strip_prefix('-') {
-                if date.len() == len && all_digits(date) {
-                    let mut value: u64 = date.parse().ok()?;
-                    if len == 8 {
-                        value *= 1_000_000;
-                    }
-                    return Some((base, RotationKey::Date(value)));
-                }
-            }
-        }
-    }
-    None
-}
+pub use crate::rotation_name::{RotationKey, rotated_base, rotation, strip_rotation_suffix};
 
 /// A Rotated File on a Server.
 #[derive(Debug, Clone, PartialEq, Eq)]

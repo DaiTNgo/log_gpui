@@ -36,6 +36,8 @@ struct CountKey {
     matches: (usize, usize),
     grid: th::Grid,
     full: Range<f64>,
+    /// The column the lanes split by.
+    lanes: Option<String>,
 }
 
 impl CountKey {
@@ -46,6 +48,7 @@ impl CountKey {
             && self.rows > before.rows
             && self.grid == before.grid
             && self.full == before.full
+            && self.lanes == before.lanes
             && self.matches.0 == before.matches.0
             && self.matches.1 >= before.matches.1
             && match (self.pass, before.pass) {
@@ -59,8 +62,9 @@ impl CountKey {
 /// A drag on the histogram, in times on the axis.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum HistogramDrag {
-    /// Pressed, not moved yet: a click unless it moves.
-    Pressed { at: f64, x: f32, inside_range: bool },
+    /// Pressed, not moved yet: a click unless it moves. `lane` is the
+    /// Swimlane pressed on, below the columns.
+    Pressed { at: f64, x: f32, inside_range: bool, lane: Option<th::Lane> },
     /// Choosing a new Time Range.
     Select { from: f64, to: f64 },
     /// Moving one edge of the Time Range; the other stays.
@@ -77,6 +81,8 @@ pub struct HistogramState {
     axis_for: Option<TabTarget>,
     /// The counts of the view's rows.
     pub shown: Arc<Buckets>,
+    /// The column the shown lanes are for.
+    pub lanes_for: Option<String>,
     /// Each row's class (`time_histogram::class_of`), built with the counts.
     classes: Arc<Vec<u8>>,
     /// `rows_epoch` the classes are for.
@@ -99,6 +105,12 @@ pub struct HistogramState {
     pub drag: Option<HistogramDrag>,
     /// The strip is folded to its thin form.
     pub collapsed: bool,
+    /// Where the Swimlane strip's axis was drawn, written while painting.
+    pub lanes_bounds: Rc<std::cell::Cell<gpui::Bounds<gpui::Pixels>>>,
+    /// The Swimlane strip is folded to its header.
+    pub lanes_collapsed: bool,
+    /// What the pointer is over on the Swimlanes.
+    pub lane_hover: Option<super::swimlane::LaneHover>,
 }
 
 impl Default for HistogramState {
@@ -107,6 +119,7 @@ impl Default for HistogramState {
             axis: None,
             axis_for: None,
             shown: Arc::default(),
+            lanes_for: None,
             classes: Arc::default(),
             classes_epoch: None,
             counted: None,
@@ -119,6 +132,9 @@ impl Default for HistogramState {
             indexed_to: None,
             drag: None,
             collapsed: false,
+            lanes_bounds: Rc::default(),
+            lanes_collapsed: false,
+            lane_hover: None,
         }
     }
 }
@@ -146,15 +162,28 @@ impl AppView {
     /// Whether the open view has a Time Histogram (decision 8): it is on,
     /// the view is a Parsed View of log lines, and a line has a time.
     pub fn histogram_shown(&self) -> bool {
-        self.workspace_state.show_histogram
-            && self.view_mode != ViewMode::Raw
+        self.workspace_state.show_histogram && self.has_time_axis()
+    }
+
+    /// Whether the open view has the Swimlane strip: it is on, apart from
+    /// the histogram, on a view that has a time axis.
+    pub fn lanes_shown(&self) -> bool {
+        self.workspace_state.show_lanes && self.has_time_axis()
+    }
+
+    /// Whether the open view can show strips on a time axis: a Parsed View
+    /// of log lines, one of which has a time.
+    fn has_time_axis(&self) -> bool {
+        self.view_mode != ViewMode::Raw
             && self.active_tab_is_log_file()
             && self.empty_canvas().is_none()
             && self.filter_index.read(&self.view.rows).timed_lines() > 0
     }
 
+    /// The width of the axis, from whichever strip was drawn.
     fn histogram_width(&self) -> f32 {
-        let w = f32::from(self.histogram.bounds.get().size.width);
+        let drawn = |b: &std::cell::Cell<gpui::Bounds<gpui::Pixels>>| f32::from(b.get().size.width);
+        let w = if self.histogram_shown() { drawn(&self.histogram.bounds) } else { drawn(&self.histogram.lanes_bounds) };
         if w > 0.0 { w } else { DEFAULT_WIDTH }
     }
 
@@ -183,7 +212,7 @@ impl AppView {
     /// rows' times, add rows appended at the end, or count again on a
     /// worker thread. Cheap when nothing changed.
     pub fn refresh_histogram(&mut self, cx: &mut Context<Self>) {
-        if !self.histogram_shown() {
+        if !self.histogram_shown() && !self.lanes_shown() {
             return;
         }
         let Some((span, indexed_to)) = self.histogram_span() else { return };
@@ -220,6 +249,8 @@ impl AppView {
             matches: list_key(&self.focus.search().matched_rows),
             grid: axis.grid(),
             full: axis.full.clone(),
+            // Lanes are counted only while their strip shows.
+            lanes: self.lanes_shown().then(|| self.lane_column()).flatten(),
         };
         self.histogram.axis = Some(axis);
         if self.histogram.asked.as_ref() == Some(&key) {
@@ -270,8 +301,14 @@ impl AppView {
         let matches = &matches[matches.partition_point(|&r| r < from)..];
         let index = self.filter_index.read(&self.view.rows);
         let facts = RowFacts { ts: &index, class: &self.histogram.classes };
+        let lanes = key.lanes.as_deref().and_then(|k| super::swimlane::lane_ids(&index, k));
+        if key.lanes.is_some() && lanes.is_none() {
+            drop(index);
+            return self.schedule_histogram_recount(key, cx);
+        }
         let Some(axis) = self.histogram.axis.as_ref() else { return };
-        let appended = Arc::make_mut(&mut self.histogram.shown).append(facts, axis, from, pass, matches);
+        let lanes = lanes.as_ref().map(|(ids, values)| th::LaneIds { ids, values: *values });
+        let appended = Arc::make_mut(&mut self.histogram.shown).append(facts, axis, from, pass, matches, lanes);
         drop(index);
         if appended.is_err() {
             return self.schedule_histogram_recount(key, cx);
@@ -304,6 +341,7 @@ impl AppView {
         });
         let pass = key.pass.map(|_| self.filter_pass.clone());
         let matches = self.focus.search().matched_rows.clone();
+        let lane_key = key.lanes.clone();
         let epoch = self.rows_epoch;
         cx.spawn(async move |this, cx| {
             let counted = cx
@@ -315,7 +353,10 @@ impl AppView {
                     });
                     let index = index.read(&view_rows);
                     let facts = RowFacts { ts: &index, class: &classes };
-                    let shown = th::count_buckets(facts, &axis, pass.as_ref().map(|p| p.from_row(0)), &matches);
+                    // Each row's value is read through the view's index, like its time.
+                    let lanes = lane_key.as_deref().and_then(|k| super::swimlane::lane_ids(&index, k));
+                    let lanes = lanes.as_ref().map(|(ids, values)| th::LaneIds { ids, values: *values });
+                    let shown = th::count_buckets(facts, &axis, pass.as_ref().map(|p| p.from_row(0)), &matches, lanes);
                     (classes, shown)
                 })
                 .await;
@@ -341,7 +382,11 @@ impl AppView {
         h.applied = generation;
         h.classes = classes;
         h.classes_epoch = Some(epoch);
+        // The lanes are for that column only when they were counted.
+        h.lanes_for = shown.lanes.as_ref().and(key.lanes.clone());
         h.shown = Arc::new(shown);
+        // Counted again: what the pointer was over is read afresh.
+        h.lane_hover = None;
         h.counted = Some(key);
         if generation == h.generation {
             // Rows that came while counting are added now.
@@ -349,6 +394,26 @@ impl AppView {
             self.refresh_histogram(cx);
         }
         cx.notify();
+    }
+
+    /// What both strips draw on: the axis, the counts and what lies over
+    /// them; `sink` receives where the strip's axis is drawn.
+    fn strip_props(
+        &self,
+        colors: crate::ui::canvas::CanvasColors,
+        sink: Rc<std::cell::Cell<gpui::Bounds<gpui::Pixels>>>,
+        cx: &mut Context<Self>,
+    ) -> Option<crate::ui::time_histogram::StripProps> {
+        Some(crate::ui::time_histogram::StripProps {
+            view: cx.entity(),
+            axis: self.histogram.axis.clone()?,
+            buckets: self.histogram.shown.clone(),
+            time_range: self.histogram_time_range(),
+            drag_range: crate::ui::time_histogram::drag_preview(self),
+            indexed_to: self.histogram.indexed_to,
+            colors,
+            bounds_sink: sink,
+        })
     }
 
     /// The histogram strip of the view, when it has one.
@@ -360,19 +425,59 @@ impl AppView {
         if !self.histogram_shown() {
             return None;
         }
-        let axis = self.histogram.axis.clone()?;
         let props = crate::ui::time_histogram::HistogramProps {
-            view: cx.entity(),
-            axis,
-            buckets: self.histogram.shown.clone(),
-            time_range: self.histogram_time_range(),
-            drag_range: crate::ui::time_histogram::drag_preview(self),
-            indexed_to: self.histogram.indexed_to,
-            colors,
+            strip: self.strip_props(colors, self.histogram.bounds.clone(), cx)?,
             collapsed: self.histogram.collapsed,
-            bounds_sink: self.histogram.bounds.clone(),
+            gutter: self.lanes_shown(),
         };
         Some(crate::ui::time_histogram::render(props, cx))
+    }
+
+    /// The Swimlane strip of the view, when it has one.
+    pub fn render_swimlanes(
+        &self,
+        colors: crate::ui::canvas::CanvasColors,
+        cx: &mut Context<Self>,
+    ) -> Option<gpui::AnyElement> {
+        if !self.lanes_shown() {
+            return None;
+        }
+        let lanes = self
+            .histogram
+            .shown
+            .lanes
+            .as_ref()
+            .map(|l| {
+                l.order()
+                    .into_iter()
+                    .map(|lane| crate::ui::time_histogram::LaneRow {
+                        lane,
+                        name: self.lane_name(lane),
+                        title: self.lane_title(lane),
+                        tint: self.lane_tint(lane, colors.dark),
+                        ticked: self.lane_ticked(lane),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        let menu = crate::ui::time_histogram::LaneMenu {
+            current: self
+                .histogram
+                .lanes_for
+                .as_deref()
+                .and_then(|k| self.filter_index.read(&self.view.rows).column(k).map(|c| (c.key.clone(), c.label.clone()))),
+            choices: self.lane_choices(),
+            suggested: self.lane_suggestion(),
+        };
+        let props = crate::ui::time_histogram::LanesProps {
+            strip: self.strip_props(colors, self.histogram.lanes_bounds.clone(), cx)?,
+            collapsed: self.histogram.lanes_collapsed,
+            lanes,
+            menu,
+            show_times: !self.histogram_shown(),
+            hover: self.lane_hover_text(),
+        };
+        Some(crate::ui::time_histogram::render_lanes(props, cx))
     }
 
     /// The rows in sight in the list, as the span of their times: the frame
@@ -418,6 +523,12 @@ impl AppView {
         }
     }
 
+    /// Fold the Swimlane strip to its header, or open it again.
+    pub fn toggle_lanes_collapsed(&mut self, cx: &mut Context<Self>) {
+        self.histogram.lanes_collapsed = !self.histogram.lanes_collapsed;
+        cx.notify();
+    }
+
     /// Fold the strip, or open it again.
     pub fn toggle_histogram_collapsed(&mut self, cx: &mut Context<Self>) {
         self.histogram.collapsed = !self.histogram.collapsed;
@@ -444,7 +555,7 @@ impl AppView {
         }
     }
 
-    fn histogram_jump_to_row(&mut self, row: usize, cx: &mut Context<Self>) {
+    pub(crate) fn histogram_jump_to_row(&mut self, row: usize, cx: &mut Context<Self>) {
         if let Some(line) = self.line_ref_of_entry(row) {
             self.set_current_line(line, Origin::Jump, cx);
         }
@@ -474,18 +585,19 @@ impl AppView {
     }
 
     /// The mouse went down on the histogram at time `at`, `x` pixels from
-    /// its left. Near an edge of the Time Range it takes that edge, inside
-    /// it the whole range; else it is a click until it moves.
-    pub fn histogram_mouse_down(&mut self, at: f64, x: f32, edge_px: f64, cx: &mut Context<Self>) {
+    /// its left, on the Swimlane `lane` if any. Near an edge of the Time
+    /// Range it takes that edge, inside it the whole range; else it is a
+    /// click until it moves.
+    pub fn histogram_mouse_down(&mut self, at: f64, x: f32, edge_px: f64, lane: Option<th::Lane>, cx: &mut Context<Self>) {
         let range = self.histogram_time_range();
         self.histogram.drag = Some(match range {
             Some((Some(from), Some(to))) if (at - from).abs() <= edge_px => HistogramDrag::Edge { fixed: to, moving: at },
             Some((Some(from), Some(to))) if (at - to).abs() <= edge_px => HistogramDrag::Edge { fixed: from, moving: at },
             Some((from, to)) => {
                 let inside = from.is_none_or(|f| at >= f) && to.is_none_or(|t| at <= t);
-                HistogramDrag::Pressed { at, x, inside_range: inside }
+                HistogramDrag::Pressed { at, x, inside_range: inside, lane }
             }
-            None => HistogramDrag::Pressed { at, x, inside_range: false },
+            None => HistogramDrag::Pressed { at, x, inside_range: false, lane },
         });
         cx.notify();
     }
@@ -494,7 +606,7 @@ impl AppView {
     pub fn histogram_mouse_drag(&mut self, at: f64, x: f32, cx: &mut Context<Self>) {
         let Some(drag) = self.histogram.drag else { return };
         self.histogram.drag = Some(match drag {
-            HistogramDrag::Pressed { at: start, x: x0, inside_range } if (x - x0).abs() > 3.0 => {
+            HistogramDrag::Pressed { at: start, x: x0, inside_range, .. } if (x - x0).abs() > 3.0 => {
                 match (inside_range, self.histogram_time_range()) {
                     (true, Some((Some(from), Some(to)))) => HistogramDrag::Move { range: (from, to), grab: start, now: at },
                     _ => HistogramDrag::Select { from: start, to: at },
@@ -509,14 +621,18 @@ impl AppView {
     }
 
     /// The mouse went up: a drag sets the Time Range once; a click jumps to
-    /// its column, or clears the Time Range when outside it.
+    /// its column (on a Swimlane, to the lane's first line there), or
+    /// clears the Time Range when outside it.
     pub fn histogram_mouse_up(&mut self, cx: &mut Context<Self>) {
         let Some(drag) = self.histogram.drag.take() else { return };
         match self.histogram_drag_range(drag) {
             Some((from, to)) => self.histogram_set_time_range(from, to, cx),
             None => {
-                let HistogramDrag::Pressed { at, inside_range, .. } = drag else { return };
-                if self.histogram_time_range().is_some() && !inside_range {
+                let HistogramDrag::Pressed { at, inside_range, lane, .. } = drag else { return };
+                let lane_col = self.histogram.shown.grid.and_then(|g| g.column_of(at));
+                if let (Some(lane), Some(col)) = (lane, lane_col) {
+                    self.lane_bar_clicked(lane, col, cx);
+                } else if self.histogram_time_range().is_some() && !inside_range {
                     self.histogram_clear_time_range(cx);
                 } else if let Some(grid) = self.histogram.axis.as_ref().map(|a| a.grid()) {
                     let start = grid.column_of(at).map_or(at, |c| grid.start_of(c));

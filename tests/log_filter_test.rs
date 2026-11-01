@@ -124,6 +124,20 @@ fn exactly_the_limit_is_still_available() {
     assert!(index.column("module").unwrap().is_filterable());
 }
 
+#[test]
+fn a_column_of_800_values_still_filters() {
+    let entries: Vec<LogEntry> = (0..800)
+        .map(|i| entry(i + 1, (i + 1) as f64, &format!("thread-{i}"), LogLevel::Info, "x"))
+        .collect();
+    let index = FilterIndex::build(&entries);
+    let module = index.column("module").unwrap();
+    assert!(module.is_filterable());
+    assert_eq!(module.distinct_label(), "800");
+    let mut f = FilterState::new();
+    f.toggle_value("module", "thread-650");
+    assert_eq!(f.evaluate(&index.read(), &entries), vec![650]);
+}
+
 // ─── Filter Values, Custom Values, Hide Mode ─────────────────────────────────
 
 #[test]

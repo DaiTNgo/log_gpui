@@ -15,7 +15,7 @@ A Marker (ADR-0007) colors one stretch of one line. Following an id such as `con
 
 - **Text Highlight as a Marker with a scope flag**: rejected, a Marker is keyed by line and Generation and is lost when its line leaves the Live Window; a Text Highlight is keyed by text and outlives lines. One type would carry two sets of rules.
 - **"Every value of column X" as a third bar scope, to pin a Value Color**: rejected, Value Colors are automatic and need no per-value control; a Text Highlight covers the rare case.
-- **Value Colors only on Filterable Columns (at most 500 values)**: rejected, identifier columns such as `request_id` are the main case and have far more values. The color is worked out while painting, so the count does not matter.
+- **Value Colors only on Filterable Columns (at most 1000 values)**: rejected, identifier columns such as `request_id` are the main case and have far more values. The color is worked out while painting, so the count does not matter.
 - **Two rows of colors in the bar, or Alt+click only**: rejected, two rows double the bar that opens on every selection; Alt alone hides the feature.
 
 ## Consequences

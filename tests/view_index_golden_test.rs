@@ -25,7 +25,8 @@ fn a_lines() -> Vec<String> {
 }
 
 /// `b.log`: timestamps between `a.log`'s, only ERROR and FATAL, and a module
-/// column with more values than a column keeps (it overflows).
+/// column of 600 values: with `a.log`'s, more than the 500 a column kept
+/// when these files were written, under the 1000 it keeps now (add-swimlane).
 fn b_lines() -> Vec<String> {
     (0..600)
         .map(|i| {

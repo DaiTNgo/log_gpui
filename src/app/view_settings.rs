@@ -137,6 +137,14 @@ impl AppView {
         cx.notify();
     }
 
+    /// Whether the Swimlane strip shows under the histogram: for every view.
+    pub fn set_show_lanes(&mut self, show: bool, cx: &mut Context<Self>) {
+        self.workspace_state.show_lanes = show;
+        self.schedule_session_save(cx);
+        self.refresh_histogram(cx);
+        cx.notify();
+    }
+
     /// Search Highlight: whether the Focus Pane paints Search Matches. One
     /// setting for every Focus Tab and Focus Pane.
     pub fn set_show_search_highlight(&mut self, show: bool, cx: &mut Context<Self>) {

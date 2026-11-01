@@ -1039,6 +1039,23 @@ impl AppView {
         }
     }
 
+    /// Whether the Log Name Column is laid out in the open view: a Log
+    /// Space's view whose Log Space turned it on.
+    pub fn log_name_column_visible(&self) -> bool {
+        self.active_is_log_space() && self.active_space().is_some_and(|s| s.log_name_column)
+    }
+
+    /// Show or hide the Log Name Column to match the open view.
+    pub(crate) fn sync_log_name_column(&mut self) {
+        let visible = self.log_name_column_visible();
+        if self.column_layout.log_name_visible != visible {
+            self.column_layout.set_log_name_visible(visible);
+            if visible {
+                self.column_layout.auto_fit(crate::column::PinnableColumn::LogName, self.text_scale());
+            }
+        }
+    }
+
     /// Why a scratch file cannot be deleted, if so.
     pub fn can_delete_scratch_file(&self, space_id: &str) -> bool {
         self.active_project()

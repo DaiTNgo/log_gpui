@@ -3,7 +3,7 @@
 //! the rows again. Each file's value ids are mapped to ids of the Log
 //! Space, the values in the order the merged rows first show them; the
 //! counts, spellings and Coverage add up; the Source column holds each
-//! file's name. No value id is kept per merged row: a row finds its id
+//! file's name, and the Log Name column its Log Name. No value id is kept per merged row: a row finds its id
 //! through its file's column and the map of that file (lean-view-memory,
 //! decision 3).
 
@@ -55,6 +55,7 @@ impl FilterIndex {
         index.rows = rows.len();
         let mut sources = vec![
             Source::SourceFile,
+            Source::LogName,
             Source::Stream,
             Source::Level,
             Source::Module,
@@ -68,10 +69,10 @@ impl FilterIndex {
         }
         let first = first_rows(files, rows, &sources);
         for (source, values) in sources.into_iter().zip(&first.values) {
-            let (column, map) = if source == Source::SourceFile {
-                source_column(files, rows, &first.files)
-            } else {
-                merge_column(source, files, rows, values)
+            let (column, map) = match source {
+                Source::SourceFile => source_column(files, rows, &first.files),
+                Source::LogName => log_name_column(files, rows, &first.files),
+                _ => merge_column(source, files, rows, values),
             };
             index.columns.push(column);
             maps.push(map);
@@ -183,7 +184,25 @@ pub(super) fn value_id(col: &mut ColumnIndex, local: &ColumnValue) -> Option<u16
 
 /// The Source column: each row holds its file's name.
 fn source_column(files: &[MergeFile], rows: &ViewRows, first_of_file: &[u32]) -> (ColumnIndex, ColumnMap) {
-    let mut col = ColumnIndex::new(Source::SourceFile, 0);
+    name_column(Source::SourceFile, files, rows, first_of_file, |name| name)
+}
+
+/// The Log Name column: each row holds its file's Log Name, so the files
+/// of one log (`app.log`, `app.log.1`) share a value.
+fn log_name_column(files: &[MergeFile], rows: &ViewRows, first_of_file: &[u32]) -> (ColumnIndex, ColumnMap) {
+    name_column(Source::LogName, files, rows, first_of_file, crate::rotation_name::log_name)
+}
+
+/// A column whose value is a file's: `name_of` its name, for every line of
+/// it. A row finds its id through its file (`ColumnMap::Source`).
+fn name_column(
+    source: Source,
+    files: &[MergeFile],
+    rows: &ViewRows,
+    first_of_file: &[u32],
+    name_of: impl Fn(&str) -> &str,
+) -> (ColumnIndex, ColumnMap) {
+    let mut col = ColumnIndex::new(source, 0);
     col.rows = rows.len();
     // Files in the order their first row shows.
     let mut order: Vec<(u32, usize)> =
@@ -191,7 +210,7 @@ fn source_column(files: &[MergeFile], rows: &ViewRows, first_of_file: &[u32]) ->
     order.sort();
     let mut id_of_file: Vec<u16> = vec![MISSING; files.len()];
     for (_, f) in order {
-        let Some(name) = files[f].source.filter(|s| !s.is_empty()) else { continue };
+        let Some(name) = files[f].source.map(&name_of).filter(|s| !s.is_empty()) else { continue };
         let lines = files[f].index.parent_lines;
         col.covered += lines;
         let folded = unicode_text::fold(name);
@@ -281,10 +300,10 @@ impl FilterIndex {
             if let Source::Field(key) = source {
                 index.field_cols.insert(key);
             }
-            let column = if source == Source::SourceFile {
-                names_so_far(files)
-            } else {
-                column_so_far(source, files)
+            let column = match source {
+                Source::SourceFile => names_so_far(Source::SourceFile, files, |name| name),
+                Source::LogName => names_so_far(Source::LogName, files, crate::rotation_name::log_name),
+                _ => column_so_far(source, files),
             };
             index.columns.push(column);
         }
@@ -292,12 +311,13 @@ impl FilterIndex {
     }
 }
 
-/// The Source column so far: each file's name, on its lines read so far.
-fn names_so_far(files: &[MergeFile]) -> ColumnIndex {
-    let mut col = ColumnIndex::new(Source::SourceFile, 0);
+/// The Source or Log Name column so far: each file's `name_of` its name, on
+/// its lines read so far.
+fn names_so_far(source: Source, files: &[MergeFile], name_of: impl Fn(&str) -> &str) -> ColumnIndex {
+    let mut col = ColumnIndex::new(source, 0);
     for file in files {
         col.rows += file.index.rows;
-        let Some(name) = file.source.filter(|s| !s.is_empty()) else { continue };
+        let Some(name) = file.source.map(&name_of).filter(|s| !s.is_empty()) else { continue };
         let lines = file.index.parent_lines;
         col.covered += lines;
         let folded = unicode_text::fold(name);

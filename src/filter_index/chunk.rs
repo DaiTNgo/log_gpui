@@ -77,6 +77,7 @@ impl<'a> LineFacts<'a> {
     fn value(&self, source: &Source, as_parent: bool) -> Option<&'a str> {
         let v = match source {
             Source::SourceFile => self.source.unwrap_or(""),
+            Source::LogName => self.source.map_or("", crate::rotation_name::log_name),
             Source::Stream => self.stream.map_or("", |s| s.as_str()),
             Source::Level => self.level_text,
             Source::Module => self.tag,
@@ -179,8 +180,9 @@ pub struct ChunkColumns {
     max_entry: Option<(f64, String)>,
 }
 
-const FIXED: [Source; 6] = [
+const FIXED: [Source; 7] = [
     Source::SourceFile,
+    Source::LogName,
     Source::Stream,
     Source::Level,
     Source::Module,
@@ -274,6 +276,7 @@ impl ChunkColumns {
         max.module = max.module.max(facts.tag.chars().count());
         if let Some(source) = facts.source {
             max.source = max.source.max(source.chars().count());
+            max.log_name = max.log_name.max(crate::rotation_name::log_name(source).chars().count());
         }
         if let Some(stream) = facts.stream {
             self.max_chars.stream = self.max_chars.stream.max(stream.as_str().len());

@@ -718,6 +718,15 @@ pub struct LogSpace {
     /// The user closed the hint that Detected Fields are there to turn on.
     #[serde(default)]
     pub detected_hint_dismissed: bool,
+    /// The Log Name Column is shown (in the Canvas and the Focus Pane).
+    #[serde(default)]
+    pub log_name_column: bool,
+    /// What the Swimlanes of the Log Space's view are split by.
+    #[serde(default)]
+    pub lane_by: crate::time_histogram::LaneBy,
+    /// The same for each File View, by file id.
+    #[serde(default)]
+    pub file_lane_by: HashMap<String, crate::time_histogram::LaneBy>,
     /// Next `added_seq` to hand out.
     #[serde(default)]
     next_seq: u64,
@@ -738,6 +747,9 @@ impl LogSpace {
             file_focus: HashMap::new(),
             last_mode: Default::default(),
             detected_hint_dismissed: false,
+            log_name_column: false,
+            lane_by: Default::default(),
+            file_lane_by: HashMap::new(),
             next_seq: 1,
         }
     }
@@ -986,8 +998,7 @@ impl LogSpace {
             let goes = file.from_glob.as_deref() == Some(glob_id)
                 && file.remote.as_ref().and_then(|r| r.path()).is_some_and(|p| plan.remove.iter().any(|r| r == p));
             if goes {
-                self.file_filters.remove(&file.file_id);
-                self.file_focus.remove(&file.file_id);
+                self.forget_file_view(&file.file_id);
                 removed.push(file);
             } else {
                 self.files.push(file);
@@ -1106,8 +1117,7 @@ impl LogSpace {
         let mut kept = Vec::new();
         for file in std::mem::take(&mut self.files) {
             if file.from_glob.as_deref() == Some(glob_id) {
-                self.file_filters.remove(&file.file_id);
-                self.file_focus.remove(&file.file_id);
+                self.forget_file_view(&file.file_id);
                 removed.push(file);
             } else {
                 kept.push(file);
@@ -1121,8 +1131,7 @@ impl LogSpace {
     /// its folder when the space is reopened).
     pub fn drop_glob_files(&mut self, file_ids: &[String]) {
         for id in file_ids {
-            self.file_filters.remove(id);
-            self.file_focus.remove(id);
+            self.forget_file_view(id);
         }
         self.files.retain(|f| !(f.from_glob.is_some() && file_ids.contains(&f.file_id)));
     }
@@ -1198,8 +1207,7 @@ impl LogSpace {
         if self.kind == LogSpaceKind::Scratch && self.files.len() == 1 {
             return Err(RemoveFileError::LastScratchFile);
         }
-        self.file_filters.remove(file_id);
-        self.file_focus.remove(file_id);
+        self.forget_file_view(file_id);
         let file = self.files.remove(pos);
         // A file the user takes out of a Live Glob is not added again by it.
         if let (Some(glob_id), Some(path)) =
@@ -1232,7 +1240,15 @@ impl LogSpace {
         }
     }
 
-    /// The Filter of a File View, empty until one is set.
+    /// Forget what the File View of `file_id` kept: its Filter, Lane By
+    /// and Focus Tabs.
+    fn forget_file_view(&mut self, file_id: &str) {
+        self.file_filters.remove(file_id);
+        self.file_lane_by.remove(file_id);
+        self.file_focus.remove(file_id);
+    }
+
+    //// The Filter of a File View, empty until one is set.
     pub fn file_filter(&self, file_id: &str) -> FilterState {
         self.file_filters.get(file_id).cloned().unwrap_or_default()
     }

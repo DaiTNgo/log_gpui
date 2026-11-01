@@ -5,7 +5,7 @@
 
 use super::AppView;
 use crate::column::PinnableColumn;
-use crate::columns::{BUILT_IN, ColumnSettings, MESSAGE_KEY};
+use crate::columns::{BUILT_IN, ColumnSettings, LOG_NAME_KEY, MESSAGE_KEY};
 use gpui::Context;
 
 /// How many Detected Fields the Columns section lists before the rest are
@@ -139,6 +139,7 @@ impl AppView {
             }
         }
         pane.source = self.column_shown("source") && self.active_is_log_space();
+        pane.log_name = self.log_name_column_visible();
         pane.stream = self.column_shown("stream") && self.active_space_has_command();
         pane.fields = self.pane_field_keys();
         self.column_layout.set_pane_columns(pane, self.text_scale());
@@ -158,6 +159,7 @@ impl AppView {
         match key {
             "timestamp" | "level" | "module" | MESSAGE_KEY => true,
             "source" => self.active_space().is_some_and(|s| s.files.len() > 1),
+            LOG_NAME_KEY => self.log_name_column_visible(),
             "stream" => self.active_space_has_command(),
             _ => self.formats.view_fields.iter().any(|f| f == key),
         }
@@ -174,6 +176,16 @@ impl AppView {
         if key == MESSAGE_KEY {
             return;
         }
+        if key == LOG_NAME_KEY {
+            // Kept by the Log Space, and shown in the Canvas too.
+            let space_id = self.active_space().map(|s| s.id.clone());
+            if let Some(space) = space_id.and_then(|id| self.active_project_mut()?.log_space_mut(&id)) {
+                space.log_name_column = shown;
+            }
+            self.sync_log_name_column();
+            self.columns_changed(cx);
+            return;
+        }
         if let Some(project) = self.active_project_mut() {
             project.columns.set_pane_shown(key, shown);
         }
@@ -187,6 +199,9 @@ impl AppView {
     pub fn column_shown(&self, key: &str) -> bool {
         if key == MESSAGE_KEY {
             return true;
+        }
+        if key == LOG_NAME_KEY {
+            return self.log_name_column_visible();
         }
         self.active_project()
             .and_then(|p| p.columns.pane_choice(key))
@@ -218,7 +233,7 @@ impl AppView {
                 other => index.coverage(other).0,
             };
             let listed = match key {
-                "source" => self.active_is_log_space(),
+                "source" | LOG_NAME_KEY => self.active_is_log_space(),
                 "stream" => self.active_space_has_command(),
                 _ => true,
             };

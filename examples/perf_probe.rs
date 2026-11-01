@@ -37,6 +37,9 @@ fn time<T>(label: &str, f: impl FnOnce() -> T) -> T {
 }
 
 fn main() {
+    if std::env::args().any(|a| a == "--histogram") {
+        return histogram_probe(10_000_000);
+    }
     let n: usize = std::env::args().nth(1).and_then(|a| a.parse().ok()).unwrap_or(1_000_000);
     let levels = ["INFO", "DEBUG", "WARN", "ERROR"];
     let tags = ["auth", "api", "db", "cache", "worker"];
@@ -93,10 +96,12 @@ fn main() {
 }
 
 /// The Time Histogram's count over `n` rows (target: under 30 ms for 10M),
-/// from the per-row arrays the view holds: no line is read.
+/// from the per-row arrays the view holds: no line is read. Then with
+/// Swimlanes, split by a column of 8 and of 1000 values (`--histogram`
+/// runs only this).
 fn histogram_probe(n: usize) {
     use log_gpui::model::LogLevel;
-    use log_gpui::time_histogram::{RowFacts, TimeAxis, class_of, count_buckets};
+    use log_gpui::time_histogram::{LaneIds, RowFacts, TimeAxis, class_of, count_buckets};
     let start = 1_788_566_400.0;
     // A day of lines; every tenth row a Continuation Line.
     let ts: Vec<f64> = (0..n).map(|i| start + (i as f64) * 86_400.0 / n as f64).collect();
@@ -106,11 +111,21 @@ fn histogram_probe(n: usize) {
     let matches: Vec<usize> = (0..n).step_by(997).collect();
     let axis = TimeAxis::new(start..start + 86_400.0, 1200.0);
     let rows = RowFacts { ts: &ts, class: &class };
-    time(&format!("histogram count_buckets {}M", n / 1_000_000), || count_buckets(rows, &axis, None, &matches));
+    time(&format!("histogram count_buckets {}M", n / 1_000_000), || count_buckets(rows, &axis, None, &matches, None));
     let b = time(&format!("histogram count_buckets {}M + Filter", n / 1_000_000), || {
-        count_buckets(rows, &axis, Some(log_gpui::filter::PassFrom::Rows(&pass)), &matches)
+        count_buckets(rows, &axis, Some(log_gpui::filter::PassFrom::Rows(&pass)), &matches, None)
     });
     println!("  {} columns of {}s", b.counts.len(), axis.step.seconds());
+    for values in [8usize, 1000] {
+        // A Parent Line in 50 has no value.
+        let ids: Vec<u16> = (0..n).map(|i| if i % 50 == 48 { u16::MAX } else { (i * 7 % values) as u16 }).collect();
+        let lanes = Some(LaneIds { ids: &ids, values });
+        let b = time(&format!("histogram count_buckets {}M + Filter + lanes of {values} values", n / 1_000_000), || {
+            count_buckets(rows, &axis, Some(log_gpui::filter::PassFrom::Rows(&pass)), &matches, lanes)
+        });
+        let l = b.lanes.expect("lanes");
+        println!("  {} lanes, {} values in Other, empty lane: {}", l.set.slots.len(), l.set.other_count, l.set.has_empty);
+    }
 }
 
 fn live_line(i: usize) -> String {

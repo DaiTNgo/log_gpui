@@ -126,7 +126,7 @@ fn merged_filter_columns_are_those_of_a_build_on_the_merged_rows() {
     files.push(("/caps.log", (0..50).map(|i| format!("2026-09-05 10:00:{:02} [info] [API] caps {i}\n", i % 60)).collect()));
     files.push((
         "/many.log",
-        (0..700).map(|i| format!("2026-09-05 10:01:{:02} [ERROR] [t{i}] many {i}\n", i % 60)).collect(),
+        (0..1100).map(|i| format!("2026-09-05 10:01:{:02} [ERROR] [t{i}] many {i}\n", i % 60)).collect(),
     ));
     let space = space(&files);
     let held: HashMap<String, ParsedFile> = files.iter().map(|(p, t)| (p.to_string(), ParsedFile::from_text(t))).collect();

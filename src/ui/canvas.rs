@@ -1676,6 +1676,13 @@ fn render_source_cell(ctx: &CellCtx, width: Pixels) -> impl IntoElement {
     cell.child(source.to_string())
 }
 
+/// The Log Name of the row's Source File.
+fn render_log_name_cell(ctx: &CellCtx, width: Pixels) -> impl IntoElement {
+    let name = ctx.source.map_or("", crate::rotation_name::log_name);
+    let cell = div().flex_shrink_0().w(width).px_2().text_color(ctx.colors.muted).truncate();
+    cell.child(name.to_string())
+}
+
 fn render_stream_cell(ctx: &CellCtx, width: Pixels) -> impl IntoElement {
     let text = ctx.entry.stream.map_or("", |s| s.as_str());
     let cell = div().flex_shrink_0().w(width).px_2().text_color(ctx.colors.muted).truncate();
@@ -1701,6 +1708,7 @@ pub(crate) fn render_column_cell(
         PinnableColumn::Level => render_level_cell(ctx, width).into_any_element(),
         PinnableColumn::Module => render_module_cell(ctx, width).into_any_element(),
         PinnableColumn::Source => render_source_cell(ctx, width).into_any_element(),
+        PinnableColumn::LogName => render_log_name_cell(ctx, width).into_any_element(),
         PinnableColumn::Stream => render_stream_cell(ctx, width).into_any_element(),
         PinnableColumn::Field(key) => render_field_cell(ctx, key, width).into_any_element(),
     }
