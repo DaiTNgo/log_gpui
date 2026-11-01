@@ -141,6 +141,17 @@ pub enum LevelClass {
     Error = 2,
 }
 
+impl LevelClass {
+    /// The class of a byte of a class list (a Continuation Line's aside).
+    pub fn from_u8(class: u8) -> LevelClass {
+        match class {
+            2 => LevelClass::Error,
+            1 => LevelClass::Warn,
+            _ => LevelClass::Other,
+        }
+    }
+}
+
 /// The class of a Continuation Line in a class list: not counted.
 pub const CONTINUATION: u8 = 3;
 
@@ -180,8 +191,8 @@ pub type ClassCounts = [u32; 3];
 /// The most lanes drawn; the other values share the "Other" lane.
 pub const MAX_LANES: usize = 8;
 
-/// The value id of a row with no value (as `filter_index::MISSING`).
-const NO_VALUE: u16 = u16::MAX;
+/// The value id of a row with no value.
+use crate::filter_index::MISSING as NO_VALUE;
 
 /// The value of each row in the column the lanes split by (its Filter value
 /// ids, `u16::MAX` for none), and how many values the column has.
@@ -234,7 +245,9 @@ const UNSEEN: u8 = u8::MAX;
 const IN_OTHER: u8 = u8::MAX - 1;
 
 /// The lanes of a histogram: for each lane and column, the highest class
-/// of its Parent Lines there plus one (0: none).
+/// of its Parent Lines there, kept as a byte: the class plus one, 0 for
+/// none. Read it with [`class_at`](Lanes::class_at) or
+/// [`classes`](Lanes::classes).
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Lanes {
     pub set: LaneSet,
@@ -262,8 +275,19 @@ impl Lanes {
         lanes
     }
 
-    /// The columns of `lane`.
-    pub fn level(&self, lane: Lane) -> &[u8] {
+    /// The highest class of `lane`'s Parent Lines in each column, `None`
+    /// where it has none.
+    pub fn classes(&self, lane: Lane) -> impl Iterator<Item = Option<LevelClass>> + '_ {
+        self.level(lane).iter().map(|&l| (l > 0).then(|| LevelClass::from_u8(l - 1)))
+    }
+
+    /// The highest class of `lane`'s Parent Lines in column `col`.
+    pub fn class_at(&self, lane: Lane, col: usize) -> Option<LevelClass> {
+        self.level(lane).get(col).and_then(|&l| (l > 0).then(|| LevelClass::from_u8(l - 1)))
+    }
+
+    /// The columns of `lane`, as kept.
+    fn level(&self, lane: Lane) -> &[u8] {
         match lane {
             Lane::Value(v) => self.set.slots.iter().position(|&s| s == v).map_or(&[], |i| &self.slot_level[i]),
             Lane::Empty => &self.empty_level,
@@ -350,6 +374,16 @@ impl Lanes {
     }
 }
 
+/// What a count walks alongside the rows: the rows passing the Filter
+/// (`None` with no Filter) and the Matches, ascending, and the value of
+/// each row when the lanes are counted.
+#[derive(Clone, Copy)]
+struct Alongside<'a> {
+    filter_pass: Option<&'a [usize]>,
+    matches: &'a [usize],
+    lanes: Option<LaneIds<'a>>,
+}
+
 /// While counting everything: each value's level on each column (flat, a
 /// row of columns per value, the no-value lines last) and its lines.
 struct LaneTally {
@@ -399,20 +433,18 @@ impl Buckets {
         self.counts.iter().map(|c| c.iter().sum::<u32>()).max().unwrap_or(0)
     }
 
-    /// Count the rows `from..` of `rows`; `filter_pass` and `matches` hold
-    /// rows from `from` on (ascending), and are walked alongside. With
-    /// `lanes`, each Parent Line is also put in its value's lane: into
-    /// `tally` when given (a whole count), else into `self.lanes`.
+    /// Count the rows `from..` of `rows`; what `along` holds is from `from`
+    /// on. With lanes, each Parent Line is also put in its value's lane:
+    /// into `tally` when given (a whole count), else into `self.lanes`.
     fn count(
         &mut self,
         rows: RowFacts,
         from: usize,
         full: &Range<f64>,
-        filter_pass: Option<&[usize]>,
-        matches: &[usize],
-        lanes: Option<LaneIds>,
+        along: Alongside,
         mut tally: Option<&mut LaneTally>,
     ) -> Result<(), NeedsRecount> {
+        let Alongside { filter_pass, matches, lanes } = along;
         let Some(grid) = self.grid else { return Ok(()) };
         let mut pass = filter_pass.map(|p| p.iter().copied().peekable());
         let mut outside = false;
@@ -496,7 +528,7 @@ impl Buckets {
         {
             return Err(NeedsRecount);
         }
-        self.count(rows, from, &axis.full, filter_pass, matches, lanes, None)
+        self.count(rows, from, &axis.full, Alongside { filter_pass, matches, lanes }, None)
     }
 }
 
@@ -517,7 +549,8 @@ pub fn count_buckets(
     let lanes = lanes.filter(|l| l.ids.len() >= rows.len());
     let mut tally = lanes.map(|l| LaneTally { flat: vec![0; (l.values + 1) * grid.len], total: vec![0; l.values + 1] });
     // The axis comes from these rows: none is outside it.
-    let _ = buckets.count(rows, 0, &(f64::NEG_INFINITY..f64::INFINITY), filter_pass, matches, lanes, tally.as_mut());
+    let along = Alongside { filter_pass, matches, lanes };
+    let _ = buckets.count(rows, 0, &(f64::NEG_INFINITY..f64::INFINITY), along, tally.as_mut());
     buckets.lanes = tally.map(|t| Lanes::from_flat(&t.flat, &t.total, grid.len));
     buckets
 }

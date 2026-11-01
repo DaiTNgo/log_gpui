@@ -10,7 +10,7 @@
 use crate::app::AppView;
 use crate::app::time_histogram::HistogramDrag;
 use crate::app::swimlane::LaneChoice;
-use crate::time_histogram::{Buckets, Grid, Lane, Lanes, TimeAxis};
+use crate::time_histogram::{Buckets, Grid, Lane, Lanes, LevelClass, TimeAxis};
 use crate::ui::canvas::CanvasColors;
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
@@ -128,6 +128,16 @@ fn rect(x0: f32, y0: f32, x1: f32, y1: f32) -> Bounds<Pixels> {
     Bounds::new(gpui::point(px(x0), px(y0)), gpui::size(px((x1 - x0).max(0.0)), px((y1 - y0).max(0.0))))
 }
 
+/// The color a class is drawn in: Error red, Warn orange, the rest grey at
+/// `quiet` opacity.
+fn class_fill(colors: &CanvasColors, class: LevelClass, quiet: f32) -> gpui::Hsla {
+    match class {
+        LevelClass::Error => colors.danger,
+        LevelClass::Warn => colors.warning,
+        LevelClass::Other => colors.muted.opacity(quiet),
+    }
+}
+
 /// Paint the columns of `buckets` on `grid` between `top` and `bottom`.
 fn paint_columns(
     window: &mut Window,
@@ -140,7 +150,7 @@ fn paint_columns(
 ) {
     let max = buckets.max_total().max(1) as f32;
     let height = bottom - top;
-    let fills = [colors.muted.opacity(0.55), colors.warning, colors.danger];
+    let fills = [LevelClass::Other, LevelClass::Warn, LevelClass::Error].map(|c| class_fill(colors, c, 0.55));
     // Bottom up: errors, then warnings, then the rest.
     let stack = |window: &mut Window, x0: f32, x1: f32, counts: &[u32; 3], opacity: f32| {
         let mut y = bottom;
@@ -191,22 +201,19 @@ fn paint_lanes(
     top: f32,
     colors: &CanvasColors,
 ) {
-    let fills = [colors.muted.opacity(0.35), colors.warning, colors.danger];
     for (i, lane) in order.iter().enumerate() {
         let y0 = top + i as f32 * LANE_HEIGHT;
         window.paint_quad(gpui::fill(rect(f32::from(bounds.origin.x), y0, f32::from(bounds.right()), y0 + 0.5), colors.border.opacity(0.5)));
         let mid = y0 + LANE_HEIGHT / 2.0;
-        for (col, &level) in lanes.level(*lane).iter().enumerate() {
-            if level == 0 {
-                continue;
-            }
+        for (col, class) in lanes.classes(*lane).enumerate() {
+            let Some(class) = class else { continue };
             let x0 = x_of(grid.start_of(col), visible, bounds).max(f32::from(bounds.origin.x));
             let x1 = x_of(grid.start_of(col + 1), visible, bounds).min(f32::from(bounds.right()));
             let x1 = if x1 - x0 > 3.0 { x1 - 1.0 } else { x1.max(x0 + 1.0) };
             // Lines of no note are a thin quiet mark, so a Warn or an Error
             // stands out at a glance.
-            let half = if level == 1 { LANE_QUIET / 2.0 } else { LANE_BAR / 2.0 };
-            window.paint_quad(gpui::fill(rect(x0, mid - half, x1, mid + half), fills[usize::from(level - 1).min(2)]));
+            let half = if class == LevelClass::Other { LANE_QUIET / 2.0 } else { LANE_BAR / 2.0 };
+            window.paint_quad(gpui::fill(rect(x0, mid - half, x1, mid + half), class_fill(colors, class, 0.35)));
         }
     }
 }
@@ -461,7 +468,14 @@ fn lane_names(view: &Entity<AppView>, lanes: &[LaneRow], colors: &CanvasColors, 
         let is_value = matches!(lane, Lane::Value(_));
         let v = view.clone();
         let title = row.title.clone();
-        let text = if is_value { row.tint.unwrap_or(cx.theme().foreground) } else { colors.muted };
+        // Ticked is the active state (design-system): accent behind, the
+        // foreground text.
+        let text = match (is_value, row.ticked) {
+            (true, true) => cx.theme().foreground,
+            (true, false) => row.tint.unwrap_or(cx.theme().foreground),
+            (false, _) => colors.muted,
+        };
+        let (accent, hover) = (cx.theme().accent, cx.theme().list_hover);
         names = names.child(
             div()
                 .id(("lane_name", i))
@@ -473,11 +487,11 @@ fn lane_names(view: &Entity<AppView>, lanes: &[LaneRow], colors: &CanvasColors, 
                 .rounded(px(3.0))
                 .text_size(px(11.0))
                 .text_color(text)
-                .when(row.ticked, |d| d.bg(colors.info.opacity(0.18)).font_weight(gpui::FontWeight::SEMIBOLD))
+                .when(row.ticked, |d| d.bg(accent))
                 .child(div().min_w_0().truncate().child(row.name.clone()))
                 .when(is_value, |d| {
                     d.cursor_pointer()
-                        .hover(|s| s.bg(colors.info.opacity(0.10)))
+                        .when(!row.ticked, |d| d.hover(move |s| s.bg(hover)))
                         .on_click(move |_, _, cx| v.update(cx, |this, cx| this.lane_name_clicked(lane, cx)))
                 })
                 .tooltip(move |window, cx| {

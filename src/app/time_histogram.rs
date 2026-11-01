@@ -304,8 +304,7 @@ impl AppView {
         let matches = &matches[matches.partition_point(|&r| r < from)..];
         let facts = RowFacts { ts: self.filter_index.effective_ts(), class: &self.histogram.classes };
         // The fields are borrowed apart: the counts change, the index does not.
-        let lanes = key.lanes.as_deref().and_then(|k| self.filter_index.column(k)).filter(|c| c.has_row_ids());
-        let lanes = lanes.map(|c| th::LaneIds { ids: c.row_ids(), values: c.values.len() });
+        let lanes = key.lanes.as_deref().and_then(|k| super::swimlane::lane_ids(&self.filter_index, k));
         if key.lanes.is_some() && lanes.is_none() {
             return self.schedule_histogram_recount(key, cx);
         }
@@ -343,7 +342,7 @@ impl AppView {
         let pass = key.pass.map(|_| self.filter_pass.clone());
         let matches = self.focus.search().matched_visible_indices.clone();
         // The value of each row, copied for the worker (two bytes a row).
-        let lanes = key.lanes.as_deref().and_then(|k| self.lane_ids(k)).map(|l| (l.ids.to_vec(), l.values));
+        let lanes = key.lanes.as_deref().and_then(|k| super::swimlane::lane_ids(&self.filter_index, k)).map(|l| (l.ids.to_vec(), l.values));
         let epoch = self.rows_epoch;
         cx.spawn(async move |this, cx| {
             let counted = cx
@@ -380,8 +379,9 @@ impl AppView {
         h.applied = generation;
         h.classes = classes;
         h.classes_epoch = Some(epoch);
+        // The lanes are for that column only when they were counted.
+        h.lanes_for = shown.lanes.as_ref().and(key.lanes.clone());
         h.shown = Arc::new(shown);
-        h.lanes_for = key.lanes.clone();
         // Counted again: what the pointer was over is read afresh.
         h.lane_hover = None;
         h.counted = Some(key);

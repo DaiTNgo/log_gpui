@@ -76,7 +76,7 @@ impl PinnableColumn {
             PinnableColumn::Level => "level",
             PinnableColumn::Module => "module",
             PinnableColumn::Source => "source",
-            PinnableColumn::LogName => "log_name",
+            PinnableColumn::LogName => crate::columns::LOG_NAME_KEY,
             PinnableColumn::Stream => "stream",
             PinnableColumn::Field(k) => k.as_str(),
         }
@@ -90,7 +90,7 @@ impl PinnableColumn {
             "level" => PinnableColumn::Level,
             "module" => PinnableColumn::Module,
             "source" => PinnableColumn::Source,
-            "log_name" => PinnableColumn::LogName,
+            crate::columns::LOG_NAME_KEY => PinnableColumn::LogName,
             "stream" => PinnableColumn::Stream,
             "message" | "request_id" | "trace_id" => return None,
             field => PinnableColumn::Field(FieldKey::new(field)),

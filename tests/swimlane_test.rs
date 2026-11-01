@@ -6,7 +6,7 @@ mod common;
 use common::Harness;
 use gpui::TestAppContext;
 use log_gpui::app::AppView;
-use log_gpui::time_histogram::{Lane, LaneBy};
+use log_gpui::time_histogram::{Lane, LaneBy, LevelClass};
 use log_gpui::workspace::log_space::{ImportSource, LogSpaceKind};
 
 /// 2026-10-19 10:00:00 UTC.
@@ -67,9 +67,9 @@ fn a_log_space_of_several_logs_splits_by_log_name(cx: &mut TestAppContext) {
         let grid = app.histogram.shown.grid.unwrap();
         let at = |m: f64| grid.column_of(TEN + m * 60.0).unwrap();
         let (api, db) = (lanes.order()[0], lanes.order()[1]);
-        assert_eq!(lanes.level(db)[at(30.0)], 3, "db has a red bar at 10:30");
-        assert_eq!(lanes.level(api)[at(31.0)], 3, "api has a red bar at 10:31");
-        assert_eq!(lanes.level(api)[at(30.0)], 0);
+        assert_eq!(lanes.class_at(db, at(30.0)), Some(LevelClass::Error), "db has a red bar at 10:30");
+        assert_eq!(lanes.class_at(api, at(31.0)), Some(LevelClass::Error), "api has a red bar at 10:31");
+        assert_eq!(lanes.class_at(api, at(30.0)), None);
     });
 }
 
@@ -129,7 +129,11 @@ fn hovering_a_lane_says_what_is_there(cx: &mut TestAppContext) {
     h.view.update(&mut h.cx, |app, cx| app.lane_hover_at(db, TEN + 30.0 * 60.0 + 1.0, cx));
     let text = h.view.read_with(&h.cx, |app, _| app.lane_hover_text()).expect("a hover text");
     assert!(text.starts_with("db.log · 10:30:00"), "{text}");
-    assert!(text.ends_with("1 line · Error"), "{text}");
+    assert!(text.ends_with("1 line · ERROR"), "{text}");
+    // A column of INFO lines says so too.
+    h.view.update(&mut h.cx, |app, cx| app.lane_hover_at(db, TEN + 45.0 * 60.0 + 1.0, cx));
+    let text = h.view.read_with(&h.cx, |app, _| app.lane_hover_text()).unwrap();
+    assert!(text.ends_with("1 line · INFO"), "{text}");
     h.view.update(&mut h.cx, |app, cx| app.lane_hover_clear(cx));
     assert_eq!(h.view.read_with(&h.cx, |app, _| app.lane_hover_text()), None);
 }
@@ -230,4 +234,21 @@ fn the_swimlanes_are_a_strip_of_their_own(cx: &mut TestAppContext) {
     // Each strip folds on its own.
     h.view.update(&mut h.cx, |app, cx| app.toggle_lanes_collapsed(cx));
     h.view.read_with(&h.cx, |app, _| assert!(app.histogram.lanes_collapsed && !app.histogram.collapsed));
+}
+
+#[gpui::test]
+fn a_chosen_column_the_lanes_cannot_split_by_falls_back_to_log_name(cx: &mut TestAppContext) {
+    let mut h = common::open_app(cx);
+    // `req` has a value a line: past the limit of values.
+    space(&mut h, &[("a.log", json(&["auth"], 1_100, 0)), ("b.log", json(&["orders"], 20, 0))]);
+    h.view.update(&mut h.cx, |app, cx| app.set_lane_by(LaneBy::Column("req".into()), cx));
+    h.cx.run_until_parked();
+    h.view.read_with(&h.cx, |app, _| {
+        assert_eq!(app.lane_by(), LaneBy::Column("req".into()), "the choice is kept");
+        assert_eq!(app.lane_column().as_deref(), Some("log_name"));
+        assert_eq!(lane_names(app), ["a.log", "b.log"]);
+    });
+    // A column the view does not have falls back the same way.
+    h.view.update(&mut h.cx, |app, cx| app.set_lane_by(LaneBy::Column("gone".into()), cx));
+    assert_eq!(h.view.read_with(&h.cx, |app, _| app.lane_column()).as_deref(), Some("log_name"));
 }

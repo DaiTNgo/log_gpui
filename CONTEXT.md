@@ -363,7 +363,7 @@ A row of the Swimlane strip, a strip of its own under the Time Histogram, turned
 _Avoid_: Track, row chart, per-service histogram.
 
 **Lane By**:
-The column the Swimlanes of a view split by, chosen in the "Lane by" menu at the head of the Swimlane strip among the view's Filterable Columns ("No split" hides the lanes; a column over the Filter's limit of distinct values, or still being read, is listed greyed with the reason). Kept with the view, as its Filter is. Never chosen, it is the Log Name Column of a Log Space with two logs or more, else no split; then the menu suggests MODULE or a Field Column named `service`, `module`, `component`, `thread`, `host` or `pod` first, without choosing it. A chosen column the view no longer has falls back to that default.
+The column the Swimlanes of a view split by, chosen in the "Lane by" menu at the head of the Swimlane strip among the view's Filterable Columns ("No split" hides the lanes; a column over the Filter's limit of distinct values, or still being read, is listed greyed with the reason). Kept with the view, as its Filter is. Never chosen, it is the Log Name Column of a Log Space with two logs or more, else no split; then the menu suggests MODULE or a Field Column named `service`, `module`, `component`, `thread`, `host` or `pod` first, without choosing it. A chosen column the lanes cannot split by (gone from the view, past the limit, or still being read) falls back to that default; the choice itself is kept.
 _Avoid_: Group by, split by, swimlane column.
 
 **Field Column**:

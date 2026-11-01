@@ -11,6 +11,12 @@ use std::collections::BTreeMap;
 /// Column key of MESSAGE, which is always shown.
 pub const MESSAGE_KEY: &str = "message";
 
+/// Column key of the Source Column.
+pub const SOURCE_KEY: &str = "source";
+
+/// Column key of the Log Name Column.
+pub const LOG_NAME_KEY: &str = "log_name";
+
 /// The fixed columns the Columns section lists in its *Built-in* group, by
 /// key, with the name their Column Header shows.
 pub const BUILT_IN: [(&str, &str); 7] = [
@@ -18,7 +24,7 @@ pub const BUILT_IN: [(&str, &str); 7] = [
     ("level", "LEVEL"),
     ("module", "MODULE"),
     ("source", "SOURCE"),
-    ("log_name", "LOG NAME"),
+    (LOG_NAME_KEY, "LOG NAME"),
     ("stream", "STREAM"),
     (MESSAGE_KEY, "MESSAGE"),
 ];

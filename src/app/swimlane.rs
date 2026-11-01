@@ -4,6 +4,9 @@
 //! does. The lanes are counted with the histogram (`time_histogram`).
 
 use super::AppView;
+use crate::columns::{LOG_NAME_KEY, SOURCE_KEY};
+use crate::filter_index::FilterIndex;
+use crate::model::LogLevel;
 use crate::time_histogram::{self as th, Lane, LaneBy, LaneIds};
 use crate::workspace::working_set::TabTarget;
 use gpui::Context;
@@ -12,13 +15,26 @@ use gpui::Context;
 const SUGGESTED_FIELDS: [&str; 6] = ["service", "module", "component", "thread", "host", "pod"];
 
 /// What the pointer is over on the Swimlanes: a lane in a column, its
-/// Parent Lines there and the highest class of them.
+/// Parent Lines there and the highest level among them.
 #[derive(Debug, Clone, PartialEq)]
 pub struct LaneHover {
     pub lane: Lane,
     pub col: usize,
     pub lines: usize,
-    pub class: u8,
+    pub level: Option<LogLevel>,
+}
+
+/// How severe a level is, for the highest of a column: a line whose level
+/// is not known is the least.
+fn severity(level: LogLevel) -> i8 {
+    if level == LogLevel::Unknown { -1 } else { level as i8 }
+}
+
+/// The value ids of each row in the column `key` of `index`, when it has
+/// them all: what the lanes are counted from.
+pub(crate) fn lane_ids<'a>(index: &'a FilterIndex, key: &str) -> Option<LaneIds<'a>> {
+    let col = index.column(key).filter(|c| c.has_row_ids())?;
+    Some(LaneIds { ids: col.row_ids(), values: col.values.len() })
 }
 
 /// A column in the "Lane by" menu.
@@ -43,32 +59,33 @@ impl AppView {
 
     /// The column the lanes split by now, when there are lanes: `Default`
     /// is the Log Name Column of a Log Space with two values or more, and a
-    /// chosen column the view no longer has falls back to it (decision 5).
+    /// chosen column the lanes cannot split by (gone from the view, past
+    /// the limit of values, or still read) falls back to it (decision 5).
     pub fn lane_column(&self) -> Option<String> {
         let chosen = match self.lane_by() {
             LaneBy::None => return None,
-            LaneBy::Column(key) if self.filter_index.column(&key).is_some() => Some(key),
-            _ => None,
+            LaneBy::Column(key) => Some(key).filter(|k| lane_ids(&self.filter_index, k).is_some()),
+            LaneBy::Default => None,
         };
-        let key = chosen.or_else(|| {
-            let log_name = self.filter_index.column("log_name")?;
-            (self.active_is_log_space() && log_name.values.len() >= 2).then(|| "log_name".to_string())
-        })?;
-        self.filter_index.column(&key).filter(|c| c.has_row_ids()).map(|_| key)
+        chosen.or_else(|| {
+            let log_name = self.filter_index.column(LOG_NAME_KEY).filter(|c| c.has_row_ids())?;
+            (self.active_is_log_space() && log_name.values.len() >= 2).then(|| LOG_NAME_KEY.to_string())
+        })
     }
 
     /// The column the menu puts first as a suggestion while there are no
-    /// lanes: MODULE, else the first Field Column named like a service.
+    /// lanes: MODULE, else the first Field Column named like a service;
+    /// only one the menu lets the user choose.
     pub fn lane_suggestion(&self) -> Option<String> {
         if self.lane_column().is_some() {
             return None;
         }
-        let in_use = |key: &str| self.filter_index.columns_in_use().any(|c| c.key == key);
-        if in_use("module") {
+        let choosable: Vec<_> = self.filter_index.columns_in_use().filter(|c| c.has_row_ids()).collect();
+        if choosable.iter().any(|c| c.key == "module") {
             return Some("module".to_string());
         }
         SUGGESTED_FIELDS.iter().find_map(|name| {
-            self.filter_index.field_columns().find(|c| c.key.eq_ignore_ascii_case(name)).map(|c| c.key.clone())
+            choosable.iter().find(|c| c.field().is_some() && c.key.eq_ignore_ascii_case(name)).map(|c| c.key.clone())
         })
     }
 
@@ -115,10 +132,9 @@ impl AppView {
         cx.notify();
     }
 
-    /// The value ids of each row in the column the lanes split by.
-    pub(crate) fn lane_ids(&self, key: &str) -> Option<LaneIds<'_>> {
-        let col = self.filter_index.column(key).filter(|c| c.has_row_ids())?;
-        Some(LaneIds { ids: col.row_ids(), values: col.values.len() })
+    /// How many values share the "Other" lane.
+    fn other_count(&self) -> usize {
+        self.histogram.shown.lanes.as_ref().map_or(0, |l| l.set.other_count)
     }
 
     /// The name a lane shows.
@@ -134,8 +150,7 @@ impl AppView {
             Lane::Empty => "(empty)".to_string(),
             Lane::Other => {
                 // Short enough for the names' room; the tooltip says more.
-                let n = self.histogram.shown.lanes.as_ref().map_or(0, |l| l.set.other_count);
-                format!("Other · {}", crate::app::format_count(n))
+                format!("Other · {}", crate::app::format_count(self.other_count()))
             }
         }
     }
@@ -144,7 +159,7 @@ impl AppView {
     pub fn lane_title(&self, lane: Lane) -> String {
         match lane {
             Lane::Other => {
-                let n = self.histogram.shown.lanes.as_ref().map_or(0, |l| l.set.other_count);
+                let n = self.other_count();
                 let noun = if n == 1 { "value" } else { "values" };
                 format!("Other: {} {noun} with no lane of their own", crate::app::format_count(n))
             }
@@ -160,9 +175,11 @@ impl AppView {
         let key = self.histogram.lanes_for.as_deref()?;
         let name = self.lane_name(lane);
         let space = self.active_space()?;
+        // The first file of the lane's log: the files of one log each have
+        // their own tint.
         let file = space.files.iter().find(|f| match key {
-            "source" => f.display_name == name,
-            "log_name" => crate::rotation_name::log_name(&f.display_name) == name,
+            SOURCE_KEY => f.display_name == name,
+            LOG_NAME_KEY => crate::rotation_name::log_name(&f.display_name) == name,
             _ => false,
         })?;
         Some(crate::ui::canvas::source_tint(space.source_tint_index(&file.file_id)?, dark))
@@ -195,15 +212,18 @@ impl AppView {
         if self.histogram.lane_hover.as_ref().is_some_and(|h| h.lane == lane && h.col == col) {
             return;
         }
-        let class = self
-            .histogram
-            .shown
-            .lanes
-            .as_ref()
-            .and_then(|l| l.level(lane).get(col).copied())
-            .unwrap_or(0);
-        let lines = if class == 0 { 0 } else { self.lane_rows_in(lane, col).count() };
-        self.histogram.lane_hover = Some(LaneHover { lane, col, lines, class });
+        let (mut lines, mut level) = (0, None);
+        {
+            let rows = self.rows();
+            for row in self.lane_rows_in(lane, col) {
+                lines += 1;
+                let l = rows.level(row).unwrap_or(LogLevel::Unknown);
+                if level.is_none_or(|top| severity(l) > severity(top)) {
+                    level = Some(l);
+                }
+            }
+        }
+        self.histogram.lane_hover = Some(LaneHover { lane, col, lines, level });
         cx.notify();
     }
 
@@ -215,7 +235,7 @@ impl AppView {
     }
 
     /// What the pointer is over, as the Swimlane strip says it:
-    /// "db.log · 10:30:00–10:31:00 · 12 lines · Error".
+    /// "db.log · 10:30:00–10:31:00 · 12 lines · ERROR".
     pub fn lane_hover_text(&self) -> Option<String> {
         let hover = self.histogram.lane_hover.as_ref()?;
         let grid = self.histogram.shown.grid?;
@@ -227,11 +247,7 @@ impl AppView {
             return Some(format!("{name} · {from}–{to} · no lines"));
         }
         let lines = if hover.lines == 1 { "1 line".to_string() } else { format!("{} lines", crate::app::format_count(hover.lines)) };
-        let level = match hover.class {
-            3 => " · Error",
-            2 => " · Warn",
-            _ => "",
-        };
+        let level = hover.level.filter(|l| *l != LogLevel::Unknown).map_or(String::new(), |l| format!(" · {}", l.as_str()));
         Some(format!("{name} · {from}–{to} · {lines}{level}"))
     }
 

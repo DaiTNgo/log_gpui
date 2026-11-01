@@ -43,7 +43,7 @@ impl Source {
     fn key(&self) -> String {
         match self {
             Source::SourceFile => "source".to_string(),
-            Source::LogName => "log_name".to_string(),
+            Source::LogName => crate::columns::LOG_NAME_KEY.to_string(),
             Source::Stream => "stream".to_string(),
             Source::Level => "level".to_string(),
             Source::Module => "module".to_string(),
@@ -101,7 +101,7 @@ pub fn with_value_of<R: Rows + ?Sized, T>(rows: &R, row: usize, key: &str, f: im
     if key == "source" {
         return f(rows.source(r).filter(|s| !s.is_empty()));
     }
-    if key == "log_name" {
+    if key == crate::columns::LOG_NAME_KEY {
         return f(rows.source(r).map(crate::rotation_name::log_name).filter(|s| !s.is_empty()));
     }
     match rows.get(r) {
@@ -115,7 +115,7 @@ pub fn column_value<'a>(entry: &'a LogEntry, key: &str) -> Option<&'a str> {
     // Called once per row by Filter and Highlight Rules: no allocation here.
     let v = match key {
         "source" => entry.source.as_deref().unwrap_or(""),
-        "log_name" => entry.source.as_deref().map_or("", crate::rotation_name::log_name),
+        crate::columns::LOG_NAME_KEY => entry.source.as_deref().map_or("", crate::rotation_name::log_name),
         "stream" => entry.stream.map_or("", |s| s.as_str()),
         "message" => entry.payload(),
         "level" => entry.level_text(),
