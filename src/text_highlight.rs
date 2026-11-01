@@ -113,6 +113,27 @@ impl HighlightMatcher {
         self.entries.iter().map(|(_, _, c)| c)
     }
 
+    /// This matcher with the Text Highlight `key` in `color`: a preview.
+    pub fn with_color(&self, key: &str, color: &HighlightColor) -> Self {
+        let mut out = self.clone();
+        for (_, k, c) in &mut out.entries {
+            if k == key {
+                *c = color.clone();
+            }
+        }
+        out
+    }
+
+    /// This matcher with `text` also highlighted in `color`, above the others: a preview.
+    pub fn with_extra(&self, text: &str, color: &HighlightColor) -> Self {
+        let mut out = self.clone();
+        let needle = Needle::new(text);
+        if !needle.is_empty() {
+            out.entries.push((needle, fold(text), color.clone()));
+        }
+        out
+    }
+
     /// The key of Text Highlight `owner`.
     pub fn key(&self, owner: usize) -> Option<&str> {
         self.entries.get(owner).map(|(_, k, _)| k.as_str())

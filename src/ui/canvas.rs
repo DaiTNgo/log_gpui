@@ -186,6 +186,8 @@ pub struct CanvasViewState<'a> {
     /// The Highlight Rule paint of each entry (by entry position).
     pub paints: Arc<crate::highlight::RowPaints>,
     pub selection: Option<TextSelection>,
+    /// The Marker being recolored `(row, byte, color)`: shown in the color the bar points at.
+    pub marker_preview: Option<(usize, usize, HighlightColor)>,
     /// Receives where the rows are on screen while painting.
     pub bounds_sink: std::rc::Rc<std::cell::Cell<gpui::Bounds<Pixels>>>,
     pub density: TextScale,
@@ -344,6 +346,7 @@ impl LogCanvas {
             layout: state.column_layout.clone(),
             paints: state.paints.clone(),
             selection: state.selection,
+            marker_preview: state.marker_preview.clone(),
             row_height,
             font_size,
             source_tints: state.source_tints.clone(),
@@ -859,6 +862,7 @@ struct RowEnv {
     layout: ColumnLayoutState,
     paints: Arc<crate::highlight::RowPaints>,
     selection: Option<TextSelection>,
+    marker_preview: Option<(usize, usize, HighlightColor)>,
     row_height: f32,
     font_size: f32,
     source_tints: Arc<std::collections::HashMap<Arc<str>, gpui::Hsla>>,
@@ -962,10 +966,25 @@ impl RowEnv {
         let scroll_x = horizontal_scroll_x(&self.scroll_handle);
         let source_tint = file_id.and_then(|id| self.source_tints.get(id)).copied();
         let text_highlights = self.text_highlights.ranges(&entry.raw_line);
+        let previewed_markers: Vec<crate::marker::TextMarker>;
+        let markers = match &self.marker_preview {
+            Some((row, byte, color)) if *row == vis_pos => {
+                previewed_markers = entries
+                    .markers(entry_ix)
+                    .iter()
+                    .map(|m| {
+                        let hit = m.range.start <= *byte && *byte < m.range.end;
+                        crate::marker::TextMarker { range: m.range.clone(), color: if hit { color.clone() } else { m.color.clone() } }
+                    })
+                    .collect();
+                &previewed_markers[..]
+            }
+            _ => entries.markers(entry_ix),
+        };
         let cell_ctx = CellCtx {
             colors: &colors,
             entry: &entry,
-            markers: entries.markers(entry_ix),
+            markers,
             text_highlights: &text_highlights,
             value_colors: self.value_colors.as_deref(),
             source: entries.source(entry_ix),

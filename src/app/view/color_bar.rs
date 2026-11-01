@@ -18,8 +18,12 @@ use gpui_kit::assets::IconName;
 impl AppView {
     fn bar_swatch(&self, id: String, color: &HighlightColor, tone: Tone, size: f32, cx: &mut Context<Self>) -> gpui::AnyElement {
         let pick = color.clone();
+        let hover = color.clone();
         let paints_selection = self.color_bar.as_ref().is_some_and(|b| b.paints_selection());
         swatch(ElementId::from(id), color, tone, size)
+            .on_hover(cx.listener(move |this, hovered: &bool, _window, cx| {
+                this.preview_bar_color(hovered.then(|| hover.clone()), cx)
+            }))
             .on_click(cx.listener(move |this, event: &gpui::ClickEvent, _window, cx| {
                 this.apply_bar_color(pick.clone(), event.modifiers().alt, cx)
             }))

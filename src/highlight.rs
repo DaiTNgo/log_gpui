@@ -136,6 +136,16 @@ impl RowPaints {
         at.checked_sub(1).and_then(|i| self.paints.get(i as usize)).map(|p| &**p)
     }
 
+    /// These paints with the rule at position `rule` in `color`: a preview.
+    pub fn with_rule_color(&self, rule: usize, color: &HighlightColor) -> Self {
+        let paints = self
+            .paints
+            .iter()
+            .map(|p| if p.rule == rule { Arc::new(RowPaint { color: color.clone(), ..(**p).clone() }) } else { p.clone() })
+            .collect();
+        Self { paints, rows: self.rows.clone() }
+    }
+
     /// The paint of each row in order.
     pub fn iter(&self) -> impl Iterator<Item = Option<&RowPaint>> + '_ {
         (0..self.rows.len()).map(|row| self.get(row))

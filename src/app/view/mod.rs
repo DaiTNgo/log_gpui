@@ -85,7 +85,8 @@ impl Render for AppView {
                 column_layout: &self.column_layout,
                 search_state: self.focus.search(),
                 bounds_sink: self.canvas_bounds.clone(),
-                paints: self.highlight_paints.clone(),
+                paints: self.paints_preview(),
+                marker_preview: self.marker_preview(),
                 selection: self.text_selection,
                 colors,
                 scroll_handle: &self.scroll_handle,
@@ -97,7 +98,7 @@ impl Render for AppView {
                     .collect(),
                 reading_fields: !self.loads.is_empty(),
                 source_tints: Arc::new(self.source_tints(colors.dark)),
-                text_highlights: self.th_matcher.clone(),
+                text_highlights: self.text_highlights_preview(),
                 value_colors: self.value_colors.clone(),
             })
         };
@@ -289,7 +290,7 @@ impl AppView {
             warning: cx.theme().warning,
             info: cx.theme().info,
             stderr: crate::ui::canvas::stderr_color(cx.theme().is_dark()),
-            text_selection: cx.theme().selection,
+            text_selection: self.selection_fill(cx.theme().selection, cx),
             dark: cx.theme().is_dark(),
             syntax: self
                 .workspace_state

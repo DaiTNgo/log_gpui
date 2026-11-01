@@ -700,7 +700,7 @@ impl PaneRows {
                 .map(|hidden| crate::ui::cells::hidden_matches_tooltip(&hidden, layout))
         });
         // Matches are painted on whichever cell holds them, in bytes of the line.
-        let text_highlights = app.th_matcher.ranges(&entry.raw_line);
+        let text_highlights = app.text_highlights_preview().ranges(&entry.raw_line);
         let ctx = CellCtx {
             colors: &colors,
             entry: &entry,

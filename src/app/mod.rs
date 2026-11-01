@@ -489,6 +489,13 @@ impl AppView {
             if matches!(event, InputEvent::Change) {
                 cx.notify();
             }
+        // Pointing at a color in the picker previews it on the selection, as pointing at a swatch does.
+        cx.observe(&color_picker, |this: &mut Self, picker, cx| {
+            let state = picker.read(cx);
+            let hovered = state.preview().filter(|p| Some(*p) != state.value());
+            this.preview_bar_color(hovered.map(color::color_from_hsla), cx);
+        })
+        .detach();
         })
         .detach();
         let inspector_editor = cx.new(|cx| {

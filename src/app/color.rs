@@ -6,6 +6,7 @@
 use super::AppView;
 use crate::palette::HighlightColor;
 use gpui::{Context, Hsla, Pixels, Point};
+use gpui_component::ActiveTheme as _;
 use std::ops::Range;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -52,11 +53,13 @@ pub struct ColorBar {
     pub scope: MarkScope,
     /// How many lines of the view hold the selected text, once counted.
     pub count: Option<usize>,
+    /// The color under the pointer: the selection shows in it until the pointer leaves.
+    pub preview: Option<HighlightColor>,
 }
 
 impl ColorBar {
     pub fn new(pos: Point<Pixels>, target: ColorTarget) -> Self {
-        Self { pos, target, palette_open: false, scope: MarkScope::Line, count: None }
+        Self { pos, target, palette_open: false, scope: MarkScope::Line, count: None, preview: None }
     }
 
     /// Whether the bar paints a selection (and so offers a scope).
@@ -118,6 +121,76 @@ impl AppView {
             }
         }
         colors
+    }
+
+    /// The fill of the selected text: the color the bar is pointing at, while
+    /// the bar paints the selection, else `base`.
+    pub fn selection_fill(&self, base: Hsla, cx: &gpui::App) -> Hsla {
+        match self.color_bar.as_ref().and_then(|b| b.preview.as_ref().filter(|_| b.paints_selection())) {
+            Some(color) => {
+                let tone = if cx.theme().is_dark() { crate::palette::Tone::Dark } else { crate::palette::Tone::Light };
+                gpui::rgb(color.rgb(tone)).into()
+            }
+            _ => base,
+        }
+    }
+
+    /// The color the bar is pointing at, with what it would change.
+    fn bar_preview(&self) -> Option<(&ColorTarget, &HighlightColor)> {
+        let bar = self.color_bar.as_ref()?;
+        Some((&bar.target, bar.preview.as_ref()?))
+    }
+
+    /// The Text Highlights as they would look with the color the bar points
+    /// at: a recolored one, or, for "Everywhere", the selected text added.
+    pub fn text_highlights_preview(&self) -> Arc<crate::text_highlight::HighlightMatcher> {
+        let Some((target, color)) = self.bar_preview() else { return self.th_matcher.clone() };
+        match target {
+            ColorTarget::RecolorTextHighlight { key, .. } => Arc::new(self.th_matcher.with_color(key, color)),
+            _ if self.color_bar.as_ref().is_some_and(|b| b.scope == MarkScope::Everywhere) => {
+                match self.bar_everywhere_text() {
+                    Some(text) => Arc::new(self.th_matcher.with_extra(&text, color)),
+                    None => self.th_matcher.clone(),
+                }
+            }
+            _ => self.th_matcher.clone(),
+        }
+    }
+
+    /// The Highlight Rule paints as they would look with the color the bar points at.
+    pub fn paints_preview(&self) -> Arc<crate::highlight::RowPaints> {
+        if let Some((ColorTarget::Rule(id), color)) = self.bar_preview()
+            && let Some(pos) = self.highlight_rules().iter().position(|r| r.id == *id)
+        {
+            return Arc::new(self.highlight_paints.with_rule_color(pos, color));
+        }
+        self.highlight_paints.clone()
+    }
+
+    /// The Marker of the Parsed View being recolored, `(row, byte, color)`, in the color pointed at.
+    pub fn marker_preview(&self) -> Option<(usize, usize, HighlightColor)> {
+        match self.bar_preview()? {
+            (ColorTarget::RecolorMarker { row, byte }, color) => Some((*row, *byte, color.clone())),
+            _ => None,
+        }
+    }
+
+    /// The Marker of the Raw View being recolored, `(file, line, byte, color)`, in the color pointed at.
+    pub fn raw_marker_preview(&self) -> Option<(Arc<str>, usize, usize, HighlightColor)> {
+        match self.bar_preview()? {
+            (ColorTarget::RawRecolor { file_id, line, byte, .. }, color) => {
+                Some((Arc::from(file_id.as_str()), *line, *byte, color.clone()))
+            }
+            _ => None,
+        }
+    }
+
+    /// Show (or with `None`, stop showing) a bar color on the selection.
+    pub fn preview_bar_color(&mut self, color: Option<HighlightColor>, cx: &mut Context<Self>) {
+        if let Some(bar) = self.color_bar.as_mut().filter(|b| b.preview != color) {
+            bar.preview = color;
+            cx.notify();
+        }
     }
 
     /// Open the bar next to the text selected in the Parsed View.

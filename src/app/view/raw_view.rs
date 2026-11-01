@@ -89,7 +89,8 @@ impl AppView {
         let current_match = self.raw.matches.get(self.raw.current).copied();
         let current_line = self.current_line();
         let selection = self.raw.list_selection;
-        let text_highlights = self.th_matcher.clone();
+        let text_highlights = self.text_highlights_preview();
+        let marker_preview = self.raw_marker_preview();
         let flash = self.raw.list_flash.clone().filter(|(_, _, at)| at.elapsed() < crate::ui::canvas::ROW_FLASH);
         // The Markers of each section's file, by line.
         let files: Vec<Option<crate::workspace::log_space::LogFile>> = sections
@@ -116,7 +117,7 @@ impl AppView {
         let view = cx.entity();
         let extra_sections = sections.clone();
         let (muted, selected_bg, flash_bg, text_selection) =
-            (colors.muted, colors.selected, colors.info, cx.theme().selection);
+            (colors.muted, colors.selected, colors.info, self.selection_fill(cx.theme().selection, cx));
         let border = cx.theme().border;
         let list = uniform_list("raw_list", rows.len(), move |range, _window, cx| {
             let mono = cx.theme().mono_font_family.clone();
@@ -154,11 +155,19 @@ impl AppView {
                                     if m.line_hash.is_some_and(|h| h != crate::workspace::log_space::line_hash(&text)) {
                                         continue;
                                     }
+                                    let color = match &marker_preview {
+                                        Some((id, l, byte, c))
+                                            if **id == *section.file_id && *l == line + 1 && m.range.start <= *byte && *byte < m.range.end =>
+                                        {
+                                            c
+                                        }
+                                        _ => &m.color,
+                                    };
                                     layers.push((
                                         m.range.clone(),
                                         gpui::HighlightStyle {
-                                            background_color: Some(gpui::rgb(m.color.rgb(tone)).into()),
-                                            color: Some(gpui::rgb(crate::palette::text_rgb(m.color.text_tone(tone))).into()),
+                                            background_color: Some(gpui::rgb(color.rgb(tone)).into()),
+                                            color: Some(gpui::rgb(crate::palette::text_rgb(color.text_tone(tone))).into()),
                                             ..Default::default()
                                         },
                                     ));
