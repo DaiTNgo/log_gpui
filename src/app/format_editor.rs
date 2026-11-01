@@ -132,16 +132,6 @@ impl AppView {
         Some((space.id.clone(), file.to_string()))
     }
 
-    /// The row of the open view a "Log Format…" of the Focus Pane is about:
-    /// the line the selection is in, else the selected row.
-    pub fn pane_log_format_row(&self) -> Option<usize> {
-        let from_selection = self.pane_selection.filter(|s| !s.is_empty()).and_then(|sel| {
-            let crate::focus::FocusRow::Entry(ix) = *self.focus_rows.get(sel.ordered().0.row)? else { return None };
-            self.visible_indices.iter().position(|&i| i == ix)
-        });
-        from_selection.or(self.selected_row_pos).filter(|&r| self.log_format_target_of_row(r).is_some())
-    }
-
     /// "Log Format…" on a cell of the row `row` of the open view: the editor
     /// on the Log Format of that line's file, with the line as the sample.
     pub fn edit_log_format_of_row(&mut self, row: usize, window: &mut Window, cx: &mut Context<Self>) {

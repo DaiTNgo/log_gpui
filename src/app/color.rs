@@ -199,6 +199,27 @@ impl AppView {
         cx.notify();
     }
 
+    /// Color Selection: open the bar for the text selected in the view shown,
+    /// the only way to open it for a selection in an editor. Nothing selected,
+    /// nothing opens.
+    pub fn open_bar_for_selection(&mut self, window: &gpui::Window, cx: &mut Context<Self>) {
+        use crate::workspace::working_set::ViewMode;
+        let (target, at) = match self.view_mode {
+            ViewMode::Raw if !self.raw.editors.is_empty() => {
+                (self.raw_editor_mark_target(window, cx), Self::raw_editor_bar_pos(window))
+            }
+            ViewMode::Raw => (self.raw_list_mark_target(), window.mouse_position()),
+            ViewMode::Parsed => (
+                self.text_selection.filter(|s| !s.is_empty()).map(|_| ColorTarget::MarkSelection),
+                window.mouse_position(),
+            ),
+        };
+        if let Some(target) = target {
+            self.color_bar = Some(ColorBar::new(at, target));
+            cx.notify();
+        }
+    }
+
     /// Open the bar to change the color of the Marker under a byte of a row.
     pub fn open_recolor_bar(&mut self, row: usize, byte: usize, at: Point<Pixels>, cx: &mut Context<Self>) {
         self.color_bar = Some(ColorBar::new(at, ColorTarget::RecolorMarker { row, byte }));

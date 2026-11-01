@@ -185,7 +185,7 @@ _Avoid_: Table view, grid view.
 ### Marking
 
 **Marker**:
-A color the user puts by hand on text they selected in one line of one file, so it stands out when reading or in a screenshot. A selection over several lines puts one Marker on each line.
+A color the user puts by hand on text they selected in one line of one file, so it stands out when reading or in a screenshot. A selection over several lines puts one Marker on each line. In a scratch file being edited, selecting text does not offer the color bar, since text is selected there to edit it; Color Selection (⌘⇧H) opens it.
 _Avoid_: Bookmark, tag, annotation.
 
 **Level Marker**:

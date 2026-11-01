@@ -236,24 +236,16 @@ impl AppView {
             return;
         }
         let Some(sel) = self.raw.list_selection else { return };
-        let sections = self.raw_sections();
-        let Some(section) = sections.get(sel.anchor.section) else { return };
-        let file_id = section.file_id.clone();
         if !sel.is_empty() {
-            let (start, end) = sel.ordered();
-            let pieces: Vec<(usize, Range<usize>, String)> = (start.line..=end.line)
-                .filter_map(|line| {
-                    let text = section.lines.get(line)?.to_string();
-                    let range = sel.on_line(sel.anchor.section, line, text.len())?;
-                    Some((line + 1, range, text))
-                })
-                .collect();
-            if !pieces.is_empty() {
-                self.color_bar = Some(ColorBar::new(at, ColorTarget::RawMark { file_id, pieces }));
+            if let Some(target) = self.raw_list_mark_target() {
+                self.color_bar = Some(ColorBar::new(at, target));
             }
             cx.notify();
             return;
         }
+        let sections = self.raw_sections();
+        let Some(section) = sections.get(sel.anchor.section) else { return };
+        let file_id = section.file_id.clone();
         self.raw.list_selection = None;
         let (line, byte) = (sel.anchor.line + 1, sel.anchor.byte);
         self.raw.selected = Some((file_id.clone(), sel.anchor.line));
@@ -273,6 +265,22 @@ impl AppView {
             self.color_bar = Some(ColorBar::new(at, ColorTarget::RecolorTextHighlight { key: key.to_string(), raw: true }));
         }
         cx.notify();
+    }
+
+    /// The bar's target for the text selected in the list.
+    pub(crate) fn raw_list_mark_target(&self) -> Option<ColorTarget> {
+        let sel = self.raw.list_selection.filter(|s| !s.is_empty())?;
+        let sections = self.raw_sections();
+        let section = sections.get(sel.anchor.section)?;
+        let (start, end) = sel.ordered();
+        let pieces: Vec<(usize, Range<usize>, String)> = (start.line..=end.line)
+            .filter_map(|line| {
+                let text = section.lines.get(line)?.to_string();
+                let range = sel.on_line(sel.anchor.section, line, text.len())?;
+                Some((line + 1, range, text))
+            })
+            .collect();
+        (!pieces.is_empty()).then(|| ColorTarget::RawMark { file_id: section.file_id.clone(), pieces })
     }
 
     /// The text selected in the list, lines joined by `\n`.

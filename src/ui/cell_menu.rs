@@ -1,7 +1,6 @@
 //! Context menu of a cell in the Parsed View: color commands (of the Marker
-//! and of the Text Highlight under the pointer, apart) and "Log Format…" of
-//! the cell's file. There is no command to filter from here.
-//! Also the menu of the Focus Pane's lines.
+//! and of the Text Highlight under the pointer, apart). There is no command
+//! to filter from here.
 
 use crate::app::AppView;
 use gpui::{App, Entity};
@@ -49,19 +48,6 @@ pub fn cell_menu(menu: PopupMenu, view: &Entity<AppView>, cx: &App) -> PopupMenu
                 remove_view.update(app, |this, cx| this.remove_text_highlight(&key, cx));
             }));
     }
-    if this.log_format_target_of_row(target.row).is_some() {
-        let row = target.row;
-        let format_view = view.clone();
-        menu = menu.item(PopupMenuItem::separator()).item(PopupMenuItem::new("Log Format…").on_click(
-            move |_, window, app| {
-                let view = format_view.clone();
-                // Deferred so the closing menu cannot steal the input focus.
-                window.defer(app, move |window, app| {
-                    view.update(app, |this, cx| this.edit_log_format_of_row(row, window, cx));
-                });
-            },
-        ));
-    }
     if let Some((column, value)) = target.column_value.clone() {
         let rule_view = view.clone();
         let label = if column == crate::highlight::MESSAGE_COLUMN {
@@ -77,18 +63,4 @@ pub fn cell_menu(menu: PopupMenu, view: &Entity<AppView>, cx: &App) -> PopupMenu
         ));
     }
     menu
-}
-
-/// Menu of the Focus Pane's lines: "Log Format…" for the line selected (or
-/// the one selected text is in).
-pub fn pane_menu(menu: PopupMenu, view: &Entity<AppView>, cx: &App) -> PopupMenu {
-    let target = view.read(cx).pane_log_format_row();
-    let format_view = view.clone();
-    menu.item(PopupMenuItem::new("Log Format…").disabled(target.is_none()).on_click(move |_, window, app| {
-        let Some(row) = target else { return };
-        let view = format_view.clone();
-        window.defer(app, move |window, app| {
-            view.update(app, |this, cx| this.edit_log_format_of_row(row, window, cx));
-        });
-    }))
 }

@@ -1152,10 +1152,11 @@ impl RowEnv {
                 })
                 .when_some(flash, |row, flash| row.child(flash))
                 .when_some(break_label, |row, label| {
-                    row.child(render_break(label, label_left, &colors, break_actions, false))
+                    let place = if vis_pos == 0 { BreakPlace::FirstRow } else { BreakPlace::Above };
+                    row.child(render_break(label, label_left, &colors, break_actions, place))
                 })
                 .when_some(break_after, |row, label| {
-                    row.child(render_break(label, label_left, &colors, None, true))
+                    row.child(render_break(label, label_left, &colors, None, BreakPlace::Below))
                 }),
         )
     }
@@ -1222,6 +1223,18 @@ fn break_button(
         .into_any_element()
 }
 
+/// Where a Break is drawn on its row.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum BreakPlace {
+    /// On the line between this row and the one above.
+    Above,
+    /// On the line between this row and the one below.
+    Below,
+    /// Inside the first row, at its top: there is no line above it, and half
+    /// of the Break would be under the column header.
+    FirstRow,
+}
+
 /// A Break drawn on the line between two rows: a rule with a label. It is
 /// not a row, so it takes no height of its own and sits half over the row
 /// above.
@@ -1230,7 +1243,7 @@ pub(crate) fn render_break(
     label_left: Pixels,
     colors: &CanvasColors,
     actions: Option<BreakActions>,
-    below: bool,
+    place: BreakPlace,
 ) -> gpui::AnyElement {
     let buttons: Vec<gpui::AnyElement> = actions
         .map(|a| {
@@ -1249,8 +1262,11 @@ pub(crate) fn render_break(
         .unwrap_or_default();
     div()
         .absolute()
-        .when(below, |d| d.bottom(px(-7.0)))
-        .when(!below, |d| d.top(px(-7.0)))
+        .map(|d| match place {
+            BreakPlace::Above => d.top(px(-7.0)),
+            BreakPlace::Below => d.bottom(px(-7.0)),
+            BreakPlace::FirstRow => d.top_0(),
+        })
         .left_0()
         .right_0()
         .h(px(14.0))

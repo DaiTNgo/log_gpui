@@ -14,7 +14,7 @@ use crate::workspace::log_space::{LogSpaceKind, line_hash};
 use crate::workspace::scratch_store;
 use crate::workspace::working_set::{TabTarget, ViewMode};
 use gpui::{
-    AppContext as _, Context, HighlightStyle, Subscription,
+    AppContext as _, Context, HighlightStyle, Pixels, Point, Subscription,
     UniformListScrollHandle, Window, hsla, point, px,
 };
 use gpui_component::input::{
@@ -680,9 +680,49 @@ impl AppView {
         }
     }
 
-    /// The Raw View's bar follows the editors' selection: text selected in a
-    /// file shows the bar to paint it; the caret inside a Marker or a Text
-    /// Highlight shows it to change or remove that one. Called while rendering.
+    /// Where the bar opens over an editor: there is no pointer to follow.
+    pub(crate) fn raw_editor_bar_pos(window: &Window) -> Point<Pixels> {
+        point((window.viewport_size().width * 0.5 - px(150.0)).max(px(20.0)), px(110.0))
+    }
+
+    /// The editors, the one with the keyboard first.
+    fn raw_sections_focused_first(&self, window: &Window, cx: &gpui::App) -> Vec<RawSection> {
+        let mut sections = self.raw_sections();
+        sections.sort_by_key(|s| {
+            let focused = self.raw.editors.get(&s.file_id).is_some_and(|e| {
+                gpui::Focusable::focus_handle(e.state.read(cx), cx).is_focused(window)
+            });
+            !focused
+        });
+        sections
+    }
+
+    /// The bar's target for the text selected in a section's editor.
+    fn editor_mark_target(&self, section: &RawSection, cx: &gpui::App) -> Option<crate::app::color::ColorTarget> {
+        let editor = self.raw.editors.get(&section.file_id)?;
+        let range = editor.state.read(cx).selected_range();
+        if range.start == range.end {
+            return None;
+        }
+        let all = section.lines.all();
+        let pieces = raw_view::pieces_from_range(&all, range)
+            .into_iter()
+            .map(|(line, r)| (line, r, all[line - 1].to_string()))
+            .collect::<Vec<_>>();
+        (!pieces.is_empty())
+            .then(|| crate::app::color::ColorTarget::RawMark { file_id: section.file_id.clone(), pieces })
+    }
+
+    /// The bar's target for the text selected in an editor, the focused one first.
+    pub(crate) fn raw_editor_mark_target(&self, window: &Window, cx: &gpui::App) -> Option<crate::app::color::ColorTarget> {
+        self.raw_sections_focused_first(window, cx).iter().find_map(|s| self.editor_mark_target(s, cx))
+    }
+
+    /// The Raw View's bar follows the editors' caret: inside a Marker or a
+    /// Text Highlight it shows the bar to change or remove that one. Selecting
+    /// text does not open it, since text is selected there to edit it; Color
+    /// Selection opens it, and it stays while the selection does. Called while
+    /// rendering.
     pub fn sync_raw_color_bar(&mut self, window: &Window, cx: &mut Context<Self>) {
         use crate::app::color::{ColorBar, ColorTarget};
         let raw_open = matches!(
@@ -703,33 +743,18 @@ impl AppView {
         if self.raw.editors.is_empty() {
             return;
         }
-        let pos = point(
-            (window.viewport_size().width * 0.5 - px(150.0)).max(px(20.0)),
-            px(110.0),
-        );
+        let pos = Self::raw_editor_bar_pos(window);
         let mut wanted: Option<ColorTarget> = None;
-        let sections = self.raw_sections();
-        let mut focused_first: Vec<&RawSection> = sections.iter().collect();
-        focused_first.sort_by_key(|s| {
-            let focused = self.raw.editors.get(&s.file_id).is_some_and(|e| {
-                gpui::Focusable::focus_handle(e.state.read(cx), cx).is_focused(window)
-            });
-            !focused
-        });
-        for section in focused_first {
+        let mut selected: Option<ColorTarget> = None;
+        for section in &self.raw_sections_focused_first(window, cx) {
             let Some(editor) = self.raw.editors.get(&section.file_id) else { continue };
             let (range, cursor) = {
                 let state = editor.state.read(cx);
                 (state.selected_range(), state.cursor())
             };
             if range.start != range.end {
-                let all = section.lines.all();
-                let pieces = raw_view::pieces_from_range(&all, range)
-                    .into_iter()
-                    .map(|(line, r)| (line, r, all[line - 1].to_string()))
-                    .collect::<Vec<_>>();
-                if !pieces.is_empty() {
-                    wanted = Some(ColorTarget::RawMark { file_id: section.file_id.clone(), pieces });
+                if let Some(target) = self.editor_mark_target(section, cx) {
+                    selected = Some(target);
                     break;
                 }
             } else if let Some((line, byte)) = raw_view::line_and_byte_in_rope(
@@ -751,6 +776,13 @@ impl AppView {
                     break;
                 }
             }
+        }
+        // A bar Color Selection opened stays while its text stays selected.
+        if let Some(target) = selected {
+            if raw_open && self.color_bar.as_ref().is_some_and(|b| b.target != target) {
+                self.color_bar = None;
+            }
+            return;
         }
         match (wanted, self.color_bar.as_ref()) {
             (Some(target), Some(bar)) if bar.target == target => {}

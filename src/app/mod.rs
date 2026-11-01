@@ -121,6 +121,11 @@ pub struct AppView {
     /// The row of `focus_rows` with the longest text (sets the pane's width).
     pub focus_longest: usize,
     pub focus_scroll: UniformListScrollHandle,
+    /// The scroll of the working-set tab strip.
+    pub tab_scroll: gpui::ScrollHandle,
+    /// The tab the strip last scrolled into view (index, tab count), so it
+    /// scrolls only when the active tab changes, not over the user's scroll.
+    pub tab_scrolled_to: Option<(usize, usize)>,
     /// The Focus Window, while the Focus Pane lives there. Never saved.
     pub focus_window: Option<focus_window::FocusWindowHandle>,
     pub focus_find_input: Entity<InputState>,
@@ -484,11 +489,6 @@ impl AppView {
             },
         )
         .detach();
-        let columns_query = cx.new(|cx| InputState::new(window, cx).placeholder("Find a field…"));
-        cx.subscribe(&columns_query, |_this: &mut Self, _, event: &InputEvent, cx| {
-            if matches!(event, InputEvent::Change) {
-                cx.notify();
-            }
         // Pointing at a color in the picker previews it on the selection, as pointing at a swatch does.
         cx.observe(&color_picker, |this: &mut Self, picker, cx| {
             let state = picker.read(cx);
@@ -496,6 +496,11 @@ impl AppView {
             this.preview_bar_color(hovered.map(color::color_from_hsla), cx);
         })
         .detach();
+        let columns_query = cx.new(|cx| InputState::new(window, cx).placeholder("Find a field…"));
+        cx.subscribe(&columns_query, |_this: &mut Self, _, event: &InputEvent, cx| {
+            if matches!(event, InputEvent::Change) {
+                cx.notify();
+            }
         })
         .detach();
         let inspector_editor = cx.new(|cx| {
@@ -541,6 +546,8 @@ impl AppView {
             focus_rows: Arc::new(Vec::new()),
             focus_longest: 0,
             focus_scroll: UniformListScrollHandle::new(),
+            tab_scroll: gpui::ScrollHandle::new(),
+            tab_scrolled_to: None,
             focus_window: None,
             focus_find_input,
             focus_find_dirty: true,

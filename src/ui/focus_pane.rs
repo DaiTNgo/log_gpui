@@ -26,7 +26,6 @@ use gpui::{
 };
 use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::input::{Input, InputState};
-use gpui_component::menu::ContextMenuExt as _;
 use gpui_component::scroll::ScrollableElement as _;
 use gpui_component::tag::Tag;
 use gpui_component::{ActiveTheme as _, Icon, Selectable as _, Sizable as _, h_flex, v_flex};
@@ -473,7 +472,6 @@ impl FocusPane {
         let alt_handle = state.scroll_handle.clone();
         let bounds_sink = state.bounds_sink.clone();
         let view = state.view.clone();
-        let menu_view = view.clone();
         let (v_down, v_move, v_up, v_up_out) = (view.clone(), view.clone(), view.clone(), view);
         let header = state.columns.map(|layout| render_column_header(layout, &scroll_handle, &state.colors));
         let env = PaneRows {
@@ -532,8 +530,7 @@ impl FocusPane {
                     .absolute()
                     .size_full(),
             )
-            .child(list)
-            .context_menu(move |menu, _window, cx| crate::ui::cell_menu::pane_menu(menu, &menu_view, cx));
+            .child(list);
 
         // The vertical scrollbar has its own column at the far right, so it never covers the rows.
         let body = div()
@@ -818,7 +815,9 @@ impl PaneRows {
                     )
                 })
                 .when_some(break_label, |row, label| {
-                    row.child(crate::ui::canvas::render_break(label, px(NUMBER_WIDTH + 8.0), &colors, None, false))
+                    use crate::ui::canvas::BreakPlace;
+                    let place = if index == 0 { BreakPlace::FirstRow } else { BreakPlace::Above };
+                    row.child(crate::ui::canvas::render_break(label, px(NUMBER_WIDTH + 8.0), &colors, None, place))
                 }),
         )
     }
