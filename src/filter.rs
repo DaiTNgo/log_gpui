@@ -40,8 +40,9 @@ impl ColumnFilter {
         self.values.iter().any(|v| v == folded)
     }
 
-    /// The text of the column's chip in the Filter Bar: `level: error, warn`,
-    /// `not module: DB`, `message: ∋ timeout`; past two values, `+N`.
+    /// A one-line summary of the column's condition, as its Filter card
+    /// shows it: `level: error, warn`, `not module: DB`, `message: ∋ timeout`;
+    /// past two values, `+N`.
     /// `display` gives a Filter Value as the column shows it.
     pub fn chip_text(&self, label: &str, display: impl Fn(&str) -> String) -> String {
         const SHOWN: usize = 2;
@@ -125,8 +126,8 @@ pub struct FilterState {
     pub columns: Vec<ColumnFilter>,
     #[serde(default)]
     pub time_range: TimeRange,
-    /// The conditions are kept but not applied: every row shows. Any change
-    /// to a condition applies them again. Not saved.
+    /// The conditions are kept but not applied: the Focus Pane lists every
+    /// line. Any change to a condition applies them again. Not saved.
     #[serde(skip)]
     pub paused: bool,
 }

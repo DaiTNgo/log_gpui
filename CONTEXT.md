@@ -192,9 +192,6 @@ _Avoid_: Bookmark, tag, annotation.
 The one right-click menu on text, in the Parsed View, the Raw View and a scratch file's editor. On a selection it offers Copy, "Mark here" and "Highlight everywhere" (each a row of colors; the second only for text in one line) and "Color…"; on a cell of the Parsed View, Show only / Hide its value and "Highlight rows where …" (not on TIMESTAMP); on a Marker or Text Highlight, changing or removing it. The Raw View's has no filter items, since Filter does not apply there.
 _Avoid_: Cell menu, context menu.
 
-**Filter Bar**:
-The row above the Parsed View showing the Filter while it has a condition, the context sidebar open or not: one chip per column and one for the Time Range, Clear, and a button pausing the Filter. A paused Filter keeps its conditions but lets every line through until it is applied again or a condition changes; pausing is not remembered.
-
 **Level Marker**:
 The symbol the app puts automatically in the Gutter of error and warning lines. It is not a Marker and the user cannot set or remove it.
 _Avoid_: Passive marker, auto marker.
@@ -294,7 +291,7 @@ A log line of the view whose raw line satisfies the Search Expression, with ever
 _Avoid_: Hit, result.
 
 **Filter**:
-Narrowing the lines of the Focus Pane by the values of the file's columns, in the Parsed View only. Columns and their values are detected when the file is loaded, and the user picks values to show or hide. The only place where the user asks about a specific column.
+Narrowing the lines of the Focus Pane by the values of the file's columns, in the Parsed View only. Columns and their values are detected when the file is loaded, and the user picks values to show or hide. The only place where the user asks about a specific column. It lives only in the Filter section of the context sidebar; nothing above the view shows it, since the view always shows every line. Pausing it keeps the conditions but lets every line into the Focus Pane until it is applied again or a condition changes; pausing is not remembered.
 _Avoid_: Query, view.
 
 **Focus Pane**:

@@ -17,7 +17,7 @@ Muốn lọc thì phải mở sidebar và đi qua bốn bước. Đóng sidebar 
 - Bấm (không kéo) lên Marker hay Text Highlight có sẵn vẫn mở thanh màu để đổi màu hoặc gỡ, như hiện nay.
 - Raw View có menu chuột phải lần đầu: dùng chính Selection Menu.
 - **BREAKING (spec)**: Menu chuột phải được có lệnh lọc. Spec hiện tại cấm điều này ("Menu chuột phải SHALL NOT có lệnh lọc").
-- **Filter Bar** mới phía trên bảng: mỗi điều kiện đang bật là một chip (`level: error, warn ×`, `not message ∋ "…" ×`). Thanh có nút "Clear" và nút tạm tắt toàn bộ Filter mà không xoá điều kiện nào.
+- Filter vẫn chỉ nằm trong context sidebar, vì nó chỉ lọc Focus Pane còn bảng luôn hiện toàn bộ log. Header của section Filter có nút tạm tắt toàn bộ Filter mà không xoá điều kiện nào.
 - Context sidebar sắp xếp lại:
   - Header ghi phạm vi (file/view đang áp dụng).
   - Nút "+" nằm trên header của section.
@@ -41,7 +41,7 @@ Muốn lọc thì phải mở sidebar và đi qua bốn bước. Đóng sidebar 
   - Thanh màu không còn tự mở khi chọn text; chỉ mở bằng Selection Menu ("Color…"), lệnh ⌘⇧H hoặc khi bấm lên màu có sẵn.
   - Mark và Highlight everywhere được làm thẳng từ Selection Menu.
 - `log-filter`:
-  - Thêm Filter Bar, tạm tắt Filter, và lọc từ vùng chọn / Inspector.
+  - Thêm tạm tắt Filter, và lọc từ vùng chọn / Inspector.
   - Bỏ điều cấm lệnh lọc trong menu chuột phải.
   - Time Range có preset; thẻ Filter hiện dạng tóm tắt.
 - `highlight-rule`:
@@ -54,7 +54,7 @@ Muốn lọc thì phải mở sidebar và đi qua bốn bước. Đóng sidebar 
 - **UI**:
   - `src/ui/context_sidebar.rs`, `src/ui/inspector.rs`
   - `src/app/view/filter_panel.rs`, `highlights_panel.rs`, `columns_panel.rs`, `color_bar.rs`
-  - Mới: `src/ui/selection_menu.rs` (thay `cell_menu.rs`), `src/app/view/filter_bar.rs`
+  - Mới: `src/ui/selection_menu.rs` (thay `cell_menu.rs`)
 - **Mở thanh màu**:
   - `src/app/color.rs`: `open_color_bar`, nhánh `MarkSelection`
   - `src/app/raw_list.rs`: `finish_raw_selection`

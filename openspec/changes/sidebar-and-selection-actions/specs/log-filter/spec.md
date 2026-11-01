@@ -1,27 +1,11 @@
 ## ADDED Requirements
 
-### Requirement: Filter Bar
-Khi Filter của view đang mở khác rỗng, Parsed View SHALL hiện Filter Bar phía trên bảng, cả khi context sidebar đóng. Filter Bar có:
-- Một chip cho mỗi cột có điều kiện: `<cột>: <giá trị>, <giá trị>`, rút gọn sau hai giá trị, có tiền tố `not` khi ở Hide Mode.
-- Một chip cho Time Range.
-- Nút "Clear" và nút tạm tắt.
-
-× trên chip SHALL xoá điều kiện đó. Bấm vào thân chip SHALL mở context sidebar ở section Filter, với thẻ của cột đó đang mở. Khi Filter rỗng, Filter Bar SHALL NOT hiện.
-
-#### Scenario: Thấy Filter khi sidebar đóng
-- **WHEN** Filter có `level` = `error`, `warn` và context sidebar đang đóng
-- **THEN** phía trên bảng có chip `level: error, warn`
-
-#### Scenario: Xoá từ chip
-- **WHEN** người dùng bấm × trên chip `level: error, warn`
-- **THEN** điều kiện `level` bị xoá và mọi level được hiển thị
-
 ### Requirement: Tạm tắt Filter
-Filter Bar và header Filter SHALL có nút tạm tắt. Khi Filter đang tạm tắt, view SHALL hiện mọi dòng như khi Filter rỗng, nhưng các điều kiện SHALL vẫn còn và hiện gạch ngang. Bấm lại, hoặc sửa bất kỳ điều kiện nào, SHALL bật lại Filter. Trạng thái tạm tắt SHALL NOT được lưu.
+Filter chỉ nằm ở section Filter của context sidebar; ngoài sidebar SHALL NOT có thanh hay chip nào hiện Filter. Header của section Filter SHALL có nút tạm tắt khi Filter khác rỗng. Khi Filter đang tạm tắt, Focus Pane SHALL liệt kê mọi dòng như khi Filter rỗng (bảng ở trên vẫn luôn hiện toàn bộ log), nhưng các điều kiện SHALL vẫn còn và hiện gạch ngang. Bấm lại, hoặc sửa bất kỳ điều kiện nào, SHALL bật lại Filter. Trạng thái tạm tắt SHALL NOT được lưu.
 
 #### Scenario: Tạm tắt rồi bật lại
 - **WHEN** Filter đang ẩn dòng `DEBUG`, người dùng bấm tạm tắt rồi bấm lại
-- **THEN** lúc tạm tắt có dòng `DEBUG`, sau khi bấm lại thì `DEBUG` lại bị ẩn
+- **THEN** lúc tạm tắt Focus Pane có dòng `DEBUG`, sau khi bấm lại thì `DEBUG` lại bị ẩn khỏi Focus Pane
 
 #### Scenario: Không lưu khi tạm tắt
 - **WHEN** người dùng tạm tắt Filter rồi đóng và mở lại view

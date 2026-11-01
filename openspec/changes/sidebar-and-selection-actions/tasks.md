@@ -18,12 +18,11 @@
 - [x] 3.2 Nối Show only / Hide trong Selection Menu với hàm này. Nhãn ghi đúng điều kiện (`level = error`, `Message ∋ "…"`)
 - [x] 3.3 Test: trọn ô → Filter Value; một phần ô → Custom Value; MESSAGE → thẻ Message; thêm vào điều kiện cùng chế độ; thay khi khác chế độ; cột vượt `MAX_DISTINCT` → Custom Value
 
-## 4. Filter Bar và tạm tắt
+## 4. Tạm tắt Filter
 
 - [x] 4.1 Thêm `#[serde(skip)] paused` vào `FilterState`. Bộ lọc coi Filter là rỗng khi `paused`. Mọi hàm sửa Filter tự bỏ `paused`
-- [x] 4.2 Viết `src/app/view/filter_bar.rs`: chip theo cột (rút gọn sau 2 giá trị, `not` cho Hide Mode), chip Time Range, Clear, nút tạm tắt. Chỉ hiện khi Filter khác rỗng, trên Parsed View
-- [x] 4.3 Bấm thân chip → `reveal_context_section(Filter)` và bung đúng thẻ; × → `filter_clear_column`
-- [x] 4.4 Test: chip phản ánh Filter; × xoá đúng cột; tạm tắt hiện mọi dòng và giữ điều kiện; sửa điều kiện thì bật lại; `paused` không được lưu
+- [x] 4.2 Nút tạm tắt trên header section Filter (chỉ khi Filter khác rỗng). Không có thanh chip Filter ngoài sidebar
+- [x] 4.3 Test: tạm tắt cho Focus Pane hiện mọi dòng và giữ điều kiện; sửa điều kiện thì bật lại; `paused` không được lưu
 
 ## 5. Context sidebar
 
@@ -51,6 +50,6 @@
 
 ## 8. Tài liệu và kiểm tra
 
-- [x] 8.1 Cập nhật `CONTEXT.md`: mục Marker và Text Highlight (thanh màu không tự mở; Selection Menu), thêm thuật ngữ **Selection Menu** và **Filter Bar**
+- [x] 8.1 Cập nhật `CONTEXT.md`: mục Marker và Text Highlight (thanh màu không tự mở; Selection Menu), thêm thuật ngữ **Selection Menu**
 - [x] 8.2 Chạy các test liên quan tới những phần đã sửa
-- [ ] 8.3 Kiểm tra tay trong app: chọn để copy không bật gì; chuột phải đủ mục ở Parsed, Raw list và editor scratch; Filter Bar; Inspector ghim ở đáy khi mở form dài
+- [ ] 8.3 Kiểm tra tay trong app: chọn để copy không bật gì; chuột phải đủ mục ở Parsed, Raw list và editor scratch; tạm tắt Filter trên header; Inspector ghim ở đáy khi mở form dài

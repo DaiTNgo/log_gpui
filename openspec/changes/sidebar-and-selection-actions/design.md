@@ -60,11 +60,12 @@ Bỏ lời gọi mở thanh trong `open_color_bar` (nhả chuột ở Parsed Vie
 Áp vào điều kiện đang có của cột: nếu cùng chế độ (show/hide) thì thêm giá trị vào. Nếu khác chế độ thì thay cả điều kiện của cột bằng giá trị mới với chế độ mới. Nhãn ghi đúng điều kiện: `Show only Message ∋ "POST /checkout"`, `Hide source = web`.
 Phương án khác: luôn thay điều kiện của cột. Không chọn, vì "Show only error" rồi "Show only warn" thường là muốn cả hai.
 
-**5. Filter Bar: chip theo từng cột có điều kiện, cộng Time Range.**
-`src/app/view/filter_bar.rs` vẽ một hàng trên Parsed View. Hàng này chỉ hiện khi Filter của view khác rỗng. Chip gồm `cột: giá trị, giá trị` (rút gọn sau 2 giá trị), hoặc `not cột: …` cho Hide Mode, và `time: 10:30 → 10:35`. × xoá điều kiện của cột đó. Bấm vào thân chip thì mở sidebar, mở section Filter và bung đúng thẻ đó (`reveal_context_section` đã có). Cuối hàng có "Clear" và nút tạm tắt.
+**5. Không có Filter Bar ngoài sidebar.**
+Filter chỉ lọc Focus Pane; bảng ở trên luôn hiện toàn bộ log. Một thanh chip đặt trên bảng sẽ khiến người dùng tưởng bảng đang bị lọc, nên Filter chỉ nằm trong section Filter của context sidebar. Mỗi thẻ ở đó đã là một dòng tóm tắt điều kiện.
+Phương án khác: thanh chip trên bảng, hoặc trên Focus Pane. Không chọn, theo yêu cầu giữ Filter ở right sidebar.
 
 **6. Tạm tắt Filter là cờ không lưu trên `FilterState`.**
-Thêm `#[serde(skip)] paused: bool`. Khi `paused`, bộ lọc coi như rỗng, Filter Bar và header Filter hiện "paused", chip bị gạch ngang. Mọi thao tác sửa Filter tự bỏ `paused`. Cờ không được lưu, nên mở lại view thì Filter đang bật.
+Thêm `#[serde(skip)] paused: bool`. Khi `paused`, bộ lọc coi như rỗng (Focus Pane liệt kê mọi dòng), header Filter ghi "paused" và phần tóm tắt các thẻ bị gạch ngang. Mọi thao tác sửa Filter tự bỏ `paused`. Cờ không được lưu, nên mở lại view thì Filter đang bật.
 Phương án khác: lưu cờ. Không chọn, vì mở lại một view thấy đủ dòng trong khi sidebar vẫn ghi có Filter sẽ gây nhầm.
 
 **7. Sidebar: vùng cuộn ở trên, Inspector ở dưới, ngăn bằng thanh chia.**
@@ -108,5 +109,4 @@ Không có migration dữ liệu. `WorkspaceState` và session thêm `context_la
 
 ## Open Questions
 
-- Filter Bar có nên hiện cả khi sidebar đang mở không? Đề xuất: có, vì nó nằm trên bảng chứ không thuộc sidebar.
 - Có cần setting để bật lại thanh màu tự mở cho người quen dùng không? Đề xuất: chưa, chờ phản hồi.

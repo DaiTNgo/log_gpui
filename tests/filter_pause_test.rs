@@ -1,14 +1,12 @@
-//! The Filter Bar and pausing the Filter (openspec change
-//! `sidebar-and-selection-actions`): the Filter shows above the table as
-//! chips, a chip's × removes its condition, and a paused Filter shows every
-//! line while keeping its conditions.
+//! Pausing the Filter (openspec change `sidebar-and-selection-actions`):
+//! a paused Filter lets every line into the Focus Pane while keeping its
+//! conditions. The Filter shows only in the context sidebar.
 
 mod common;
 
 use common::Harness;
 use gpui::TestAppContext;
 use log_gpui::filter::{ColumnFilter, FilterState};
-use log_gpui::workspace::state::ContextSection;
 
 fn lines() -> Vec<String> {
     vec![
@@ -29,7 +27,7 @@ fn shown(h: &Harness) -> usize {
 }
 
 #[test]
-fn a_chip_names_its_values_and_counts_the_rest() {
+fn a_card_summary_names_its_values_and_counts_the_rest() {
     let f = ColumnFilter { column: "level".into(), values: vec!["error".into(), "warn".into()], ..Default::default() };
     assert_eq!(f.chip_text("Level", |v| v.to_uppercase()), "Level: ERROR, WARN");
     let f = ColumnFilter {
@@ -56,31 +54,15 @@ fn pausing_is_not_saved_and_a_change_applies_the_filter_again() {
 }
 
 #[gpui::test]
-fn the_bar_shows_the_filter_and_a_chip_removes_its_condition(cx: &mut TestAppContext) {
+fn nothing_outside_the_sidebar_shows_the_filter(cx: &mut TestAppContext) {
     let mut h = common::open_app_with_lines(cx, &lines());
-    draw(&mut h);
-    assert!(h.cx.debug_bounds("filter-chip-level").is_none(), "no bar while the Filter is empty");
     h.view.update(&mut h.cx, |app, cx| {
         app.context_sidebar.visible = false;
         app.filter_toggle_value("level", "ERROR", cx);
-        app.filter_toggle_value("level", "WARN", cx);
     });
     draw(&mut h);
-    assert_eq!(shown(&h), 2);
-    let chip = h.cx.debug_bounds("filter-chip-level").expect("the chip shows with the sidebar closed");
-    // The chip's body opens the Filter section on its card.
-    h.cx.simulate_click(chip.center(), gpui::Modifiers::none());
-    h.view.read_with(&h.cx, |app, _| {
-        assert!(app.context_sidebar.visible);
-        assert!(!app.context_sidebar.is_collapsed(ContextSection::Filter));
-        assert_eq!(app.filter_ui.expanded.as_deref(), Some("level"));
-    });
-    draw(&mut h);
-    let remove = h.cx.debug_bounds("filter-chip-level-remove").unwrap();
-    h.cx.simulate_click(remove.center(), gpui::Modifiers::none());
-    draw(&mut h);
-    assert_eq!(shown(&h), 4);
-    h.view.read_with(&h.cx, |app, _| assert!(app.filter_state.is_empty()));
+    assert_eq!(shown(&h), 1);
+    assert!(h.cx.debug_bounds("filter-chip-level").is_none(), "no chip row above the view");
 }
 
 #[gpui::test]

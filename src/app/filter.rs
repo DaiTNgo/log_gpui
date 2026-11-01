@@ -373,6 +373,13 @@ impl AppView {
         self.apply_filter_change(cx);
     }
 
+    /// Pause the Filter (the Focus Pane lists every line, the conditions
+    /// stay) or apply it again.
+    pub fn toggle_filter_paused(&mut self, cx: &mut Context<Self>) {
+        self.filter_state.paused = !self.filter_state.paused;
+        self.apply_filter_change(cx);
+    }
+
     pub fn filter_clear_all(&mut self, cx: &mut Context<Self>) {
         self.filter_state.clear();
         self.filter_ui.expanded = None;
