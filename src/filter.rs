@@ -39,6 +39,22 @@ impl ColumnFilter {
     pub fn has_value(&self, folded: &str) -> bool {
         self.values.iter().any(|v| v == folded)
     }
+
+    /// The text of the column's chip in the Filter Bar: `level: error, warn`,
+    /// `not module: DB`, `message: ∋ timeout`; past two values, `+N`.
+    /// `display` gives a Filter Value as the column shows it.
+    pub fn chip_text(&self, label: &str, display: impl Fn(&str) -> String) -> String {
+        const SHOWN: usize = 2;
+        let mut values: Vec<String> = self.values.iter().map(|v| display(v)).collect();
+        values.extend(self.custom.iter().map(|c| format!("∋ {c}")));
+        let extra = values.len().saturating_sub(SHOWN);
+        values.truncate(SHOWN);
+        let mut text = format!("{}{label}: {}", if self.hide { "not " } else { "" }, values.join(", "));
+        if extra > 0 {
+            text.push_str(&format!(" +{extra}"));
+        }
+        text
+    }
 }
 
 /// From/To bounds on `timestamp`, as typed. An empty bound is unbounded.

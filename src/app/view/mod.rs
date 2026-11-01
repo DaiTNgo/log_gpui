@@ -7,6 +7,7 @@ mod format_editor_view;
 mod command_views;
 mod connection_view;
 mod dialogs;
+mod filter_bar;
 mod filter_panel;
 mod full_dialog;
 mod focus_pane;
@@ -57,6 +58,7 @@ impl Render for AppView {
         let tab_bar = self.render_tab_bar(cx);
         let go_to_bar = self.render_go_to_bar(cx);
         let detected_hint = self.render_detected_hint_bar(cx);
+        let filter_bar = if self.view_mode == ViewMode::Parsed { self.render_filter_bar(cx) } else { None };
 
         self.refresh_text_paint(cx);
 
@@ -231,6 +233,7 @@ impl Render for AppView {
                             .child(editor_toolbar)
                             .children(go_to_bar)
                             .children(detected_hint)
+                            .children(filter_bar)
                             .child(log_canvas)
                             .child(notice),
                     )
