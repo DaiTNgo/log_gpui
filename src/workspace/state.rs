@@ -69,6 +69,9 @@ pub struct WorkspaceState {
     /// their Value Color: an app setting.
     #[serde(default = "default_true")]
     pub show_value_colors: bool,
+    /// Whether log lines are painted per token (Syntax Color): an app setting.
+    #[serde(default = "default_true")]
+    pub show_syntax_color: bool,
 }
 
 /// Default Live Window.
@@ -112,6 +115,7 @@ impl Default for WorkspaceState {
             raw_soft_wrap: true,
             show_search_highlight: true,
             show_value_colors: true,
+            show_syntax_color: true,
         }
     }
 }

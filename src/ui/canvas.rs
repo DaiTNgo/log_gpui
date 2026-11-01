@@ -57,6 +57,52 @@ pub struct CanvasColors {
     pub text_selection: gpui::Hsla,
     /// Whether the dark theme is active (picks the palette's dark values).
     pub dark: bool,
+    /// The colors of Syntax Color; `None` when the setting is off.
+    pub syntax: Option<SyntaxPalette>,
+}
+
+/// The colors Syntax Color paints tokens in, besides the level colors.
+#[derive(Clone, Copy)]
+pub struct SyntaxPalette {
+    pub timestamp: gpui::Hsla,
+    pub stack_trace: gpui::Hsla,
+    pub caused_by: gpui::Hsla,
+    pub module: gpui::Hsla,
+    pub number: gpui::Hsla,
+    pub string: gpui::Hsla,
+    pub identifier: gpui::Hsla,
+    pub key: gpui::Hsla,
+}
+
+impl SyntaxPalette {
+    /// Fixed per light/dark theme; every color keeps 4.5:1 against the
+    /// theme's background.
+    pub fn new(dark: bool) -> Self {
+        let h = |deg: f32, s: f32, l: f32| gpui::hsla(deg / 360.0, s, l, 1.0);
+        if dark {
+            Self {
+                timestamp: h(215.0, 0.22, 0.73),
+                stack_trace: h(220.0, 0.10, 0.71),
+                caused_by: h(350.0, 0.65, 0.76),
+                module: h(265.0, 0.70, 0.77),
+                number: h(25.0, 0.85, 0.68),
+                string: h(165.0, 0.50, 0.65),
+                identifier: h(190.0, 0.70, 0.68),
+                key: h(220.0, 0.80, 0.74),
+            }
+        } else {
+            Self {
+                timestamp: h(215.0, 0.30, 0.38),
+                stack_trace: h(220.0, 0.08, 0.38),
+                caused_by: h(350.0, 0.60, 0.40),
+                module: h(265.0, 0.50, 0.42),
+                number: h(22.0, 0.85, 0.36),
+                string: h(165.0, 0.80, 0.26),
+                identifier: h(190.0, 0.85, 0.27),
+                key: h(220.0, 0.70, 0.42),
+            }
+        }
+    }
 }
 
 /// The single Match color: shared Match paint when Phrase colors are off, the
@@ -85,6 +131,36 @@ pub fn stderr_color(dark: bool) -> gpui::Hsla {
 }
 
 impl CanvasColors {
+    /// The color paints of the tokens of `text`, in bytes of `text`; empty
+    /// when Syntax Color is off.
+    pub fn syntax_paints(
+        &self,
+        text: &str,
+        scope: crate::syntax_color::Scope,
+    ) -> Vec<(std::ops::Range<usize>, gpui::Hsla)> {
+        use crate::syntax_color::TokenKind;
+        let Some(palette) = &self.syntax else {
+            return Vec::new();
+        };
+        crate::syntax_color::tokenize(text, scope)
+            .into_iter()
+            .map(|t| {
+                let color = match t.kind {
+                    TokenKind::Timestamp => palette.timestamp,
+                    TokenKind::Level(level) => self.level(level),
+                    TokenKind::StackTrace => palette.stack_trace,
+                    TokenKind::CausedBy => palette.caused_by,
+                    TokenKind::Module => palette.module,
+                    TokenKind::Number => palette.number,
+                    TokenKind::String => palette.string,
+                    TokenKind::Identifier => palette.identifier,
+                    TokenKind::Key => palette.key,
+                };
+                (t.range, color)
+            })
+            .collect()
+    }
+
     pub fn tone(&self) -> Tone {
         if self.dark { Tone::Dark } else { Tone::Light }
     }
@@ -1394,8 +1470,9 @@ fn hsla_of(rgb: u32) -> gpui::Hsla {
     gpui::rgb(rgb).into()
 }
 
-/// The text of one cell, with its Value Color, Text Highlights, Markers,
-/// Search Matches and the text selection painted on it, bottom to top. A
+/// The text of one cell, with its Value Color or Syntax Color, Text
+/// Highlights, Search Matches, Markers and the text selection painted on it,
+/// bottom to top. A
 /// Continuation Line's other cells show a dim `_`.
 pub(crate) fn render_text_cell(ctx: &CellCtx, cell: TextCell) -> gpui::AnyElement {
     if shows_placeholder(ctx.entry, cell) {
@@ -1419,6 +1496,18 @@ pub(crate) fn render_text_cell(ctx: &CellCtx, cell: TextCell) -> gpui::AnyElemen
         && let Some(rgb) = colors.rgb(field, text)
     {
         layers.push(Layer { range: 0..text.len(), background: None, color: Some(hsla_of(rgb)) });
+    }
+    // Syntax Color (message and whole lines) and Value Color (identifier
+    // cells) color text of different cells: both sit lowest.
+    if matches!(cell, TextCell::Message | TextCell::Raw) {
+        let scope = if cell == TextCell::Raw {
+            crate::syntax_color::Scope::Line
+        } else {
+            crate::syntax_color::Scope::Message { continuation: ctx.entry.is_continuation() }
+        };
+        for (range, color) in ctx.colors.syntax_paints(text, scope) {
+            layers.push(Layer { range, background: None, color: Some(color) });
+        }
     }
     if let Some(span) = &span {
         for h in ctx.text_highlights {

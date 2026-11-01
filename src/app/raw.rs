@@ -34,6 +34,8 @@ pub const SCRATCH_SAVE_DEBOUNCE: Duration = Duration::from_millis(500);
 pub struct ScratchEditor {
     pub state: gpui::Entity<EditorState>,
     pub highlights: Option<TextDecorationCollection>,
+    /// The lines Syntax Color was last painted on.
+    pub syntax_lines: Option<std::ops::Range<usize>>,
     _subscription: Subscription,
     /// Re-renders the view when the editor's selection moves, so the color
     /// bar follows it.
@@ -79,6 +81,8 @@ pub struct RawViewState {
     /// count (an older flash stops fading once a newer one starts).
     flash: Option<RangeDecorationCollection>,
     flash_count: u64,
+    /// A look at whether the editors scrolled off their Syntax Color is due.
+    syntax_check_pending: bool,
     /// The split lines of each edited scratch file, so rendering does not
     /// split the whole text again every frame.
     /// Selection each editor had when the view last re-rendered for it.
@@ -118,6 +122,7 @@ impl RawViewState {
             selected: None,
             flash: None,
             flash_count: 0,
+            syntax_check_pending: false,
             last_selection: HashMap::new(),
             lines_cache: Default::default(),
             pending_appends: HashMap::new(),
@@ -330,6 +335,12 @@ impl AppView {
             if self.raw.editors.contains_key(&section.file_id) {
                 continue;
             }
+            // The file is still being read: an editor made now would be empty
+            // and its empty text kept (and saved over the file). The frame
+            // after the read makes it.
+            if !self.raw.texts.contains_key(&section.file_id) && !self.parsed_files.contains_key(&section.file_id) {
+                continue;
+            }
             let text = self
                 .raw
                 .texts
@@ -386,10 +397,11 @@ impl AppView {
                     }
                     cx.notify();
                 }
+                this.schedule_syntax_check(cx);
             });
             self.raw.editors.insert(
                 section.file_id.clone(),
-                ScratchEditor { state, highlights: None, _subscription: subscription, _observe: observe },
+                ScratchEditor { state, highlights: None, syntax_lines: None, _subscription: subscription, _observe: observe },
             );
             created = true;
         }
@@ -891,7 +903,35 @@ impl AppView {
         .detach();
     }
 
-    /// Paint the scratch editors: Text Highlights, every Match (the current
+    /// Look, a moment from now, at whether a scratch editor scrolled past the
+    /// lines Syntax Color is painted on, and paint again if so. The editor
+    /// lays itself out after the scroll, so its visible lines are only known
+    /// once the frame is drawn.
+    pub(crate) fn schedule_syntax_check(&mut self, cx: &mut Context<Self>) {
+        if self.raw.syntax_check_pending || self.raw.editors.is_empty() {
+            return;
+        }
+        self.raw.syntax_check_pending = true;
+        cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(Duration::from_millis(40)).await;
+            this.update(cx, |this, cx| {
+                this.raw.syntax_check_pending = false;
+                let off_screen = this.raw.editors.values().any(|e| {
+                    match (&e.syntax_lines, e.state.read(cx).visible_row_range()) {
+                        (Some(painted), Some(visible)) => visible.start < painted.start || visible.end > painted.end,
+                        _ => false,
+                    }
+                });
+                if off_screen {
+                    this.update_raw_highlights(cx);
+                }
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Paint the scratch editors: Syntax Color, Text Highlights, every Match (the current
     /// one stronger) and Markers, bottom to top.
     pub(crate) fn update_raw_highlights(&mut self, cx: &mut Context<Self>) {
         let sections = self.raw_sections();
@@ -900,6 +940,7 @@ impl AppView {
         let all_bg = hsla(0.55, 0.85, 0.55, 0.35);
         let current_bg = hsla(0.55, 0.9, 0.55, 0.7);
         let tone = if cx.theme().is_dark() { Tone::Dark } else { Tone::Light };
+        let colors = self.canvas_colors(cx);
         let phrase_fills = (self.phrase_colors() && matcher.is_some()).then(|| {
             let keys = matcher.as_ref().map(|m| m.phrase_keys()).unwrap_or_default();
             crate::ui::canvas::search_phrase_fills(&keys, tone)
@@ -930,6 +971,31 @@ impl AppView {
         for (si, section) in sections.iter().enumerate() {
             let Some(editor) = self.raw.editors.get_mut(&section.file_id) else { continue };
             let mut decorations = Vec::new();
+            // Syntax Color is the lowest paint: the Text Highlights, Matches
+            // and Markers below go over it. Only the lines on screen and a
+            // margin around them: the editor says which they are, and
+            // `visible` changes as it scrolls.
+            editor.syntax_lines = None;
+            if colors.syntax.is_some() {
+                let lines = section.lines.all();
+                let margin = crate::syntax_color::EDITOR_LINE_MARGIN;
+                let visible = editor.state.read(cx).visible_row_range().unwrap_or(0..0);
+                // Not cut at the last line: the editor counts one more line
+                // after a final newline, and a `visible` past `painted` would
+                // paint again for ever.
+                let span = visible.start.saturating_sub(margin)..visible.end + margin;
+                let starts = raw_view::line_starts(&lines);
+                for line_ix in span.start..span.end.min(lines.len()) {
+                    let (Some(line), Some(&offset)) = (lines.get(line_ix), starts.get(line_ix)) else { continue };
+                    for (range, color) in colors.syntax_paints(line, crate::syntax_color::Scope::Line) {
+                        decorations.push(TextDecoration::new(
+                            offset + range.start..offset + range.end,
+                            HighlightStyle { color: Some(color), ..Default::default() },
+                        ));
+                    }
+                }
+                editor.syntax_lines = Some(span);
+            }
             // Text Highlights under the Matches.
             if !text_highlights.is_empty() {
                 let mut offset = 0usize;

@@ -208,6 +208,10 @@ _Avoid_: Hash color, auto color, identifier highlight.
 The fixed set of colors offered for Markers, Text Highlights and Highlight Rules, each hue in several shades, next to a free color picker.
 _Avoid_: Color list, swatches.
 
+**Syntax Color**:
+The color of the text of a log line by kind of token: timestamp, level, module, number, quoted string, identifier (UUID, IPv4, URL), the key of `key=value`, stack trace and `Caused by:`. It paints text color only, never a background, in the Raw View, the Focus Pane and the message cell of the Parsed View (whose other cells keep their own colors). Fixed per theme, not chosen by the user. One app-wide setting, on by default and kept across restarts. Markers, Highlight Rules and Search Matches paint over it.
+_Avoid_: Syntax highlighting, token colors, Highlight Rule.
+
 ### Lines
 
 **Continuation Line**:
@@ -450,3 +454,4 @@ L26. **Full Read Never Cuts Silently**: Open in full reads no more than the Full
 42. **Reading Never Blocks**: Opening a file, Search, a Filter or Highlight Rule Custom Value, a new Detected Field and another Log Format all run in the background with progress; results show as they come, and the view can always be read and scrolled.
 43. **Text Stays On Disk**: The app never holds the text of every line in memory: only the lines shown and a small set around them. A Remote File's lines are on disk in its Remote Cache (L10). A scratch file's text is in memory only while its editor is open in the open tab or a Warm Tab.
 44. **Only The Open Tab Reads**: When the app opens only the chosen tab is read; every other tab is a Dormant Tab. Only the open tab reads: a tab the user leaves stops reading at once. Its Line Indexes stay in memory as a Warm Tab while they fit in the Warm Tab Budget, the tab left longest ago going Dormant first; a Dormant Tab reads its files again when chosen (a Remote File from its Remote Cache, then only what is new on the Server). Closing the last tab that shows files of a Server ends the connection to it.
+45. **Syntax Color Sits Lowest**: Text is painted, from the top, by a Marker, a Highlight Rule, a Search Match, a Text Highlight, Syntax Color or a Value Color (they color different cells), then the default color. A higher paint covers a lower one only over the characters (or cell) it covers. Turning off Search Highlight or Syntax Color changes nothing about the other, nor about which lines Match. Only the lines on screen are tokenized, and at most their first 4096 bytes.

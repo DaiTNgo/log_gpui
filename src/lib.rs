@@ -29,6 +29,7 @@ pub mod search_color;
 pub mod search_expr;
 pub mod search_history;
 pub mod space_view;
+pub mod syntax_color;
 pub mod text_highlight;
 pub mod text_selection;
 pub mod theme;

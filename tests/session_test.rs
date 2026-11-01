@@ -469,3 +469,19 @@ fn an_older_session_with_the_old_live_window_default_takes_the_new_one() {
     assert_eq!(read(5, 100_000), 100_000, "chosen after the change");
     assert_eq!(log_gpui::workspace::state::WorkspaceState::new().live_window, 1_000_000);
 }
+
+#[test]
+fn test_syntax_color_survives_a_restart_and_defaults_to_on() {
+    let mut ws = build_workspace();
+    assert!(ws.show_syntax_color);
+    ws.show_syntax_color = false;
+    let json = SessionManifest::from_workspace(&ws).to_json().unwrap();
+    let restored = SessionManifest::from_json(&json).unwrap().into_workspace();
+    assert!(!restored.show_syntax_color);
+
+    // A manifest from before the setting loads with Syntax Color on.
+    let mut value: serde_json::Value = serde_json::from_str(&json).unwrap();
+    value.as_object_mut().unwrap().remove("show_syntax_color");
+    let old = SessionManifest::from_json(&value.to_string()).unwrap().into_workspace();
+    assert!(old.show_syntax_color);
+}

@@ -155,6 +155,20 @@ impl AppView {
         self.set_show_value_colors(show, cx);
     }
 
+    /// Syntax Color: whether log lines are painted per token. One setting for
+    /// every tab.
+    pub fn set_show_syntax_color(&mut self, show: bool, cx: &mut Context<Self>) {
+        self.workspace_state.show_syntax_color = show;
+        self.update_raw_highlights(cx);
+        self.schedule_session_save(cx);
+        cx.notify();
+    }
+
+    pub fn toggle_syntax_color(&mut self, cx: &mut Context<Self>) {
+        let show = !self.workspace_state.show_syntax_color;
+        self.set_show_syntax_color(show, cx);
+    }
+
     /// Whether Search Matches are painted per Phrase (the Settings toggle).
     /// The Canvas, minimap, Focus Pane and Raw View read it here.
     pub fn phrase_colors(&self) -> bool {

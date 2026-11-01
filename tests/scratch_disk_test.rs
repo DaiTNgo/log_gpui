@@ -160,3 +160,87 @@ fn a_dormant_scratch_tab_that_could_not_save_keeps_its_text(cx: &mut TestAppCont
     });
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
 }
+
+/// Opening a scratch tab in its Raw View while the file is still being read
+/// must not give it an empty editor: that would show nothing and then be
+/// saved over the file.
+#[gpui::test]
+fn the_raw_editor_waits_for_the_file_to_be_read(cx: &mut TestAppContext) {
+    use gpui::px;
+    use log_gpui::workspace::working_set::ViewMode;
+    let mut h = open_app(cx);
+    common::no_warm_tabs(&mut h);
+    let space = h.view.update(&mut h.cx, |app, cx| app.create_log_space("Raw Waits", LogSpaceKind::Scratch, &[], cx).unwrap());
+    h.cx.run_until_parked();
+    let (id, path) = h.view.read_with(&h.cx, |app, _| {
+        let f = &app.workspace_state.active_project().unwrap().log_space(&space).unwrap().files[0];
+        (f.file_id.clone(), f.path.clone().unwrap())
+    });
+    std::fs::write(&path, TEXT).unwrap();
+    leave(&mut h);
+    let tab = tab_of(&h, &space);
+    h.view.update(&mut h.cx, |app, cx| {
+        app.switch_to_tab(tab, cx);
+        app.set_view_mode(ViewMode::Raw, cx);
+    });
+    // One frame while the read is still under way.
+    h.cx.simulate_resize(gpui::size(px(900.0), px(700.0)));
+    h.view.read_with(&h.cx, |app, _| {
+        assert!(!app.parsed_files.contains_key(&id), "the read has not finished");
+        assert!(!app.raw.texts.contains_key(&id), "no empty text is kept for the file");
+    });
+    h.cx.run_until_parked();
+    h.cx.simulate_resize(gpui::size(px(901.0), px(700.0)));
+    h.cx.run_until_parked();
+    h.view.read_with(&h.cx, |app, cx| {
+        let editor = app.raw.editors.get(&id).expect("the editor opens once the file is read");
+        assert_eq!(editor.state.read(cx).value().to_string(), TEXT.trim_end_matches('\n').to_string());
+    });
+}
+
+/// Syntax Color in the scratch editor covers the lines on screen and a margin,
+/// and follows a scroll.
+#[gpui::test]
+fn the_editor_paints_syntax_color_on_the_lines_on_screen(cx: &mut TestAppContext) {
+    use gpui::{point, px};
+    use log_gpui::workspace::working_set::ViewMode;
+    let mut h = open_app(cx);
+    common::no_warm_tabs(&mut h);
+    let space = h.view.update(&mut h.cx, |app, cx| app.create_log_space("Syntax Window", LogSpaceKind::Scratch, &[], cx).unwrap());
+    h.cx.run_until_parked();
+    let (id, path) = h.view.read_with(&h.cx, |app, _| {
+        let f = &app.workspace_state.active_project().unwrap().log_space(&space).unwrap().files[0];
+        (f.file_id.clone(), f.path.clone().unwrap())
+    });
+    let text: String = (0..3000).map(|i| format!("2026-10-20 10:00:01 INFO line {i}\n")).collect();
+    std::fs::write(&path, text).unwrap();
+    leave(&mut h);
+    let tab = tab_of(&h, &space);
+    h.view.update(&mut h.cx, |app, cx| {
+        app.switch_to_tab(tab, cx);
+        app.set_view_mode(ViewMode::Raw, cx);
+    });
+    h.cx.run_until_parked();
+    for i in 0..3 {
+        h.cx.simulate_resize(gpui::size(px(900.0 + i as f32), px(700.0)));
+        h.cx.run_until_parked();
+    }
+    let painted = h.view.read_with(&h.cx, |app, _| app.raw.editors.get(&id).and_then(|e| e.syntax_lines.clone()));
+    let painted = painted.expect("Syntax Color is painted on some lines");
+    assert_eq!(painted.start, 0);
+    assert!(painted.end < 3000, "not every line: {painted:?}");
+    assert!(painted.end - painted.start < 1000, "bounded by the viewport: {painted:?}");
+
+    h.view.update(&mut h.cx, |app, cx| {
+        let editor = &app.raw.editors[&id];
+        editor.state.update(cx, |state, cx| state.set_scroll_offset(point(px(0.0), px(-1.0e7)), cx));
+    });
+    for i in 0..3 {
+        h.cx.simulate_resize(gpui::size(px(910.0 + i as f32), px(700.0)));
+        h.cx.run_until_parked();
+        h.cx.executor().advance_clock(std::time::Duration::from_millis(100));
+        h.cx.run_until_parked();
+    }
+    let painted = h.view.read_with(&h.cx, |app, _| app.raw.editors[&id].syntax_lines.clone()).unwrap();
+    assert!(painted.end >= 3000 && painted.start > 0, "the end of the file is painted after scrolling there: {painted:?}");
+}
