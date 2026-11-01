@@ -114,6 +114,7 @@ impl AppView {
         self.find_matches(false, cx);
         self.refresh_focus();
         self.clamp_selected_row();
+        self.refresh_histogram(cx);
         self.schedule_session_save(cx);
         cx.notify();
     }
@@ -157,6 +158,8 @@ impl AppView {
             self.extend_focus(matches_before, pass_before);
         }
         self.clamp_selected_row();
+        // The histogram adds the new rows to its columns.
+        self.refresh_histogram(cx);
         self.schedule_session_save(cx);
         cx.notify();
     }
@@ -172,6 +175,7 @@ impl AppView {
         self.selecting = false;
         self.refresh_focus();
         self.clamp_selected_row();
+        self.refresh_histogram(cx);
         self.schedule_session_save(cx);
         cx.notify();
     }
@@ -284,6 +288,7 @@ impl AppView {
         }
         self.refresh_focus();
         self.clamp_selected_row();
+        self.refresh_histogram(cx);
         cx.notify();
         !found.done
     }

@@ -1,7 +1,7 @@
 ## ADDED Requirements
 
 ### Requirement: View đủ điều kiện có Time Histogram
-Hệ thống SHALL hiện Time Histogram, một dải ngang phía trên danh sách dòng, ở mọi view mà các dòng có thời gian theo từng dòng và có ít nhất một dòng có giờ: Log Space, File View, Focus Pane và Focus Window. Hệ thống SHALL NOT hiện Time Histogram ở Raw View, hoặc ở view không có dòng nào có giờ. Dải SHALL thu gọn được.
+Hệ thống SHALL hiện Time Histogram, một dải ngang phía trên danh sách dòng, ở mọi view mà các dòng có thời gian theo từng dòng và có ít nhất một dòng có giờ: Log Space và File View. Hệ thống SHALL NOT hiện Time Histogram ở Raw View, ở Focus Pane, ở Focus Window, hoặc ở view không có dòng nào có giờ. Dải SHALL thu gọn được.
 
 #### Scenario: Log Space có giờ
 - **WHEN** người dùng mở Log Space có `api.log` và `db.log`, cả hai đều có timestamp, và Histogram đang bật
@@ -14,6 +14,14 @@ Hệ thống SHALL hiện Time Histogram, một dải ngang phía trên danh sá
 #### Scenario: Raw View
 - **WHEN** người dùng chuyển view sang Raw View
 - **THEN** Time Histogram không hiện
+
+#### Scenario: Focus Pane
+- **WHEN** Focus Pane đang mở dưới một Log Space có giờ, và Histogram đang bật
+- **THEN** Time Histogram chỉ hiện phía trên danh sách dòng chính, Focus Pane không có dải riêng
+
+#### Scenario: Focus Window
+- **WHEN** người dùng chuyển Focus Tab sang Focus Window, và Histogram đang bật
+- **THEN** Focus Window không có Time Histogram, còn dải của view chính vẫn hiện
 
 ### Requirement: Cột đếm Parent Line theo level
 Mỗi cột của Time Histogram SHALL là số Parent Line có thời gian hiệu lực trong khoảng của cột đó, chia theo level: Error và Fatal màu đỏ, Warn màu cam, các level còn lại và dòng không có level màu xám. Continuation Line SHALL NOT được đếm.
@@ -80,13 +88,6 @@ Kéo chọn một khoảng trên Time Histogram của view chính SHALL đặt T
 #### Scenario: Xoá bằng cách bấm chỗ trống
 - **WHEN** Time Range đang được đặt và người dùng bấm vào phần dải nằm ngoài khoảng tô nền mà không kéo
 - **THEN** Time Range bị xoá và nền xanh biến mất
-
-### Requirement: Histogram của Focus Pane
-Time Histogram của Focus Pane SHALL dùng cùng trục và cùng zoom với Time Histogram của view chính, và SHALL chỉ đếm các dòng Focus Tab đang mở liệt kê.
-
-#### Scenario: Thẳng hàng
-- **WHEN** view chính trải `10:00`–`11:00` và Focus Tab chỉ liệt kê dòng `ERROR` trong khoảng `10:30`–`10:35`
-- **THEN** histogram của Focus Pane cũng trải `10:00`–`11:00`, và chỉ có cột trong khoảng `10:30`–`10:35`
 
 ### Requirement: Dòng không có thời gian
 Dòng không có thời gian hiệu lực SHALL NOT được vẽ thành cột. Khi view có dòng như vậy, Time Histogram SHALL hiện một nhãn ghi số dòng đó, và bấm vào nhãn SHALL đặt dòng hiện tại thành dòng đầu tiên không có thời gian.

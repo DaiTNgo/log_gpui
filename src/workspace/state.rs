@@ -44,6 +44,9 @@ pub struct WorkspaceState {
     /// Whether the minimap is shown: an app setting.
     #[serde(default = "default_true")]
     pub show_minimap: bool,
+    /// Whether the Time Histogram is shown: an app setting.
+    #[serde(default = "default_true")]
+    pub show_histogram: bool,
     /// Memory the files of the tabs left may keep, in MB (Warm Tab
     /// Budget); 0 lets a tab's lines go as soon as it is left: an app
     /// setting.
@@ -111,6 +114,7 @@ impl Default for WorkspaceState {
             theme: Default::default(),
             text_zoom: 0,
             show_minimap: true,
+            show_histogram: true,
             warm_tab_budget_mb: default_warm_tab_budget(),
             phrase_colors: true,
             phrase_hues: Default::default(),

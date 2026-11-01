@@ -59,6 +59,8 @@ impl Render for AppView {
         let detected_hint = self.render_detected_hint_bar(cx);
 
         self.refresh_text_paint(cx);
+        // Whatever changed what the histogram counts since the last frame.
+        self.refresh_histogram(cx);
 
         // 5. Center: Raw View, Parsed View (the Log Canvas) or an empty state.
         let has_files = self.active_space().is_some_and(|s| !s.files.is_empty());
@@ -102,6 +104,8 @@ impl Render for AppView {
                 value_colors: self.value_colors.clone(),
             })
         };
+
+        let histogram = self.render_time_histogram(colors, cx);
 
         let viewport_height = f32::from(window.viewport_size().height);
         let focus_pane =
@@ -225,6 +229,7 @@ impl Render for AppView {
                             .child(editor_toolbar)
                             .children(go_to_bar)
                             .children(detected_hint)
+                            .children(histogram)
                             .child(log_canvas)
                             .child(notice),
                     )

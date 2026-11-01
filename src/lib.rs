@@ -33,6 +33,7 @@ pub mod syntax_color;
 pub mod text_highlight;
 pub mod text_selection;
 pub mod theme;
+pub mod time_histogram;
 pub mod timeline;
 pub mod density;
 pub mod extract;

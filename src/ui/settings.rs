@@ -70,7 +70,6 @@ struct Values {
     warm_tab_budget_mb: u32,
     glob_limit: usize,
     glob_interval: u64,
-    minimap: bool,
     search_highlight: bool,
     value_colors: bool,
     syntax_color: bool,
@@ -99,7 +98,6 @@ pub fn open_settings_dialog(view: Entity<AppView>, window: &mut Window, cx: &mut
                     warm_tab_budget_mb: v.workspace_state.warm_tab_budget_mb,
                     glob_limit: v.live.glob_limit,
                     glob_interval: v.live.glob_interval,
-                    minimap: v.show_minimap,
                     search_highlight: v.workspace_state.show_search_highlight,
                     value_colors: v.workspace_state.show_value_colors,
                     syntax_color: v.workspace_state.show_syntax_color,
@@ -514,7 +512,7 @@ fn rows_of(section: SettingsSection, view: &Entity<AppView>, v: &Values, cx: &Ap
             }]
         }
         SettingsSection::Appearance => {
-            let (v_density, v_minimap, v_theme) = (view.clone(), view.clone(), view.clone());
+            let (v_density, v_theme) = (view.clone(), view.clone());
             let theme = v.theme;
             let (v_smaller, v_larger, v_reset) = (view.clone(), view.clone(), view.clone());
             let (text_pt, zoom) = v.text_size;
@@ -603,18 +601,6 @@ fn rows_of(section: SettingsSection, view: &Entity<AppView>, v: &Values, cx: &Ap
                                     window.refresh();
                                 }),
                         )
-                        .into_any_element(),
-                },
-                Row {
-                    title: "Show minimap",
-                    description: "A thin overview of the whole log beside the table; click or drag it to scroll.",
-                    control: Switch::new("show-minimap")
-                        .checked(v.minimap)
-                        .on_click(move |checked: &bool, window, app| {
-                            let on = *checked;
-                            v_minimap.update(app, |this, cx| this.set_show_minimap(on, cx));
-                            window.refresh();
-                        })
                         .into_any_element(),
                 },
                 Row {

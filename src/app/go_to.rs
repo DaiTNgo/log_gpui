@@ -163,8 +163,15 @@ impl AppView {
         if at < time_of(first) || at > time_of(last) {
             return Err(GoToError::TimeOutside);
         }
-        let ix = (0..rows.len()).find(|&r| rows.own_time(r).is_some_and(|t| t >= at)).ok_or(GoToError::TimeOutside)?;
+        let ix = crate::time_histogram::first_row_at(self.filter_index.effective_ts(), at, self.view_times_ascend())
+            .ok_or(GoToError::TimeOutside)?;
         self.line_ref_of_entry(ix).map(GoToTarget::Row).ok_or(GoToError::NoLines)
+    }
+
+    /// Whether the rows' times ascend (no time last): a Log Space's are
+    /// merged by time, a File View's may go back.
+    pub(crate) fn view_times_ascend(&self) -> bool {
+        matches!(self.active_target(), Some(crate::workspace::working_set::TabTarget::LogSpace { .. }))
     }
 
     /// The rows of the first and the last time in the view.
