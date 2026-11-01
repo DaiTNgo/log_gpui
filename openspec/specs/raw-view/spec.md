@@ -118,7 +118,7 @@ Hệ thống SHALL cho Save As một file scratch ra vị trí người dùng ch
 - **THEN** nội dung mới vào `untitled.log` trong ứng dụng, còn `~/Desktop/incident.log` giữ nguyên nội dung lúc Save As
 
 ### Requirement: Marker trong Raw View
-Hệ thống SHALL cho tô Marker lên đoạn text đã chọn trong Raw View, và đổi màu hoặc gỡ Marker từ chính đoạn đã tô, như trong Parsed View. Marker SHALL dùng chung giữa Raw View, Parsed View, Log Space và File View. Sửa nội dung một dòng scratch SHALL làm mất mọi Marker của dòng đó.
+Hệ thống SHALL cho tô Marker lên đoạn text đã chọn trong Raw View, và đổi màu hoặc gỡ Marker từ chính đoạn đã tô, như trong Parsed View. Trong Raw View đang sửa được, thanh màu để tô SHALL chỉ mở qua lệnh "Mark: Color Selection…"; đặt con trỏ lên một Marker hoặc Text Highlight có sẵn SHALL vẫn mở thanh màu để đổi màu hoặc gỡ. Marker SHALL dùng chung giữa Raw View, Parsed View, Log Space và File View. Sửa nội dung một dòng scratch SHALL làm mất mọi Marker của dòng đó.
 
 #### Scenario: Marker dùng chung
 - **WHEN** người dùng tô `timeout` ở dòng 42 của `api.log` trong Raw View rồi chuyển sang Parsed View
@@ -131,3 +131,23 @@ Hệ thống SHALL cho tô Marker lên đoạn text đã chọn trong Raw View, 
 #### Scenario: Không có Highlight Rule
 - **WHEN** một dòng có Marker và khớp một Highlight Rule đang bật
 - **THEN** Raw View chỉ hiện màu Marker, không có màu của rule
+
+#### Scenario: Đổi màu Marker trong editor scratch
+- **WHEN** dòng 5 của `untitled.log` đang sửa được có Marker xanh trên `error` và người dùng bấm vào giữa chữ `error`
+- **THEN** thanh màu mở để đổi màu hoặc gỡ Marker đó
+
+#### Scenario: Kéo chọn trong editor scratch không tô
+- **WHEN** người dùng kéo chọn dòng 2 tới dòng 7 của `untitled.log` đang sửa được rồi nhấn Delete
+- **THEN** các dòng đó bị xóa, không có thanh màu nào hiện trong lúc chọn
+
+### Requirement: Menu chuột phải trong Raw View
+Chuột phải lên vùng chọn trong Raw View (cả danh sách chỉ đọc lẫn editor scratch) SHALL mở Selection Menu, không có nhóm lọc vì Raw View không áp dụng Filter. Chọn text trong Raw View SHALL NOT tự mở thanh màu.
+
+#### Scenario: Tô trong Raw View
+- **WHEN** người dùng chọn `timeout` trong Raw View của `api.log`, chuột phải và bấm màu đỏ ở hàng "Mark here"
+- **THEN** `timeout` ở dòng đó có Marker đỏ
+
+#### Scenario: Editor scratch
+- **WHEN** người dùng chọn text trong editor của `untitled.log` rồi chuột phải
+- **THEN** Selection Menu mở với Copy và các mục tô màu
+

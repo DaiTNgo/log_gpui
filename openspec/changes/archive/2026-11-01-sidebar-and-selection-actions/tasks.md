@@ -1,6 +1,6 @@
 ## 1. Chuẩn bị
 
-- [ ] 1.1 Kiểm tra tay rồi archive `scratch-color-bar-on-demand` (còn task 3.2), để spec `text-marker` có requirement "Lệnh mở thanh màu cho vùng chọn" trước khi change này sửa tiếp
+- [x] 1.1 Kiểm tra tay rồi archive `scratch-color-bar-on-demand` (còn task 3.2), để spec `text-marker` có requirement "Lệnh mở thanh màu cho vùng chọn" trước khi change này sửa tiếp
 - [x] 1.2 Thêm `width`, `inspector_share`, `inspector_mode` vào `ContextSidebarLayout` (`WorkspaceState.context_layout`, lưu cùng session), có `serde(default)`. Test: session cũ không có các trường này vẫn đọc được
 
 ## 2. Selection Menu

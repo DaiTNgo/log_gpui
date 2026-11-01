@@ -2,9 +2,7 @@
 
 ## Purpose
 Marker tô màu đoạn text đã chọn trong một dòng.
-
 ## Requirements
-
 ### Requirement: Marker tô màu đoạn text đã chọn
 Hệ thống SHALL cho người dùng tô một màu lên đoạn text đã chọn trong một dòng, gọi là Marker. Vùng chọn qua nhiều dòng SHALL tạo một Marker trên mỗi dòng cho phần được chọn của dòng đó. Một dòng SHALL có được nhiều Marker.
 
@@ -17,22 +15,34 @@ Hệ thống SHALL cho người dùng tô một màu lên đoạn text đã ch�
 - **THEN** dòng 3, 4, 5 mỗi dòng có một Marker xanh phủ đúng phần được chọn
 
 ### Requirement: Thanh màu nổi khi chọn text
-Hệ thống SHALL hiện một thanh màu nhỏ nổi cạnh vùng chọn khi người dùng chọn text. Thanh màu gồm các màu dùng gần đây, nút mở Highlight Palette và nút mở color picker. Menu chuột phải trên vùng chọn SHALL có "Mark with color".
+Chọn text SHALL NOT tự mở thanh màu, ở mọi view (Parsed View, Raw View chỉ đọc, editor scratch), dù chọn bằng chuột hay bàn phím. Thanh màu nổi SHALL mở cạnh vùng chọn khi người dùng:
+- chọn "Color…" trong Selection Menu, hoặc
+- dùng lệnh "Mark: Color Selection…".
 
-#### Scenario: Chọn rồi tô
-- **WHEN** người dùng chọn text và bấm màu đầu tiên trên thanh nổi
+Thanh màu gồm lựa chọn "This line only" / "Everywhere", các màu dùng gần đây, nút mở Highlight Palette và nút mở color picker. Selection Menu SHALL cho tô Marker ("Mark here") mà không cần mở thanh màu.
+
+#### Scenario: Chọn để copy
+- **WHEN** người dùng kéo chọn text trong Parsed View rồi nhả chuột
+- **THEN** text được chọn và không có thanh màu nào hiện
+
+#### Scenario: Mở thanh từ menu rồi tô
+- **WHEN** người dùng chọn text, chuột phải, chọn "Color…" rồi bấm màu đầu tiên trên thanh
 - **THEN** đoạn đó được tô màu đó và thanh nổi đóng lại
 
 #### Scenario: Bỏ chọn
-- **WHEN** người dùng bấm ra ngoài vùng chọn
+- **WHEN** thanh màu đang mở và người dùng bấm ra ngoài vùng chọn
 - **THEN** thanh nổi đóng và không có Marker nào được tạo
 
 ### Requirement: Đổi màu và gỡ Marker
-Menu chuột phải trên text đã tô SHALL có "Change color" và "Remove marker". "Remove marker" SHALL gỡ cả Marker chứa vị trí đó. Tô chồng lên một Marker cũ SHALL cắt Marker cũ, phần chồng nhận màu mới.
+Bấm (không kéo) lên một Marker SHALL mở thanh màu để đổi màu hoặc gỡ Marker đó. Selection Menu mở trên một Marker SHALL có "Remove marker". "Remove marker" SHALL gỡ cả Marker chứa vị trí đó. Tô chồng lên một Marker cũ SHALL cắt Marker cũ; phần chồng nhận màu mới.
 
 #### Scenario: Gỡ Marker
 - **WHEN** người dùng chuột phải lên một Marker và chọn "Remove marker"
 - **THEN** Marker đó biến mất, các Marker khác trên dòng vẫn còn
+
+#### Scenario: Đổi màu bằng cách bấm
+- **WHEN** người dùng bấm lên một Marker đỏ và chọn màu xanh trên thanh màu
+- **THEN** Marker đó thành màu xanh
 
 #### Scenario: Tô chồng
 - **WHEN** `abcdef` có Marker đỏ và người dùng tô xanh lên `cd`
@@ -80,3 +90,19 @@ Hệ thống SHALL tự lưu Marker theo dòng của từng file và khôi phụ
 #### Scenario: Sửa dòng scratch
 - **WHEN** dòng 10 của `untitled.log` có Marker và người dùng sửa dòng đó
 - **THEN** sau khi lưu, dòng 10 không còn Marker nào
+
+### Requirement: Lệnh mở thanh màu cho vùng chọn
+Hệ thống SHALL có lệnh "Mark: Color Selection…" trong Command Palette và Keymap, phím mặc định `cmd-shift-h`. Khi view đang hiện có vùng chọn khác rỗng (Parsed View, Raw View chỉ đọc hoặc editor scratch), lệnh SHALL mở thanh màu cho vùng chọn đó, cạnh vùng chọn, với lựa chọn "This line only" / "Everywhere" như khi thanh tự mở. Khi không có vùng chọn, lệnh SHALL NOT làm gì.
+
+#### Scenario: Tô trong editor scratch bằng lệnh
+- **WHEN** người dùng chọn `timeout` ở dòng 3 của `untitled.log` đang sửa được rồi bấm `cmd-shift-h` và chọn màu đỏ
+- **THEN** `timeout` ở dòng 3 có Marker đỏ và thanh màu đóng lại
+
+#### Scenario: Mở thanh cho vùng chọn trong Raw View chỉ đọc
+- **WHEN** người dùng kéo chọn text trong Raw View của `api.log`, thanh màu đã đóng mà vùng chọn vẫn còn, rồi bấm `cmd-shift-h`
+- **THEN** thanh màu mở lại cho đúng vùng chọn đó
+
+#### Scenario: Không có vùng chọn
+- **WHEN** người dùng bấm `cmd-shift-h` khi không có text nào được chọn
+- **THEN** không có thanh màu nào hiện
+
