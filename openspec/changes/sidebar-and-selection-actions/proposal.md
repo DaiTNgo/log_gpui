@@ -21,7 +21,7 @@ Muốn lọc thì phải mở sidebar và đi qua bốn bước. Đóng sidebar 
 - Context sidebar sắp xếp lại:
   - Nút "+" nằm trên header của section.
   - Mỗi điều kiện Filter là một dòng tóm tắt, bấm vào mới mở chi tiết.
-  - Time Range có preset 5m / 1h / 24h / All và một dòng tóm tắt mở ra hai ô Từ/Đến xếp dọc.
+  - Time Range chỉ còn hai ô From/To xếp dọc, có nhãn.
   - Hàng Highlight Rule gọn hơn: xoá qua menu, kéo cả hàng để đổi thứ tự.
   - Columns gập mặc định.
   - Inspector ghim ở đáy với thanh chia kéo được.
@@ -42,7 +42,7 @@ Muốn lọc thì phải mở sidebar và đi qua bốn bước. Đóng sidebar 
 - `log-filter`:
   - Thêm tạm tắt Filter, và lọc từ vùng chọn / Inspector.
   - Bỏ điều cấm lệnh lọc trong menu chuột phải.
-  - Time Range có preset; thẻ Filter hiện dạng tóm tắt.
+  - Time Range là hai ô From/To xếp dọc; thẻ Filter hiện dạng tóm tắt.
 - `highlight-rule`:
   - Mục Highlights gọn hơn: nút "+" trên header, xoá qua menu, form dùng chung khối chọn giá trị.
   - "Highlight rows where…" chuyển vào Selection Menu.
@@ -62,5 +62,5 @@ Muốn lọc thì phải mở sidebar và đi qua bốn bước. Đóng sidebar 
 - **Change đang mở**:
   - `scratch-color-bar-on-demand` (chưa archive) cũng sửa requirement "Thanh màu nổi khi chọn text"; change này thay thế phần đó. Cần archive change đó trước, hoặc gộp vào.
   - `add-focus-pane` có requirement "Inspector SHALL NOT có tab Fields". Change này đảo lại quyết định đó.
-  - `add-time-histogram` đặt Time Range từ histogram; preset ở đây ghi vào cùng Time Range.
+  - `add-time-histogram` đặt Time Range từ histogram, ghi vào cùng hai ô From/To.
 - Không đổi dữ liệu lưu, trừ độ rộng sidebar và chiều cao Inspector (thêm vào `ContextSidebarState`, có giá trị mặc định).

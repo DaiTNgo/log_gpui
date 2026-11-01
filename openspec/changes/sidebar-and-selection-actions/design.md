@@ -81,8 +81,9 @@ Filter / Highlights / Columns nằm chung một vùng cuộn. Inspector nằm ng
 **9. Khối chọn giá trị dùng chung.**
 Hàm `render_value_picker(column, ticked, input, on_toggle, on_add)` dùng cho thẻ Filter và form New rule. Chỉ có một ô nhập: gõ chữ thì lọc danh sách, Enter thêm Custom Value. Giá trị và số đếm căn phải. Như vậy gộp được `search_input` + `value_input` của Filter và `rule_search` + `rule_input` của Highlights. Danh sách giữ giới hạn 220px như hiện nay.
 
-**10. Time Range: preset neo theo timestamp mới nhất của view, không theo đồng hồ máy.**
-5m / 1h / 24h đặt Từ = timestamp mới nhất trong view trừ đi khoảng đó, Đến để trống. "All" xoá Time Range. Lý do là log thường được mở sau khi sự việc đã xảy ra, nên "1h trước giờ máy" thường cho ra view rỗng. Dưới các preset là một dòng tóm tắt (`10:30:12 → end`). Bấm vào thì mở hai ô Từ/Đến xếp dọc, có nhãn cố định. Giá trị do histogram đặt (`add-time-histogram`) hiện trong cùng dòng tóm tắt.
+**10. Time Range: chỉ hai ô From / To, luôn hiện.**
+Hai ô xếp dọc, có nhãn cố định, như cách nhập hiện nay. Không có preset 5m/1h/24h, nhãn nhóm hay dòng tóm tắt: thử trong app thì chúng chỉ thêm chữ mà không đáng chỗ.
+Phương án khác: preset neo theo timestamp mới nhất của view. Đã làm thử rồi bỏ theo phản hồi.
 
 **11. Inspector Fields / Raw.**
 - **Fields** lấy các cột đã parse của Parent Line đang chọn: cột built-in, cột của Log Format và Detected Field có giá trị.
@@ -100,7 +101,6 @@ Hàm `render_value_picker(column, ticked, input, on_toggle, on_add)` dùng cho t
 - **Editor scratch (`gpui_component::input::Editor`) có menu chuột phải riêng, là menu native của hệ điều hành (`NativeMenu`), không vẽ được hàng ô màu.** → Đã kiểm tra (task 2.1): tạo `EditorState` với `.context_menu(false)` để tắt menu đó, rồi gắn Selection Menu (`ContextMenuExt`) vào khung bọc editor. Khi menu tắt, chuột phải không dời con trỏ, nên Selection Menu đọc vùng chọn hoặc vị trí con trỏ hiện có.
 - **Menu dài (tới 10 mục).** → Mục chỉ hiện khi dùng được: lọc chỉ ở Parsed View, "Highlight rows" chỉ khi chọn trọn ô, "Remove" chỉ khi có màu dưới con trỏ.
 - **Mâu thuẫn với các change chưa archive.** → Archive `scratch-color-bar-on-demand` trước khi bắt đầu (task 1.1). Requirement Inspector trong `add-focus-pane` được thay ở đây; khi archive `add-focus-pane` phải giữ bản của change này.
-- **Preset Time Range trên view live.** → Preset chỉ tính một lần lúc bấm, không trượt theo dòng mới. Chip ghi rõ giờ bắt đầu.
 
 ## Migration Plan
 

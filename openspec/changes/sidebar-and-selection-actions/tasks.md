@@ -36,11 +36,11 @@
 
 - [x] 6.1 Viết `render_value_picker` dùng chung: một ô nhập (gõ để lọc, Enter thêm Custom Value), số đếm căn phải. Gộp `search_input` + `value_input` và `rule_search` + `rule_input`
 - [x] 6.2 Thẻ Filter dạng tóm tắt một dòng; bấm vào thì mở khối chọn giá trị; lựa chọn hiện / Hide Mode ở cuối khối
-- [x] 6.3 Time Range: preset 5m / 1h / 24h / All neo theo timestamp mới nhất của view; dòng tóm tắt; bấm vào mở hai ô Từ/Đến xếp dọc có nhãn
+- [x] 6.3 Time Range: hai ô From/To xếp dọc có nhãn, luôn hiện; không preset, không dòng tóm tắt
 - [x] 6.7 Mỗi mục trong section là một hàng 28px không viền (thẻ Filter, rule, cột); nhãn nhóm chữ nhỏ viết hoa; `contains "…"` thay `∋`; nút tạm tắt ghi chữ Pause/Resume
 - [x] 6.4 Hàng Highlight Rule: bỏ tay kéo riêng (kéo cả hàng), bỏ nút × thường trực, thêm "⋯" khi hover và menu chuột phải có Delete
 - [x] 6.5 Form New rule: 8 màu và "…" mở palette đầy đủ; "+" khi form đang mở không tạo lại form (`open_rule_form`)
-- [x] 6.6 Test: Enter trong ô nhập thêm Custom Value; preset 1h tính theo log chứ không theo giờ máy; "+" lần hai giữ nội dung form; xoá rule qua menu
+- [x] 6.6 Test: Enter trong ô nhập thêm Custom Value; "+" lần hai giữ nội dung form; xoá rule qua menu
 
 ## 7. Inspector
 

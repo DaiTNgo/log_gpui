@@ -701,11 +701,6 @@ impl FilterIndex {
         self.first_ts.map_or(0.0, |t| (t / 86400.0).floor() * 86400.0)
     }
 
-    /// The latest timestamp of the rows, in seconds.
-    pub fn latest_timestamp(&self) -> Option<f64> {
-        self.max_entry.as_ref().map(|(t, _)| *t)
-    }
-
     /// Display forms of the earliest and latest timestamp, as hints.
     pub fn time_hint(&self) -> Option<(String, String)> {
         match (&self.min_entry, &self.max_entry) {

@@ -350,70 +350,24 @@ impl AppView {
         card.into_any_element()
     }
 
+    /// The Time Range: From and To, one above the other.
     fn render_time_range(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
         let range = &self.filter_state.time_range;
-        let from_ok = self.time_bound_is_valid(&range.from);
-        let to_ok = self.time_bound_is_valid(&range.to);
-        let open = self.filter_ui.time_open;
-        let summary = match (range.from.is_empty(), range.to.is_empty()) {
-            (true, true) => "All lines".to_string(),
-            (false, true) => format!("From {}", range.from),
-            (true, false) => format!("Until {}", range.to),
-            (false, false) => format!("{} – {}", range.from, range.to),
+        let valid = self.time_bound_is_valid(&range.from) && self.time_bound_is_valid(&range.to);
+        let field = |label: &'static str, input| {
+            v_flex()
+                .w_full()
+                .gap_0p5()
+                .child(div().text_xs().text_color(cx.theme().muted_foreground).child(label))
+                .child(Input::new(input).small())
         };
-        let mut presets = h_flex().gap_1();
-        for (label, secs) in crate::app::context_layout::TIME_PRESETS {
-            presets = presets.child(
-                Button::new(ElementId::from(format!("time-preset-{label}")))
-                    .xsmall()
-                    .label(label)
-                    .when(secs.is_none() && !range.is_active(), |b| b.primary())
-                    .when(secs.is_some() || range.is_active(), |b| b.ghost())
-                    .on_click(cx.listener(move |this, _, _, cx| this.apply_time_preset(secs, cx))),
-            );
-        }
-        let mut block = v_flex()
+        v_flex()
             .w_full()
             .gap_1()
-            .child(
-                h_flex()
-                    .w_full()
-                    .gap_2()
-                    .items_center()
-                    .child(div().flex_1().child(super::columns_panel::group_title("Time range", cx)))
-                    .when(!from_ok || !to_ok, |this| this.child(Tag::danger().child("! invalid time"))),
-            )
-            .child(presets)
-            .child(
-                h_flex()
-                    .id("time-summary")
-                    .debug_selector(|| "time-summary".into())
-                    .w_full()
-                    .gap_1()
-                    .items_center()
-                    .cursor_pointer()
-                    .text_xs()
-                    .text_color(cx.theme().muted_foreground)
-                    .child(div().flex_1().min_w(px(0.0)).truncate().child(summary))
-                    .child(div().flex_shrink_0().child(if open { "Hide" } else { "Edit…" }))
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.filter_ui.time_open = !this.filter_ui.time_open;
-                        cx.notify();
-                    })),
-            );
-        if open {
-            let field = |label: &'static str, input| {
-                v_flex()
-                    .w_full()
-                    .gap_0p5()
-                    .child(div().text_xs().text_color(cx.theme().muted_foreground).child(label))
-                    .child(Input::new(input).small())
-            };
-            block = block
-                .child(field("From", &self.filter_ui.from_input))
-                .child(field("To", &self.filter_ui.to_input));
-        }
-        block.into_any_element()
+            .child(field("From", &self.filter_ui.from_input))
+            .child(field("To", &self.filter_ui.to_input))
+            .when(!valid, |this| this.child(Tag::danger().child("! invalid time")))
+            .into_any_element()
     }
 
     /// Filter section body: add filter, one card per filtered column, time range.

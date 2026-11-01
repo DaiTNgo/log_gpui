@@ -22,8 +22,6 @@ pub struct FilterUi {
     /// Narrows the value list of the expanded column; Enter adds the text
     /// as a Custom Value.
     pub search_input: Entity<InputState>,
-    /// The From / To inputs of the Time Range are open.
-    pub time_open: bool,
     /// Column `search_input` was last reset for; a different column clears it.
     pub search_scope: Option<String>,
     pub from_input: Entity<InputState>,
@@ -73,7 +71,6 @@ impl FilterUi {
             picker_open: false,
             expanded: None,
             search_input,
-            time_open: false,
             search_scope: None,
             from_input,
             to_input,

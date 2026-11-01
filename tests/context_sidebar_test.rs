@@ -7,7 +7,6 @@ mod common;
 use common::Harness;
 use gpui::{Entity, TestAppContext};
 use gpui_component::input::InputState;
-use log_gpui::app::context_layout::preset_from;
 use log_gpui::workspace::state::{
     ContextSection, ContextSidebarLayout, ContextSidebarState, InspectorMode, MAX_CONTEXT_SIDEBAR_WIDTH,
     MIN_CONTEXT_SIDEBAR_WIDTH,
@@ -70,27 +69,6 @@ fn a_session_without_the_layout_reads_with_the_defaults_and_keeps_a_new_one() {
     let back: log_gpui::workspace::session::SessionManifest = serde_json::from_str(&saved).unwrap();
     assert_eq!(back.context_layout.width, 400.0);
     assert_eq!(back.context_layout.inspector_mode, InspectorMode::Raw);
-}
-
-#[test]
-fn a_preset_counts_back_from_the_newest_line() {
-    let newest = chrono::NaiveDate::from_ymd_opt(2026, 10, 18).unwrap().and_hms_opt(8, 40, 0).unwrap().and_utc().timestamp();
-    assert_eq!(preset_from(newest as f64, 3600).as_deref(), Some("2026-10-18 07:40:00"));
-}
-
-#[gpui::test]
-fn the_1h_preset_follows_the_log_not_the_clock(cx: &mut TestAppContext) {
-    let mut h = common::open_app_with_lines(cx, &lines());
-    h.view.update(&mut h.cx, |app, cx| app.apply_time_preset(Some(5 * 60), cx));
-    h.cx.run_until_parked();
-    h.view.read_with(&h.cx, |app, _| {
-        assert_eq!(app.filter_state.time_range.from, "2026-10-18 08:54:00");
-        assert_eq!(app.filter_state.time_range.to, "");
-        assert_eq!(app.filter_pass.len(), 6, "08:54 to 08:59");
-    });
-    h.view.update(&mut h.cx, |app, cx| app.apply_time_preset(None, cx));
-    h.cx.run_until_parked();
-    h.view.read_with(&h.cx, |app, _| assert!(!app.filter_state.time_range.is_active()));
 }
 
 #[gpui::test]

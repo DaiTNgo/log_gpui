@@ -23,11 +23,7 @@ Mỗi cột có điều kiện SHALL hiện là một dòng tóm tắt (tên c�
 ### Requirement: Time Range
 Hệ thống SHALL cung cấp Filter khoảng thời gian cho `timestamp` với hai ô Từ và Đến. Mỗi ô SHALL nhận mọi định dạng thời gian mà ứng dụng đọc được từ dòng log, và SHALL có placeholder lấy từ timestamp đầu tiên của view. Ô trống nghĩa là không giới hạn phía đó. Hệ thống SHALL gợi ý giá trị nhỏ nhất và lớn nhất, và SHALL so sánh theo đồng hồ của file, không đổi múi giờ.
 
-Section Filter SHALL có các preset 5m, 1h, 24h và All:
-- 5m, 1h và 24h SHALL đặt Từ bằng timestamp mới nhất của view trừ đi khoảng đó, và để trống Đến. Giá trị được tính một lần lúc bấm.
-- All SHALL xoá Time Range.
-
-Dưới các preset là một dòng tóm tắt Time Range đang đặt. Bấm vào dòng đó SHALL mở hai ô Từ và Đến xếp dọc, mỗi ô có nhãn cố định.
+Trong section Filter, hai ô Từ và Đến SHALL luôn hiện, xếp dọc, mỗi ô có nhãn cố định ("From", "To"). Section SHALL NOT có nhãn nhóm "Time range", preset khoảng thời gian, hay dòng tóm tắt Time Range.
 
 #### Scenario: Giới hạn hai phía
 - **WHEN** người dùng nhập Từ `10:00:00` và Đến `10:05:00`
@@ -41,9 +37,9 @@ Dưới các preset là một dòng tóm tắt Time Range đang đặt. Bấm v�
 - **WHEN** cột TIMESTAMP hiện `2026-10-18T10:00:00+07:00` và người dùng nhập Từ `2026-10-18 10:00:00`
 - **THEN** Time Range được chấp nhận và lọc từ thời điểm đó
 
-#### Scenario: Preset neo theo log
-- **WHEN** dòng mới nhất của view có timestamp `2026-10-18 08:40:00` và người dùng bấm 1h
-- **THEN** Từ là `2026-10-18 07:40:00`, Đến trống, dù đồng hồ máy đang là ngày khác
+#### Scenario: Chỉ có hai ô
+- **WHEN** người dùng mở section Filter
+- **THEN** có ô From và ô To, không có preset hay dòng tóm tắt thời gian
 
 ### Requirement: Không còn các điểm vào cũ
 Hệ thống SHALL NOT có panel "View", danh sách module cố định, "Saved View" hay panel Marker. Lọc theo giá trị SHALL làm được từ context sidebar, từ Selection Menu và từ Inspector, theo quy tắc của `selection-menu`. Ghim cột trên Column Header, đổi độ rộng cột và Auto-fit SHALL vẫn hoạt động. Density và công tắc Source Column SHALL nằm trong Quick Settings trên toolbar, và Quick Settings SHALL chỉ chứa các công tắc hiển thị.

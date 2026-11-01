@@ -1,23 +1,10 @@
 //! Logic: the size of the context sidebar (its width, the Inspector's
-//! height under the splitter), the Inspector's fields, and the Time Range
-//! presets of its Filter section.
+//! height under the splitter) and the Inspector's fields.
 
 use super::AppView;
 use crate::workspace::state::{CONTEXT_SIDEBAR_WIDTH, InspectorMode};
 use crate::workspace::working_set::ViewMode;
 use gpui::{Context, Pixels};
-
-/// The Time Range presets: label and how far back from the newest line.
-pub const TIME_PRESETS: [(&str, Option<i64>); 4] =
-    [("5m", Some(5 * 60)), ("1h", Some(3600)), ("24h", Some(86_400)), ("All", None)];
-
-/// The From bound of a preset `secs` back from `latest` (seconds, on the
-/// file's own clock), written as the Timestamp column writes a time.
-pub fn preset_from(latest: f64, secs: i64) -> Option<String> {
-    let from = latest.floor() as i64 - secs;
-    let dt = chrono::DateTime::from_timestamp(from, 0)?.naive_utc();
-    Some(dt.format("%Y-%m-%d %H:%M:%S").to_string())
-}
 
 impl AppView {
     /// The splitter above the Inspector was dragged to window height `y`.
@@ -51,21 +38,6 @@ impl AppView {
         self.workspace_state.context_layout.inspector_mode = mode;
         self.schedule_session_save(cx);
         cx.notify();
-    }
-
-    /// A Time Range preset: From the newest line of the view less `secs`,
-    /// To empty; `None` clears the Time Range. Worked out once, when chosen.
-    pub fn apply_time_preset(&mut self, secs: Option<i64>, cx: &mut Context<Self>) {
-        let from = match secs {
-            Some(secs) => match self.filter_index.latest_timestamp().and_then(|t| preset_from(t, secs)) {
-                Some(from) => from,
-                None => return,
-            },
-            None => String::new(),
-        };
-        self.filter_state.set_time_range(&from, "");
-        self.filter_ui.inputs_dirty = true;
-        self.apply_filter_change(cx);
     }
 }
 
