@@ -239,20 +239,33 @@ impl Merger {
 /// its line number.
 pub type RowKey = (usize, u32, usize);
 
-/// The entries of the rows last shown, parsed again from their source.
+/// The entries of the rows last shown, parsed again from their source. Each
+/// entry weighs what it was kept with (`insert_weighed`; 1 by default), and
+/// past the capacity the least recently used go.
 #[derive(Debug, Default)]
 pub struct RowCache {
     capacity: usize,
-    entries: HashMap<RowKey, (Arc<LogEntry>, u64)>,
+    weight: usize,
+    entries: HashMap<RowKey, (Arc<LogEntry>, u64, usize)>,
     tick: u64,
 }
 
-/// Rows kept by default: a few screens around the one shown.
-pub const ROW_CACHE: usize = 4096;
+/// Bytes of parsed rows the whole app keeps: a few screens around the ones
+/// shown, however many files are open.
+pub const ROW_CACHE_BYTES: usize = 64 << 20;
+
+/// Shards of the shared Row Cache: a file's rows are all in one, so the UI
+/// thread and the reads in the background rarely wait on each other.
+const ROW_SHARDS: usize = 16;
+
+/// What a parsed row of a line `len` bytes long is counted as.
+pub fn row_weight(len: usize) -> usize {
+    std::mem::size_of::<LogEntry>() + len + 64
+}
 
 impl RowCache {
     pub fn new(capacity: usize) -> Self {
-        Self { capacity: capacity.max(1), entries: HashMap::new(), tick: 0 }
+        Self { capacity: capacity.max(1), weight: 0, entries: HashMap::new(), tick: 0 }
     }
 
     pub fn len(&self) -> usize {
@@ -263,11 +276,21 @@ impl RowCache {
         self.entries.is_empty()
     }
 
+    /// The weight of every entry kept.
+    pub fn weight(&self) -> usize {
+        self.weight
+    }
+
+    /// The number and weight of the entries of file `file`.
+    pub fn of_file(&self, file: usize) -> (usize, usize) {
+        self.entries.iter().filter(|(k, _)| k.0 == file).fold((0, 0), |(n, w), (_, e)| (n + 1, w + e.2))
+    }
+
     /// The entry of `key`, when it is kept; it counts as used.
     pub fn get(&mut self, key: RowKey) -> Option<Arc<LogEntry>> {
         self.tick += 1;
         let tick = self.tick;
-        self.entries.get_mut(&key).map(|(entry, used)| {
+        self.entries.get_mut(&key).map(|(entry, used, _)| {
             *used = tick;
             entry.clone()
         })
@@ -277,27 +300,52 @@ impl RowCache {
         self.entries.contains_key(&key)
     }
 
-    /// Keep `entry` as the entry of `key`. Past the capacity the least
-    /// recently used go, a quarter at a time.
+    /// Keep `entry` as the entry of `key`.
     pub fn insert(&mut self, key: RowKey, entry: Arc<LogEntry>) {
+        self.insert_weighed(key, entry, 1);
+    }
+
+    /// Keep `entry` as the entry of `key`, weighing `weight`. Past a quarter
+    /// over the capacity the least recently used go, down to the capacity.
+    pub fn insert_weighed(&mut self, key: RowKey, entry: Arc<LogEntry>, weight: usize) {
         self.tick += 1;
-        self.entries.insert(key, (entry, self.tick));
-        if self.entries.len() > self.capacity + self.capacity / 4 {
-            let mut ticks: Vec<u64> = self.entries.values().map(|(_, t)| *t).collect();
-            let cut = self.entries.len() - self.capacity;
-            ticks.select_nth_unstable(cut - 1);
-            let oldest_kept = ticks[cut - 1];
-            self.entries.retain(|_, (_, t)| *t > oldest_kept);
+        if let Some((_, _, old)) = self.entries.insert(key, (entry, self.tick, weight)) {
+            self.weight -= old;
+        }
+        self.weight += weight;
+        if self.weight > self.capacity + self.capacity / 4 {
+            let mut by_age: Vec<(u64, usize)> = self.entries.values().map(|(_, t, w)| (*t, *w)).collect();
+            by_age.sort_unstable();
+            let mut weight = self.weight;
+            let mut oldest_gone = 0;
+            for (tick, w) in by_age {
+                if weight <= self.capacity {
+                    break;
+                }
+                weight -= w;
+                oldest_gone = tick;
+            }
+            self.entries.retain(|_, (_, t, _)| *t > oldest_gone);
+            self.weight = weight;
         }
     }
 
     /// Forget every line of file `file`.
     pub fn forget_file(&mut self, file: usize) {
-        self.entries.retain(|k, _| k.0 != file);
+        let mut gone = 0;
+        self.entries.retain(|k, (_, _, w)| {
+            let keep = k.0 != file;
+            if !keep {
+                gone += *w;
+            }
+            keep
+        });
+        self.weight -= gone;
     }
 
     pub fn clear(&mut self) {
         self.entries.clear();
+        self.weight = 0;
     }
 
     /// The stretches of `lines` (ascending line numbers of one file and
@@ -315,4 +363,41 @@ impl RowCache {
         }
         out
     }
+}
+
+/// The Row Cache of the whole app: the parsed rows of every file, by the
+/// file's key (`IndexedFile::file_key`), its Generation and its line,
+/// within `ROW_CACHE_BYTES`.
+#[derive(Debug)]
+pub struct SharedRowCache {
+    shards: Vec<std::sync::Mutex<RowCache>>,
+}
+
+impl SharedRowCache {
+    /// A cache of `capacity` bytes in all.
+    pub fn new(capacity: usize) -> Self {
+        let each = (capacity / ROW_SHARDS).max(1);
+        Self { shards: (0..ROW_SHARDS).map(|_| std::sync::Mutex::new(RowCache::new(each))).collect() }
+    }
+
+    /// The shard that holds the rows of file `file`.
+    pub fn shard(&self, file: usize) -> std::sync::MutexGuard<'_, RowCache> {
+        self.shards[file % ROW_SHARDS].lock().unwrap()
+    }
+
+    /// Forget every row of file `file`.
+    pub fn forget(&self, file: usize) {
+        self.shard(file).forget_file(file);
+    }
+
+    /// The weight of every row kept.
+    pub fn weight(&self) -> usize {
+        self.shards.iter().map(|s| s.lock().unwrap().weight()).sum()
+    }
+}
+
+/// The app's Row Cache.
+pub fn rows() -> &'static SharedRowCache {
+    static ROWS: std::sync::OnceLock<SharedRowCache> = std::sync::OnceLock::new();
+    ROWS.get_or_init(|| SharedRowCache::new(ROW_CACHE_BYTES))
 }

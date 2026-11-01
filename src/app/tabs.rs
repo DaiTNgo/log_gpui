@@ -13,12 +13,10 @@ use crate::column::FieldMaxChars;
 use crate::filter::FilterState;
 use crate::focus::FocusTabs;
 use crate::space_view::{BuiltView, EmptyCanvas, ParsedFile, build_file_view, build_space_view};
-use crate::archive::{ArchiveError, MAX_UNCOMPRESSED_BYTES, detect, read_source};
 use crate::workspace::log_space::{LogFile, LogSpace, LogSpaceKind};
 use crate::workspace::project::Project;
 use crate::workspace::working_set::{CloseScope, TabSessionState, TabTarget, ViewMode, WorkingSet};
 use gpui::{Context, ScrollStrategy};
-use std::path::Path;
 
 /// The notice for a file that could not be read; an Archive Entry is named
 /// by its display name.
@@ -162,127 +160,48 @@ impl AppView {
         }
     }
 
-    /// Make sure the file is parsed and cached. A file that cannot be read
-    /// counts as empty and leaves a notice.
-    /// Read a Scratch file: through a Line Index on its bytes in memory
-    /// (task 8.2), as a file on disk is.
+    /// Read a Scratch file: in the background through a Line Index on the
+    /// file where it is, like a local file. A file with no text yet (or no
+    /// longer on disk) shows empty at once.
     pub(crate) fn ensure_scratch_loaded(&mut self, file: &LogFile) {
         if self.parsed_files.contains_key(&file.file_id) {
             return;
         }
-        let parsed = match file.source() {
-            Some(source) => match read_source(source) {
-                Ok(bytes) => self.scratch_parsed(file, bytes),
-                Err(e) => {
-                    let error = read_failure(file, &e);
-                    self.notice = Some(error.clone());
-                    ParsedFile::failed(error)
-                }
-            },
-            None => ParsedFile::empty(),
-        };
-        self.parsed_files.insert(file.file_id.clone(), parsed);
-    }
-
-    /// A Scratch file's text read through a Line Index on its bytes, with
-    /// its Log Format and the Detected Fields turned on.
-    pub(crate) fn scratch_parsed(&mut self, file: &LogFile, bytes: Vec<u8>) -> ParsedFile {
-        let (format_id, options) = self.index_options_for(file);
-        let source = std::sync::Arc::new(crate::index::BytesSource::new(bytes));
-        match crate::index::file::IndexedFile::index_now(source, options) {
-            Ok(indexed) => ParsedFile { format_id, ..ParsedFile::from_indexed(indexed) },
-            Err(error) => ParsedFile::failed(error),
+        let empty = file.path.as_deref().is_none_or(|p| std::fs::metadata(p).map_or(true, |m| m.len() == 0));
+        if empty {
+            self.parsed_files.insert(file.file_id.clone(), ParsedFile::empty());
+            return;
         }
+        self.queue_file_load(file);
     }
 
     /// Load a file that is read live: what is on disk now, and the state the
     /// source needs to carry on from there. An Archive Entry is static: it
-    /// is read once and has no live state.
+    /// is unpacked and read in the background (`ensure_archive_entries_loaded`).
     pub(crate) fn ensure_live_file_loaded(&mut self, file: &LogFile) {
-        if self.parsed_files.contains_key(&file.file_id) {
+        if self.parsed_files.contains_key(&file.file_id) || file.entry.is_some() {
             return;
         }
         // A file on disk is read in the background.
-        if file.entry.is_none() && file.path.is_some() {
+        if file.path.is_some() {
             return self.queue_file_load(file);
         }
-        let Some(source) = file.source() else {
-            self.parsed_files.insert(file.file_id.clone(), ParsedFile::empty());
-            return;
-        };
-        let bytes = match read_source(source) {
-            Ok(bytes) => bytes,
-            Err(e) => {
-                let error = read_failure(file, &e);
-                self.notice = Some(error.clone());
-                self.parsed_files.insert(file.file_id.clone(), ParsedFile::failed(error));
-                return;
-            }
-        };
-        self.parsed_files.insert(file.file_id.clone(), ParsedFile::from_bytes(&bytes));
+        self.parsed_files.insert(file.file_id.clone(), ParsedFile::empty());
     }
 
-    /// Read the Archive Entries of a space that are not cached yet, once per
-    /// Archive, so a `.tar.gz` is unpacked a single time however many of its
-    /// entries the space holds.
+    /// Unpack in the background the Archive Entries of a space not read yet,
+    /// once per Archive, so a `.tar.gz` is read a single time however many
+    /// of its entries the space holds; each is then read like a local file.
     fn ensure_archive_entries_loaded(&mut self, space: &LogSpace, only: Option<&str>) {
-        let mut by_archive: Vec<(&str, Vec<&LogFile>)> = Vec::new();
         for file in space.files.iter().filter(|f| only.is_none_or(|id| id == f.file_id)) {
             let (Some(archive), Some(_)) = (file.path.as_deref(), file.entry.as_deref()) else { continue };
-            if self.parsed_files.contains_key(&file.file_id) {
+            if self.parsed_files.contains_key(&file.file_id) || self.is_queued_or_read(&file.file_id) {
                 continue;
             }
-            match by_archive.iter_mut().find(|(a, _)| *a == archive) {
-                Some((_, files)) => files.push(file),
-                None => by_archive.push((archive, vec![file])),
+            match self.archive_queue.iter_mut().find(|(a, _)| a == archive) {
+                Some((_, files)) => files.push(file.clone()),
+                None => self.archive_queue.push((archive.to_string(), vec![file.clone()])),
             }
-        }
-        let mut notices = Vec::new();
-        for (archive, files) in by_archive {
-            let names: Vec<&str> = files.iter().filter_map(|f| f.entry.as_deref()).collect();
-            let path = Path::new(archive);
-            let root = self.archive_cache_root();
-            let result = match detect(path) {
-                Some(kind) => crate::archive_cache::unpack(&root, path, kind, &names, MAX_UNCOMPRESSED_BYTES),
-                None if path.exists() => Err(ArchiveError::Damaged("not an archive".into())),
-                None => Err(ArchiveError::NotFound),
-            };
-            let mut entries = match result {
-                Ok(entries) => entries,
-                Err(e) => {
-                    let e = std::io::Error::from(e);
-                    for file in files {
-                        let error = read_failure(file, &e);
-                        notices.push(error.clone());
-                        self.parsed_files.insert(file.file_id.clone(), ParsedFile::failed(error));
-                    }
-                    continue;
-                }
-            };
-            for file in files {
-                let content = file.entry.as_deref().and_then(|name| entries.remove(name));
-                let parsed = match content.map(|r| r.map_err(std::io::Error::from)) {
-                    // The entry is read from its unpacked file, like a local one.
-                    Some(Ok(unpacked)) => match ParsedFile::from_path(&unpacked) {
-                        Ok(parsed) => parsed,
-                        Err(e) => {
-                            let error = read_failure(file, &e);
-                            notices.push(error.clone());
-                            ParsedFile::failed(error)
-                        }
-                    },
-                    Some(Err(e)) => {
-                        let error = read_failure(file, &e);
-                        notices.push(error.clone());
-                        ParsedFile::failed(error)
-                    }
-                    None => ParsedFile::empty(),
-                };
-                self.parsed_files.insert(file.file_id.clone(), parsed);
-            }
-        }
-        if !notices.is_empty() {
-            self.notice = Some(notices.join("; "));
         }
     }
 

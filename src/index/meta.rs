@@ -103,6 +103,13 @@ impl<T> Default for Runs<T> {
     }
 }
 
+impl<T> Runs<T> {
+    /// The memory it holds on the heap, in bytes.
+    pub fn heap_bytes(&self) -> usize {
+        self.runs.capacity() * std::mem::size_of::<(usize, T)>()
+    }
+}
+
 impl<T: Copy + PartialEq> Runs<T> {
     /// Lines from `line` on have `value` (until the next `set`). `line` is
     /// at or after the first line of the last run.
@@ -238,6 +245,6 @@ impl MetaTable {
     }
 
     pub fn heap_bytes(&self) -> usize {
-        self.meta.capacity() * std::mem::size_of::<LineMeta>()
+        self.meta.capacity() * std::mem::size_of::<LineMeta>() + self.generations.heap_bytes() + self.streams.heap_bytes()
     }
 }

@@ -5,6 +5,8 @@
 //! position, Filter and Focus Tabs it keeps. A file whose tab was left while
 //! it was being read is dropped. While a file of a Live Log Space is
 //! indexed, its last lines show first (L3): they are read on their own.
+//! The Archive Entries of a tab are unpacked to the archive cache in the
+//! background first, one pass per Archive, then read like local files.
 
 use super::AppView;
 use crate::filter_index::{FilterIndex, MergeFile};
@@ -17,7 +19,7 @@ use crate::space_view::ParsedFile;
 use crate::workspace::log_space::{LogFile, StoredMarker};
 use gpui::Context;
 use std::sync::{Arc, Mutex};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Duration;
 
 /// How often the progress of a read is shown again.
@@ -41,16 +43,20 @@ pub struct FileLoad {
     cancel: Arc<AtomicBool>,
 }
 
-/// How far a read is: what Indexing has built so far.
+/// How far a read is: what Indexing has built so far, or for an Archive
+/// Entry not unpacked yet, the bytes read of its Archive.
 enum Progress {
     Indexed(Arc<Indexed>),
+    Unpacking { read: Arc<AtomicU64>, total: u64 },
 }
 
 impl FileLoad {
     /// How far the read is, 0..=100.
     pub fn percent(&self) -> u8 {
-        let Progress::Indexed(indexed) = &self.progress;
-        let (done, total) = indexed.progress();
+        let (done, total) = match &self.progress {
+            Progress::Indexed(indexed) => indexed.progress(),
+            Progress::Unpacking { read, total } => (read.load(Ordering::Relaxed), *total),
+        };
         if total == 0 {
             return 0;
         }
@@ -60,9 +66,29 @@ impl FileLoad {
     /// What Indexing has built so far, for a file read through its Line
     /// Index.
     pub fn indexed(&self) -> Option<&Arc<Indexed>> {
-        let Progress::Indexed(indexed) = &self.progress;
-        Some(indexed)
+        match &self.progress {
+            Progress::Indexed(indexed) => Some(indexed),
+            Progress::Unpacking { .. } => None,
+        }
     }
+
+    /// Whether the file is an Archive Entry still being unpacked.
+    pub fn is_unpacking(&self) -> bool {
+        matches!(self.progress, Progress::Unpacking { .. })
+    }
+
+    /// The file's name as its progress shows it.
+    pub fn label(&self) -> String {
+        if self.is_unpacking() { format!("{} (unpacking)", self.name) } else { self.name.clone() }
+    }
+}
+
+/// A file to read in the background, and where its text is: its path, or
+/// for an Archive Entry, its file in the archive cache.
+#[derive(Debug, Clone)]
+pub struct QueuedLoad {
+    pub file: LogFile,
+    pub read_path: String,
 }
 
 impl Drop for FileLoad {
@@ -96,13 +122,18 @@ impl AppView {
     /// Read `file` (a local file read live) in the background, unless it is
     /// read or being read already.
     pub(crate) fn queue_file_load(&mut self, file: &LogFile) {
-        if self.parsed_files.contains_key(&file.file_id)
-            || self.loads.contains_key(&file.file_id)
-            || self.load_queue.iter().any(|f| f.file_id == file.file_id)
-        {
+        if self.parsed_files.contains_key(&file.file_id) || self.is_queued_or_read(&file.file_id) {
             return;
         }
-        self.load_queue.push(file.clone());
+        let Some(path) = file.path.clone() else { return };
+        self.load_queue.push(QueuedLoad { file: file.clone(), read_path: path });
+    }
+
+    /// Whether `file_id` is being read, or waits to be read or unpacked.
+    pub(crate) fn is_queued_or_read(&self, file_id: &str) -> bool {
+        self.loads.contains_key(file_id)
+            || self.load_queue.iter().any(|q| q.file.file_id == file_id)
+            || self.archive_queue.iter().any(|(_, files)| files.iter().any(|f| f.file_id == file_id))
     }
 
     /// How `file` is read: the id of its Log Format, and the options with
@@ -152,11 +183,20 @@ impl AppView {
                 parsed.indexed = Some(Arc::new(indexed.read_with(options)));
                 parsed.format_id = format_id;
             }
-            self.loads.remove(&file.file_id);
-            self.load_queue.retain(|f| f.file_id != file.file_id);
-            self.load_queue.push(file.clone());
+            self.queue_read_again(file);
         }
         true
+    }
+
+    /// Read `file` again in the background, from its start; the view shows
+    /// it as read before until then. A read of it under way stops.
+    pub(crate) fn queue_read_again(&mut self, file: &LogFile) {
+        if let Some(load) = self.loads.remove(&file.file_id) {
+            load.cancel.store(true, Ordering::Release);
+        }
+        self.load_queue.retain(|q| q.file.file_id != file.file_id);
+        let Some(path) = file.path.clone() else { return };
+        self.load_queue.push(QueuedLoad { file: file.clone(), read_path: path });
     }
 
     /// Whether a file the open tab shows is still being read.
@@ -169,20 +209,22 @@ impl AppView {
     pub fn reading(&self) -> Vec<(String, u8)> {
         let reads = self.active_file_ids();
         let mut out: Vec<(String, u8)> =
-            self.loads.iter().filter(|(id, _)| reads.contains(*id)).map(|(_, l)| (l.name.clone(), l.percent())).collect();
+            self.loads.iter().filter(|(id, _)| reads.contains(*id)).map(|(_, l)| (l.label(), l.percent())).collect();
         out.sort();
         out
     }
 
     /// Start reading the files queued.
     pub(crate) fn start_queued_loads(&mut self, cx: &mut Context<Self>) {
+        self.start_queued_unpacking(cx);
         let queued = std::mem::take(&mut self.load_queue);
         if queued.is_empty() {
             return;
         }
         let live = self.active_space_is_live();
-        for file in queued {
-            let Some(path) = file.path.clone() else { continue };
+        for QueuedLoad { file, read_path: path } in queued {
+            // An Archive Entry is static: no last lines to show first.
+            let live = live && file.entry.is_none();
             let cancel = Arc::new(AtomicBool::new(false));
             let read_cancel = cancel.clone();
             let name = file.display_name.clone();
@@ -369,6 +411,8 @@ impl AppView {
             let picker = (self.filter_ui.picker_open, self.filter_ui.expanded.clone());
             self.restore_active_session(cx);
             (self.filter_ui.picker_open, self.filter_ui.expanded) = picker;
+            // What Indexing held only while it read goes back to the system.
+            super::live::release_freed_memory();
         } else {
             self.show_values_read_so_far();
         }
@@ -455,6 +499,117 @@ impl AppView {
     pub(crate) fn drop_dormant_loads(&mut self) {
         let reads = self.active_file_ids();
         self.loads.retain(|id, _| reads.contains(id));
-        self.load_queue.retain(|f| reads.contains(&f.file_id));
+        self.load_queue.retain(|q| reads.contains(&q.file.file_id));
+        for (_, files) in &mut self.archive_queue {
+            files.retain(|f| reads.contains(&f.file_id));
+        }
+        self.archive_queue.retain(|(_, files)| !files.is_empty());
+    }
+
+    /// Unpack in the background the Archives waiting to be: one pass over
+    /// each for all its entries the tab shows, with its progress on them.
+    fn start_queued_unpacking(&mut self, cx: &mut Context<Self>) {
+        let queued = std::mem::take(&mut self.archive_queue);
+        for (archive, files) in queued {
+            let how = crate::archive_cache::Unpacking::default();
+            let total = std::fs::metadata(&archive).map_or(0, |m| m.len());
+            for file in &files {
+                let progress = Progress::Unpacking { read: how.read.clone(), total };
+                let load = FileLoad { name: file.display_name.clone(), progress, tail: None, again: false, cancel: how.cancel.clone() };
+                self.loads.insert(file.file_id.clone(), load);
+            }
+            let root = self.archive_cache_root();
+            let names: Vec<String> = files.iter().filter_map(|f| f.entry.clone()).collect();
+            let (path, work) = (std::path::PathBuf::from(&archive), how.clone());
+            let archive = archive.clone();
+            let task = cx.background_executor().spawn(async move {
+                let names: Vec<&str> = names.iter().map(String::as_str).collect();
+                match crate::archive::detect(&path) {
+                    Some(kind) => crate::archive_cache::unpack_with(&root, &path, kind, &names, crate::archive::MAX_UNCOMPRESSED_BYTES, &work),
+                    None if path.exists() => Err(crate::archive::ArchiveError::Damaged("not an archive".into())),
+                    None => Err(crate::archive::ArchiveError::NotFound),
+                }
+            });
+            cx.spawn(async move |this, cx| {
+                let result = task.await;
+                this.update(cx, |this, cx| this.archive_unpacked(archive, files, &how.cancel, result, cx)).ok();
+            })
+            .detach();
+        }
+        self.show_read_progress(cx);
+    }
+
+    /// An Archive was unpacked (or could not be): its entries the tab still
+    /// shows are read from the archive cache; those that failed are empty,
+    /// with a notice. A cancelled unpacking leaves nothing behind.
+    fn archive_unpacked(
+        &mut self,
+        archive: String,
+        files: Vec<LogFile>,
+        cancel: &Arc<AtomicBool>,
+        result: Result<std::collections::HashMap<String, Result<std::path::PathBuf, crate::archive::ArchiveError>>, crate::archive::ArchiveError>,
+        cx: &mut Context<Self>,
+    ) {
+        use crate::archive::ArchiveError;
+        let reads = self.active_file_ids();
+        let mut notices = Vec::new();
+        let mut again = Vec::new();
+        let failed = result.as_ref().is_err_and(|e| !matches!(e, ArchiveError::Cancelled));
+        let mut entries = match result {
+            Ok(entries) => Some(entries),
+            Err(ArchiveError::Cancelled) => None,
+            Err(e) => {
+                let e = std::io::Error::from(e);
+                for file in &files {
+                    if self.loads.get(&file.file_id).is_some_and(|l| Arc::ptr_eq(&l.cancel, cancel)) && reads.contains(&file.file_id) {
+                        let error = super::tabs::read_failure(file, &e);
+                        notices.push(error.clone());
+                        self.parsed_files.insert(file.file_id.clone(), ParsedFile::failed(error));
+                    }
+                }
+                None
+            }
+        };
+        for file in files {
+            // Another read of the file took its place, or the tab left.
+            if !self.loads.get(&file.file_id).is_some_and(|l| Arc::ptr_eq(&l.cancel, cancel)) {
+                continue;
+            }
+            // The unpacking is over: its shared `cancel` stops nothing now.
+            self.loads.remove(&file.file_id);
+            if !reads.contains(&file.file_id) {
+                continue;
+            }
+            let found = entries.as_mut().and_then(|e| file.entry.as_deref().and_then(|name| e.remove(name)));
+            match found {
+                Some(Ok(path)) => {
+                    self.load_queue.push(QueuedLoad { file, read_path: path.to_string_lossy().into_owned() });
+                }
+                Some(Err(ArchiveError::Cancelled)) => {}
+                Some(Err(e)) => {
+                    let error = super::tabs::read_failure(&file, &std::io::Error::from(e));
+                    notices.push(error.clone());
+                    self.parsed_files.insert(file.file_id.clone(), ParsedFile::failed(error));
+                }
+                None if entries.is_some() => {
+                    self.parsed_files.insert(file.file_id.clone(), ParsedFile::empty());
+                }
+                // Stopped for another entry of the Archive no longer shown:
+                // this one is still wanted, so it is unpacked again.
+                None if !failed => again.push(file),
+                None => {}
+            }
+        }
+        if !again.is_empty() {
+            self.archive_queue.push((archive, again));
+        }
+        if !notices.is_empty() {
+            self.notice = Some(notices.join("; "));
+        }
+        self.start_queued_loads(cx);
+        if !self.is_reading() {
+            self.restore_active_session(cx);
+        }
+        cx.notify();
     }
 }

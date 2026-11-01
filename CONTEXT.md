@@ -47,11 +47,11 @@ A `.zip`, `.tar`, `.tar.gz`/`.tgz` or single `.gz` file dropped or picked like a
 _Avoid_: Compressed file, bundle.
 
 **Archive Entry**:
-A text file inside an Archive, added to a Static Log Space and shown as `<archive name> › <path in archive>` (a lone `.gz` shows its name without `.gz`). It is read straight into memory, never extracted to disk, and never read live.
+A text file inside an Archive, added to a Static Log Space and shown as `<archive name> › <path in archive>` (a lone `.gz` shows its name without `.gz`). It is unpacked once, in the background, to the app's archive cache and read from there like a local file; it is never read live.
 _Avoid_: Extracted file, unpacked file.
 
 **Scratch Log Space**:
-A Log Space created by choosing "Scratch" on the New Log Space switch (the one the dialog opens on) with only a name. Its files (`untitled.log`, `untitled-2.log`, …) start empty in the app's own data folder, and the user types or pastes log text into them.
+A Log Space created by choosing "Scratch" on the New Log Space switch (the one the dialog opens on) with only a name. Its files (`untitled.log`, `untitled-2.log`, …) start empty in the app's own data folder, and the user types or pastes log text into them. Its files are read from disk like any local file; what is being typed is saved before the Parsed View reads it.
 _Avoid_: Empty space, manual space.
 
 **Live Log Space**:
@@ -159,8 +159,16 @@ Reading the text of every line again in the background for something that needs 
 _Avoid_: Search job, background search.
 
 **Dormant Tab**:
-A tab whose lines are not read: not yet since the app opened, or let go when the user left it. It keeps its Filter, Focus Tabs, Search Expression, place and Markers, and is read again when chosen; its Remote Files show the lines in their Remote Cache at once and read only what is new.
+A tab whose lines are not read: not yet since the app opened, or let go when the user left it and it no longer fit in the Warm Tab Budget. It keeps its Filter, Focus Tabs, Search Expression, place and Markers, and is read again when chosen; its Remote Files show the lines in their Remote Cache at once and read only what is new.
 _Avoid_: Unloaded tab, sleeping tab, lazy tab.
+
+**Warm Tab**:
+A tab the user just left whose files keep their Line Index in memory, within the Warm Tab Budget. It reads nothing until chosen again; then it shows at once and reads only what was written to its files meanwhile. Past the budget the tab left longest ago becomes a Dormant Tab. Its Remote Files are never kept: they open again from their Remote Cache.
+_Avoid_: Cached tab, background tab, kept tab.
+
+**Warm Tab Budget**:
+The most memory every Warm Tab may keep, one value for the whole app (512 MB by default). Off (0) makes a tab Dormant as soon as it is left.
+_Avoid_: Tab cache size, memory limit.
 
 **Raw View**:
 Each file's text shown line by line exactly as stored, with line numbers and no columns, one collapsible File Section per file. It always shows every line, ignoring Filter; only Search and Markers apply. Editable only for a scratch file shown alone: its File View, or a Scratch Log Space holding just it.
@@ -432,5 +440,5 @@ L26. **Full Read Never Cuts Silently**: Open in full reads no more than the Full
 40. **Invalid Patterns Keep Last Preview**: While the template of a Log Format is invalid, the Preview keeps the result of the last valid one. The error shows only once the user stops typing or leaves the field.
 41. **A Jump Never Narrows**: Go to Line, next/previous Match and next/previous error only move the current line. They never change Search, Filter, the Time Range or which lines the view and the Focus Pane show, and what is typed in the Go to bar is not remembered.
 42. **Reading Never Blocks**: Opening a file, Search, a Filter or Highlight Rule Custom Value, a new Detected Field and another Log Format all run in the background with progress; results show as they come, and the view can always be read and scrolled.
-43. **Text Stays On Disk**: The app never holds the text of every line in memory: only the lines shown and a small set around them. A Remote File's lines are on disk in its Remote Cache (L10).
-44. **Only The Open Tab Reads**: When the app opens only the chosen tab is read; every other tab is a Dormant Tab. Leaving a tab lets its lines go from memory, and choosing it again reads its files again (a Remote File from its Remote Cache, then only what is new on the Server). Closing the last tab that shows files of a Server ends the connection to it.
+43. **Text Stays On Disk**: The app never holds the text of every line in memory: only the lines shown and a small set around them. A Remote File's lines are on disk in its Remote Cache (L10). A scratch file's text is in memory only while its editor is open in the open tab or a Warm Tab.
+44. **Only The Open Tab Reads**: When the app opens only the chosen tab is read; every other tab is a Dormant Tab. Only the open tab reads: a tab the user leaves stops reading at once. Its Line Indexes stay in memory as a Warm Tab while they fit in the Warm Tab Budget, the tab left longest ago going Dormant first; a Dormant Tab reads its files again when chosen (a Remote File from its Remote Cache, then only what is new on the Server). Closing the last tab that shows files of a Server ends the connection to it.

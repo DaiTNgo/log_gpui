@@ -246,11 +246,23 @@ impl AppView {
     }
 
     /// Whether the tab at `index` is a Dormant Tab: it shows log lines but is
-    /// not the active tab, so none of its files is read.
+    /// not the active tab, so none of its files is read, and they are not
+    /// all kept for it as a Warm Tab.
     pub fn is_dormant_tab(&self, index: usize) -> bool {
-        let Some(working_set) = self.active_project().map(|p| &p.working_set) else { return false };
-        working_set.active_tab_index() != Some(index)
-            && working_set.tabs().get(index).is_some_and(|t| t.target.is_log_view())
+        let Some(project) = self.active_project() else { return false };
+        let working_set = &project.working_set;
+        let Some(tab) = working_set.tabs().get(index) else { return false };
+        if working_set.active_tab_index() == Some(index) || !tab.target.is_log_view() {
+            return false;
+        }
+        let (space_id, only) = match &tab.target {
+            TabTarget::LogSpace { space_id } => (space_id, None),
+            TabTarget::FileView { space_id, file_id } => (space_id, Some(file_id)),
+            TabTarget::InvestigationBoard { .. } => return false,
+        };
+        let Some(space) = project.log_space(space_id) else { return true };
+        let mut files = space.files.iter().filter(|f| only.is_none_or(|id| *id == f.file_id)).peekable();
+        files.peek().is_none() || !files.all(|f| self.warm.contains(&f.file_id))
     }
 
     /// The `file_id`s the active tab reads.
@@ -265,20 +277,119 @@ impl AppView {
             .collect()
     }
 
-    /// Let go of the lines of the files the active tab does not read: their
-    /// tabs are Dormant and read their files again when chosen. Scratch
-    /// edits are saved first.
-    pub(crate) fn drop_dormant_files(&mut self) {
+    /// The files the active tab does not read stop being read. Their Line
+    /// Indexes stay (a Warm Tab) while they fit in the Warm Tab Budget, the
+    /// files left longest ago going first; a file let go makes its tabs
+    /// Dormant, read again when chosen. A Remote File or Remote Command is
+    /// always let go: it opens again from its Remote Cache. Scratch edits
+    /// are saved first. The files kept that the active tab shows again.
+    pub(crate) fn drop_dormant_files(&mut self) -> Vec<String> {
         let keep = self.active_file_ids();
-        if self.parsed_files.keys().all(|id| keep.contains(id)) {
-            return;
+        let shown_again: Vec<String> = keep.iter().filter(|id| self.warm.take(id)).cloned().collect();
+        for id in &shown_again {
+            if let Some(file) = self.parsed_files.get(id).and_then(|p| p.indexed.as_ref()) {
+                file.source.unpark();
+            }
+        }
+        let budget = self.workspace_state.warm_tab_budget_mb as usize * (1 << 20);
+        let unshown = |id: &String| !keep.contains(id);
+        let left: Vec<String> = self.parsed_files.keys().filter(|id| unshown(id) && !self.warm.contains(id)).cloned().collect();
+        let editors = self.raw.editors.keys().chain(self.raw.texts.keys());
+        let editors_left = editors.filter(|id| unshown(id) && !self.warm.contains(id)).count() > 0;
+        if left.is_empty() && !editors_left && self.warm.total() <= budget {
+            return shown_again;
         }
         self.flush_scratch_saves();
-        let left: Vec<String> = self.parsed_files.keys().filter(|id| !keep.contains(*id)).cloned().collect();
-        for id in &left {
-            self.close_cached(id);
+        let mut leaving = Vec::new();
+        let mut freed = false;
+        for id in left {
+            // Kept only once it holds no file open: a file with an older
+            // Generation needs its handle for that one's lines.
+            let parked = || self.parsed_files.get(&id).and_then(|p| p.indexed.as_ref()).is_none_or(|f| f.source.park());
+            if is_remote_id(&id) || !parked() {
+                self.let_file_go(&id);
+                freed = true;
+            } else {
+                leaving.push((id.clone(), self.memory_of(&id)));
+            }
         }
-        self.parsed_files.retain(|id, _| keep.contains(id));
+        if !leaving.is_empty() {
+            self.warm.leave(leaving);
+        }
+        for id in self.warm.fit(budget) {
+            self.let_file_go(&id);
+            freed = true;
+        }
+        // An editor of a file neither shown nor kept goes once saved.
+        let editors: Vec<String> =
+            self.raw.editors.keys().chain(self.raw.texts.keys()).filter(|id| unshown(id) && !self.warm.contains(id)).cloned().collect();
+        for id in editors {
+            if !self.raw.unsaved.contains(&id) {
+                self.forget_raw_state(&id);
+            }
+        }
+        if freed {
+            release_freed_memory();
+        }
+        shown_again
+    }
+
+    /// Let go of what is held for a file no tab shows: its Line Index, its
+    /// rows and its Remote Cache's open file, and its editor once saved.
+    fn let_file_go(&mut self, file_id: &str) {
+        self.warm.take(file_id);
+        self.close_cached(file_id);
+        self.parsed_files.remove(file_id);
+        if !self.raw.unsaved.contains(file_id) {
+            self.forget_raw_state(file_id);
+        }
+    }
+
+    /// What a file left counts as in the Warm Tab Budget: its Line Index,
+    /// and the text of its editor (held by the editor, its text and its
+    /// lines).
+    fn memory_of(&self, file_id: &str) -> usize {
+        let index = self.parsed_files.get(file_id).and_then(|p| p.indexed.as_ref()).map_or(0, |f| f.memory_bytes());
+        index + self.raw.texts.get(file_id).map_or(0, |t| t.len() * 3)
+    }
+
+    /// Files kept for a Warm Tab and shown again: what changed on disk
+    /// meanwhile is read. A Static Log Space looks at its files now; a
+    /// local file of a Live Log Space that another file took the place of
+    /// is read again under a Break, and one written on is read on by its
+    /// source from where it was indexed.
+    fn catch_up_shown_again(&mut self, shown_again: &[String], cx: &mut Context<Self>) {
+        if shown_again.is_empty() {
+            return;
+        }
+        if !self.active_space_is_live() {
+            self.live.static_watched = None;
+            self.watch_static_files(cx);
+            return;
+        }
+        let mut deltas = Vec::new();
+        for id in shown_again {
+            let Some(file) = self.active_space().and_then(|s| s.file(id).cloned()) else { continue };
+            let (Some(path), None, None) = (&file.path, &file.remote, &file.entry) else { continue };
+            let Some(indexed) = self.parsed_files.get(id).and_then(|p| p.indexed.clone()) else { continue };
+            if indexed.changed_on_disk(std::path::Path::new(path)).ok() != Some(crate::index::file::OnDisk::Replaced) {
+                continue;
+            }
+            let Some(parsed) = self.parsed_files.remove(id) else { continue };
+            let delta = self.index_written_since(id, parsed, false, Some(BreakKind::Replaced), FileDelta::default());
+            deltas.push((id.clone(), delta));
+        }
+        if !deltas.is_empty() {
+            self.apply_deltas(deltas, cx);
+        }
+    }
+
+    /// Set the Warm Tab Budget, in MB: the files kept past it go now.
+    pub fn set_warm_tab_budget(&mut self, mb: u32, cx: &mut Context<Self>) {
+        self.workspace_state.warm_tab_budget_mb = mb;
+        self.drop_dormant_files();
+        self.schedule_session_save(cx);
+        cx.notify();
     }
 
     /// Whether the open tab reads a Live Log Space: it has Live/Pause and
@@ -337,15 +448,20 @@ impl AppView {
             if let Some(source) = self.live.sources.remove(&file_id) {
                 source.handle.close();
             }
-            // What was received goes to the Remote Cache, for next time.
-            self.close_cached(&file_id);
-            self.parsed_files.remove(&file_id);
+            // What was received goes to the Remote Cache, for next time. A
+            // local file's Line Index may stay for a Warm Tab
+            // (`drop_dormant_files`): its source goes on from it.
+            if is_remote_id(&file_id) {
+                self.close_cached(&file_id);
+                self.parsed_files.remove(&file_id);
+            }
         }
         // A Dormant Tab's space stays paused for when it is chosen again.
         let tabs = self.tab_space_ids();
         self.live.paused_spaces.retain(|id| open.contains(id) || tabs.contains(id));
-        self.drop_dormant_files();
+        let shown_again = self.drop_dormant_files();
         self.drop_dormant_loads();
+        self.catch_up_shown_again(&shown_again, cx);
         self.start_missing_sources(cx);
         self.sync_glob_watchers(cx);
     }
@@ -1543,18 +1659,28 @@ fn partition_rows(len: usize, before: impl Fn(usize) -> bool) -> usize {
     lo
 }
 
-/// Return the memory the allocator keeps after large blocks were freed.
-#[cfg(target_os = "macos")]
-pub(crate) fn release_freed_memory() {
-    unsafe extern "C" {
-        fn malloc_zone_pressure_relief(zone: *mut std::ffi::c_void, goal: usize) -> usize;
-    }
-    // SAFETY: a null zone means every zone; a goal of 0 means as much as can be.
-    let freed = unsafe { malloc_zone_pressure_relief(std::ptr::null_mut(), 0) };
-    if std::env::var_os("LOG_GPUI_LIVE_TRACE").is_some() {
-        eprintln!("released {} MB", freed >> 20);
-    }
+/// Whether `file_id` is a Remote File's or a Remote Command's.
+pub(crate) fn is_remote_id(file_id: &str) -> bool {
+    file_id.starts_with("remote:") || file_id.starts_with("remote-cmd:")
 }
 
-#[cfg(not(target_os = "macos"))]
-pub(crate) fn release_freed_memory() {}
+/// Give back to the system the memory the allocator keeps after large
+/// blocks were freed (a file let go, a read done): mimalloc's, the app's
+/// allocator, and on macOS what the system malloc keeps for the frameworks.
+pub fn release_freed_memory() {
+    // SAFETY: any thread may call it; it frees only what nothing uses, and
+    // `force` reaches what other threads freed too. Without mimalloc as the
+    // allocator (tests, examples) it has nothing to free.
+    unsafe { libmimalloc_sys::mi_collect(true) };
+    #[cfg(target_os = "macos")]
+    {
+        unsafe extern "C" {
+            fn malloc_zone_pressure_relief(zone: *mut std::ffi::c_void, goal: usize) -> usize;
+        }
+        // SAFETY: a null zone means every zone; a goal of 0 means as much as can be.
+        let freed = unsafe { malloc_zone_pressure_relief(std::ptr::null_mut(), 0) };
+        if std::env::var_os("LOG_GPUI_LIVE_TRACE").is_some() {
+            eprintln!("released {} MB", freed >> 20);
+        }
+    }
+}

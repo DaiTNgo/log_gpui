@@ -139,3 +139,108 @@ fn an_archive_entry_is_read_from_its_unpacked_file_and_goes_with_its_space(cx: &
     });
     assert!(!unpacked.exists(), "deleting the Log Space removes the unpacked file");
 }
+
+// memory-budget, group 5: unpacked in the background, counted, cancellable.
+
+#[test]
+fn an_unpacking_counts_the_archive_read_and_stops_when_cancelled() {
+    use log_gpui::archive_cache::{Unpacking, unpack_with};
+    use std::sync::atomic::Ordering;
+    let d = tempfile::tempdir().unwrap();
+    let (root, archive) = (d.path().join("cache"), d.path().join("logs.tar.gz"));
+    let big: Vec<u8> = (0..200_000).flat_map(|i| format!("2026-09-05 10:00:00 [INFO] line {i}\n").into_bytes()).collect();
+    tar_gz(&archive, &[("a.log", &big), ("b.log", b"two\n")]);
+
+    let how = Unpacking::default();
+    unpack_with(&root, &archive, ArchiveKind::TarGz, &["a.log"], 1 << 30, &how).unwrap();
+    let size = std::fs::metadata(&archive).unwrap().len();
+    let read = how.read.load(Ordering::Relaxed);
+    assert!(read > 0 && read <= size + 64 * 1024, "{read} of {size} bytes read");
+
+    // Cancelled: nothing of it is kept, no `.part` left.
+    let how = Unpacking::default();
+    how.cancel.store(true, Ordering::Release);
+    let out = unpack_with(&root, &archive, ArchiveKind::TarGz, &["b.log"], 1 << 30, &how);
+    assert!(matches!(out, Err(ArchiveError::Cancelled)));
+    let dir = dir_of(&root, &archive).unwrap();
+    assert_eq!(parts_in(&dir), 0);
+    assert!(!entry_path(&dir, "b.log").exists());
+
+    // An entry unpacked before needs no read of the Archive at all.
+    let how = Unpacking::default();
+    unpack_with(&root, &archive, ArchiveKind::TarGz, &["a.log"], 1 << 30, &how).unwrap();
+    assert_eq!(how.read.load(Ordering::Relaxed), 0);
+}
+
+/// The `.part` files in an Archive's folder: entries cut off.
+fn parts_in(dir: &Path) -> usize {
+    std::fs::read_dir(dir).map_or(0, |d| d.filter(|e| e.as_ref().unwrap().path().extension().is_some_and(|x| x == "part")).count())
+}
+
+fn bundle(h: &mut common::Harness, archive: &Path, entries: &[&str]) {
+    let sources: Vec<ImportSource> = entries
+        .iter()
+        .map(|e| ImportSource::Entry { archive: archive.to_string_lossy().into_owned(), entry: (*e).into() })
+        .collect();
+    h.view.update(&mut h.cx, |app, cx| {
+        app.create_log_space("Bundle", LogSpaceKind::Static, &sources, cx);
+    });
+}
+
+#[gpui::test]
+fn archive_entries_are_unpacked_and_read_in_the_background(cx: &mut TestAppContext) {
+    let mut h = common::open_app(cx);
+    let archive = h.dir.path().join("logs.tar.gz");
+    tar_gz(&archive, &[
+        ("a.log", b"2026-09-05 10:00:00 [INFO] [a] one\n"),
+        ("b.log", b"2026-09-05 10:00:01 [INFO] [b] two\n"),
+        ("c.log", b"2026-09-05 10:00:02 [INFO] [c] three\n"),
+    ]);
+    bundle(&mut h, &archive, &["a.log", "b.log", "c.log"]);
+    h.view.read_with(&h.cx, |app, _| {
+        assert!(app.is_reading(), "unpacked in the background");
+        assert!(app.parsed_files.is_empty(), "nothing read on the UI thread");
+        assert!(app.loads.values().all(|l| l.is_unpacking()));
+    });
+    // Asked again meanwhile: no second unpacking.
+    h.view.update(&mut h.cx, |app, cx| app.rebuild_open_view_keeping_position(cx));
+    h.view.read_with(&h.cx, |app, _| assert!(app.archive_queue.is_empty()));
+    h.cx.run_until_parked();
+    h.view.read_with(&h.cx, |app, _| {
+        assert_eq!(app.view.len(), 3);
+        assert!(!app.is_reading());
+        assert!(app.notice.is_none(), "{:?}", app.notice);
+    });
+}
+
+#[gpui::test]
+fn a_damaged_archive_reads_as_empty_with_a_notice(cx: &mut TestAppContext) {
+    let mut h = common::open_app(cx);
+    let archive = h.dir.path().join("logs.tar.gz");
+    std::fs::write(&archive, b"\x1f\x8bnot really gzip").unwrap();
+    bundle(&mut h, &archive, &["a.log"]);
+    h.cx.run_until_parked();
+    h.view.read_with(&h.cx, |app, _| {
+        assert_eq!(app.view.len(), 0);
+        assert!(app.notice.is_some(), "the failure is told");
+        assert!(!app.is_reading());
+    });
+}
+
+#[gpui::test]
+fn leaving_the_tab_stops_the_unpacking(cx: &mut TestAppContext) {
+    let mut h = common::open_app(cx);
+    let archive = h.dir.path().join("logs.tar.gz");
+    tar_gz(&archive, &[("a.log", b"2026-09-05 10:00:00 [INFO] [a] one\n")]);
+    bundle(&mut h, &archive, &["a.log"]);
+    let other = h.dir.path().join("other.log");
+    std::fs::write(&other, "2026-09-05 10:00:00 [INFO] other\n").unwrap();
+    let source = ImportSource::Disk(other.to_string_lossy().into_owned());
+    h.view.update(&mut h.cx, |app, cx| app.create_log_space("Other", LogSpaceKind::Static, &[source], cx));
+    h.view.read_with(&h.cx, |app, _| {
+        assert!(app.loads.values().all(|l| !l.is_unpacking()), "the Archive's read went with its tab");
+    });
+    h.cx.run_until_parked();
+    let root = h.view.read_with(&h.cx, |app, _| app.archive_cache_root_for_test());
+    assert_eq!(parts_in(&dir_of(&root, &archive).unwrap()), 0, "no part of an entry is left");
+}

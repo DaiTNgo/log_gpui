@@ -7,6 +7,7 @@ use super::handles::{HandleBudget, HandleLease};
 use std::fs::File;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 
 /// The bytes of one file, read at any position.
@@ -21,6 +22,17 @@ pub trait LineSource: Send + Sync {
     /// Done reading for now: a source that does not stay open lets go of
     /// what it holds open. It opens again on the next read.
     fn release(&self) {}
+
+    /// Its file is kept for a Warm Tab: let go of every handle until it is
+    /// shown again (`unpark`), opening the file at the path when read.
+    /// Whether nothing is held open now; a source whose text is only
+    /// readable through a handle it holds (an older Generation) says no.
+    fn park(&self) -> bool {
+        false
+    }
+
+    /// Shown again after `park`: it stays open again from its next read.
+    fn unpark(&self) {}
 
     /// The identity of the file read (its inode on Unix), when the source
     /// is a file and it can be told.
@@ -72,21 +84,24 @@ fn read_full_at(file: &File, mut offset: u64, buf: &mut [u8]) -> io::Result<usiz
 pub struct DiskSource {
     path: PathBuf,
     budget: Arc<HandleBudget>,
-    stay_open: bool,
+    stay_open: AtomicBool,
+    /// Parked (`park`) while it stayed open: it stays open again once
+    /// shown again.
+    parked: AtomicBool,
     open: Mutex<Option<(File, HandleLease)>>,
 }
 
 impl DiskSource {
     /// A file opened when read and closed after each pass.
     pub fn on_demand(path: impl Into<PathBuf>, budget: Arc<HandleBudget>) -> Self {
-        Self { path: path.into(), budget, stay_open: false, open: Mutex::new(None) }
+        Self { path: path.into(), budget, stay_open: false.into(), parked: false.into(), open: Mutex::new(None) }
     }
 
     /// A file kept open until dropped: a live file, or an older Generation
     /// that still has lines in a view. It keeps reading the file it opened
     /// even after the path names another file.
     pub fn stay_open(path: impl Into<PathBuf>, budget: Arc<HandleBudget>) -> io::Result<Self> {
-        let source = Self { path: path.into(), budget, stay_open: true, open: Mutex::new(None) };
+        let source = Self { path: path.into(), budget, stay_open: true.into(), parked: false.into(), open: Mutex::new(None) };
         source.with_file(|_| Ok(()))?;
         Ok(source)
     }
@@ -124,8 +139,22 @@ impl LineSource for DiskSource {
     }
 
     fn release(&self) {
-        if !self.stay_open {
+        if !self.stay_open.load(Ordering::Acquire) {
             *self.open.lock().unwrap() = None;
+        }
+    }
+
+    fn park(&self) -> bool {
+        if self.stay_open.swap(false, Ordering::AcqRel) {
+            self.parked.store(true, Ordering::Release);
+        }
+        *self.open.lock().unwrap() = None;
+        true
+    }
+
+    fn unpark(&self) {
+        if self.parked.swap(false, Ordering::AcqRel) {
+            self.stay_open.store(true, Ordering::Release);
         }
     }
 }
@@ -154,6 +183,14 @@ impl LineSource for OffsetSource {
 
     fn release(&self) {
         self.inner.release();
+    }
+
+    fn park(&self) -> bool {
+        self.inner.park()
+    }
+
+    fn unpark(&self) {
+        self.inner.unpark();
     }
 }
 
@@ -272,6 +309,19 @@ impl LineSource for ChainSource {
         }
     }
 
+    /// Only one Generation: an older one is read through the handle it
+    /// keeps, the path naming another file now.
+    fn park(&self) -> bool {
+        let parts = self.parts.read().unwrap();
+        parts.len() == 1 && parts[0].source.park()
+    }
+
+    fn unpark(&self) {
+        for part in self.parts.read().unwrap().iter() {
+            part.source.unpark();
+        }
+    }
+
     /// The newest Generation's: the file at the path.
     fn identity(&self) -> Option<crate::live::local::FileId> {
         self.parts.read().unwrap().last().and_then(|p| p.source.identity())
@@ -313,5 +363,9 @@ impl LineSource for BytesSource {
         let n = have.len().min(buf.len());
         buf[..n].copy_from_slice(&have[..n]);
         Ok(n)
+    }
+
+    fn park(&self) -> bool {
+        true
     }
 }

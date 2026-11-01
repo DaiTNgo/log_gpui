@@ -23,6 +23,7 @@ pub use shortcuts::shortcut_label;
 pub mod live;
 pub mod live_more;
 pub mod loading;
+pub mod warm;
 pub mod open_in_full;
 mod marking;
 mod persist;
@@ -223,7 +224,12 @@ pub struct AppView {
     /// Local files being read in the background, by `file_id`.
     pub loads: HashMap<String, loading::FileLoad>,
     /// Files to read in the background, once there is a context to.
-    pub(crate) load_queue: Vec<crate::workspace::log_space::LogFile>,
+    pub(crate) load_queue: Vec<loading::QueuedLoad>,
+    /// Archives to unpack in the background, with the entries the open tab
+    /// shows, once there is a context to.
+    pub archive_queue: Vec<(String, Vec<crate::workspace::log_space::LogFile>)>,
+    /// The files of the tabs left, kept within the Warm Tab Budget.
+    pub warm: warm::WarmFiles,
     /// Whether the progress of the reads is being drawn again.
     pub(crate) read_progress_shown: bool,
     /// Bumped whenever rows left or moved in the open view (not when rows
@@ -581,6 +587,8 @@ impl AppView {
             filter_scanning: None,
             loads: HashMap::new(),
             load_queue: Vec::new(),
+            archive_queue: Vec::new(),
+            warm: Default::default(),
             read_progress_shown: false,
             rows_epoch: 0,
             time_range_generation: 0,

@@ -116,6 +116,17 @@ Settings SHALL có Warm Tab Budget tính bằng MB, mặc định 512, với 0 n
 - **WHEN** người dùng mở app với session lưu trước change này
 - **THEN** Warm Tab Budget là 512 MB
 
+### Requirement: Memory của file bị bỏ được trả về hệ điều hành
+Khi hệ thống bỏ Line Index của một file (tab thành Dormant Tab, Warm Tab vượt budget, gỡ file) và khi tab đang mở đọc xong các file của nó, hệ thống SHALL trả về hệ điều hành memory mà allocator giữ lại nhưng không dùng nữa. Mở lần lượt nhiều file lớn, mỗi file thay file trước, SHALL NOT làm memory của tiến trình tăng dần.
+
+#### Scenario: Rời tab với budget 0
+- **WHEN** Warm Tab Budget là 0 và người dùng rời một tab có file 3.000.000 dòng
+- **THEN** footprint của tiến trình giảm về gần mức trước khi mở file đó
+
+#### Scenario: Nhiều file lớn lần lượt
+- **WHEN** Warm Tab Budget là 0 và người dùng mở lần lượt 8 file 3.000.000 dòng, mỗi file trong một tab mới
+- **THEN** footprint sau file thứ 8 ngang footprint sau file thứ nhất, không tăng theo số file đã mở
+
 ### Requirement: Một Row Cache chung có giới hạn byte
 Hệ thống SHALL giữ các dòng đã parse trong một cache chung cho cả app, có giới hạn theo byte ước lượng, thay vì một giới hạn số dòng cho mỗi file. Khi vượt giới hạn, hệ thống SHALL bỏ dòng dùng lâu nhất trên toàn app. Khi Line Index của một file bị bỏ (Dormant Tab, gỡ file, index lại), hệ thống SHALL bỏ mọi dòng của file đó khỏi cache.
 

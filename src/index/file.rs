@@ -1,13 +1,14 @@
 //! A local file read through its Line Index (task 4b.2): what is held for
 //! every line is its position, `LineMeta` and Filter value ids; a line's
 //! entry is parsed again from the file when it is asked for, and the
-//! entries asked for last are kept (`RowCache`). Lines are read in blocks
+//! entries asked for last are kept in the app's Row Cache
+//! (`view_rows::rows`). Lines are read in blocks
 //! of `READ_AROUND`, so the lines next to one asked for come with it.
 
 use super::indexing::{IndexOptions, Indexed, Outcome, index_all};
 use super::meta::LineMeta;
 use super::scan::FileTexts;
-use super::view_rows::{ROW_CACHE, RowCache};
+use super::view_rows::{row_weight, rows};
 use super::{ChainSource, LineSource, read_entries};
 use crate::model::LogEntry;
 use crate::parser::text::LineParser;
@@ -25,7 +26,8 @@ pub struct IndexedFile {
     pub source: Arc<dyn LineSource>,
     pub indexed: Arc<Indexed>,
     options: IndexOptions,
-    cache: Mutex<RowCache>,
+    /// The file's key in the app's Row Cache (`view_rows::rows`).
+    file_key: usize,
     fingerprint: Mutex<Fingerprint>,
     /// Where each Generation starts, oldest first: a file not read live has
     /// one.
@@ -107,6 +109,19 @@ impl std::fmt::Debug for IndexedFile {
     }
 }
 
+/// A key no other `IndexedFile` of this run has.
+fn next_file_key() -> usize {
+    static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(1);
+    NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+}
+
+impl Drop for IndexedFile {
+    /// Its rows go from the Row Cache with it.
+    fn drop(&mut self) {
+        rows().forget(self.file_key);
+    }
+}
+
 impl IndexedFile {
     /// The file `source` as Indexing (with `options`) read it into `indexed`.
     pub fn new(source: Arc<dyn LineSource>, indexed: Arc<Indexed>, options: IndexOptions) -> Self {
@@ -119,7 +134,7 @@ impl IndexedFile {
             source,
             indexed,
             options,
-            cache: Mutex::new(RowCache::new(ROW_CACHE)),
+            file_key: next_file_key(),
             fingerprint,
             generations,
             chain: None,
@@ -133,7 +148,9 @@ impl IndexedFile {
     /// A local file read live: a new Generation can follow its lines
     /// (`begin_generation`).
     pub fn with_chain(chain: Arc<ChainSource>, indexed: Arc<Indexed>, options: IndexOptions) -> Self {
-        Self { chain: Some(chain.clone()), ..Self::new(chain, indexed, options) }
+        let mut file = Self::new(chain.clone(), indexed, options);
+        file.chain = Some(chain);
+        file
     }
 
     /// The same file, read from now on with `options` (another Log Format
@@ -145,7 +162,7 @@ impl IndexedFile {
             source: self.source.clone(),
             indexed: self.indexed.clone(),
             options,
-            cache: Mutex::new(RowCache::new(ROW_CACHE)),
+            file_key: next_file_key(),
             fingerprint: Mutex::new(self.fingerprint.lock().unwrap().clone()),
             generations: Mutex::new(self.generations.lock().unwrap().clone()),
             chain: self.chain.clone(),
@@ -162,7 +179,7 @@ impl IndexedFile {
         let mut generations = self.generations.lock().unwrap();
         generations[0].generation = generation;
         generations[0].mark = mark;
-        self.cache.lock().unwrap().forget_file(0);
+        rows().forget(self.file_key);
     }
 
     /// Where each Generation starts and how its lines are numbered, oldest
@@ -170,7 +187,7 @@ impl IndexedFile {
     pub fn set_generations(&self, starts: Vec<GenerationStart>) {
         if starts.first().is_some_and(|g| g.pos == 0) {
             *self.generations.lock().unwrap() = starts;
-            self.cache.lock().unwrap().forget_file(0);
+            rows().forget(self.file_key);
         }
     }
 
@@ -235,7 +252,7 @@ impl IndexedFile {
     /// The Breaks drawn below lines, by position.
     pub fn set_marks_after(&self, marks: std::collections::BTreeMap<usize, Arc<crate::live::BreakMark>>) {
         *self.marks_after.lock().unwrap() = marks;
-        self.cache.lock().unwrap().forget_file(0);
+        rows().forget(self.file_key);
     }
 
     /// The output each line of a Remote Command came from, by position.
@@ -256,7 +273,7 @@ impl IndexedFile {
             }
         }
         *self.streams.lock().unwrap() = streams;
-        self.cache.lock().unwrap().forget_file(0);
+        rows().forget(self.file_key);
     }
 
     /// The Breaks drawn above lines that do not start a Generation, by
@@ -264,7 +281,7 @@ impl IndexedFile {
     /// Live Window, …).
     pub fn set_marks(&self, marks: std::collections::BTreeMap<usize, Arc<crate::live::BreakMark>>) {
         *self.marks.lock().unwrap() = marks;
-        self.cache.lock().unwrap().forget_file(0);
+        rows().forget(self.file_key);
     }
 
     /// What the indexed part of the file was.
@@ -337,18 +354,18 @@ impl IndexedFile {
 
     /// Let go of every entry kept: they are read again when asked for.
     pub fn forget_cached(&self) {
-        self.cache.lock().unwrap().forget_file(0);
+        rows().forget(self.file_key);
     }
 
     /// The entry of line `n` (0-based) if the cache has it: nothing is read.
     pub fn cached_entry(&self, n: usize) -> Option<Arc<LogEntry>> {
-        self.cache.lock().unwrap().get((0, 0, n))
+        rows().shard(self.file_key).get((self.file_key, 0, n))
     }
 
     /// The entry of line `n` (0-based), from the cache or read from the
     /// file with the lines around it. `None` when the file no longer has it.
     pub fn entry(&self, n: usize) -> Option<Arc<LogEntry>> {
-        if let Some(entry) = self.cache.lock().unwrap().get((0, 0, n)) {
+        if let Some(entry) = rows().shard(self.file_key).get((self.file_key, 0, n)) {
             return Some(entry);
         }
         let data = self.indexed.data.read().unwrap();
@@ -362,9 +379,10 @@ impl IndexedFile {
         parser.set_config(self.options.config.clone());
         parser.set_format(self.options.format.clone());
         let entries = read_entries(&*self.source, &data.file, start..end, &mut parser).ok()?;
+        let lens: Vec<usize> = (start..end).map(|i| data.file.lines.span(i).map_or(0, |(_, len)| len as usize)).collect();
         drop(data);
         let generations = self.generations.lock().unwrap().clone();
-        let mut cache = self.cache.lock().unwrap();
+        let mut cache = rows().shard(self.file_key);
         let mut found = None;
         for (i, mut entry) in entries.into_iter().enumerate() {
             self.place(&generations, start + i, &mut entry);
@@ -372,7 +390,7 @@ impl IndexedFile {
             if start + i == n {
                 found = Some(entry.clone());
             }
-            cache.insert((0, 0, start + i), entry);
+            cache.insert_weighed((self.file_key, 0, start + i), entry, row_weight(lens[i]));
         }
         found
     }
@@ -501,7 +519,7 @@ impl IndexedFile {
             data.file.meta.truncate(last);
             let parent_row = (0..last).rev().find(|&r| data.file.meta.get(r).is_some_and(|m| m.parent_dist == 0)).unwrap_or(0);
             data.filter.truncate_to(last, parent_row, &[removed][..]);
-            self.cache.lock().unwrap().forget_file(0);
+            rows().forget(self.file_key);
         }
         let locked = self.indexed.locked.load(std::sync::atomic::Ordering::Acquire);
         super::indexing::index_more(&mut data, bytes, &self.options, locked);
@@ -523,7 +541,26 @@ impl IndexedFile {
 
     /// How many entries are kept now.
     pub fn cached(&self) -> usize {
-        self.cache.lock().unwrap().len()
+        rows().shard(self.file_key).of_file(self.file_key).0
+    }
+
+    /// The weight of the rows of this file the Row Cache keeps.
+    pub fn cached_weight(&self) -> usize {
+        rows().shard(self.file_key).of_file(self.file_key).1
+    }
+
+    /// The file's key in the app's Row Cache.
+    pub fn file_key(&self) -> usize {
+        self.file_key
+    }
+
+    /// The memory the file holds while it is open, in bytes, roughly: its
+    /// Line Index and its Filter's times, ids and values (`heap_bytes` and
+    /// more). Not its rows in the Row Cache, which has a budget of its own.
+    /// What a Warm Tab is counted at.
+    pub fn memory_bytes(&self) -> usize {
+        let data = self.indexed.data.read().unwrap();
+        data.file.lines.heap_bytes() + data.file.meta.heap_bytes() + data.filter.heap_bytes()
     }
 
     /// The file's lines to read in a Scan.

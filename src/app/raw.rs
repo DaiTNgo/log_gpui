@@ -524,16 +524,23 @@ impl AppView {
 
     /// Parse again the scratch files edited since they were parsed.
     pub(crate) fn reparse_edited_scratch_files(&mut self) {
-        let edited: Vec<String> = self.raw.edited.drain().collect();
+        if self.raw.edited.is_empty() {
+            return;
+        }
+        // Saved first, then read again from disk: no copy of the text is
+        // indexed. A file that could not be saved keeps the rows it had.
+        self.flush_scratch_saves();
+        let edited: Vec<String> = self.raw.edited.iter().filter(|id| !self.raw.unsaved.contains(*id)).cloned().collect();
         for file_id in edited {
-            let Some(text) = self.raw.texts.get(&file_id).cloned() else { continue };
+            self.raw.edited.remove(&file_id);
             let file = self.workspace_state.projects.iter().flat_map(|p| p.log_spaces.iter()).find_map(|s| s.file(&file_id)).cloned();
-            let parsed = match file {
-                // Indexed again, the edited text in memory (task 8.2).
-                Some(file) => self.scratch_parsed(&file, text.into_bytes()),
-                None => ParsedFile::from_text(&text),
-            };
-            self.parsed_files.insert(file_id, parsed);
+            match file {
+                Some(file) if self.parsed_files.contains_key(&file_id) => self.queue_read_again(&file),
+                Some(file) => self.queue_file_load(&file),
+                None => {
+                    self.parsed_files.remove(&file_id);
+                }
+            }
         }
     }
 
@@ -544,13 +551,20 @@ impl AppView {
             source.handle.close();
         }
         self.parsed_files.remove(file_id);
+        self.warm.take(file_id);
+        self.forget_raw_state(file_id);
+        self.raw.unsaved.remove(file_id);
+        self.drop_unused_remote_caches();
+    }
+
+    /// Let go of what the Raw View holds of a file: its editor and the text
+    /// typed in it. What is not saved yet (`raw.unsaved`) stays marked.
+    pub(crate) fn forget_raw_state(&mut self, file_id: &str) {
         self.raw.editors.remove(file_id);
         self.raw.texts.remove(file_id);
         self.raw.lines_cache.borrow_mut().remove(file_id);
         self.raw.edited.remove(file_id);
-        self.raw.unsaved.remove(file_id);
         self.raw.save_gen.remove(file_id);
-        self.drop_unused_remote_caches();
     }
 
     /// ⌘C in the Raw View: copy the selected imported line.

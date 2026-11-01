@@ -156,6 +156,30 @@ Khi một file trong `warm` được dùng lại (tab của nó được chọn)
 
 Warm Tab hiện như tab đã đọc xong, không có dấu Dormant. Requirement "Tab hiện trạng thái đọc" của `dormant-tab` phân biệt Dormant, đang Indexing và đã đọc xong. Warm Tab rơi vào nhóm "đã đọc xong", vì chọn nó thì hiện ngay. Không thêm trạng thái hiển thị mới.
 
+### 12. mimalloc làm allocator, `mi_collect` khi file bị bỏ
+
+- `src/main.rs` đặt `#[global_allocator] static GLOBAL: mimalloc::MiMalloc`. Test và example không có `main.rs` của app, nên vẫn dùng allocator hệ thống, trừ `examples/mimalloc_probe.rs`, vốn chạy như app.
+- `live::release_freed_memory` gọi `libmimalloc_sys::mi_collect(true)` trên mọi hệ. Trên macOS nó vẫn gọi thêm `malloc_zone_pressure_relief`, cho phần memory mà framework của hệ thống cấp qua malloc. Lời gọi đi qua crate `libmimalloc-sys` (feature `extended`), không qua `extern "C"` tự khai báo, để linker luôn kéo mimalloc vào, kể cả với binary dùng allocator khác.
+- Hàm này được gọi khi `drop_dormant_files` bỏ file, khi trim Live Window, và mới thêm: khi tab đang mở đọc xong (`file_read`, `!is_reading()`). Lời gọi cuối thu dọn các bộ đệm và các bản cũ của `Vec` mà Indexing bỏ lại.
+- *Thay thế đã cân nhắc* (số đo ở mục "Đo thử mimalloc"):
+  - `MallocLargeCache=0`: memory đứng yên nhưng Indexing chậm gấp 2 lần, và phải khởi động lại tiến trình để đặt biến môi trường.
+  - `MIMALLOC_PURGE_DELAY=0`: trả memory ngay ở mọi lần giải phóng, không cần lời gọi tường minh, nhưng trả giá ở mọi lần giải phóng. Trễ 100 ms thì không trả khi app đứng yên.
+  - Sửa Indexing để cấp sẵn dung lượng hoặc lưu theo khúc: không thêm dependency nhưng phải sửa sâu, và chưa đo.
+
+### 11. Ghi chú khi triển khai (lệch so với các quyết định trên)
+
+- **Ước lượng memory tên là `IndexedFile::memory_bytes`**, không phải `heap_bytes` (quyết định 5). `heap_bytes` đã có sẵn: `mem_probe` và `index_probe` dùng nó để báo số "Line Index B/dòng", nên giữ nguyên. `memory_bytes` cộng thêm `effective_ts`, `row_ids` và giá trị của các cột. `MetaTable::heap_bytes` giờ tính cả các `Runs` (Generation, Stream).
+- **File của Warm Tab không giữ handle** (rủi ro "Handle file của Warm Tab"). File local được index qua `DiskSource::stay_open`, nên handle vẫn mở sau khi rời tab. `LineSource` thêm `park()` và `unpark()`:
+  - `park` đóng handle; lần đọc sau mở lại theo path.
+  - `ChainSource::park` chỉ đồng ý khi chỉ có một Generation. Generation cũ chỉ đọc được qua handle nó giữ, vì path đã trỏ sang file khác.
+  - File không park được thì bị bỏ (Dormant) thay vì giữ Warm. Điều này khớp với glossary của Generation: "stay readable … until its tab goes Dormant".
+  - Chọn lại tab thì `unpark`, rồi `catch_up_shown_again` kiểm tra file như quyết định 7.
+- **Mỗi file Warm tính ít nhất 1 byte.** Nếu không, file rỗng (Scratch mới) với budget 0 vẫn nằm lại trong Warm Tab mãi mãi.
+- **Settings dùng `ButtonGroup`** (Off, 256 MB, 512 MB, 1 GB, 2 GB) như Live Window và Full Read Limit, thay vì ô số tự do.
+- **`is_dormant_tab`** trả false cho một tab mà mọi file của nó đang Warm.
+- **Đường đọc Archive Entry vào memory trong app đã bị bỏ** (`ensure_live_file_loaded` không còn nhánh `read_source`), vì quyết định 3b đi qua `archive_queue`. Phần này trước đó nằm ngoài phạm vi; nó biến mất tự nhiên khi Archive đi đường nền. `ParsedFile::from_source` và `parser::parse_*` vẫn còn đường đọc vào memory, nhưng app không gọi chúng.
+- **Hàng đợi archive** là `AppView::archive_queue` (Archive → các entry), bắt đầu trong `start_queued_loads`. Các entry cùng Archive dùng chung một cờ huỷ. Nếu một lần giải nén bị huỷ vì một entry khác không còn được hiện, các entry vẫn cần được đưa lại vào hàng đợi.
+
 ## Risks / Trade-offs
 
 - **[Ước lượng memory sai nhiều]** → Budget chặn sai. → Kiểm tra bằng `mem_probe` (quyết định 5). Ước lượng nghiêng về phía thừa.
@@ -168,6 +192,85 @@ Warm Tab hiện như tab đã đọc xong, không có dấu Dormant. Requirement
 - **[Archive bị đổi trong lúc đang giải nén]** → `dir_of` đã gắn thư mục với kích thước và mtime lúc bắt đầu. Lần sau mở thì giải nén vào thư mục mới, và `sweep` dọn thư mục cũ.
 - **[Shard theo file làm file đơn có ít cache hơn]** → Tính toán ở quyết định 8 cho thấy vẫn hơn hiện tại. Có test cuộn nhanh trên file đơn, và đổi cách shard nếu cần.
 - **[`Drop` của `IndexedFile` chạy trên luồng nền]** → `forget` chỉ lock một shard, rẻ.
+
+## Số đo (2026-11-01)
+
+Đo bằng `examples/memory_budget_probe.rs`, bản release, page cache nóng, trong harness GPUI (`TestAppContext`). Worktree cách ly không dựng được bản code trước change để đo nền. Vì vậy "trước" được đo bằng budget 0, là đúng hành vi rời tab cũ. Với Archive và Scratch, "trước" là tổng thời gian của phần việc mà code cũ chạy trên UI thread.
+
+**Chuyển lại tab vừa rời** (file 3.000.000 dòng, ~300 MB; mỗi budget chạy một tiến trình riêng):
+
+| | Budget 0 (Dormant, như trước) | Budget 512 MB (Warm) |
+|---|---|---|
+| UI thread khi bấm tab | 0,55 ms | 64 ms (dựng lại view từ Line Index) |
+| Tới khi hiện dòng | 226 ms (index lại ở nền rồi dựng view) | 64 ms |
+| `memory_bytes` của file | 135 MB (45 B/dòng) | 135 MB |
+| RSS tăng khi mở / sau khi rời | +447 MB / +448 MB | +446 MB / +446 MB |
+
+- Với budget 0, RSS **không giảm** sau khi rời tab. Lý do được điều tra ở mục "RSS không giảm khi rời tab" bên dưới: đó không phải leak trong app.
+- **`memory_bytes` khớp với memory thật đang dùng** (task 6.2), đo bằng byte malloc đang dùng (`malloc_zone_statistics`), không đo bằng RSS. Sau khi rời tab, malloc còn dùng +33 MB với budget 0 và +168 MB với budget 512. Hiệu 135 MB đúng bằng `memory_bytes` (135 MB).
+
+### RSS không giảm khi rời tab (điều tra 2026-11-01)
+
+- **File bị bỏ đúng là được giải phóng.** Test `a_file_let_go_is_freed` cho thấy không còn tham chiếu nào tới `IndexedFile` hay `Indexed`. Byte malloc đang dùng giảm từ +301 MB xuống +33 MB.
+- **Phần còn lại nằm trong large-cache của malloc macOS.** `vmmap --summary` sau khi rời tab cho thấy `MALLOC_LARGE (empty)` 363 MB, trong đó 315 MB vẫn dirty, trong 60 vùng. Đó là các khối lớn đã giải phóng: Line Index, `effective_ts`, `row_ids` và bộ đệm Indexing, cùng các bản cũ bỏ lại mỗi lần một `Vec` lớn tăng gấp đôi. `malloc_zone_pressure_relief` trả 0 MB, tức không lấy lại được gì; `phys_footprint` (số Activity Monitor hiển thị) cũng không giảm.
+- **Chạy lại với `MallocLargeCache=0`:** footprint lúc mở là 241 MB thay vì 467 MB, sau khi rời tab còn 39 MB. Nhưng chuyển lại tab Dormant chậm gấp đôi (480 ms so với 230 ms).
+- **Nó tăng dần, không được dùng lại hết.** Mở lần lượt 8 file 3 triệu dòng với budget 0: malloc chỉ dùng khoảng 300 MB ở mọi bước, nhưng footprint tăng khoảng 100 MB mỗi file (462 → 1.145 MB). Với `MallocLargeCache=0` thì đứng yên khoảng 237 MB.
+- **Vấn đề này có từ trước change này.** Dormant Tab bỏ Line Index như vậy từ `line-offset-index`. Warm Tab làm nó ít xảy ra hơn, vì tab được giữ thì không phải index lại. Nhưng mỗi tab lớn thành Dormant rồi được index lại vẫn để lại khoảng 100 MB.
+- **Hướng sửa (chưa chọn):**
+  - (a) Dùng một allocator khác làm global allocator (mimalloc hoặc jemalloc), vì chúng trả memory về hệ điều hành. Thêm một dependency.
+  - (b) Giảm số khối lớn bị bỏ lại khi Indexing: cấp sẵn dung lượng theo ước lượng từ kích thước file, hoặc lưu theo khúc cố định thay vì một `Vec` liền tăng gấp đôi.
+  - (c) Khởi động lại tiến trình với `MallocLargeCache=0`: đơn giản nhưng Indexing chậm hơn khoảng 2 lần.
+
+### Đo thử mimalloc (2026-11-01)
+
+`examples/mimalloc_probe.rs` chạy cùng `memory_budget_probe` nhưng đặt mimalloc (crate `mimalloc` 0.1.48, chỉ ở dev-dependency) làm global allocator. "Collect" là gọi `mi_collect(true)` sau khi rời tab và sau mỗi lần Indexing xong, đúng chỗ app đang gọi `release_freed_memory`.
+
+| File 3 triệu dòng | malloc macOS | `MallocLargeCache=0` | mimalloc mặc định | mimalloc `PURGE_DELAY=0` | mimalloc + collect |
+|---|---|---|---|---|---|
+| Footprint lúc mở | 462–474 MB | 241 MB | 541 MB | 288 MB | 544 MB (292 MB nếu collect sau Indexing) |
+| Footprint sau khi rời (budget 0) | 467 MB | 39 MB | 541 MB | 52 MB | **54 MB** |
+| Footprint sau khi rời (budget 512) | 451 MB | | | 174 MB | **172 MB** |
+| Mở lần lượt 8 file (budget 0), file thứ 8 | 1.145 MB, tăng đều | 238 MB | 680–903 MB, dao động | 340 MB | **338 MB, đứng yên** |
+| Chuyển lại tab Dormant, tới khi hiện | 230 ms | 480 ms | 174 ms | 177 ms | **173 ms** |
+| Chuyển lại tab Warm, UI thread | 64–78 ms | | 89 ms | 81 ms | 80 ms |
+| Archive Entry 404 MB, mở lần đầu / mở lại | 734 / 450 ms | | 557 / 263 ms | | |
+| Scratch 40 MB, tới khi hiện | 54 ms | | 38 ms | | |
+
+- `MIMALLOC_PURGE_DELAY=100` **không** trả memory khi app đứng yên (vẫn 328 MB sau 3 giây). mimalloc chỉ dọn khi có cấp phát tiếp theo, nên cần một lời gọi tường minh. Đặt delay 0 thì trả ngay, nhưng cái giá trả ở mọi lần giải phóng.
+- **Khuyến nghị:** mimalloc làm global allocator của app (`src/main.rs`), cộng với `mi_collect(true)` trong `release_freed_memory`, thay cho `malloc_zone_pressure_relief`. Thêm một lời gọi sau khi Indexing của tab xong. Footprint khi đó đứng yên khoảng 340 MB khi đi qua nhiều tab lớn (so với 1,1 GB và tăng tiếp), và Indexing, giải nén, Scan đều nhanh hơn 20–40%.
+- Cái giá: thêm một dependency có mã C (`libmimalloc-sys`, build bằng `cc`), và footprint lúc vừa mở file trước khi collect cao hơn khoảng 15%. RSS theo `ps` vẫn cao vì trang đã purge được đánh dấu MADV_FREE; số Activity Monitor hiển thị là footprint.
+
+**Đã áp dụng (quyết định 12), đo lại qua đường của app** (`mimalloc_probe`, app tự gọi `release_freed_memory`; mimalloc 0.1.52):
+
+| File 3 triệu dòng | malloc macOS (trước) | mimalloc trong app |
+|---|---|---|
+| Footprint sau khi mở (đã đọc xong) | 462–474 MB | 298 MB |
+| Sau khi rời, budget 0 / 512 | 467 / 451 MB | **56 / 182 MB** |
+| Mở lần lượt 8 file, file thứ 8 | 1.145 MB | **342 MB** (dao động 299–342) |
+| Chuyển lại tab Dormant / Warm | 230 / 64–78 ms | 175 / 87 ms |
+| Archive 404 MB, mở lần đầu / mở lại | 734 / 450 ms | 544 / 256 ms |
+| Scratch 40 MB | 54 ms | 36 ms |
+
+- Chuyển lại tab Warm chậm hơn một chút (87 ms so với 64–78 ms trên UI thread). Đây là dựng lại view.
+- Chưa đo trên Windows và Linux.
+- Với file 3 triệu dòng, Warm hiện lại nhanh hơn khoảng 3,5 lần, nhưng 64 ms đó chạy trên UI thread. Dormant chỉ chiếm UI thread chưa tới 1 ms; phần dựng view của nó chạy sau, trong `file_read`, và cũng trên UI thread.
+
+**Row Cache chung** (Log Space 50 file × 20.000 dòng, đọc mọi dòng):
+- Cache giữ 69,7 MB: dưới ngưỡng cắt 125% của 64 MB.
+- Theo cách cũ (4096 dòng mỗi file), cùng tải giữ khoảng 82 MB, và con số này tăng theo số file.
+
+**Scratch 40 MB** (500.000 dòng, chọn lại tab với budget 0): UI thread 0,97 ms; tới khi hiện dòng 54 ms. Trước change, toàn bộ việc đọc file vào memory và index chạy đồng bộ trên UI thread.
+
+**Archive Entry 404 MB** (trong `.tar.gz` 93 MB):
+
+| | UI thread | Tới khi hiện dòng |
+|---|---|---|
+| Mở lần đầu (giải nén rồi index) | 0,44 ms | 734 ms |
+| Mở lại (đã giải nén) | 0,40 ms | 450 ms |
+
+Trước change, toàn bộ cột "tới khi hiện dòng" chạy trên UI thread.
+
+**Mặc định 512 MB:** giữ nguyên. Một file 3 triệu dòng tính 135 MB, nên 512 MB giữ được khoảng ba tab cỡ đó. Nên xem lại sau khi giải được câu hỏi RSS không giảm ở trên.
 
 ## Migration Plan
 

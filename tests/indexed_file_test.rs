@@ -66,7 +66,8 @@ fn the_cache_keeps_a_few_screens_only() {
     for n in 0..file.len() {
         file.entry(n).unwrap();
     }
-    assert!(file.cached() <= log_gpui::index::view_rows::ROW_CACHE * 5 / 4, "{} kept", file.cached());
+    let shard = log_gpui::index::view_rows::ROW_CACHE_BYTES / 16;
+    assert!(file.cached_weight() <= shard * 5 / 4, "{} bytes kept", file.cached_weight());
 }
 
 #[test]

@@ -7,7 +7,9 @@ use flate2::read::GzDecoder;
 use std::collections::HashMap;
 use std::fmt;
 use std::fs::File;
-use std::io::{self, BufReader, Read};
+use std::io::{self, BufReader, Read, Seek};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::path::Path;
 
 /// An entry above this size gets a "Large file" warning but can still be added.
@@ -65,6 +67,8 @@ pub enum ArchiveError {
     Encrypted,
     NotFound,
     TooLarge,
+    /// Stopped before the end: nobody wants it any more.
+    Cancelled,
     Io(io::Error),
 }
 
@@ -75,6 +79,7 @@ impl fmt::Display for ArchiveError {
             ArchiveError::Encrypted => write!(f, "password-protected archive"),
             ArchiveError::NotFound => write!(f, "not found"),
             ArchiveError::TooLarge => write!(f, "larger than the archive declares or the 2 GB limit"),
+            ArchiveError::Cancelled => write!(f, "cancelled"),
             ArchiveError::Io(e) => write!(f, "{e}"),
         }
     }
@@ -89,6 +94,7 @@ impl From<ArchiveError> for io::Error {
             ArchiveError::Encrypted => io::ErrorKind::PermissionDenied,
             ArchiveError::NotFound => io::ErrorKind::NotFound,
             ArchiveError::TooLarge => io::ErrorKind::FileTooLarge,
+            ArchiveError::Cancelled => io::ErrorKind::Interrupted,
             ArchiveError::Io(e) => return io::Error::new(e.kind(), e.to_string()),
         };
         io::Error::new(kind, e.to_string())
@@ -209,8 +215,36 @@ fn skipped_name(name: &str) -> bool {
         || name.rsplit('/').next().is_some_and(|base| base == ".DS_Store")
 }
 
-fn open_reader(path: &Path) -> Result<BufReader<File>, ArchiveError> {
-    File::open(path).map(BufReader::new).map_err(io_err)
+fn open_reader(path: &Path) -> Result<BufReader<Counted<File>>, ArchiveError> {
+    open_counted(path, None)
+}
+
+/// The file at `path`, counting into `read` the bytes read from it.
+fn open_counted(path: &Path, read: Option<Arc<AtomicU64>>) -> Result<BufReader<Counted<File>>, ArchiveError> {
+    File::open(path).map(|inner| BufReader::new(Counted { inner, read })).map_err(io_err)
+}
+
+/// A reader that adds the bytes read from it to a count: how far through
+/// an Archive an unpacking is.
+pub struct Counted<R> {
+    inner: R,
+    read: Option<Arc<AtomicU64>>,
+}
+
+impl<R: Read> Read for Counted<R> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        let n = self.inner.read(buf)?;
+        if let Some(read) = &self.read {
+            read.fetch_add(n as u64, Ordering::Relaxed);
+        }
+        Ok(n)
+    }
+}
+
+impl<R: Seek> Seek for Counted<R> {
+    fn seek(&mut self, pos: io::SeekFrom) -> io::Result<u64> {
+        self.inner.seek(pos)
+    }
 }
 
 /// Read at most `declared` bytes, and never more than `limit`; more than
@@ -237,7 +271,7 @@ pub fn list(path: &Path, kind: ArchiveKind) -> Result<Vec<EntryInfo>, ArchiveErr
         ArchiveKind::Tar => list_tar(open_reader(path)?),
         ArchiveKind::TarGz => list_tar(GzDecoder::new(open_reader(path)?)),
         ArchiveKind::Gz | ArchiveKind::Zstd | ArchiveKind::Xz | ArchiveKind::Bzip2 => {
-            let mut decoder = single_decoder(path, kind)?;
+            let mut decoder = single_decoder(path, kind, None)?;
             let head = head_of(&mut decoder)?;
             // Drain the rest to find the real size and any damage.
             let rest = io::copy(&mut (&mut decoder).take(MAX_UNCOMPRESSED_BYTES), &mut io::sink())
@@ -247,9 +281,9 @@ pub fn list(path: &Path, kind: ArchiveKind) -> Result<Vec<EntryInfo>, ArchiveErr
     }
 }
 
-fn single_decoder(path: &Path, kind: ArchiveKind) -> Result<Box<dyn Read + Send>, ArchiveError> {
+fn single_decoder(path: &Path, kind: ArchiveKind, read: Option<Arc<AtomicU64>>) -> Result<Box<dyn Read + Send>, ArchiveError> {
     let compression = kind.single().expect("a lone packed file");
-    decoder(compression, open_reader(path)?).map_err(io_err)
+    decoder(compression, open_counted(path, read)?).map_err(io_err)
 }
 
 fn list_zip(path: &Path) -> Result<Vec<EntryInfo>, ArchiveError> {
@@ -312,12 +346,25 @@ pub fn visit_entries<T>(
     kind: ArchiveKind,
     entries: &[&str],
     limit: u64,
+    each: impl FnMut(&str, &mut dyn Read, u64) -> Result<T, ArchiveError>,
+) -> Result<HashMap<String, Result<T, ArchiveError>>, ArchiveError> {
+    visit_entries_counting(path, kind, entries, limit, None, each)
+}
+
+/// `visit_entries`, adding to `read` the bytes read from the Archive as it
+/// goes: how far through it the visit is.
+pub fn visit_entries_counting<T>(
+    path: &Path,
+    kind: ArchiveKind,
+    entries: &[&str],
+    limit: u64,
+    read: Option<Arc<AtomicU64>>,
     mut each: impl FnMut(&str, &mut dyn Read, u64) -> Result<T, ArchiveError>,
 ) -> Result<HashMap<String, Result<T, ArchiveError>>, ArchiveError> {
     let mut out: HashMap<String, Result<T, ArchiveError>> = HashMap::new();
     match kind {
         ArchiveKind::Zip => {
-            let mut archive = zip::ZipArchive::new(open_reader(path)?).map_err(zip_err)?;
+            let mut archive = zip::ZipArchive::new(open_counted(path, read.clone())?).map_err(zip_err)?;
             for name in entries {
                 let result = match archive.by_name(name) {
                     Ok(mut file) => {
@@ -329,11 +376,11 @@ pub fn visit_entries<T>(
                 out.insert((*name).to_string(), result);
             }
         }
-        ArchiveKind::Tar => visit_tar_entries(open_reader(path)?, entries, &mut each, &mut out)?,
-        ArchiveKind::TarGz => visit_tar_entries(GzDecoder::new(open_reader(path)?), entries, &mut each, &mut out)?,
+        ArchiveKind::Tar => visit_tar_entries(open_counted(path, read.clone())?, entries, &mut each, &mut out)?,
+        ArchiveKind::TarGz => visit_tar_entries(GzDecoder::new(open_counted(path, read.clone())?), entries, &mut each, &mut out)?,
         ArchiveKind::Gz | ArchiveKind::Zstd | ArchiveKind::Xz | ArchiveKind::Bzip2 => {
             // The entry name is not needed: a lone packed file holds exactly one.
-            let mut decoder = single_decoder(path, kind)?;
+            let mut decoder = single_decoder(path, kind, read.clone())?;
             let mut first = true;
             for name in entries {
                 let result = if first { each(name, &mut decoder, limit) } else { Err(ArchiveError::TooLarge) };
@@ -365,6 +412,9 @@ fn visit_tar_entries<T>(
         if wanted.contains(&name.as_str()) && !out.contains_key(&name) {
             let declared = entry.size();
             let result = each(&name, &mut entry, declared);
+            if matches!(result, Err(ArchiveError::Cancelled)) {
+                return Err(ArchiveError::Cancelled);
+            }
             out.insert(name, result);
             remaining -= 1;
             if remaining == 0 {

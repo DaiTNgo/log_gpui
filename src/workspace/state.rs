@@ -42,6 +42,11 @@ pub struct WorkspaceState {
     /// Whether the minimap is shown: an app setting.
     #[serde(default = "default_true")]
     pub show_minimap: bool,
+    /// Memory the files of the tabs left may keep, in MB (Warm Tab
+    /// Budget); 0 lets a tab's lines go as soon as it is left: an app
+    /// setting.
+    #[serde(default = "default_warm_tab_budget")]
+    pub warm_tab_budget_mb: u32,
     /// Whether Search Matches are painted in a color per Phrase;
     /// off paints them all in the one shared Match color: an app
     /// setting.
@@ -96,6 +101,7 @@ impl Default for WorkspaceState {
             theme: Default::default(),
             text_zoom: 0,
             show_minimap: true,
+            warm_tab_budget_mb: default_warm_tab_budget(),
             phrase_colors: true,
             phrase_hues: Default::default(),
             phrase_rgbs: Default::default(),
@@ -291,6 +297,10 @@ impl FocusPaneState {
 
 fn default_drawer_width() -> f32 {
     DEFAULT_DRAWER_WIDTH
+}
+
+pub fn default_warm_tab_budget() -> u32 {
+    crate::app::warm::DEFAULT_WARM_TAB_BUDGET_MB
 }
 
 pub fn default_true() -> bool {

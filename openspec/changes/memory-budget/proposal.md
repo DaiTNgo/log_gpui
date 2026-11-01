@@ -30,6 +30,11 @@ Sau `line-offset-index` và `remote-local-cache`, file local, Archive Entry, Rem
   - Bỏ dòng ít dùng nhất trên toàn app, không theo từng file. Một Log Space 50 file và một file đơn tốn cùng giới hạn.
   - Bỏ Line Index của một file (Dormant, gỡ file) thì bỏ luôn các dòng của nó trong cache chung.
 
+- **mimalloc làm allocator của app** (thêm sau khi đo, xem mục "RSS không giảm khi rời tab" trong design.md).
+  - Malloc của macOS giữ các khối lớn mà Line Index đã giải phóng và không trả về hệ điều hành. Mỗi lần index lại một file lớn, footprint tăng thêm khoảng 100 MB (1,1 GB sau 8 file 3 triệu dòng), dù app chỉ dùng khoảng 300 MB.
+  - App dùng mimalloc làm global allocator, và `release_freed_memory` gọi `mi_collect(true)` khi file bị bỏ (Dormant, vượt Warm Tab Budget) và khi tab đọc xong. Footprint đứng yên khoảng 340 MB, và Indexing, giải nén, Scratch nhanh hơn 20–40%.
+  - Cùng đoạn code chạy trên Windows và Linux; trước đó, việc trả memory chỉ có trên macOS.
+
 Ngoài phạm vi:
 - Bỏ đường đọc Archive Entry vào memory (`ensure_live_file_loaded`, `ParsedFile::from_source`): việc dọn dẹp riêng.
 - `drop_top` và `drop_bottom` của Remote Cache đọc cả segment: chờ số đo của task 9.4 trong `remote-local-cache`.
@@ -73,6 +78,7 @@ Change này không sửa CONTEXT.md vì các session khác đang làm song song.
   - `src/index/view_rows.rs` (`RowCache`, `ROW_CACHE`), `src/index/file.rs` (`IndexedFile::cache`, ước lượng memory)
   - Tab strip (hiển thị Warm khác Dormant hay không: xem design.md)
   - `src/ui/settings.rs`, `src/workspace/state.rs`, `src/workspace/session.rs` (Warm Tab Budget)
+- **Dependency:** thêm `mimalloc` và `libmimalloc-sys` (feature `extended`), có mã C build bằng `cc`. `src/main.rs` đặt global allocator.
 - **Settings:** thêm Warm Tab Budget (MB).
 - **Session:** thêm một giá trị Settings, có mặc định khi thiếu. Không đổi format khác.
 - **Đo:** `perf_probe` (chuyển tab Warm và Dormant), `mem_probe` (Log Space nhiều file với Row Cache chung).
