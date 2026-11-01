@@ -9,10 +9,12 @@
 //! app closed is never read; `sweep` clears such files and the folders no
 //! Log Space uses.
 
-use crate::archive::{ArchiveError, ArchiveKind, io_err, visit_entries};
+use crate::archive::{ArchiveError, ArchiveKind, io_err, visit_entries_counting};
 use std::collections::{HashMap, HashSet};
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 /// The archive cache in the app's data folder `base`.
 pub fn root_in(base: &Path) -> PathBuf {
@@ -53,13 +55,37 @@ pub fn entry_path(dir: &Path, entry: &str) -> PathBuf {
 
 /// Copy at most `declared` bytes, and never more than `limit`, from
 /// `reader` to `out`; more than either is `TooLarge`.
-fn copy_bounded(reader: &mut dyn Read, out: &mut impl Write, declared: u64, limit: u64) -> Result<(), ArchiveError> {
+/// Stops with `Cancelled` once `cancel` is set.
+fn copy_bounded(reader: &mut dyn Read, out: &mut impl Write, declared: u64, limit: u64, cancel: &AtomicBool) -> Result<(), ArchiveError> {
     let cap = declared.min(limit);
-    let copied = io::copy(&mut reader.take(cap.saturating_add(1)), out).map_err(io_err)?;
+    let mut reader = reader.take(cap.saturating_add(1));
+    let mut buf = vec![0u8; 64 << 10];
+    let mut copied = 0u64;
+    loop {
+        if cancel.load(Ordering::Acquire) {
+            return Err(ArchiveError::Cancelled);
+        }
+        let n = match reader.read(&mut buf) {
+            Ok(0) => break,
+            Ok(n) => n,
+            Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+            Err(e) => return Err(io_err(e)),
+        };
+        out.write_all(&buf[..n]).map_err(io_err)?;
+        copied += n as u64;
+    }
     if copied > cap {
         return Err(ArchiveError::TooLarge);
     }
     Ok(())
+}
+
+/// How an unpacking in the background is told to stop, and shows how far
+/// it is: the bytes read of the Archive.
+#[derive(Debug, Clone, Default)]
+pub struct Unpacking {
+    pub read: Arc<AtomicU64>,
+    pub cancel: Arc<AtomicBool>,
 }
 
 /// Unpack `entries` of the Archive at `archive` into its folder under
@@ -72,6 +98,20 @@ pub fn unpack(
     kind: ArchiveKind,
     entries: &[&str],
     limit: u64,
+) -> Result<HashMap<String, Result<PathBuf, ArchiveError>>, ArchiveError> {
+    unpack_with(root, archive, kind, entries, limit, &Unpacking::default())
+}
+
+/// `unpack`, counting the bytes read of the Archive into `how.read` and
+/// stopping once `how.cancel` is set: then the whole unpacking is
+/// `Cancelled` and no part of an entry is left.
+pub fn unpack_with(
+    root: &Path,
+    archive: &Path,
+    kind: ArchiveKind,
+    entries: &[&str],
+    limit: u64,
+    how: &Unpacking,
 ) -> Result<HashMap<String, Result<PathBuf, ArchiveError>>, ArchiveError> {
     let dir = dir_of(root, archive).map_err(io_err)?;
     let mut out = HashMap::new();
@@ -91,14 +131,17 @@ pub fn unpack(
         return Ok(out);
     }
     std::fs::create_dir_all(&dir).map_err(io_err)?;
-    let unpacked = visit_entries(archive, kind, &missing, limit, |name, reader, declared| {
+    let unpacked = visit_entries_counting(archive, kind, &missing, limit, Some(how.read.clone()), |name, reader, declared| {
+        if how.cancel.load(Ordering::Acquire) {
+            return Err(ArchiveError::Cancelled);
+        }
         let path = entry_path(&dir, name);
         let part = path.with_extension("part");
         let written = std::fs::File::create(&part)
             .map_err(io_err)
             .and_then(|file| {
                 let mut file = io::BufWriter::new(file);
-                copy_bounded(reader, &mut file, declared, limit)?;
+                copy_bounded(reader, &mut file, declared, limit, &how.cancel)?;
                 file.flush().map_err(io_err)
             })
             .and_then(|()| std::fs::rename(&part, &path).map_err(io_err));
@@ -107,6 +150,9 @@ pub fn unpack(
         }
         written.map(|()| path)
     })?;
+    if how.cancel.load(Ordering::Acquire) || unpacked.values().any(|r| matches!(r, Err(ArchiveError::Cancelled))) {
+        return Err(ArchiveError::Cancelled);
+    }
     out.extend(unpacked);
     Ok(out)
 }

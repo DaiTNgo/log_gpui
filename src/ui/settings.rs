@@ -67,6 +67,7 @@ struct Row {
 struct Values {
     live_window: usize,
     full_read_limit: usize,
+    warm_tab_budget_mb: u32,
     glob_limit: usize,
     glob_interval: u64,
     minimap: bool,
@@ -92,6 +93,7 @@ pub fn open_settings_dialog(view: Entity<AppView>, window: &mut Window, cx: &mut
                 Values {
                     live_window: v.live.window,
                     full_read_limit: v.live.full_read_limit,
+                    warm_tab_budget_mb: v.workspace_state.warm_tab_budget_mb,
                     glob_limit: v.live.glob_limit,
                     glob_interval: v.live.glob_interval,
                     minimap: v.show_minimap,
@@ -403,7 +405,9 @@ fn rows_of(section: SettingsSection, view: &Entity<AppView>, v: &Values, cx: &Ap
             let view = view.clone();
             let windows = [10_000usize, 50_000, 100_000, 500_000, 1_000_000];
             let current = v.live_window;
-            let (limit_view, interval_view, read_view) = (view.clone(), view.clone(), view.clone());
+            let (limit_view, interval_view, read_view, warm_view) = (view.clone(), view.clone(), view.clone(), view.clone());
+            let budgets = [0u32, 256, 512, 1024, 2048];
+            let current_budget = v.warm_tab_budget_mb;
             let read_limits = [500_000usize, 1_000_000, 2_000_000, 5_000_000, 10_000_000];
             let current_read = v.full_read_limit;
             let limits = [10usize, 25, 50, 100, 200, 500];
@@ -440,6 +444,27 @@ fn rows_of(section: SettingsSection, view: &Entity<AppView>, v: &Values, cx: &Ap
                     .on_click(move |ix: &Vec<usize>, window, app| {
                         if let Some(&i) = ix.first() {
                             read_view.update(app, |this, cx| this.set_full_read_limit(read_limits[i], cx));
+                            window.refresh();
+                        }
+                    })
+                    .into_any_element(),
+            },
+            Row {
+                title: "Warm Tab Budget",
+                description: "Tabs you leave stay in memory up to this size, so they show again at once; past it the tab left longest ago is read again when chosen. Off lets a tab go as soon as you leave it.",
+                control: ButtonGroup::new("settings-warm-tab-budget")
+                    .small()
+                    .children(budgets.map(|mb| {
+                        let label = match mb {
+                            0 => "Off".to_string(),
+                            mb if mb >= 1024 => format!("{} GB", mb / 1024),
+                            mb => format!("{mb} MB"),
+                        };
+                        Button::new(SharedString::from(format!("warm-tab-budget-{mb}"))).label(label).selected(current_budget == mb)
+                    }))
+                    .on_click(move |ix: &Vec<usize>, window, app| {
+                        if let Some(&i) = ix.first() {
+                            warm_view.update(app, |this, cx| this.set_warm_tab_budget(budgets[i], cx));
                             window.refresh();
                         }
                     })

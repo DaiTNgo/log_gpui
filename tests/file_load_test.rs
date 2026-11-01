@@ -43,6 +43,7 @@ fn a_file_is_read_in_the_background(cx: &mut TestAppContext) {
 #[gpui::test]
 fn leaving_a_tab_while_it_reads_drops_the_read(cx: &mut TestAppContext) {
     let mut h = open_app(cx);
+    common::no_warm_tabs(&mut h);
     let (a, b) = (log_file(&h, "a.log", 50), log_file(&h, "b.log", 50));
     h.view.update(&mut h.cx, |app, cx| app.create_log_space("A", LogSpaceKind::Static, &[a], cx));
     h.cx.run_until_parked();
@@ -248,6 +249,7 @@ fn replace_a(h: &mut Harness) {
 #[gpui::test]
 fn leaving_the_tab_closes_the_old_generations(cx: &mut TestAppContext) {
     let mut h = open_app(cx);
+    common::no_warm_tabs(&mut h);
     let budget = log_gpui::index::HandleBudget::new(16);
     h.view.update(&mut h.cx, |app, _| app.live.handle_budget = budget.clone());
     let a = live_a(&mut h);

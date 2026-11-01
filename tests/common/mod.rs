@@ -98,6 +98,12 @@ fn open_app_with_lines_as(cx: &mut TestAppContext, lines: &[String], kind: LogSp
     h
 }
 
+/// Warm Tab Budget 0: a tab left lets its lines go at once (Dormant), as
+/// before Warm Tabs.
+pub fn no_warm_tabs(h: &mut Harness) {
+    h.view.update(&mut h.cx, |app, _| app.workspace_state.warm_tab_budget_mb = 0);
+}
+
 pub fn sample_lines(n: usize) -> Vec<String> {
     (1..=n)
         .map(|i| format!("2026-10-19 10:00:{:02} INFO line {i}", i % 60))

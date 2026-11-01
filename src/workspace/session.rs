@@ -34,6 +34,8 @@ pub struct SessionManifest {
     pub text_zoom: i8,
     #[serde(default = "crate::workspace::state::default_true")]
     pub show_minimap: bool,
+    #[serde(default = "crate::workspace::state::default_warm_tab_budget")]
+    pub warm_tab_budget_mb: u32,
     #[serde(default = "crate::workspace::state::default_true")]
     pub phrase_colors: bool,
     #[serde(default = "crate::workspace::state::default_true")]
@@ -135,6 +137,7 @@ impl SessionManifest {
             density: ws.density,
             text_zoom: ws.text_zoom,
             show_minimap: ws.show_minimap,
+            warm_tab_budget_mb: ws.warm_tab_budget_mb,
             phrase_colors: ws.phrase_colors,
             raw_soft_wrap: ws.raw_soft_wrap,
             show_search_highlight: ws.show_search_highlight,
@@ -174,6 +177,7 @@ impl SessionManifest {
         ws.density = self.density;
         ws.text_zoom = self.text_zoom;
         ws.show_minimap = self.show_minimap;
+        ws.warm_tab_budget_mb = self.warm_tab_budget_mb;
         ws.phrase_colors = self.phrase_colors;
         ws.raw_soft_wrap = self.raw_soft_wrap;
         ws.show_search_highlight = self.show_search_highlight;

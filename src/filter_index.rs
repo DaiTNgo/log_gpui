@@ -365,6 +365,23 @@ pub fn has_timestamp(entry: &LogEntry) -> bool {
 }
 
 impl FilterIndex {
+    /// The memory it holds on the heap, in bytes, roughly: the row ids and
+    /// times of every row, and the values of each column.
+    pub fn heap_bytes(&self) -> usize {
+        // A map entry: its key, its value and the table's own share.
+        const ENTRY: usize = 48;
+        let columns: usize = self
+            .columns
+            .iter()
+            .map(|c| {
+                let values: usize =
+                    c.values.iter().map(|v| std::mem::size_of::<ColumnValue>() + v.display.capacity() + v.folded.capacity()).sum();
+                c.row_ids.capacity() * 2 + values + (c.folded_ids.len() + c.spellings.len()) * ENTRY
+            })
+            .sum();
+        self.effective_ts.capacity() * 8 + columns + (self.kv_counts.len() + self.field_cols.len()) * ENTRY
+    }
+
     /// The rows `rows` of a Remote Command read from disk came from these
     /// outputs (`stream_of`), which Indexing could not know: their Stream
     /// was missing until now. `is_parent` says which are Parent Lines, for

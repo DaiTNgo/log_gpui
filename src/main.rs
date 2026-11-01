@@ -6,6 +6,11 @@ use log_gpui::app::AppView;
 use gpui::{px, size, AppContext, Bounds, WindowBounds, WindowOptions};
 use gpui_component::{theme::ThemeMode, Root, Theme, TitleBar};
 
+/// mimalloc in place of the system allocator: the memory of a file let go
+/// goes back to the system (`release_freed_memory`), and reading is faster.
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 fn main() {
     let app = gpui_kit::application().with_assets(gpui_kit::assets::AllAssets);
 

@@ -57,6 +57,7 @@ fn tab_of(h: &Harness, space_id: &str) -> usize {
 #[gpui::test]
 fn only_the_active_tab_reads_its_files(cx: &mut TestAppContext) {
     let mut h = open_app(cx);
+    common::no_warm_tabs(&mut h);
     let (a, b) = (log_file(&h, "a.log", 50), log_file(&h, "b.log", 50));
     let first = new_space(&mut h, "First", &[a]);
     let second = new_space(&mut h, "Second", &[b]);
@@ -74,6 +75,7 @@ fn only_the_active_tab_reads_its_files(cx: &mut TestAppContext) {
 #[gpui::test]
 fn a_file_view_reads_its_own_file_only(cx: &mut TestAppContext) {
     let mut h = open_app(cx);
+    common::no_warm_tabs(&mut h);
     let files: Vec<ImportSource> = (0..3).map(|i| log_file(&h, &format!("f{i}.log"), 20)).collect();
     let space = new_space(&mut h, "Payment", &files);
     let ids = file_ids(&h, &space);
@@ -87,6 +89,7 @@ fn a_file_view_reads_its_own_file_only(cx: &mut TestAppContext) {
 #[gpui::test]
 fn a_dormant_tab_stays_paused(cx: &mut TestAppContext) {
     let mut h = open_app(cx);
+    common::no_warm_tabs(&mut h);
     let (a, b) = (log_file(&h, "a.log", 5), log_file(&h, "b.log", 5));
     let first = new_space(&mut h, "First", &[a]);
     h.view.update(&mut h.cx, |app, cx| app.toggle_pause(cx));
@@ -101,6 +104,7 @@ fn a_dormant_tab_stays_paused(cx: &mut TestAppContext) {
 #[gpui::test]
 fn returning_to_a_tab_keeps_where_it_was(cx: &mut TestAppContext) {
     let mut h = open_app(cx);
+    common::no_warm_tabs(&mut h);
     let (a, b) = (log_file(&h, "a.log", 300), log_file(&h, "b.log", 10));
     let first = new_space(&mut h, "First", &[a]);
     h.view.update(&mut h.cx, |app, _| app.selected_row_pos = Some(200));
@@ -114,6 +118,7 @@ fn returning_to_a_tab_keeps_where_it_was(cx: &mut TestAppContext) {
 #[gpui::test]
 fn scratch_edits_are_saved_before_their_lines_go(cx: &mut TestAppContext) {
     let mut h = open_app(cx);
+    common::no_warm_tabs(&mut h);
     h.view.update(&mut h.cx, |app, cx| {
         app.create_log_space("Notes", LogSpaceKind::Scratch, &[], cx);
     });
@@ -140,6 +145,7 @@ fn scratch_edits_are_saved_before_their_lines_go(cx: &mut TestAppContext) {
 #[gpui::test]
 fn the_tab_strip_tells_dormant_tabs(cx: &mut TestAppContext) {
     let mut h = open_app(cx);
+    common::no_warm_tabs(&mut h);
     let (a, b) = (log_file(&h, "a.log", 5), log_file(&h, "b.log", 5));
     let first = new_space(&mut h, "First", &[a]);
     new_space(&mut h, "Second", &[b]);
@@ -155,6 +161,7 @@ fn the_tab_strip_tells_dormant_tabs(cx: &mut TestAppContext) {
 #[gpui::test]
 fn a_dormant_tab_chosen_again_fits_its_columns_without_reading_its_lines(cx: &mut TestAppContext) {
     let mut h = open_app(cx);
+    common::no_warm_tabs(&mut h);
     let (a, b) = (log_file(&h, "a.log", 3000), log_file(&h, "b.log", 5));
     let first = new_space(&mut h, "First", &[a]);
     new_space(&mut h, "Second", &[b]);
