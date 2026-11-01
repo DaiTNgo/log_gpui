@@ -49,6 +49,15 @@ impl AppView {
         let mut bar_bg = active_bg;
         bar_bg.l *= 0.55;
         let last = labels.len().saturating_sub(1);
+        // Bring the active tab into view when it changes (a file chosen in
+        // the sidebar may open or switch to a tab off the end of the strip).
+        let scroll_key = active_idx.map(|ix| (ix, labels.len()));
+        if scroll_key != self.tab_scrolled_to {
+            self.tab_scrolled_to = scroll_key;
+            if let Some(ix) = active_idx {
+                self.tab_scroll.scroll_to_item(ix);
+            }
+        }
         // How far the open tab's files are read, while they are.
         let reading = self.reading().iter().map(|(_, p)| *p).min();
 
@@ -175,6 +184,7 @@ impl AppView {
             .h(px(TAB_BAR_HEIGHT))
             .flex_shrink_0()
             .overflow_x_scroll()
+            .track_scroll(&self.tab_scroll)
             .bg(bar_bg)
             .border_b_1()
             .border_color(border)

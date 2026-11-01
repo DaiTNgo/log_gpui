@@ -7,10 +7,11 @@ use super::AppView;
 use crate::app::raw::RawSection;
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
-    Context, InteractiveElement, IntoElement, ParentElement, SharedString,
+    Context, InteractiveElement, IntoElement, MouseButton, ParentElement, SharedString,
     StatefulInteractiveElement, Styled, div, px,
 };
 use gpui_component::input::Editor;
+use gpui_component::menu::ContextMenuExt as _;
 use gpui_component::{ActiveTheme as _, Icon, h_flex, v_flex};
 use gpui_kit::assets::IconName;
 
@@ -69,7 +70,7 @@ impl AppView {
     /// Line Index and its cache.
     fn render_raw_list(&mut self, cx: &mut Context<Self>) -> gpui::AnyElement {
         use crate::app::raw_list::{RawRow, TEXT_PAD, gutter_width};
-        use gpui::{MouseButton, uniform_list};
+        use gpui::uniform_list;
         let (sections, rows) = self.raw_rows();
         let row_h = self.text_scale().row_height();
         let font_size = self.text_scale().font_size();
@@ -221,6 +222,7 @@ impl AppView {
         .with_horizontal_sizing_behavior(gpui::ListHorizontalSizingBehavior::Unconstrained)
         .track_scroll(&self.raw.scroll);
         let (v_down, v_move, v_up, v_out) = (cx.entity(), cx.entity(), cx.entity(), cx.entity());
+        let (v_right, v_menu) = (cx.entity(), cx.entity());
         let bounds_sink = self.raw.list_bounds.clone();
         div()
             .id("raw_list_container")
@@ -244,12 +246,16 @@ impl AppView {
             .on_mouse_up_out(MouseButton::Left, move |event, _, cx| {
                 v_out.update(cx, |this, cx| this.finish_raw_selection(event.position, cx));
             })
+            .on_mouse_down(MouseButton::Right, move |event, window, cx| {
+                v_right.update(cx, |this, cx| this.on_raw_list_right_click(event.position, window, cx));
+            })
             .child(
                 gpui::canvas(|bounds, _, _| bounds, move |bounds, _, _, _| bounds_sink.set(bounds))
                     .absolute()
                     .size_full(),
             )
             .child(list)
+            .context_menu(move |menu, _, cx| crate::ui::selection_menu::selection_menu(menu, &v_menu, cx))
             .into_any_element()
     }
 
@@ -453,19 +459,31 @@ impl AppView {
             return div().flex_1().into_any_element();
         };
         let strip = self.break_strip(section, cx);
+        let (v_right, v_menu) = (cx.entity(), cx.entity());
+        let file_id = section.file_id.clone();
         v_flex()
             .flex_1()
             .h_full()
             .min_w(px(0.0))
             .text_size(px(13.0 * self.text_scale().ratio()))
             .children(strip)
-            .child(div().flex_1().min_h(px(0.0)).child(
-                Editor::new(&editor.state)
-                    .appearance(false)
-                    .bordered(false)
-                    .readonly(!section.editable)
-                    .h(gpui::relative(1.0)),
-            ))
+            .child(
+                div()
+                    .id("scratch_editor")
+                    .flex_1()
+                    .min_h(px(0.0))
+                    .on_mouse_down(MouseButton::Right, move |event, _, cx| {
+                        v_right.update(cx, |this, cx| this.on_editor_right_click(&file_id, event.position, cx));
+                    })
+                    .child(
+                        Editor::new(&editor.state)
+                            .appearance(false)
+                            .bordered(false)
+                            .readonly(!section.editable)
+                            .h(gpui::relative(1.0)),
+                    )
+                    .context_menu(move |menu, _, cx| crate::ui::selection_menu::selection_menu(menu, &v_menu, cx)),
+            )
             .into_any_element()
     }
 

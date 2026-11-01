@@ -185,8 +185,12 @@ _Avoid_: Table view, grid view.
 ### Marking
 
 **Marker**:
-A color the user puts by hand on text they selected in one line of one file, so it stands out when reading or in a screenshot. A selection over several lines puts one Marker on each line.
+A color the user puts by hand on text they selected in one line of one file, so it stands out when reading or in a screenshot. A selection over several lines puts one Marker on each line. Selecting text never opens the color bar, in any view: "Mark here" in the Selection Menu paints it, and "Color…" there or Color Selection (⌘⇧H) opens the color bar.
 _Avoid_: Bookmark, tag, annotation.
+
+**Selection Menu**:
+The one right-click menu on text, in the Parsed View, the Raw View and a scratch file's editor. On a selection it offers Copy, "Mark here" and "Highlight everywhere" (each a row of colors; the second only for text in one line) and "Color…"; on a cell of the Parsed View, Show only / Hide its value and "Highlight rows where …" (not on TIMESTAMP); on a Marker or Text Highlight, changing or removing it. The Raw View's has no filter items, since Filter does not apply there.
+_Avoid_: Cell menu, context menu.
 
 **Level Marker**:
 The symbol the app puts automatically in the Gutter of error and warning lines. It is not a Marker and the user cannot set or remove it.
@@ -197,7 +201,7 @@ A condition on the values of one column paired with a color. In the Parsed View,
 _Avoid_: Marker, color rule, keyword highlight.
 
 **Text Highlight**:
-A stretch of text and a color, kept by the Project: every place in any line where that text appears, ignoring letter case, gets that color behind it, in every view and every Log Space of the Project, new live lines included. Made from the color bar of a selection with "Everywhere" (or Alt+click), recolored and removed from the context menu of any place it paints; removing it removes it everywhere. A Marker shows one place the user found; a Text Highlight helps find every place.
+A stretch of text and a color, kept by the Project: every place in any line where that text appears, ignoring letter case, gets that color behind it, in every view and every Log Space of the Project, new live lines included. Made from "Highlight everywhere" in the Selection Menu, or the color bar of a selection with "Everywhere" (or Alt+click), recolored and removed from the Selection Menu of any place it paints; removing it removes it everywhere. A Marker shows one place the user found; a Text Highlight helps find every place.
 _Avoid_: Keyword highlight, quick highlight, Marker.
 
 **Value Color**:
@@ -287,7 +291,7 @@ A log line of the view whose raw line satisfies the Search Expression, with ever
 _Avoid_: Hit, result.
 
 **Filter**:
-Narrowing the lines of the Focus Pane by the values of the file's columns, in the Parsed View only. Columns and their values are detected when the file is loaded, and the user picks values to show or hide. The only place where the user asks about a specific column.
+Narrowing the lines of the Focus Pane by the values of the file's columns, in the Parsed View only. Columns and their values are detected when the file is loaded, and the user picks values to show or hide. The only place where the user asks about a specific column. It lives only in the Filter section of the context sidebar; nothing above the view shows it, since the view always shows every line. Pausing it keeps the conditions but lets every line into the Focus Pane until it is applied again or a condition changes; pausing is not remembered.
 _Avoid_: Query, view.
 
 **Focus Pane**:

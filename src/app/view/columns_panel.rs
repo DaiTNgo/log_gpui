@@ -68,24 +68,18 @@ impl AppView {
         h_flex()
             .id(ElementId::from(format!("col-row-{key}")))
             .w_full()
+            .h(px(28.0))
             .gap_2()
             .px_1()
-            .py_1()
             .items_center()
             .rounded_md()
-            .border_1()
-            .border_color(cx.theme().border)
-            .opacity(if shown { 1.0 } else { 0.7 })
-            .child(
-                v_flex()
-                    .flex_1()
-                    .min_w(px(0.0))
-                    .child(div().text_xs().font_weight(gpui::FontWeight::SEMIBOLD).truncate().child(row.name.clone()))
-                    .child(div().text_xs().text_color(muted).child(lines_label(row.lines))),
-            )
+            .hover(|s| s.bg(cx.theme().secondary))
+            .child(div().flex_1().min_w(px(0.0)).text_xs().truncate().child(display_name(&row.name)))
+            .child(div().flex_shrink_0().text_xs().text_color(muted).child(lines_label(row.lines)))
             .when(row.switchable, |d| {
                 d.child(
                     Switch::new(ElementId::from(format!("col-switch-{key}")))
+                        .small()
                         .checked(shown)
                         .on_click(move |_, _window, app| {
                             let key = switch_key.clone();
@@ -97,14 +91,27 @@ impl AppView {
     }
 }
 
-fn group_title(title: &'static str, cx: &Context<AppView>) -> gpui::AnyElement {
+/// The label of a group of rows in a section: small, muted capitals.
+pub(crate) fn group_title(title: &'static str, cx: &gpui::App) -> gpui::AnyElement {
     div()
         .pt_2()
-        .text_xs()
-        .font_weight(gpui::FontWeight::SEMIBOLD)
+        .pb_0p5()
+        .px_1()
+        .text_size(px(10.0))
         .text_color(cx.theme().muted_foreground)
-        .child(title)
+        .child(title.to_uppercase())
         .into_any_element()
+}
+
+/// A column name as rows show it: `TIMESTAMP` reads `Timestamp`; a field
+/// named by the file keeps its spelling.
+fn display_name(name: &str) -> String {
+    if name.chars().any(|c| c.is_lowercase()) {
+        return name.to_string();
+    }
+    let lower = name.to_lowercase();
+    let mut chars = lower.chars();
+    chars.next().map(|c| c.to_uppercase().chain(chars).collect()).unwrap_or_default()
 }
 
 impl AppView {

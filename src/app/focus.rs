@@ -39,7 +39,7 @@ impl AppView {
 
     /// Whether Filter limits the Focus Tab (only the Parsed View has Filter).
     fn filter_limits_focus(&self) -> bool {
-        self.view_mode == ViewMode::Parsed && self.filter_state.active_count() > 0
+        self.view_mode == ViewMode::Parsed && self.filter_state.is_applied()
     }
 
     // ── Lines ───────────────────────────────────────────────────────────────
@@ -518,7 +518,7 @@ impl AppView {
         if !self.focus_rows.is_empty() {
             return None;
         }
-        let filtering = self.view_mode == ViewMode::Parsed && self.filter_state.active_count() > 0;
+        let filtering = self.view_mode == ViewMode::Parsed && self.filter_state.is_applied();
         if filtering && self.filter_pass.is_empty() {
             if let Some(notice) = self.unread_filter_notice() {
                 return Some(notice);
@@ -545,7 +545,7 @@ impl AppView {
     }
 
     pub fn focus_pane_has_content(&self) -> bool {
-        let filtering = self.view_mode == ViewMode::Parsed && self.filter_state.active_count() > 0;
+        let filtering = self.view_mode == ViewMode::Parsed && self.filter_state.is_applied();
         filtering || self.focus.tabs.iter().any(|t| t.search.matcher.is_some())
     }
 

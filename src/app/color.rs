@@ -27,6 +27,8 @@ pub enum ColorTarget {
     RecolorTextHighlight { key: String, raw: bool },
     /// Change the color of a Highlight Rule.
     Rule(u64),
+    /// Choose the color of the New rule form.
+    RuleForm,
 }
 
 /// Where a color chosen for a selection goes.
@@ -199,6 +201,27 @@ impl AppView {
         cx.notify();
     }
 
+    /// Color Selection: open the bar for the text selected in the view shown,
+    /// the only way to open it for a selection in an editor. Nothing selected,
+    /// nothing opens.
+    pub fn open_bar_for_selection(&mut self, window: &gpui::Window, cx: &mut Context<Self>) {
+        use crate::workspace::working_set::ViewMode;
+        let (target, at) = match self.view_mode {
+            ViewMode::Raw if !self.raw.editors.is_empty() => {
+                (self.raw_editor_mark_target(window, cx), Self::raw_editor_bar_pos(window))
+            }
+            ViewMode::Raw => (self.raw_list_mark_target(), window.mouse_position()),
+            ViewMode::Parsed => (
+                self.text_selection.filter(|s| !s.is_empty()).map(|_| ColorTarget::MarkSelection),
+                window.mouse_position(),
+            ),
+        };
+        if let Some(target) = target {
+            self.color_bar = Some(ColorBar::new(at, target));
+            cx.notify();
+        }
+    }
+
     /// Open the bar to change the color of the Marker under a byte of a row.
     pub fn open_recolor_bar(&mut self, row: usize, byte: usize, at: Point<Pixels>, cx: &mut Context<Self>) {
         self.color_bar = Some(ColorBar::new(at, ColorTarget::RecolorMarker { row, byte }));
@@ -214,6 +237,12 @@ impl AppView {
     /// Open the palette to choose the color of a Highlight Rule.
     pub fn open_rule_palette(&mut self, rule_id: u64, at: Point<Pixels>, cx: &mut Context<Self>) {
         self.color_bar = Some(ColorBar { palette_open: true, ..ColorBar::new(at, ColorTarget::Rule(rule_id)) });
+        cx.notify();
+    }
+
+    /// Open the palette to choose the color of the New rule form.
+    pub fn open_rule_form_palette(&mut self, at: Point<Pixels>, cx: &mut Context<Self>) {
+        self.color_bar = Some(ColorBar { palette_open: true, ..ColorBar::new(at, ColorTarget::RuleForm) });
         cx.notify();
     }
 
@@ -346,6 +375,7 @@ impl AppView {
             }
             ColorTarget::RecolorTextHighlight { key, .. } => self.recolor_text_highlight(&key, color, cx),
             ColorTarget::Rule(id) => self.set_highlight_rule_color(id, color, cx),
+            ColorTarget::RuleForm => self.rule_form_set_color(color, cx),
         }
         cx.notify();
     }

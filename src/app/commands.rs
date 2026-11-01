@@ -35,6 +35,7 @@ impl AppView {
             Command::MoveFocusToWindow => self.move_focus_to_window(window, cx),
             Command::ToggleFindFilter => self.toggle_find_filter(cx),
             Command::ToggleSearchHighlight => self.toggle_search_highlight(cx),
+            Command::ColorSelection => self.open_bar_for_selection(window, cx),
             Command::ToggleValueColors => self.toggle_value_colors(cx),
             Command::ToggleSyntaxColor => self.toggle_syntax_color(cx),
             Command::ToggleFilter => self.toggle_filter_builder(cx),

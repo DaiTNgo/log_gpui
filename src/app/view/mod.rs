@@ -3,6 +3,7 @@
 mod chrome;
 mod color_bar;
 mod columns_panel;
+mod context_parts;
 mod format_editor_view;
 mod command_views;
 mod connection_view;
@@ -25,8 +26,7 @@ use gpui_component::ActiveTheme as _;
 
 use crate::ui::canvas::{CanvasColors, CanvasViewState, LogCanvas};
 use crate::ui::command_palette::CommandPalette;
-use crate::ui::context_sidebar::{ContextSections, ContextSidebar};
-use crate::ui::inspector::InspectorView;
+use crate::ui::context_sidebar::ContextSidebar;
 use crate::ui::project_switcher::ProjectSwitcher;
 use crate::ui::sidebar::SidebarView;
 use gpui::{
@@ -174,17 +174,11 @@ impl Render for AppView {
             // The Raw View keeps the Inspector alone; Filter and Highlights are for parsed rows.
             .is_shown(self.active_tab_is_log_file())
             .then(|| {
-                let sections = ContextSections {
-                    filter: self.render_filter_panel_content(cx),
-                    highlights: self.render_highlights_panel_content(cx),
-                    columns: self.render_columns_panel_content(cx),
-                    inspector: InspectorView::render_body(self.inspector_text.is_some(), &self.inspector_editor, cx),
-                    active_filters: self.filter_state.active_count(),
-                    rule_count: self.highlight_rules().len(),
-                    parsed: self.view_mode == ViewMode::Parsed,
-                };
+                let sections = self.context_sections(cx);
                 ContextSidebar::render(
                     &self.context_sidebar,
+                    &self.workspace_state.context_layout,
+                    self.context_body_bounds.clone(),
                     window,
                     viewport_height - pane_taken,
                     sections,

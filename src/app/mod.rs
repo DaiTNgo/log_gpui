@@ -7,6 +7,7 @@ pub mod color;
 mod connection_details;
 mod commands;
 pub mod columns;
+pub mod context_layout;
 pub mod line_config;
 pub mod formats;
 pub mod format_editor;
@@ -42,6 +43,7 @@ mod projects;
 pub mod rename;
 mod search;
 mod selection;
+pub mod selection_menu;
 mod spaces;
 pub mod text_select;
 mod tabs;
@@ -121,6 +123,11 @@ pub struct AppView {
     /// The row of `focus_rows` with the longest text (sets the pane's width).
     pub focus_longest: usize,
     pub focus_scroll: UniformListScrollHandle,
+    /// The scroll of the working-set tab strip.
+    pub tab_scroll: gpui::ScrollHandle,
+    /// The tab the strip last scrolled into view (index, tab count), so it
+    /// scrolls only when the active tab changes, not over the user's scroll.
+    pub tab_scrolled_to: Option<(usize, usize)>,
     /// The Focus Window, while the Focus Pane lives there. Never saved.
     pub focus_window: Option<focus_window::FocusWindowHandle>,
     pub focus_find_input: Entity<InputState>,
@@ -190,11 +197,10 @@ pub struct AppView {
     pub phrase_menu: Option<(gpui::Point<gpui::Pixels>, String, bool)>,
     pub color_picker: Entity<ColorPickerState>,
     /// The custom color of the Phrase menu; its hue becomes the Phrase's hue.
-    /// What the last right-click landed on, for the context menu.
-    pub cell_target: Option<text_select::CellTarget>,
+    /// What the last right-click landed on, for the Selection Menu.
+    pub selection_menu: Option<selection_menu::SelectionTarget>,
     /// The "+ Add rule" form of the Highlights section.
     pub rule_form: Option<highlights::RuleForm>,
-    pub rule_input: Entity<InputState>,
     /// Narrows the value list of the New rule form.
     pub rule_search: Entity<InputState>,
     pub rule_search_scope: Option<String>,
@@ -273,6 +279,8 @@ pub struct AppView {
     // Sidebar state
     pub sidebar_state: LeftSidebarState,
     pub context_sidebar: ContextSidebarState,
+    /// Where the context sidebar's body was last drawn.
+    pub context_body_bounds: std::rc::Rc<std::cell::Cell<gpui::Bounds<gpui::Pixels>>>,
     pub expanded_projects: HashSet<String>,
     /// Log Spaces whose file list is open in the sidebar.
     pub expanded_spaces: HashSet<String>,
@@ -484,11 +492,6 @@ impl AppView {
             },
         )
         .detach();
-        let columns_query = cx.new(|cx| InputState::new(window, cx).placeholder("Find a field…"));
-        cx.subscribe(&columns_query, |_this: &mut Self, _, event: &InputEvent, cx| {
-            if matches!(event, InputEvent::Change) {
-                cx.notify();
-            }
         // Pointing at a color in the picker previews it on the selection, as pointing at a swatch does.
         cx.observe(&color_picker, |this: &mut Self, picker, cx| {
             let state = picker.read(cx);
@@ -496,6 +499,11 @@ impl AppView {
             this.preview_bar_color(hovered.map(color::color_from_hsla), cx);
         })
         .detach();
+        let columns_query = cx.new(|cx| InputState::new(window, cx).placeholder("Find a field…"));
+        cx.subscribe(&columns_query, |_this: &mut Self, _, event: &InputEvent, cx| {
+            if matches!(event, InputEvent::Change) {
+                cx.notify();
+            }
         })
         .detach();
         let inspector_editor = cx.new(|cx| {
@@ -505,26 +513,20 @@ impl AppView {
             state.set_line_number(false, window, cx);
             state
         });
-        let rule_search = cx.new(|cx| InputState::new(window, cx).placeholder("Search values…"));
-        cx.subscribe(&rule_search, |_this: &mut Self, _, event: &InputEvent, cx| {
-            if matches!(event, InputEvent::Change) {
-                cx.notify();
-            }
-        })
-        .detach();
-        let rule_input = cx.new(|cx| InputState::new(window, cx).placeholder("Add value…  (contains)"));
+        // Typing narrows the values; Enter adds the text as a Custom Value.
+        let rule_search = cx.new(|cx| InputState::new(window, cx).placeholder("Search or add a value…"));
         cx.subscribe_in(
-            &rule_input,
+            &rule_search,
             window,
-            |this: &mut Self, input, event: &InputEvent, window, cx| {
-                if let InputEvent::PressEnter { .. } = event {
+            |this: &mut Self, input, event: &InputEvent, window, cx| match event {
+                InputEvent::Change => cx.notify(),
+                InputEvent::PressEnter { .. } => {
                     let text = input.read(cx).value().to_string();
                     if this.rule_form_add_custom(&text, cx) {
-                        input.update(cx, |state, cx| {
-                            state.set_value(gpui::SharedString::from(""), window, cx)
-                        });
+                        input.update(cx, |state, cx| state.set_value(gpui::SharedString::from(""), window, cx));
                     }
                 }
+                _ => {}
             },
         )
         .detach();
@@ -541,6 +543,8 @@ impl AppView {
             focus_rows: Arc::new(Vec::new()),
             focus_longest: 0,
             focus_scroll: UniformListScrollHandle::new(),
+            tab_scroll: gpui::ScrollHandle::new(),
+            tab_scrolled_to: None,
             focus_window: None,
             focus_find_input,
             focus_find_dirty: true,
@@ -577,9 +581,8 @@ impl AppView {
             value_sample: Default::default(),
             phrase_menu: None,
             color_picker,
-            cell_target: None,
+            selection_menu: None,
             rule_form: None,
-            rule_input,
             rule_search,
             rule_search_scope: None,
             inspector_editor,
@@ -623,6 +626,7 @@ impl AppView {
             project_rename_buffer: String::new(),
             sidebar_state: LeftSidebarState::new(),
             context_sidebar: ContextSidebarState::new(),
+            context_body_bounds: Default::default(),
             expanded_projects,
             expanded_spaces,
             renaming: None,

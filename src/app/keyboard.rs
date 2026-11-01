@@ -228,7 +228,7 @@ impl AppView {
 
     /// Select the row `key` lands on and scroll to it. End turns Follow back
     /// on in a live Log Space.
-    fn move_row_by_key(&mut self, key: crate::go_to::RowKey, cx: &mut Context<Self>) {
+    pub(crate) fn move_row_by_key(&mut self, key: crate::go_to::RowKey, cx: &mut Context<Self>) {
         let (top, in_sight) = self.rows_in_sight();
         let len = self.visible_indices.len();
         if let Some(row) = crate::go_to::row_for_key(key, self.selected_row_pos, top, in_sight, len) {
