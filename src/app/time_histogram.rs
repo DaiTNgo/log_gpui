@@ -36,6 +36,8 @@ struct CountKey {
     matches: (usize, usize),
     grid: th::Grid,
     full: Range<f64>,
+    /// The column the lanes split by.
+    lanes: Option<String>,
 }
 
 impl CountKey {
@@ -46,6 +48,7 @@ impl CountKey {
             && self.rows > before.rows
             && self.grid == before.grid
             && self.full == before.full
+            && self.lanes == before.lanes
             && self.matches.0 == before.matches.0
             && self.matches.1 >= before.matches.1
             && match (self.pass, before.pass) {
@@ -59,8 +62,9 @@ impl CountKey {
 /// A drag on the histogram, in times on the axis.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum HistogramDrag {
-    /// Pressed, not moved yet: a click unless it moves.
-    Pressed { at: f64, x: f32, inside_range: bool },
+    /// Pressed, not moved yet: a click unless it moves. `lane` is the
+    /// Swimlane pressed on, below the columns.
+    Pressed { at: f64, x: f32, inside_range: bool, lane: Option<th::Lane> },
     /// Choosing a new Time Range.
     Select { from: f64, to: f64 },
     /// Moving one edge of the Time Range; the other stays.
@@ -77,6 +81,8 @@ pub struct HistogramState {
     axis_for: Option<TabTarget>,
     /// The counts of the view's rows.
     pub shown: Arc<Buckets>,
+    /// The column the shown lanes are for.
+    pub lanes_for: Option<String>,
     /// Each row's class (`time_histogram::class_of`), built with the counts.
     classes: Arc<Vec<u8>>,
     /// `rows_epoch` the classes are for.
@@ -107,6 +113,7 @@ impl Default for HistogramState {
             axis: None,
             axis_for: None,
             shown: Arc::default(),
+            lanes_for: None,
             classes: Arc::default(),
             classes_epoch: None,
             counted: None,
@@ -220,6 +227,7 @@ impl AppView {
             matches: list_key(&self.focus.search().matched_visible_indices),
             grid: axis.grid(),
             full: axis.full.clone(),
+            lanes: self.lane_column(),
         };
         self.histogram.axis = Some(axis);
         if self.histogram.asked.as_ref() == Some(&key) {
@@ -272,8 +280,14 @@ impl AppView {
         let matches = &self.focus.search().matched_visible_indices;
         let matches = &matches[matches.partition_point(|&r| r < from)..];
         let facts = RowFacts { ts: self.filter_index.effective_ts(), class: &self.histogram.classes };
+        // The fields are borrowed apart: the counts change, the index does not.
+        let lanes = key.lanes.as_deref().and_then(|k| self.filter_index.column(k)).filter(|c| c.has_row_ids());
+        let lanes = lanes.map(|c| th::LaneIds { ids: c.row_ids(), values: c.values.len() });
+        if key.lanes.is_some() && lanes.is_none() {
+            return self.schedule_histogram_recount(key, cx);
+        }
         let Some(axis) = self.histogram.axis.as_ref() else { return };
-        let appended = Arc::make_mut(&mut self.histogram.shown).append(facts, axis, from, pass, matches);
+        let appended = Arc::make_mut(&mut self.histogram.shown).append(facts, axis, from, pass, matches, lanes);
         if appended.is_err() {
             return self.schedule_histogram_recount(key, cx);
         }
@@ -305,6 +319,8 @@ impl AppView {
         });
         let pass = key.pass.map(|_| self.filter_pass.clone());
         let matches = self.focus.search().matched_visible_indices.clone();
+        // The value of each row, copied for the worker (two bytes a row).
+        let lanes = key.lanes.as_deref().and_then(|k| self.lane_ids(k)).map(|l| (l.ids.to_vec(), l.values));
         let epoch = self.rows_epoch;
         cx.spawn(async move |this, cx| {
             let counted = cx
@@ -315,7 +331,7 @@ impl AppView {
                         Arc::new(build_classes(&rows, &files))
                     });
                     let facts = RowFacts { ts: &ts, class: &classes };
-                    let shown = th::count_buckets(facts, &axis, pass.as_deref().map(Vec::as_slice), &matches);
+                    let shown = th::count_buckets(facts, &axis, pass.as_deref().map(Vec::as_slice), &matches, lanes.as_ref().map(|(ids, values)| th::LaneIds { ids, values: *values }));
                     (classes, shown)
                 })
                 .await;
@@ -342,6 +358,7 @@ impl AppView {
         h.classes = classes;
         h.classes_epoch = Some(epoch);
         h.shown = Arc::new(shown);
+        h.lanes_for = key.lanes.clone();
         h.counted = Some(key);
         if generation == h.generation {
             // Rows that came while counting are added now.
@@ -371,6 +388,23 @@ impl AppView {
             colors,
             collapsed: self.histogram.collapsed,
             bounds_sink: self.histogram.bounds.clone(),
+            lanes: self
+                .histogram
+                .shown
+                .lanes
+                .as_ref()
+                .map(|l| l.order().into_iter().map(|lane| (lane, self.lane_name(lane))).collect())
+                .unwrap_or_default(),
+            lane_menu: crate::ui::time_histogram::LaneMenu {
+                current: self
+                    .histogram
+                    .lanes_for
+                    .as_deref()
+                    .and_then(|k| self.filter_index.column(k))
+                    .map(|c| (c.key.clone(), c.label.clone())),
+                choices: self.lane_choices(),
+                suggested: self.lane_suggestion(),
+            },
         };
         Some(crate::ui::time_histogram::render(props, cx))
     }
@@ -441,7 +475,7 @@ impl AppView {
         }
     }
 
-    fn histogram_jump_to_row(&mut self, row: usize, cx: &mut Context<Self>) {
+    pub(crate) fn histogram_jump_to_row(&mut self, row: usize, cx: &mut Context<Self>) {
         if let Some(line) = self.line_ref_of_entry(row) {
             self.set_current_line(line, Origin::Jump, cx);
         }
@@ -471,18 +505,19 @@ impl AppView {
     }
 
     /// The mouse went down on the histogram at time `at`, `x` pixels from
-    /// its left. Near an edge of the Time Range it takes that edge, inside
-    /// it the whole range; else it is a click until it moves.
-    pub fn histogram_mouse_down(&mut self, at: f64, x: f32, edge_px: f64, cx: &mut Context<Self>) {
+    /// its left, on the Swimlane `lane` if any. Near an edge of the Time
+    /// Range it takes that edge, inside it the whole range; else it is a
+    /// click until it moves.
+    pub fn histogram_mouse_down(&mut self, at: f64, x: f32, edge_px: f64, lane: Option<th::Lane>, cx: &mut Context<Self>) {
         let range = self.histogram_time_range();
         self.histogram.drag = Some(match range {
             Some((Some(from), Some(to))) if (at - from).abs() <= edge_px => HistogramDrag::Edge { fixed: to, moving: at },
             Some((Some(from), Some(to))) if (at - to).abs() <= edge_px => HistogramDrag::Edge { fixed: from, moving: at },
             Some((from, to)) => {
                 let inside = from.is_none_or(|f| at >= f) && to.is_none_or(|t| at <= t);
-                HistogramDrag::Pressed { at, x, inside_range: inside }
+                HistogramDrag::Pressed { at, x, inside_range: inside, lane }
             }
-            None => HistogramDrag::Pressed { at, x, inside_range: false },
+            None => HistogramDrag::Pressed { at, x, inside_range: false, lane },
         });
         cx.notify();
     }
@@ -491,7 +526,7 @@ impl AppView {
     pub fn histogram_mouse_drag(&mut self, at: f64, x: f32, cx: &mut Context<Self>) {
         let Some(drag) = self.histogram.drag else { return };
         self.histogram.drag = Some(match drag {
-            HistogramDrag::Pressed { at: start, x: x0, inside_range } if (x - x0).abs() > 3.0 => {
+            HistogramDrag::Pressed { at: start, x: x0, inside_range, .. } if (x - x0).abs() > 3.0 => {
                 match (inside_range, self.histogram_time_range()) {
                     (true, Some((Some(from), Some(to)))) => HistogramDrag::Move { range: (from, to), grab: start, now: at },
                     _ => HistogramDrag::Select { from: start, to: at },
@@ -506,14 +541,18 @@ impl AppView {
     }
 
     /// The mouse went up: a drag sets the Time Range once; a click jumps to
-    /// its column, or clears the Time Range when outside it.
+    /// its column (on a Swimlane, to the lane's first line there), or
+    /// clears the Time Range when outside it.
     pub fn histogram_mouse_up(&mut self, cx: &mut Context<Self>) {
         let Some(drag) = self.histogram.drag.take() else { return };
         match self.histogram_drag_range(drag) {
             Some((from, to)) => self.histogram_set_time_range(from, to, cx),
             None => {
-                let HistogramDrag::Pressed { at, inside_range, .. } = drag else { return };
-                if self.histogram_time_range().is_some() && !inside_range {
+                let HistogramDrag::Pressed { at, inside_range, lane, .. } = drag else { return };
+                let lane_col = self.histogram.shown.grid.and_then(|g| g.column_of(at));
+                if let (Some(lane), Some(col)) = (lane, lane_col) {
+                    self.lane_bar_clicked(lane, col, cx);
+                } else if self.histogram_time_range().is_some() && !inside_range {
                     self.histogram_clear_time_range(cx);
                 } else if let Some(grid) = self.histogram.axis.as_ref().map(|a| a.grid()) {
                     let start = grid.column_of(at).map_or(at, |c| grid.start_of(c));

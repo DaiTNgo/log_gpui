@@ -53,7 +53,7 @@ impl TextCell {
             PinnableColumn::Level => Some(TextCell::Level),
             PinnableColumn::Module => Some(TextCell::Module),
             PinnableColumn::Field(k) => Some(TextCell::Field(k)),
-            PinnableColumn::Source | PinnableColumn::Stream => None,
+            PinnableColumn::Source | PinnableColumn::LogName | PinnableColumn::Stream => None,
         }
     }
 }

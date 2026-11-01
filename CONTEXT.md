@@ -30,6 +30,10 @@ _Avoid_: Pin Toggle (that pins a column), frozen tab, sticky tab.
 The column in a Log Space's Parsed View that names each row's Source File. It is pinnable and filterable. Whether the Focus Pane shows it is a switch in the Columns section.
 _Avoid_: File column, origin column.
 
+**Log Name Column**:
+The column in a Log Space's Parsed View, right after the Source Column, that names each row's log: its Source File's name without a rotation suffix and then a compression suffix, by the rule that tells a Rotated File (`message.0` and `message.1` are both `message`, `db.log.1.gz` is `db.log`). What stands before the file name (a folder, `<server>:`, `<archive> › `) is kept, so the same name on two Servers is two logs. It is filterable and pinnable, hidden until turned on by its switch in the Columns section, which the Log Space keeps and which shows it in the Canvas and the Focus Pane alike; a Filter on it holds while it is hidden. A File View has none.
+_Avoid_: Stream, Stream Column (that is a Remote Command's stdout/stderr), file family, base name.
+
 **Quick Settings**:
 The toolbar popover holding display switches for the open view, such as density.
 _Avoid_: View panel, view options.
@@ -179,7 +183,7 @@ One file's block in the Raw View, headed by the file name and folder, that can b
 _Avoid_: Excerpt, file panel.
 
 **Parsed View**:
-The Unified Canvas: the file split into detected columns, with Search, Markers and Highlight Rules. It always shows every line and every column (every Detected Field, Source for a Log Space of two or more files, Stream for a Log Space with a Remote Command), scrolling sideways when they do not fit; Filter narrows only the Focus Pane below it.
+The Unified Canvas: the file split into detected columns, with Search, Markers and Highlight Rules. It always shows every line and every column (every Detected Field, Source for a Log Space of two or more files, Stream for a Log Space with a Remote Command, Log Name once turned on), scrolling sideways when they do not fit; Filter narrows only the Focus Pane below it.
 _Avoid_: Table view, grid view.
 
 ### Marking
@@ -327,7 +331,7 @@ Moving the view to a line number of one file, typed into the Go to bar above the
 _Avoid_: Jump to line, goto.
 
 **Filterable Column**:
-A detected column the user may filter on: it has at most 500 distinct values, and it is not `timestamp` or `message`/payload. A column with more than 500 distinct values is shown as unavailable with its distinct count and the reason.
+A detected column the user may filter on: it has at most 1000 distinct values, and it is not `timestamp` or `message`/payload. A column with more than 1000 distinct values is shown as unavailable with its distinct count and the reason.
 _Avoid_: Facet, filter field.
 
 **Distinct Count**:
@@ -354,6 +358,14 @@ _Avoid_: Date filter, time slider.
 The strip above the list of a view whose lines have times (Log Space, File View; not the Raw View, the Focus Pane or the Focus Window): one column per span of time counting the Parent Lines in it, Error/Fatal red, Warn orange, the rest grey. Under a Filter, all lines show dim and those passing it solid; a tick marks a column with a Match. A click jumps to the first line of the column; a drag sets the Time Range (ADR-0017). Lines with no time are not drawn, only counted in a label. Turned on and off for every view by the Histogram button.
 _Avoid_: Timeline, sparkline, volume chart.
 
+**Swimlane**:
+A row under the Time Histogram, on the same axis (its zoom, the frame of the part shown and the Time Range reach across the lanes), for one value of the column chosen by Lane By: a bar in each column where a Parent Line of that value is, coloured by the highest level there. At most 8 lanes, the values with the most Parent Lines in the view, most first; the other values share "Other (n values)" at the end, and Parent Lines with no value have "(empty)" just before it. A Continuation Line is in its Parent Line's lane. The lanes count every line of the view, whatever the Filter; lines arriving add to the lanes there (a new value takes a free lane or goes in Other), which are chosen again only when everything is counted again. Clicking a lane's name ticks its value in the Filter of the column, as the Filter sidebar would; clicking a bar goes to the lane's first line in that column. Folding the strip hides the lanes.
+_Avoid_: Track, row chart, per-service histogram.
+
+**Lane By**:
+The column the Swimlanes of a view split by, chosen in the "Lane by" menu at the head of the Time Histogram among the view's Filterable Columns ("No split" hides the lanes; a column over the Filter's limit of distinct values, or still being read, is listed greyed with the reason). Kept with the view, as its Filter is. Never chosen, it is the Log Name Column of a Log Space with two logs or more, else no split; then the menu suggests MODULE or a Field Column named `service`, `module`, `component`, `thread`, `host` or `pod` first, without choosing it. A chosen column the view no longer has falls back to that default.
+_Avoid_: Group by, split by, swimlane column.
+
 **Field Column**:
 A column of the Parsed View besides TIMESTAMP, LEVEL, MODULE and MESSAGE that shows a named field read from the line: a JSON key, a field of a Log Format, or a Detected Field turned on. Its cell is a stretch of the line's text.
 _Avoid_: Custom column, extra column, dynamic column. A column made from a stretch of text is made by editing a Log Format.
@@ -379,7 +391,7 @@ A field the app finds in lines on its own (a JSON key, or a `key=value` pair in 
 _Avoid_: Suggested column, auto column.
 
 **Columns** (section of the context sidebar):
-The one place to show or hide the columns of the Focus Pane (Source and Stream included; Detected Fields are off by default), kept per Project. Each column is a switch and nothing else: columns are not reordered (the Focus Pane keeps the order by source) and not renamed, and the Log Format is chosen and edited from the sidebar's "Log Format…". It never changes the Unified Canvas, which shows every column.
+The one place to show or hide the columns of the Focus Pane (Source and Stream included; Detected Fields are off by default), kept per Project; the Log Name Column's switch is the exception, kept by the Log Space. Each column is a switch and nothing else: columns are not reordered (the Focus Pane keeps the order by source) and not renamed, and the Log Format is chosen and edited from the sidebar's "Log Format…". It never changes the Unified Canvas, which shows every column, except the Log Name Column, whose switch shows it in both.
 _Avoid_: Column manager, view panel.
 
 ## Rules & Constraints
@@ -432,7 +444,7 @@ L26. **Full Read Never Cuts Silently**: Open in full reads no more than the Full
 12. **Invalid Expression Keeps Last Matches**: While the typed Search Expression is incomplete or invalid, the Matches from the last valid expression stay shown and an error indicator appears beside the field.
 13. **Filter Combination**: Within one column, Filter Values and Custom Values combine with OR; across columns, and with the Time Range, they combine with AND.
 14. **Filter Has No Regex**: Filter matches by equality (Filter Value) or contains (Custom Value) only.
-15. **Filter Counts Ignore Other Filters**: A column's Filter Values and their row counts never change because other filters are applied. They count the lines the view holds: counted as the file is read (the values read so far show while Indexing goes on), new values appended unticked and counts grown as lines arrive, and counts shrunk as lines leave a Live Window. A column that grows past 500 distinct values keeps the conditions already set but accepts no new ones.
+15. **Filter Counts Ignore Other Filters**: A column's Filter Values and their row counts never change because other filters are applied. They count the lines the view holds: counted as the file is read (the values read so far show while Indexing goes on), new values appended unticked and counts grown as lines arrive, and counts shrunk as lines leave a Live Window. A column that grows past 1000 distinct values keeps the conditions already set but accepts no new ones.
 16. **Search Counts Only Filtered Lines**: In the Parsed View, only lines that pass Filter count as Matches. The Match count, next/previous, the overview ruler, the highlights in the view and the Focus Pane all use this one set. In the Raw View, Filter is ignored.
 17. **Quick Settings Only**: There is no View panel. Column pinning stays on the Column Header and column width stays adjustable by drag and Auto-fit. Quick Settings holds only display switches (density). Showing and hiding the Focus Pane's columns lives in the Columns section, and Log Formats are edited from "Log Format…"; the Canvas has no switch for its columns.
 18. **Missing Value Never Matches**: A row with no value in a column never matches any Filter Value or Custom Value of that column. It is hidden when the column shows only the chosen values, and stays visible in Hide Mode. There is no "(empty)" value.

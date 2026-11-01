@@ -10,6 +10,7 @@ pub const DEFAULT_TIMESTAMP_WIDTH: Pixels = px(120.0);
 pub const DEFAULT_LEVEL_WIDTH: Pixels = px(68.0);
 pub const DEFAULT_MODULE_WIDTH: Pixels = px(100.0);
 pub const DEFAULT_SOURCE_WIDTH: Pixels = px(120.0);
+pub const DEFAULT_LOG_NAME_WIDTH: Pixels = px(120.0);
 pub const DEFAULT_STREAM_WIDTH: Pixels = px(72.0);
 pub const DEFAULT_FIELD_WIDTH: Pixels = px(120.0);
 
@@ -17,6 +18,7 @@ pub const MIN_TIMESTAMP_WIDTH: Pixels = px(48.0);
 pub const MIN_LEVEL_WIDTH: Pixels = px(36.0);
 pub const MIN_MODULE_WIDTH: Pixels = px(48.0);
 pub const MIN_SOURCE_WIDTH: Pixels = px(48.0);
+pub const MIN_LOG_NAME_WIDTH: Pixels = px(48.0);
 pub const MIN_STREAM_WIDTH: Pixels = px(48.0);
 pub const MIN_FIELD_WIDTH: Pixels = px(48.0);
 
@@ -30,6 +32,9 @@ pub enum PinnableColumn {
     /// The Source Column of a Log Space: the name of each row's Source File.
     /// Shown only when the Log Space turns it on.
     Source,
+    /// The Log Name Column of a Log Space: each row's Source File without
+    /// its rotation suffix. Hidden unless the Log Space turns it on.
+    LogName,
     /// The Stream Column of a Log Space with a Remote Command: `stdout` or
     /// `stderr`. Hidden unless turned on; it is never pinned.
     Stream,
@@ -46,6 +51,7 @@ impl PinnableColumn {
             PinnableColumn::Level => "Level".into(),
             PinnableColumn::Module => "Module".into(),
             PinnableColumn::Source => "Source".into(),
+            PinnableColumn::LogName => "LogName".into(),
             PinnableColumn::Stream => "Stream".into(),
             PinnableColumn::Field(k) => format!("field:{k}"),
         }
@@ -57,6 +63,7 @@ impl PinnableColumn {
             "Level" => PinnableColumn::Level,
             "Module" => PinnableColumn::Module,
             "Source" => PinnableColumn::Source,
+            "LogName" => PinnableColumn::LogName,
             "Stream" => PinnableColumn::Stream,
             other => PinnableColumn::Field(FieldKey::new(other.strip_prefix("field:")?)),
         })
@@ -69,6 +76,7 @@ impl PinnableColumn {
             PinnableColumn::Level => "level",
             PinnableColumn::Module => "module",
             PinnableColumn::Source => "source",
+            PinnableColumn::LogName => "log_name",
             PinnableColumn::Stream => "stream",
             PinnableColumn::Field(k) => k.as_str(),
         }
@@ -82,6 +90,7 @@ impl PinnableColumn {
             "level" => PinnableColumn::Level,
             "module" => PinnableColumn::Module,
             "source" => PinnableColumn::Source,
+            "log_name" => PinnableColumn::LogName,
             "stream" => PinnableColumn::Stream,
             "message" | "request_id" | "trace_id" => return None,
             field => PinnableColumn::Field(FieldKey::new(field)),
@@ -114,11 +123,12 @@ impl<'de> Deserialize<'de> for PinnableColumn {
 
 impl PinnableColumn {
     /// The fixed columns, in their order before the Field Columns.
-    pub const ALL: [PinnableColumn; 5] = [
+    pub const ALL: [PinnableColumn; 6] = [
         PinnableColumn::Timestamp,
         PinnableColumn::Level,
         PinnableColumn::Module,
         PinnableColumn::Source,
+        PinnableColumn::LogName,
         PinnableColumn::Stream,
     ];
 
@@ -130,7 +140,7 @@ impl PinnableColumn {
 
     #[inline]
     pub fn is_pinnable(name: &str) -> bool {
-        matches!(name.to_ascii_uppercase().as_str(), "TIMESTAMP" | "LEVEL" | "MODULE" | "SOURCE")
+        matches!(name.to_ascii_uppercase().as_str(), "TIMESTAMP" | "LEVEL" | "MODULE" | "SOURCE" | "LOG NAME")
     }
 
     #[inline]
@@ -140,6 +150,7 @@ impl PinnableColumn {
             PinnableColumn::Level => "LEVEL",
             PinnableColumn::Module => "MODULE",
             PinnableColumn::Source => "SOURCE",
+            PinnableColumn::LogName => "LOG NAME",
             PinnableColumn::Stream => "STREAM",
             PinnableColumn::Field(k) => k.as_str(),
         }
@@ -164,6 +175,7 @@ impl PinnableColumn {
             PinnableColumn::Level => 5,     // "LEVEL"
             PinnableColumn::Module => 6,    // "MODULE"
             PinnableColumn::Source => 6,    // "SOURCE"
+            PinnableColumn::LogName => 8,   // "LOG NAME"
             PinnableColumn::Stream => 6,    // "STREAM", and "stdout" / "stderr"
             PinnableColumn::Field(k) => k.as_str().chars().count(),
         }
@@ -209,6 +221,8 @@ pub struct FieldMaxChars {
     #[serde(default)]
     pub source: usize,
     #[serde(default)]
+    pub log_name: usize,
+    #[serde(default)]
     pub stream: usize,
     /// Longest value of each field read from the lines.
     #[serde(default)]
@@ -222,6 +236,7 @@ impl FieldMaxChars {
             level: 0,
             module: 0,
             source: 0,
+            log_name: 0,
             stream: 0,
             fields: HashMap::new(),
         }
@@ -234,6 +249,7 @@ impl FieldMaxChars {
             PinnableColumn::Level => self.level,
             PinnableColumn::Module => self.module,
             PinnableColumn::Source => self.source,
+            PinnableColumn::LogName => self.log_name,
             PinnableColumn::Stream => self.stream,
             PinnableColumn::Field(k) => self.fields.get(&k).copied().unwrap_or(0),
         }
@@ -245,6 +261,7 @@ impl FieldMaxChars {
         self.level = self.level.max(other.level);
         self.module = self.module.max(other.module);
         self.source = self.source.max(other.source);
+        self.log_name = self.log_name.max(other.log_name);
         self.stream = self.stream.max(other.stream);
         for (k, n) in &other.fields {
             let m = self.fields.entry(*k).or_default();
@@ -265,6 +282,7 @@ impl FieldMaxChars {
         self.module = self.module.max(entry.tag().chars().count());
         if let Some(source) = source {
             self.source = self.source.max(source.chars().count());
+            self.log_name = self.log_name.max(crate::rotation_name::log_name(source).chars().count());
         }
         if let Some(stream) = entry.stream {
             self.stream = self.stream.max(stream.as_str().len());
@@ -313,6 +331,7 @@ pub fn compute_column_width(
         PinnableColumn::Level => 24.0,
         PinnableColumn::Module => 16.0,
         PinnableColumn::Source => 16.0,
+        PinnableColumn::LogName => 16.0,
         PinnableColumn::Stream => 16.0,
         PinnableColumn::Field(_) => 16.0,
     };
@@ -344,6 +363,8 @@ pub struct PaneColumns {
     /// Format's fields, then Detected Fields), not chosen by the user.
     pub fields: Vec<FieldKey>,
     pub source: bool,
+    #[serde(default)]
+    pub log_name: bool,
     pub stream: bool,
 }
 
@@ -368,6 +389,9 @@ pub struct ColumnLayoutState {
     /// hidden keeps its pin and is simply not laid out).
     #[serde(default)]
     pub source_visible: bool,
+    /// Whether the Log Name Column is shown.
+    #[serde(default)]
+    pub log_name_visible: bool,
     /// Whether the Stream Column is shown.
     #[serde(default)]
     pub stream_visible: bool,
@@ -403,6 +427,7 @@ impl ColumnLayoutState {
         widths.insert(PinnableColumn::Level, DEFAULT_LEVEL_WIDTH);
         widths.insert(PinnableColumn::Module, DEFAULT_MODULE_WIDTH);
         widths.insert(PinnableColumn::Source, DEFAULT_SOURCE_WIDTH);
+        widths.insert(PinnableColumn::LogName, DEFAULT_LOG_NAME_WIDTH);
         widths.insert(PinnableColumn::Stream, DEFAULT_STREAM_WIDTH);
 
         let mut min_widths = HashMap::new();
@@ -410,6 +435,7 @@ impl ColumnLayoutState {
         min_widths.insert(PinnableColumn::Level, MIN_LEVEL_WIDTH);
         min_widths.insert(PinnableColumn::Module, MIN_MODULE_WIDTH);
         min_widths.insert(PinnableColumn::Source, MIN_SOURCE_WIDTH);
+        min_widths.insert(PinnableColumn::LogName, MIN_LOG_NAME_WIDTH);
         min_widths.insert(PinnableColumn::Stream, MIN_STREAM_WIDTH);
 
         Self {
@@ -421,6 +447,7 @@ impl ColumnLayoutState {
             fitted_font: default_fitted_font(),
             gutter_width: DEFAULT_GUTTER_WIDTH,
             source_visible: false,
+            log_name_visible: false,
             stream_visible: false,
             hidden: BTreeSet::new(),
             fields: Vec::new(),
@@ -504,6 +531,7 @@ impl ColumnLayoutState {
     pub fn is_laid_out(&self, col: PinnableColumn) -> bool {
         match col {
             PinnableColumn::Source => self.source_visible,
+            PinnableColumn::LogName => self.log_name_visible,
             PinnableColumn::Stream => self.stream_visible,
             PinnableColumn::Field(k) => self.fields.contains(&k),
             fixed => !self.hidden.contains(&fixed),
@@ -511,7 +539,7 @@ impl ColumnLayoutState {
     }
 
     /// The columns laid out, in the view's order: TIMESTAMP, LEVEL, MODULE,
-    /// Source, Stream, then the Field Columns.
+    /// Source, Log Name, Stream, then the Field Columns.
     pub fn columns(&self) -> Vec<PinnableColumn> {
         PinnableColumn::ALL
             .iter()
@@ -552,6 +580,9 @@ impl ColumnLayoutState {
         if pane.source && !self.pane.source {
             self.auto_fit(PinnableColumn::Source, density);
         }
+        if pane.log_name && !self.pane.log_name {
+            self.auto_fit(PinnableColumn::LogName, density);
+        }
         if pane.stream && !self.pane.stream {
             self.max_chars.stream = self.max_chars.stream.max(6);
             self.auto_fit(PinnableColumn::Stream, density);
@@ -568,6 +599,7 @@ impl ColumnLayoutState {
             .chain(self.pane.fields.iter().map(|k| PinnableColumn::Field(*k)))
             .filter(|c| match c {
                 PinnableColumn::Source => self.pane.source,
+                PinnableColumn::LogName => self.pane.log_name,
                 PinnableColumn::Stream => self.pane.stream,
                 PinnableColumn::Field(_) => true,
                 fixed => !self.pane.hidden.contains(fixed),
@@ -582,6 +614,7 @@ impl ColumnLayoutState {
         layout.hidden = self.pane.hidden.clone();
         layout.fields = self.pane.fields.clone();
         layout.source_visible = self.pane.source;
+        layout.log_name_visible = self.pane.log_name;
         layout.stream_visible = self.pane.stream;
         layout
     }
@@ -600,6 +633,13 @@ impl ColumnLayoutState {
     /// Show or hide the Source Column.
     pub fn set_source_visible(&mut self, visible: bool) {
         self.source_visible = visible;
+        self.sync_ordered_pinned();
+    }
+
+    /// Show or hide the Log Name Column (a pinned one that is hidden keeps
+    /// its pin).
+    pub fn set_log_name_visible(&mut self, visible: bool) {
+        self.log_name_visible = visible;
         self.sync_ordered_pinned();
     }
 
@@ -625,6 +665,7 @@ impl ColumnLayoutState {
         self.widths.insert(PinnableColumn::Level, DEFAULT_LEVEL_WIDTH * ratio);
         self.widths.insert(PinnableColumn::Module, DEFAULT_MODULE_WIDTH * ratio);
         self.widths.insert(PinnableColumn::Source, DEFAULT_SOURCE_WIDTH * ratio);
+        self.widths.insert(PinnableColumn::LogName, DEFAULT_LOG_NAME_WIDTH * ratio);
         self.widths.insert(PinnableColumn::Stream, DEFAULT_STREAM_WIDTH * ratio);
     }
 
@@ -764,6 +805,7 @@ impl ColumnLayoutState {
             PinnableColumn::Level => DEFAULT_LEVEL_WIDTH,
             PinnableColumn::Module => DEFAULT_MODULE_WIDTH,
             PinnableColumn::Source => DEFAULT_SOURCE_WIDTH,
+            PinnableColumn::LogName => DEFAULT_LOG_NAME_WIDTH,
             PinnableColumn::Stream => DEFAULT_STREAM_WIDTH,
             PinnableColumn::Field(_) => DEFAULT_FIELD_WIDTH,
         })
@@ -776,6 +818,7 @@ impl ColumnLayoutState {
             PinnableColumn::Level => MIN_LEVEL_WIDTH,
             PinnableColumn::Module => MIN_MODULE_WIDTH,
             PinnableColumn::Source => MIN_SOURCE_WIDTH,
+            PinnableColumn::LogName => MIN_LOG_NAME_WIDTH,
             PinnableColumn::Stream => MIN_STREAM_WIDTH,
             PinnableColumn::Field(_) => MIN_FIELD_WIDTH,
         })

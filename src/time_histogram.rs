@@ -177,6 +177,186 @@ impl RowFacts<'_> {
 /// Counts by class: other, warn, error.
 pub type ClassCounts = [u32; 3];
 
+/// The most lanes drawn; the other values share the "Other" lane.
+pub const MAX_LANES: usize = 8;
+
+/// The value id of a row with no value (as `filter_index::MISSING`).
+const NO_VALUE: u16 = u16::MAX;
+
+/// The value of each row in the column the lanes split by (its Filter value
+/// ids, `u16::MAX` for none), and how many values the column has.
+#[derive(Debug, Clone, Copy)]
+pub struct LaneIds<'a> {
+    pub ids: &'a [u16],
+    pub values: usize,
+}
+
+/// Which values have a lane of their own (openspec change `add-swimlane`,
+/// decision 3): the [`MAX_LANES`] with the most Parent Lines, most first
+/// (a tie by value order); the rest share "Other", and the lines with no
+/// value have "(empty)".
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct LaneSet {
+    /// The value id of each lane of its own, in lane order.
+    pub slots: Vec<u16>,
+    /// How many values share the "Other" lane.
+    pub other_count: usize,
+    /// Some Parent Line has no value: the "(empty)" lane is drawn.
+    pub has_empty: bool,
+}
+
+impl LaneSet {
+    /// Choose the lanes from `total`: the Parent Lines of each value id,
+    /// and last of all those with no value.
+    pub fn choose(total: &[usize]) -> LaneSet {
+        let Some((&empty, values)) = total.split_last() else { return LaneSet::default() };
+        let mut ranked: Vec<usize> = (0..values.len()).filter(|&v| values[v] > 0).collect();
+        // Most lines first; the sort is stable, so a tie keeps value order.
+        ranked.sort_by(|&a, &b| values[b].cmp(&values[a]));
+        let slots: Vec<u16> = ranked.iter().take(MAX_LANES).map(|&v| v as u16).collect();
+        LaneSet { other_count: ranked.len() - slots.len(), slots, has_empty: empty > 0 }
+    }
+}
+
+/// One lane among a [`LaneSet`]'s.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Lane {
+    /// The lane of this value id.
+    Value(u16),
+    /// The lines with no value.
+    Empty,
+    /// The values with no lane of their own.
+    Other,
+}
+
+/// Lane of a value in `Lanes::lane_of`: not seen yet, or the Other lane.
+const UNSEEN: u8 = u8::MAX;
+const IN_OTHER: u8 = u8::MAX - 1;
+
+/// The lanes of a histogram: for each lane and column, the highest class
+/// of its Parent Lines there plus one (0: none).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Lanes {
+    pub set: LaneSet,
+    /// One row of columns per value of `set.slots`.
+    pub slot_level: Vec<Vec<u8>>,
+    /// The "(empty)" lane, while `set.has_empty`.
+    pub empty_level: Vec<u8>,
+    /// The "Other" lane, while `set.other_count > 0`.
+    pub other_level: Vec<u8>,
+    /// The lane each value id is in: an index into `slots`, [`IN_OTHER`],
+    /// or [`UNSEEN`].
+    lane_of: Vec<u8>,
+}
+
+impl Lanes {
+    /// The lanes drawn, in order: the values', "(empty)", then "Other".
+    pub fn order(&self) -> Vec<Lane> {
+        let mut lanes: Vec<Lane> = self.set.slots.iter().map(|&v| Lane::Value(v)).collect();
+        if self.set.has_empty {
+            lanes.push(Lane::Empty);
+        }
+        if self.set.other_count > 0 {
+            lanes.push(Lane::Other);
+        }
+        lanes
+    }
+
+    /// The columns of `lane`.
+    pub fn level(&self, lane: Lane) -> &[u8] {
+        match lane {
+            Lane::Value(v) => self.set.slots.iter().position(|&s| s == v).map_or(&[], |i| &self.slot_level[i]),
+            Lane::Empty => &self.empty_level,
+            Lane::Other => &self.other_level,
+        }
+    }
+
+    /// Whether a row of value `id` belongs in `lane`.
+    pub fn holds(&self, lane: Lane, id: u16) -> bool {
+        match lane {
+            Lane::Value(v) => id == v,
+            Lane::Empty => id == NO_VALUE,
+            Lane::Other => id != NO_VALUE && !self.set.slots.contains(&id),
+        }
+    }
+
+    /// The lanes chosen from a whole count: `flat` holds the level of each
+    /// value (the no-value lines last) on each of `len` columns, `total`
+    /// the Parent Lines of each.
+    fn from_flat(flat: &[u8], total: &[usize], len: usize) -> Lanes {
+        let set = LaneSet::choose(total);
+        let values = total.len() - 1;
+        let row = |v: usize| flat[v * len..(v + 1) * len].to_vec();
+        let mut lane_of = vec![UNSEEN; values];
+        for (i, &v) in set.slots.iter().enumerate() {
+            lane_of[v as usize] = i as u8;
+        }
+        let mut other_level = vec![0u8; if set.other_count > 0 { len } else { 0 }];
+        for v in 0..values {
+            if total[v] == 0 || lane_of[v] != UNSEEN {
+                continue;
+            }
+            lane_of[v] = IN_OTHER;
+            for (o, &l) in other_level.iter_mut().zip(&flat[v * len..(v + 1) * len]) {
+                *o = (*o).max(l);
+            }
+        }
+        Lanes {
+            slot_level: set.slots.iter().map(|&v| row(v as usize)).collect(),
+            empty_level: if set.has_empty { row(values) } else { Vec::new() },
+            other_level,
+            set,
+            lane_of,
+        }
+    }
+
+    /// Add a Parent Line of value `id` and class `class`, in column `col`
+    /// when it has one, after the lanes were chosen: a value without a lane
+    /// takes a free one, else it goes in "Other". The lanes there keep
+    /// their order.
+    fn add(&mut self, id: u16, col: Option<usize>, class: u8, len: usize) {
+        let lane = if id == NO_VALUE {
+            if !self.set.has_empty {
+                self.set.has_empty = true;
+                self.empty_level = vec![0; len];
+            }
+            &mut self.empty_level
+        } else {
+            let v = id as usize;
+            if v >= self.lane_of.len() {
+                self.lane_of.resize(v + 1, UNSEEN);
+            }
+            if self.lane_of[v] == UNSEEN {
+                if self.set.slots.len() < MAX_LANES {
+                    self.lane_of[v] = self.set.slots.len() as u8;
+                    self.set.slots.push(id);
+                    self.slot_level.push(vec![0; len]);
+                } else {
+                    self.lane_of[v] = IN_OTHER;
+                    if self.set.other_count == 0 {
+                        self.other_level = vec![0; len];
+                    }
+                    self.set.other_count += 1;
+                }
+            }
+            match self.lane_of[v] {
+                IN_OTHER => &mut self.other_level,
+                i => &mut self.slot_level[i as usize],
+            }
+        };
+        if let Some(cell) = col.and_then(|c| lane.get_mut(c)) {
+            *cell = (*cell).max(class + 1);
+        }
+    }
+}
+
+/// While counting everything: each value's level on each column (flat, a
+/// row of columns per value, the no-value lines last) and its lines.
+struct LaneTally {
+    flat: Vec<u8>,
+    total: Vec<usize>,
+}
+
 /// The counts of a histogram over a grid.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Buckets {
@@ -192,6 +372,8 @@ pub struct Buckets {
     pub untimed: usize,
     /// The first of them.
     pub first_untimed: Option<usize>,
+    /// The lanes, when the view is split by a column.
+    pub lanes: Option<Lanes>,
 }
 
 /// Lines came with a time outside the axis: it has to grow and everything
@@ -208,6 +390,7 @@ impl Buckets {
             matched: vec![false; grid.len],
             untimed: 0,
             first_untimed: None,
+            lanes: None,
         }
     }
 
@@ -217,7 +400,9 @@ impl Buckets {
     }
 
     /// Count the rows `from..` of `rows`; `filter_pass` and `matches` hold
-    /// rows from `from` on (ascending), and are walked alongside.
+    /// rows from `from` on (ascending), and are walked alongside. With
+    /// `lanes`, each Parent Line is also put in its value's lane: into
+    /// `tally` when given (a whole count), else into `self.lanes`.
     fn count(
         &mut self,
         rows: RowFacts,
@@ -225,6 +410,8 @@ impl Buckets {
         full: &Range<f64>,
         filter_pass: Option<&[usize]>,
         matches: &[usize],
+        lanes: Option<LaneIds>,
+        mut tally: Option<&mut LaneTally>,
     ) -> Result<(), NeedsRecount> {
         let Some(grid) = self.grid else { return Ok(()) };
         let mut pass = filter_pass.map(|p| p.iter().copied().peekable());
@@ -242,6 +429,25 @@ impl Buckets {
                 None => false,
             };
             let t = rows.ts[row];
+            if let Some(lanes) = lanes {
+                let id = lanes.ids.get(row).copied().unwrap_or(NO_VALUE);
+                let col = if t.is_nan() { None } else { grid.column_of(t) };
+                match tally.as_deref_mut() {
+                    Some(tally) => {
+                        let v = if id == NO_VALUE { lanes.values } else { usize::from(id).min(lanes.values) };
+                        tally.total[v] += 1;
+                        if let Some(col) = col {
+                            let cell = &mut tally.flat[v * grid.len + col];
+                            *cell = (*cell).max(class.min(2) + 1);
+                        }
+                    }
+                    None => {
+                        if let Some(l) = self.lanes.as_mut() {
+                            l.add(id, col, class.min(2), grid.len);
+                        }
+                    }
+                }
+            }
             if t.is_nan() {
                 self.untimed += 1;
                 self.first_untimed.get_or_insert(row);
@@ -272,6 +478,8 @@ impl Buckets {
     /// the columns, the rows before not counted again. `filter_pass` and
     /// `matches` are the passing rows and Matches from `from` on.
     /// `NeedsRecount` when one has a time outside `axis.full`.
+    /// The lanes keep the values they have (decision 4): a new value takes
+    /// a free lane or goes in "Other".
     pub fn append(
         &mut self,
         rows: RowFacts,
@@ -279,23 +487,53 @@ impl Buckets {
         from: usize,
         filter_pass: Option<&[usize]>,
         matches: &[usize],
+        lanes: Option<LaneIds>,
     ) -> Result<(), NeedsRecount> {
-        if self.grid != Some(axis.grid()) || filter_pass.is_some() != self.filtered.is_some() {
+        if self.grid != Some(axis.grid())
+            || filter_pass.is_some() != self.filtered.is_some()
+            || lanes.is_some() != self.lanes.is_some()
+            || lanes.is_some_and(|l| l.ids.len() < rows.len())
+        {
             return Err(NeedsRecount);
         }
-        self.count(rows, from, &axis.full, filter_pass, matches)
+        self.count(rows, from, &axis.full, filter_pass, matches, lanes, None)
     }
 }
 
 /// Count every row of `rows` on the columns of `axis`: Parent Lines by
 /// class, those in `filter_pass` (ascending rows; `None` with no Filter)
 /// apart, the columns holding one of `matches` (ascending rows), and the
-/// rows with no time.
-pub fn count_buckets(rows: RowFacts, axis: &TimeAxis, filter_pass: Option<&[usize]>, matches: &[usize]) -> Buckets {
-    let mut buckets = Buckets::empty(axis.grid(), filter_pass.is_some());
+/// rows with no time. With `lanes`, also the lanes of the column's values,
+/// in the same pass; they count every row, whatever the Filter.
+pub fn count_buckets(
+    rows: RowFacts,
+    axis: &TimeAxis,
+    filter_pass: Option<&[usize]>,
+    matches: &[usize],
+    lanes: Option<LaneIds>,
+) -> Buckets {
+    let grid = axis.grid();
+    let mut buckets = Buckets::empty(grid, filter_pass.is_some());
+    let lanes = lanes.filter(|l| l.ids.len() >= rows.len());
+    let mut tally = lanes.map(|l| LaneTally { flat: vec![0; (l.values + 1) * grid.len], total: vec![0; l.values + 1] });
     // The axis comes from these rows: none is outside it.
-    let _ = buckets.count(rows, 0, &(f64::NEG_INFINITY..f64::INFINITY), filter_pass, matches);
+    let _ = buckets.count(rows, 0, &(f64::NEG_INFINITY..f64::INFINITY), filter_pass, matches, lanes, tally.as_mut());
+    buckets.lanes = tally.map(|t| Lanes::from_flat(&t.flat, &t.total, grid.len));
     buckets
+}
+
+/// What the Swimlanes of a view are split by (openspec change
+/// `add-swimlane`, decision 5). Kept with the view's Filter.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum LaneBy {
+    /// "No split": no lanes.
+    None,
+    /// The Filterable Column of this key.
+    Column(String),
+    /// Never chosen: the Log Name Column when it has two values or more,
+    /// else no lanes.
+    #[default]
+    Default,
 }
 
 /// The earliest and latest time among `ts` (`NAN` skipped).
@@ -434,7 +672,7 @@ mod tests {
         rows.push((hm(10, 3), Some(LogLevel::Fatal), false));
         rows.push((hm(10, 3), Some(LogLevel::Info), false));
         let (ts, class) = facts(&rows);
-        let b = count_buckets(RowFacts { ts: &ts, class: &class }, &axis(hm(10, 0), hm(10, 5)), None, &[]);
+        let b = count_buckets(RowFacts { ts: &ts, class: &class }, &axis(hm(10, 0), hm(10, 5)), None, &[], None);
         assert_eq!(b.counts[2], [0, 1, 1]);
         assert_eq!(b.counts[3], [1, 0, 1]);
         assert_eq!(b.filtered, None);
@@ -443,7 +681,7 @@ mod tests {
     #[test]
     fn lines_with_no_level_are_grey() {
         let (ts, class) = facts(&[(hm(10, 0), None, false), (hm(10, 1), None, false)]);
-        let b = count_buckets(RowFacts { ts: &ts, class: &class }, &axis(hm(10, 0), hm(10, 1)), None, &[]);
+        let b = count_buckets(RowFacts { ts: &ts, class: &class }, &axis(hm(10, 0), hm(10, 1)), None, &[], None);
         assert!(b.counts.iter().all(|c| c[1] == 0 && c[2] == 0));
         assert_eq!(b.counts.iter().map(|c| c[0]).sum::<u32>(), 2);
     }
@@ -462,7 +700,7 @@ mod tests {
         let r = RowFacts { ts: &ts, class: &class };
         let a = axis(hm(10, 30), hm(10, 45));
         // Filter: level = ERROR. Matches of `timeout`: rows 1 and 2.
-        let b = count_buckets(r, &a, Some(&[1, 4]), &[1, 2]);
+        let b = count_buckets(r, &a, Some(&[1, 4]), &[1, 2], None);
         let filtered = b.filtered.as_ref().unwrap();
         assert_eq!((b.counts[1], filtered[1]), ([0, 0, 1], [0, 0, 1]));
         assert_eq!((b.counts[0], filtered[0]), ([1, 0, 0], [0, 0, 0]));
@@ -482,7 +720,7 @@ mod tests {
             (f64::NAN, None, true),
             (f64::NAN, None, false),
         ]);
-        let b = count_buckets(RowFacts { ts: &ts, class: &class }, &axis(hm(10, 0), hm(10, 1)), None, &[]);
+        let b = count_buckets(RowFacts { ts: &ts, class: &class }, &axis(hm(10, 0), hm(10, 1)), None, &[], None);
         assert_eq!((b.untimed, b.first_untimed), (2, Some(1)));
         assert_eq!(b.counts.iter().map(|c| c.iter().sum::<u32>()).sum::<u32>(), 1);
     }
@@ -492,20 +730,20 @@ mod tests {
         let mut rows = vec![(hm(10, 0), Some(LogLevel::Info), false)];
         let (ts, class) = facts(&rows);
         let a = axis(hm(10, 0), hm(10, 5));
-        let mut b = count_buckets(RowFacts { ts: &ts, class: &class }, &a, None, &[]);
+        let mut b = count_buckets(RowFacts { ts: &ts, class: &class }, &a, None, &[], None);
         // 200 lines in the last column.
         rows.extend((0..200).map(|i| (hm(10, 5), Some(if i % 2 == 0 { LogLevel::Warn } else { LogLevel::Info }), false)));
         let (ts, class) = facts(&rows);
-        assert_eq!(b.append(RowFacts { ts: &ts, class: &class }, &a, 1, None, &[]), Ok(()));
+        assert_eq!(b.append(RowFacts { ts: &ts, class: &class }, &a, 1, None, &[], None), Ok(()));
         assert_eq!(b.counts[5], [100, 100, 0]);
         assert_eq!(b.counts[0], [1, 0, 0]);
         // A line past the end of the axis.
         rows.push((hm(10, 9), None, false));
         let (ts, class) = facts(&rows);
-        assert_eq!(b.append(RowFacts { ts: &ts, class: &class }, &a, 201, None, &[]), Err(NeedsRecount));
+        assert_eq!(b.append(RowFacts { ts: &ts, class: &class }, &a, 201, None, &[], None), Err(NeedsRecount));
         // Counted on another grid: count again.
         let zoomed = TimeAxis { visible: hm(10, 0)..hm(10, 2), ..a.clone() };
-        assert_eq!(b.append(RowFacts { ts: &ts, class: &class }, &zoomed, 202, None, &[]), Err(NeedsRecount));
+        assert_eq!(b.append(RowFacts { ts: &ts, class: &class }, &zoomed, 202, None, &[], None), Err(NeedsRecount));
     }
 
     #[test]
@@ -564,5 +802,121 @@ mod tests {
         assert!(a.shows_all());
         a.set_visible(hm(9, 0)..hm(9, 30), 720.0);
         assert_eq!(a.visible, hm(10, 0)..hm(10, 30));
+    }
+
+    /// Rows of (time, level, continues, value id).
+    fn lane_rows(rows: &[(f64, Option<LogLevel>, bool, u16)]) -> (Vec<f64>, Vec<u8>, Vec<u16>) {
+        let (ts, class) = facts(&rows.iter().map(|r| (r.0, r.1, r.2)).collect::<Vec<_>>());
+        (ts, class, rows.iter().map(|r| r.3).collect())
+    }
+
+    #[test]
+    fn two_services_err_in_their_own_lanes() {
+        // service: db = 0, api = 1.
+        let (ts, class, ids) = lane_rows(&[
+            (hm(10, 30), Some(LogLevel::Error), false, 0),
+            (hm(10, 30), Some(LogLevel::Info), false, 1),
+            (hm(10, 31), Some(LogLevel::Error), false, 1),
+            (hm(10, 31), Some(LogLevel::Warn), false, 0),
+            (hm(10, 31), Some(LogLevel::Info), false, 0),
+        ]);
+        let lanes = Some(LaneIds { ids: &ids, values: 2 });
+        let b = count_buckets(RowFacts { ts: &ts, class: &class }, &axis(hm(10, 30), hm(10, 32)), None, &[], lanes);
+        let l = b.lanes.unwrap();
+        assert_eq!(l.order(), [Lane::Value(0), Lane::Value(1)], "more lines first");
+        // Highest class + 1: Error 3, Warn 2, the rest 1.
+        assert_eq!(&l.level(Lane::Value(0))[..2], [3, 2]);
+        assert_eq!(&l.level(Lane::Value(1))[..2], [1, 3]);
+    }
+
+    #[test]
+    fn many_threads_keep_eight_lanes_and_other() {
+        // 300 threads; thread v has 300 - v lines, so 0..8 have the most.
+        let mut rows = Vec::new();
+        for v in 0..300u16 {
+            rows.extend((0..300 - v).map(|_| (hm(10, 0), Some(LogLevel::Info), false, v)));
+        }
+        let (ts, class, ids) = lane_rows(&rows);
+        let lanes = Some(LaneIds { ids: &ids, values: 300 });
+        let b = count_buckets(RowFacts { ts: &ts, class: &class }, &axis(hm(10, 0), hm(10, 1)), None, &[], lanes);
+        let l = b.lanes.unwrap();
+        assert_eq!(l.set.slots, (0..8).collect::<Vec<u16>>());
+        assert_eq!(l.set.other_count, 292);
+        assert!(!l.set.has_empty);
+        assert_eq!(l.order().last(), Some(&Lane::Other));
+        assert_eq!(l.level(Lane::Other)[0], 1);
+    }
+
+    #[test]
+    fn a_tie_keeps_value_order() {
+        assert_eq!(LaneSet::choose(&[2, 5, 5, 2, 0]).slots, [1, 2, 0, 3]);
+    }
+
+    #[test]
+    fn lines_with_no_value_have_the_empty_lane_and_continuations_follow_their_parent() {
+        let mut rows = vec![(hm(10, 0), Some(LogLevel::Error), false, 0)];
+        // A stack trace of 40 lines under the `service=db` line.
+        rows.extend((0..40).map(|_| (hm(10, 0), None, true, NO_VALUE)));
+        let (ts, class, ids) = lane_rows(&rows);
+        let lanes = Some(LaneIds { ids: &ids, values: 1 });
+        let b = count_buckets(RowFacts { ts: &ts, class: &class }, &axis(hm(10, 0), hm(10, 1)), None, &[], lanes);
+        assert_eq!(b.lanes.as_ref().unwrap().order(), [Lane::Value(0)], "no (empty) lane for continuations");
+
+        // 12 Parent Lines with no service.
+        rows.extend((0..12).map(|_| (hm(10, 1), Some(LogLevel::Info), false, NO_VALUE)));
+        let (ts, class, ids) = lane_rows(&rows);
+        let lanes = Some(LaneIds { ids: &ids, values: 1 });
+        let b = count_buckets(RowFacts { ts: &ts, class: &class }, &axis(hm(10, 0), hm(10, 1)), None, &[], lanes);
+        let l = b.lanes.unwrap();
+        assert_eq!(l.order(), [Lane::Value(0), Lane::Empty]);
+        assert_eq!(&l.level(Lane::Empty)[..2], [0, 1]);
+    }
+
+    #[test]
+    fn a_new_value_while_tailing_takes_a_free_lane_and_the_lanes_keep_their_order() {
+        let mut rows: Vec<_> = (0..3u16).flat_map(|v| (0..3 - v).map(move |_| (hm(10, 0), Some(LogLevel::Info), false, v))).collect();
+        let (ts, class, ids) = lane_rows(&rows);
+        let a = axis(hm(10, 0), hm(10, 5));
+        let mut b = count_buckets(RowFacts { ts: &ts, class: &class }, &a, None, &[], Some(LaneIds { ids: &ids, values: 3 }));
+        let before = b.lanes.as_ref().unwrap().order();
+        // `auth` (value 3) comes, more than any other.
+        let from = rows.len();
+        rows.extend((0..10).map(|_| (hm(10, 2), Some(LogLevel::Error), false, 3)));
+        let (ts, class, ids) = lane_rows(&rows);
+        let appended = b.append(RowFacts { ts: &ts, class: &class }, &a, from, None, &[], Some(LaneIds { ids: &ids, values: 4 }));
+        assert_eq!(appended, Ok(()));
+        let l = b.lanes.as_ref().unwrap();
+        assert_eq!(l.order()[..3], before[..], "the lanes there do not move");
+        assert_eq!(l.order()[3], Lane::Value(3));
+        assert_eq!(l.level(Lane::Value(3))[2], 3);
+    }
+
+    #[test]
+    fn a_new_value_goes_in_other_when_the_lanes_are_full() {
+        let mut rows: Vec<_> = (0..8u16).map(|v| (hm(10, 0), Some(LogLevel::Info), false, v)).collect();
+        let (ts, class, ids) = lane_rows(&rows);
+        let a = axis(hm(10, 0), hm(10, 5));
+        let mut b = count_buckets(RowFacts { ts: &ts, class: &class }, &a, None, &[], Some(LaneIds { ids: &ids, values: 8 }));
+        rows.push((hm(10, 4), Some(LogLevel::Warn), false, 8));
+        let (ts, class, ids) = lane_rows(&rows);
+        b.append(RowFacts { ts: &ts, class: &class }, &a, 8, None, &[], Some(LaneIds { ids: &ids, values: 9 })).unwrap();
+        let l = b.lanes.as_ref().unwrap();
+        assert_eq!(l.set.slots.len(), 8);
+        assert_eq!((l.set.other_count, l.level(Lane::Other)[4]), (1, 2));
+    }
+
+    #[test]
+    fn the_filter_does_not_take_lines_out_of_the_lanes() {
+        let (ts, class, ids) = lane_rows(&[
+            (hm(10, 0), Some(LogLevel::Info), false, 0),
+            (hm(10, 1), Some(LogLevel::Error), false, 1),
+            (hm(10, 2), Some(LogLevel::Info), false, 2),
+        ]);
+        // Only `db` (value 0) passes the Filter.
+        let lanes = Some(LaneIds { ids: &ids, values: 3 });
+        let b = count_buckets(RowFacts { ts: &ts, class: &class }, &axis(hm(10, 0), hm(10, 3)), Some(&[0]), &[], lanes);
+        let l = b.lanes.unwrap();
+        assert_eq!(l.order().len(), 3);
+        assert_eq!((l.level(Lane::Value(1))[1], l.level(Lane::Value(2))[2]), (3, 1));
     }
 }

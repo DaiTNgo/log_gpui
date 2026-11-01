@@ -45,6 +45,7 @@ mod search;
 mod selection;
 pub mod selection_menu;
 mod spaces;
+pub mod swimlane;
 pub mod text_select;
 mod tabs;
 pub mod time_histogram;

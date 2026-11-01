@@ -3,7 +3,7 @@
 //! the rows again. Each file's value ids are mapped to ids of the Log
 //! Space, the values in the order the merged rows first show them; the
 //! counts, spellings and Coverage add up; the Source column holds each
-//! file's name.
+//! file's name, and the Log Name column its Log Name.
 
 use super::{ColumnIndex, ColumnValue, FilterIndex, MAX_DISTINCT, MISSING, Source};
 use crate::index::view_rows::unpack;
@@ -46,6 +46,7 @@ impl FilterIndex {
         }
         let mut sources = vec![
             Source::SourceFile,
+            Source::LogName,
             Source::Stream,
             Source::Level,
             Source::Module,
@@ -58,10 +59,10 @@ impl FilterIndex {
             sources.push(Source::Field(key));
         }
         for source in sources {
-            let column = if source == Source::SourceFile {
-                source_column(files, rows, &row_of)
-            } else {
-                merge_column(source, files, rows, &row_of)
+            let column = match source {
+                Source::SourceFile => source_column(files, rows, &row_of),
+                Source::LogName => log_name_column(files, rows, &row_of),
+                _ => merge_column(source, files, rows, &row_of),
             };
             index.columns.push(column);
         }
@@ -103,7 +104,25 @@ impl FilterIndex {
 
 /// The Source column: each row holds its file's name.
 fn source_column(files: &[MergeFile], rows: &[u64], row_of: &[Vec<u32>]) -> ColumnIndex {
-    let mut col = ColumnIndex::new(Source::SourceFile, 0);
+    name_column(Source::SourceFile, files, rows, row_of, |name| name)
+}
+
+/// The Log Name column: each row holds its file's Log Name, so the files
+/// of one log (`app.log`, `app.log.1`) share a value.
+fn log_name_column(files: &[MergeFile], rows: &[u64], row_of: &[Vec<u32>]) -> ColumnIndex {
+    name_column(Source::LogName, files, rows, row_of, crate::rotation_name::log_name)
+}
+
+/// A column whose value is a file's: `name_of` its name, for every line of
+/// it.
+fn name_column(
+    source: Source,
+    files: &[MergeFile],
+    rows: &[u64],
+    row_of: &[Vec<u32>],
+    name_of: impl Fn(&str) -> &str,
+) -> ColumnIndex {
+    let mut col = ColumnIndex::new(source, 0);
     col.rows = rows.len();
     // Files in the order their first row shows.
     let mut order: Vec<(u32, usize)> = row_of
@@ -114,7 +133,7 @@ fn source_column(files: &[MergeFile], rows: &[u64], row_of: &[Vec<u32>]) -> Colu
     order.sort();
     let mut id_of_file: Vec<u16> = vec![MISSING; files.len()];
     for (_, f) in order {
-        let Some(name) = files[f].source.filter(|s| !s.is_empty()) else { continue };
+        let Some(name) = files[f].source.map(&name_of).filter(|s| !s.is_empty()) else { continue };
         let lines = files[f].index.parent_lines;
         col.covered += lines;
         let folded = unicode_text::fold(name);
@@ -233,10 +252,10 @@ impl FilterIndex {
             if let Source::Field(key) = source {
                 index.field_cols.insert(key);
             }
-            let column = if source == Source::SourceFile {
-                names_so_far(files)
-            } else {
-                column_so_far(source, files)
+            let column = match source {
+                Source::SourceFile => names_so_far(Source::SourceFile, files, |name| name),
+                Source::LogName => names_so_far(Source::LogName, files, crate::rotation_name::log_name),
+                _ => column_so_far(source, files),
             };
             index.columns.push(column);
         }
@@ -244,12 +263,13 @@ impl FilterIndex {
     }
 }
 
-/// The Source column so far: each file's name, on its lines read so far.
-fn names_so_far(files: &[MergeFile]) -> ColumnIndex {
-    let mut col = ColumnIndex::new(Source::SourceFile, 0);
+/// The Source or Log Name column so far: each file's `name_of` its name, on
+/// its lines read so far.
+fn names_so_far(source: Source, files: &[MergeFile], name_of: impl Fn(&str) -> &str) -> ColumnIndex {
+    let mut col = ColumnIndex::new(source, 0);
     for file in files {
         col.rows += file.index.rows;
-        let Some(name) = file.source.filter(|s| !s.is_empty()) else { continue };
+        let Some(name) = file.source.map(&name_of).filter(|s| !s.is_empty()) else { continue };
         let lines = file.index.parent_lines;
         col.covered += lines;
         let folded = unicode_text::fold(name);

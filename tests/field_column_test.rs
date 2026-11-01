@@ -41,12 +41,13 @@ fn coverage_follows_rows_leaving_and_coming_back() {
 
 #[test]
 fn coverage_is_kept_when_a_column_overflows() {
-    let text: String = (0..600).map(|i| format!("{{\"msg\":\"m\",\"id\":\"v{i}\"}}\n")).collect();
+    let n = log_gpui::filter_index::MAX_DISTINCT + 100;
+    let text: String = (0..n).map(|i| format!("{{\"msg\":\"m\",\"id\":\"v{i}\"}}\n")).collect();
     let entries = parse_text_bytes(text.as_bytes()).unwrap();
     let index = FilterIndex::build(&entries);
     let id = index.column("id").unwrap();
     assert!(id.overflow);
-    assert_eq!(index.coverage("id").0, 600);
+    assert_eq!(index.coverage("id").0, n);
 }
 
 #[test]

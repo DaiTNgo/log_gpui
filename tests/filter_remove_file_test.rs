@@ -1,6 +1,6 @@
 //! A Remote File leaving a Log Space of several files (Clear, or lines
 //! leaving the window): the Filter counts follow, and a column that had
-//! passed 500 distinct values takes new conditions again.
+//! passed 1000 distinct values takes new conditions again.
 
 use log_gpui::filter_index::FilterIndex;
 use log_gpui::model::LogEntry;
@@ -29,12 +29,12 @@ fn closed_columns(index: &FilterIndex) -> usize {
 }
 
 #[test]
-fn removing_a_whole_file_gives_back_counts_and_reopens_a_column_over_500_values() {
-    let busy = file("m", 1_200, 600);
+fn removing_a_whole_file_gives_back_counts_and_reopens_a_column_over_the_limit() {
+    let busy = file("m", 2_400, 1_200);
     let quiet = file("q", 300, 3);
     let both = merged_index(&[&busy, &quiet]);
-    assert_eq!(both.rows(), 1_500);
-    assert!(closed_columns(&both) >= 1, "600 + 3 distinct values pass the limit");
+    assert_eq!(both.rows(), 2_700);
+    assert!(closed_columns(&both) >= 1, "1,200 + 3 distinct values pass the limit");
 
     // The busy file is cleared: only the quiet file is left.
     let left = merged_index(&[&[], &quiet]);

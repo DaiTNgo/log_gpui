@@ -13,11 +13,12 @@ pub const MESSAGE_KEY: &str = "message";
 
 /// The fixed columns the Columns section lists in its *Built-in* group, by
 /// key, with the name their Column Header shows.
-pub const BUILT_IN: [(&str, &str); 6] = [
+pub const BUILT_IN: [(&str, &str); 7] = [
     ("timestamp", "TIMESTAMP"),
     ("level", "LEVEL"),
     ("module", "MODULE"),
     ("source", "SOURCE"),
+    ("log_name", "LOG NAME"),
     ("stream", "STREAM"),
     (MESSAGE_KEY, "MESSAGE"),
 ];

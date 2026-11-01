@@ -10,7 +10,7 @@ Filter was a list of rows (`level`/`module`/`message`/`request_id` with operator
 
 ## Decision
 
-**Filter** is built from the file itself. When a file is loaded, its columns and their distinct values are detected. For each **Filterable Column** (at most 500 distinct values, never `timestamp` or `message`/payload) the user ticks **Filter Values** shown as checkboxes, or adds a **Custom Value** (contains, no regex). Values that differ only by letter case are one checkbox. A per-column **Hide Mode** turns "show only these" into "hide these". `timestamp` has its own **Time Range** (From/To). Columns above 500 distinct values are shown dimmed with their count and the reason.
+**Filter** is built from the file itself. When a file is loaded, its columns and their distinct values are detected. For each **Filterable Column** (at most 1000 distinct values, never `timestamp` or `message`/payload) the user ticks **Filter Values** shown as checkboxes, or adds a **Custom Value** (contains, no regex). Values that differ only by letter case are one checkbox. A per-column **Hide Mode** turns "show only these" into "hide these". `timestamp` has its own **Time Range** (From/To). Columns above 1000 distinct values are shown dimmed with their count and the reason.
 
 Within one column the checked and custom values combine with OR; columns and the Time Range combine with AND. A row with no value in a column never matches it.
 

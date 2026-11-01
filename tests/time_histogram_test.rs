@@ -62,7 +62,7 @@ fn a_drag_sets_the_time_range_and_a_click_jumps(cx: &mut TestAppContext) {
 
     // Drag from 10:30 to 10:35.
     h.view.update(&mut h.cx, |app, cx| {
-        app.histogram_mouse_down(at(30.0), 100.0, 1.0, cx);
+        app.histogram_mouse_down(at(30.0), 100.0, 1.0, None, cx);
         app.histogram_mouse_drag(at(35.0), 200.0, cx);
         assert!(matches!(app.histogram.drag, Some(HistogramDrag::Select { .. })));
         // Nothing narrows while dragging.
@@ -81,7 +81,7 @@ fn a_drag_sets_the_time_range_and_a_click_jumps(cx: &mut TestAppContext) {
 
     // Drag the right edge to 10:40.
     h.view.update(&mut h.cx, |app, cx| {
-        app.histogram_mouse_down(at(35.0), 200.0, 1.0, cx);
+        app.histogram_mouse_down(at(35.0), 200.0, 1.0, None, cx);
         assert!(matches!(app.histogram.drag, Some(HistogramDrag::Edge { .. })));
         app.histogram_mouse_drag(at(40.0), 260.0, cx);
         app.histogram_mouse_up(cx);
@@ -102,7 +102,7 @@ fn a_drag_sets_the_time_range_and_a_click_jumps(cx: &mut TestAppContext) {
     let pass_before = h.view.read_with(&h.cx, |app, _| app.filter_pass.clone());
     h.view.update(&mut h.cx, |app, cx| {
         // In the column of 10:33:00, whatever its width.
-        app.histogram_mouse_down(at(33.0) + 0.5, 150.0, 1.0, cx);
+        app.histogram_mouse_down(at(33.0) + 0.5, 150.0, 1.0, None, cx);
         app.histogram_mouse_up(cx);
     });
     h.cx.run_until_parked();
@@ -115,7 +115,7 @@ fn a_drag_sets_the_time_range_and_a_click_jumps(cx: &mut TestAppContext) {
 
     // A click outside the range clears it.
     h.view.update(&mut h.cx, |app, cx| {
-        app.histogram_mouse_down(at(5.0), 20.0, 1.0, cx);
+        app.histogram_mouse_down(at(5.0), 20.0, 1.0, None, cx);
         app.histogram_mouse_up(cx);
     });
     h.view.read_with(&h.cx, |app, _| {

@@ -16,7 +16,7 @@ pub use chunk::{ChunkColumns, LineFacts, Overflowed};
 pub use merge::MergeFile;
 
 /// A column with more distinct values than this cannot be filtered on.
-pub const MAX_DISTINCT: usize = 500;
+pub const MAX_DISTINCT: usize = 1000;
 
 /// Value id of a row that has no value in a column.
 pub const MISSING: u16 = u16::MAX;
@@ -25,6 +25,9 @@ pub const MISSING: u16 = u16::MAX;
 enum Source {
     /// The Source File of a row in a Log Space (the Source Column).
     SourceFile,
+    /// The Log Name of a row's Source File in a Log Space (the Log Name
+    /// Column): its name without a rotation suffix.
+    LogName,
     /// Which output of a Remote Command the line came from. A line's own:
     /// a Continuation Line does not take its Parent Line's.
     Stream,
@@ -40,6 +43,7 @@ impl Source {
     fn key(&self) -> String {
         match self {
             Source::SourceFile => "source".to_string(),
+            Source::LogName => "log_name".to_string(),
             Source::Stream => "stream".to_string(),
             Source::Level => "level".to_string(),
             Source::Module => "module".to_string(),
@@ -52,6 +56,7 @@ impl Source {
     fn label(&self) -> String {
         match self {
             Source::SourceFile => "Source".to_string(),
+            Source::LogName => "Log Name".to_string(),
             Source::Stream => "Stream".to_string(),
             Source::Level => "Level".to_string(),
             Source::Module => "Module".to_string(),
@@ -70,6 +75,7 @@ impl Source {
     fn value<'a>(&self, entry: &'a LogEntry, source: Option<&'a str>) -> Option<&'a str> {
         let v = match self {
             Source::SourceFile => source.unwrap_or(""),
+            Source::LogName => source.map_or("", crate::rotation_name::log_name),
             Source::Stream => entry.stream.map_or("", |s| s.as_str()),
             Source::Level => entry.level_text(),
             Source::Module => entry.tag(),
@@ -95,6 +101,9 @@ pub fn with_value_of<R: Rows + ?Sized, T>(rows: &R, row: usize, key: &str, f: im
     if key == "source" {
         return f(rows.source(r).filter(|s| !s.is_empty()));
     }
+    if key == "log_name" {
+        return f(rows.source(r).map(crate::rotation_name::log_name).filter(|s| !s.is_empty()));
+    }
     match rows.get(r) {
         Some(entry) => f(column_value(&entry, key)),
         None => f(None),
@@ -106,6 +115,7 @@ pub fn column_value<'a>(entry: &'a LogEntry, key: &str) -> Option<&'a str> {
     // Called once per row by Filter and Highlight Rules: no allocation here.
     let v = match key {
         "source" => entry.source.as_deref().unwrap_or(""),
+        "log_name" => entry.source.as_deref().map_or("", crate::rotation_name::log_name),
         "stream" => entry.stream.map_or("", |s| s.as_str()),
         "message" => entry.payload(),
         "level" => entry.level_text(),
@@ -181,7 +191,7 @@ impl ColumnIndex {
         if self.overflow { None } else { Some(self.values.len()) }
     }
 
-    /// Text for the "Add filter" column list: the count, or `> 500`.
+    /// Text for the "Add filter" column list: the count, or `> 1000`.
     pub fn distinct_label(&self) -> String {
         match self.distinct_count() {
             Some(n) => n.to_string(),
@@ -197,6 +207,12 @@ impl ColumnIndex {
     /// Value id of `row`, or `None` when ids are not tracked for it.
     pub fn id_of_row(&self, row: usize) -> Option<u16> {
         self.row_ids.get(row).copied()
+    }
+
+    /// The value id of every row (`MISSING` for none); empty unless
+    /// [`has_row_ids`](Self::has_row_ids).
+    pub fn row_ids(&self) -> &[u16] {
+        &self.row_ids
     }
 
     pub fn has_row_ids(&self) -> bool {
@@ -459,6 +475,7 @@ impl FilterIndex {
         // at the end of `columns_in_use`.
         for source in [
             Source::SourceFile,
+            Source::LogName,
             Source::Stream,
             Source::Level,
             Source::Module,

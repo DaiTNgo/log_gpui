@@ -241,6 +241,7 @@ impl AppView {
         self.read_detected_fields();
         self.column_layout.set_source_visible(source_visible);
         self.sync_stream_column();
+        self.sync_log_name_column();
         self.sync_pane_columns();
     }
 
@@ -460,6 +461,7 @@ impl AppView {
         self.read_detected_fields();
         self.column_layout.set_source_visible(source_visible);
         self.sync_stream_column();
+        self.sync_log_name_column();
         self.sync_pane_columns();
         if fresh {
             // Fitted to the widest values the view's files have, known from
