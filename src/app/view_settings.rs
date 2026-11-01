@@ -115,6 +115,13 @@ impl AppView {
         cx.notify();
     }
 
+    pub fn set_theme(&mut self, theme: crate::theme::AppTheme, cx: &mut Context<Self>) {
+        self.workspace_state.theme = theme;
+        theme.apply(cx);
+        self.schedule_session_save(cx);
+        cx.notify();
+    }
+
     pub fn set_show_minimap(&mut self, show: bool, cx: &mut Context<Self>) {
         self.show_minimap = show;
         self.workspace_state.show_minimap = show;
@@ -139,6 +146,48 @@ impl AppView {
     /// The Canvas, minimap, Focus Pane and Raw View read it here.
     pub fn phrase_colors(&self) -> bool {
         self.workspace_state.phrase_colors
+    }
+
+    /// Choose the hue of a Phrase (`None`: back to the generated color).
+    pub fn set_phrase_hue(&mut self, key: &str, hue: Option<f32>, cx: &mut Context<Self>) {
+        self.workspace_state.phrase_rgbs.remove(key);
+        match hue {
+            Some(h) => self.workspace_state.phrase_hues.insert(key.to_string(), h),
+            None => self.workspace_state.phrase_hues.remove(key),
+        };
+        self.apply_phrase_colors(cx);
+    }
+
+    /// Paint a Phrase in exactly this color (`0xRRGGBB`).
+    pub fn set_phrase_rgb(&mut self, key: &str, rgb: u32, cx: &mut Context<Self>) {
+        self.workspace_state.phrase_hues.remove(key);
+        self.workspace_state.phrase_rgbs.insert(key.to_string(), rgb);
+        self.apply_phrase_colors(cx);
+    }
+
+    fn apply_phrase_colors(&mut self, cx: &mut Context<Self>) {
+        crate::search_color::set_hue_overrides(self.workspace_state.phrase_hues.clone());
+        crate::search_color::set_rgb_overrides(self.workspace_state.phrase_rgbs.clone());
+        crate::search_color::set_preview(None);
+        self.update_raw_highlights(cx);
+        self.schedule_session_save(cx);
+        cx.notify();
+    }
+
+    /// Show a color on a Phrase while the pointer is over it in the menu;
+    /// `None` stops the preview.
+    pub fn preview_phrase(&mut self, key: &str, preview: Option<crate::search_color::Preview>, cx: &mut Context<Self>) {
+        crate::search_color::set_preview(preview.map(|p| (key.to_string(), p)));
+        self.update_raw_highlights(cx);
+        cx.notify();
+    }
+
+    /// Close the color menu and drop any preview it was showing.
+    pub fn close_phrase_menu(&mut self, cx: &mut Context<Self>) {
+        self.phrase_menu = None;
+        crate::search_color::set_preview(None);
+        self.update_raw_highlights(cx);
+        cx.notify();
     }
 
     pub fn set_phrase_colors(&mut self, on: bool, cx: &mut Context<Self>) {

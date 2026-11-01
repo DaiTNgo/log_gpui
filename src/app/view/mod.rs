@@ -128,6 +128,7 @@ impl Render for AppView {
         let full_dialog = self.render_open_in_full(cx);
         let download_options = self.render_download_options(cx);
         let color_bar = self.render_color_bar(cx);
+        let phrase_menu = self.render_phrase_menu(false, cx);
         let notice = self.render_notice(cx);
 
         let project_switcher = ProjectSwitcher::render(
@@ -247,6 +248,7 @@ impl Render for AppView {
             // Above every dialog: a Confirm can be asked from one.
             .child(confirm)
             .children(color_bar)
+            .children(phrase_menu)
     }
 }
 

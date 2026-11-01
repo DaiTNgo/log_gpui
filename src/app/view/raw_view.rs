@@ -4,9 +4,7 @@
 //! is a real editor.
 
 use super::AppView;
-use crate::app::raw::{
-    EDITOR_PADDING, RAW_ROW_HEIGHT, RawSection, section_editor_height,
-};
+use crate::app::raw::RawSection;
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
     Context, InteractiveElement, IntoElement, ParentElement, SharedString,
@@ -47,10 +45,10 @@ impl AppView {
         )
         .absolute()
         .size_full();
-        // Read-only sections are one list over their files' lines; scratch
-        // files are edited in editors.
-        let body = if sections.iter().any(|s| s.editable) {
-            self.render_scratch_sections(sections, cx)
+        // Read-only sections are one list over their files' lines; a scratch
+        // file shown alone is edited in an editor.
+        let body = if let Some(section) = sections.iter().find(|s| s.editable) {
+            self.render_scratch_editor(section, cx)
         } else {
             self.render_raw_list(cx)
         };
@@ -95,36 +93,6 @@ impl AppView {
             .iter()
             .map(|s| self.active_project().and_then(|p| p.log_spaces.iter().find_map(|sp| sp.file(&s.file_id))).cloned())
             .collect();
-        // Headers, actions rows and Breaks are built here, for the rows of
-        // this frame only.
-        let mut extras: std::collections::HashMap<usize, gpui::AnyElement> = Default::default();
-        let first = self.raw.scroll.0.borrow().base_handle.offset();
-        let top = ((-f32::from(first.y)) / row_h).max(0.0) as usize;
-        let shown = (f32::from(self.raw.list_bounds.get().size.height) / row_h).ceil() as usize + 2;
-        for index in top.saturating_sub(2)..(top + shown.max(60)).min(rows.len()) {
-            let element = match rows.row(index) {
-                Some(RawRow::Header { section }) => {
-                    let collapsed = self.is_section_collapsed(&sections[section].file_id);
-                    Some(self.section_header(&sections[section], collapsed, cx))
-                }
-                Some(RawRow::Actions { section }) => self.live_actions_row(&sections[section], cx),
-                Some(RawRow::Break { section, line }) => sections[section].breaks.get(&line).map(|mark| {
-                    h_flex()
-                        .px_2()
-                        .gap_2()
-                        .text_size(px(10.0))
-                        .text_color(cx.theme().warning)
-                        .child("⏤")
-                        .child(mark.label.clone())
-                        .into_any_element()
-                }),
-                _ => None,
-            };
-            if let Some(element) = element {
-                extras.insert(index, element);
-            }
-        }
-        let extras = std::rc::Rc::new(std::cell::RefCell::new(extras));
         // The longest line sets how far the list scrolls sideways.
         let longest = sections
             .iter()
@@ -140,6 +108,10 @@ impl AppView {
             })
             .max()
             .map(|(_, index)| index);
+        // Headers, actions rows and Breaks are built by the view as the list
+        // draws them: the list also draws a row on its own to measure it.
+        let view = cx.entity();
+        let extra_sections = sections.clone();
         let (muted, selected_bg, flash_bg, text_selection) =
             (colors.muted, colors.selected, colors.info, cx.theme().selection);
         let border = cx.theme().border;
@@ -207,7 +179,8 @@ impl AppView {
                                 .into_any_element()
                         }
                         Some(RawRow::Header { .. }) | Some(RawRow::Actions { .. }) | Some(RawRow::Break { .. }) => {
-                            match extras.borrow_mut().remove(&index) {
+                            let row = rows.row(index);
+                            match view.update(cx, |this, cx| this.raw_extra_row(row, &extra_sections, cx)) {
                                 Some(element) => base.child(element).into_any_element(),
                                 None => base.into_any_element(),
                             }
@@ -255,54 +228,109 @@ impl AppView {
     }
 
     /// One File Section header: chevron, file name, folder, line count.
-    fn section_header(
-        &self,
-        section: &RawSection,
-        collapsed: bool,
+    /// A header, actions row or Break of the list.
+    fn raw_extra_row(
+        &mut self,
+        row: Option<crate::app::raw_list::RawRow>,
+        sections: &[RawSection],
         cx: &mut Context<Self>,
-    ) -> gpui::AnyElement {
+    ) -> Option<gpui::AnyElement> {
+        use crate::app::raw_list::RawRow;
+        match row? {
+            RawRow::Header { section } => {
+                let collapsed = self.is_section_collapsed(&sections[section].file_id);
+                Some(self.section_header(&sections[section], collapsed, cx))
+            }
+            RawRow::Actions { section } => self.live_actions_row(&sections[section], cx),
+            RawRow::Break { section, line } => sections[section].breaks.get(&line).map(|mark| {
+                h_flex()
+                    .px_2()
+                    .gap_2()
+                    .text_size(px(10.0))
+                    .text_color(cx.theme().warning)
+                    .child("⏤")
+                    .child(mark.label.clone())
+                    .into_any_element()
+            }),
+            RawRow::Line { .. } => None,
+        }
+    }
+
+    fn section_header(&self, section: &RawSection, collapsed: bool, cx: &mut Context<Self>) -> gpui::AnyElement {
+        use gpui_component::button::Button;
+        use gpui_component::Sizable as _;
         let view = cx.entity();
         let file_id = section.file_id.clone();
         let theme = cx.theme();
-        let (bg, border, muted) =
-            (crate::ui::main_view::background(cx), theme.border, theme.muted_foreground);
+        let (card, hover, border, muted) = (theme.secondary, theme.secondary_hover, theme.border, theme.muted_foreground);
+        // The header stays in sight when the lines scroll sideways: as wide
+        // as the view, moved by how far the list scrolled.
+        let width = f32::from(self.raw.list_bounds.get().size.width);
+        let scrolled = -f32::from(self.raw.scroll.0.borrow().base_handle.offset().x);
+        let edit = section.scratch && !section.editable;
         h_flex()
-            .id(SharedString::from(format!("raw-section-{}", section.file_id)))
-            .h(px(RAW_ROW_HEIGHT))
-            .w_full()
-            .px_2()
-            .gap_2()
-            .items_center()
-            .cursor_pointer()
-            .bg(bg)
-            .border_b_1()
-            .border_color(border)
-            .text_xs()
-            .font_weight(gpui::FontWeight::SEMIBOLD)
-            .on_click(move |_, _, app| {
-                let id = file_id.clone();
-                view.update(app, |this, cx| this.toggle_section(&id, cx));
-            })
+            .when(width > 0.0, |this| this.w(px(width)).ml(px(scrolled.max(0.0))))
+            .when(width <= 0.0, |this| this.w_full())
+            .h_full()
+            .px_1()
+            .py(px(2.0))
             .child(
-                Icon::new(if collapsed { IconName::ChevronRight } else { IconName::ChevronDown })
-                    .size_3(),
-            )
-            .child(section.display_name.clone())
-            .when_some(section.folder.clone(), |this, folder| {
-                this.child(
-                    div()
-                        .text_color(muted)
-                        .font_weight(gpui::FontWeight::NORMAL)
-                        .truncate()
-                        .child(folder),
-                )
-            })
-            .child(
-                div()
-                    .ml_auto()
-                    .text_color(muted)
-                    .font_weight(gpui::FontWeight::NORMAL)
-                    .child(format!("{} lines", crate::app::format_count(section.lines.len()))),
+                h_flex()
+                    .id(SharedString::from(format!("raw-section-{}", section.file_id)))
+                    .debug_selector({
+                        let id = section.file_id.clone();
+                        move || format!("raw-section-{id}")
+                    })
+                    .size_full()
+                    .px_2()
+                    .gap_2()
+                    .items_center()
+                    .rounded_md()
+                    .border_1()
+                    .border_color(border)
+                    .bg(card)
+                    .hover(|s| s.bg(hover))
+                    .cursor_pointer()
+                    .text_sm()
+                    .on_click(move |_, _, app| {
+                        let id = file_id.clone();
+                        view.update(app, |this, cx| this.toggle_section(&id, cx));
+                    })
+                    .child(
+                        Icon::new(if collapsed { IconName::ChevronRight } else { IconName::ChevronDown })
+                            .size_3()
+                            .text_color(muted),
+                    )
+                    .child(Icon::new(IconName::FileText).size_3p5().text_color(muted))
+                    .child(div().flex_none().font_weight(gpui::FontWeight::SEMIBOLD).child(section.display_name.clone()))
+                    // A scratch file's folder is the app's own: not worth showing.
+                    .when_some(section.folder.clone().filter(|_| !section.scratch), |this, folder| {
+                        this.child(div().min_w(px(0.0)).text_color(muted).truncate().child(folder))
+                    })
+                    .child(
+                        div()
+                            .ml_auto()
+                            .flex_none()
+                            .text_xs()
+                            .text_color(muted)
+                            .child(format!("{} lines", crate::app::format_count(section.lines.len()))),
+                    )
+                    // A scratch file among several is edited in its own File View.
+                    .when(edit, |this| {
+                        let file_id = section.file_id.clone();
+                        this.child(
+                            Button::new(SharedString::from(format!("raw-edit-{}", section.file_id)))
+                                .outline()
+                                .xsmall()
+                                .icon(IconName::Pencil)
+                                .label("Edit")
+                                .tooltip("Edit this file in its own tab")
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    cx.stop_propagation();
+                                    this.edit_scratch_file(&file_id, cx);
+                                })),
+                        )
+                    }),
             )
             .into_any_element()
     }
@@ -392,76 +420,26 @@ impl AppView {
         Some(strip.into_any_element())
     }
 
-    /// One editor per File Section (read-only unless it is a scratch File View), so
-    /// text can be selected and copied.
-    fn render_scratch_sections(
-        &mut self,
-        sections: Vec<RawSection>,
-        cx: &mut Context<Self>,
-    ) -> gpui::AnyElement {
-        // One file: the editor fills the whole area, like a text editor.
-        if sections.len() == 1 {
-            if let Some(editor) = self.raw.editors.get(&sections[0].file_id) {
-                let strip = self.break_strip(&sections[0], cx);
-                return v_flex()
-                    .flex_1()
-                    .h_full()
-                    .min_w(px(0.0))
-                    .text_size(px(13.0 * self.text_scale().ratio()))
-                    .children(strip)
-                    .child(div().flex_1().min_h(px(0.0)).child(
-                        Editor::new(&editor.state)
-                            .appearance(false)
-                            .bordered(false)
-                            .readonly(!sections[0].editable)
-                            .h(gpui::relative(1.0)),
-                    ))
-                    .into_any_element();
-            }
+    /// The one scratch file shown, in an editor filling the whole area like
+    /// a text editor.
+    fn render_scratch_editor(&mut self, section: &RawSection, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let Some(editor) = self.raw.editors.get(&section.file_id) else {
             return div().flex_1().into_any_element();
-        }
-        let ratio = self.text_scale().ratio();
-        let theme = cx.theme();
-        let border = theme.border;
-        let mut column = v_flex().w_full();
-        for section in &sections {
-            let single = sections.len() == 1;
-            let collapsed = !single && self.is_section_collapsed(&section.file_id);
-            let mut block = v_flex().w_full();
-            if !single {
-                block = block.child(self.section_header(section, collapsed, cx));
-            }
-            if !collapsed {
-                if let Some(strip) = self.break_strip(section, cx) {
-                    block = block.child(strip);
-                }
-                if let Some(editor) = self.raw.editors.get(&section.file_id) {
-                    block = block.child(
-                        div()
-                            .w_full()
-                            .h(px(section_editor_height(section.lines.len(), ratio)))
-                            .border_b_1()
-                            .border_color(border)
-                            .text_size(px(12.0 * ratio))
-                            .child(
-                                Editor::new(&editor.state)
-                                    .appearance(false)
-                                    .bordered(false)
-                                    .readonly(!section.editable)
-                                    .h(px(section_editor_height(section.lines.len(), ratio) - EDITOR_PADDING / 2.0)),
-                            ),
-                    );
-                }
-            }
-            column = column.child(block);
-        }
-        div()
-            .id("raw_scratch_scroll")
+        };
+        let strip = self.break_strip(section, cx);
+        v_flex()
             .flex_1()
             .h_full()
-            .overflow_y_scroll()
-            .track_scroll(&self.raw.section_scroll)
-            .child(column)
+            .min_w(px(0.0))
+            .text_size(px(13.0 * self.text_scale().ratio()))
+            .children(strip)
+            .child(div().flex_1().min_h(px(0.0)).child(
+                Editor::new(&editor.state)
+                    .appearance(false)
+                    .bordered(false)
+                    .readonly(!section.editable)
+                    .h(gpui::relative(1.0)),
+            ))
             .into_any_element()
     }
 

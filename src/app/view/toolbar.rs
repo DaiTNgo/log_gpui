@@ -16,6 +16,8 @@ impl AppView {
     pub(super) fn render_editor_toolbar(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
         let raw_mode = self.view_mode == ViewMode::Raw;
         let is_log = self.active_tab_is_log_file();
+        // Collapse or expand every File Section, when the Raw View has several.
+        let fold_all = (is_log && raw_mode && self.raw_sections().len() > 1).then(|| self.all_sections_collapsed());
         let parse_error = self.focus.search().parse_error.as_ref().map(|e| {
             let msg = e.message();
             if msg.chars().count() > 48 {
@@ -26,6 +28,7 @@ impl AppView {
         });
 
         let match_label = self.match_counter_label();
+        let (colors_under, colors_over) = crate::ui::phrase_chips::toolbar_search_layers(self, cx).unzip();
 
         h_flex()
             .w_full()
@@ -78,15 +81,17 @@ impl AppView {
                                 div()
                                     .flex_1()
                                     .min_w(px(0.0))
+                                    .relative()
+                                    .children(colors_under)
                                     .child(
                                         Input::new(&self.search_input)
                                             .appearance(false)
                                             .bordered(false)
                                             .focus_bordered(false)
                                             .h(px(28.0)),
-                                    ),
+                                    )
+                                    .children(colors_over),
                             )
-                            .children(self.search_phrase_chips(cx))
                             .when(!self.search_history().is_empty(), |this| {
                                 this.child(self.render_search_history_button(cx))
                             })
@@ -149,6 +154,23 @@ impl AppView {
                             ),
                     ),
             )
+            .when_some(fold_all, |this, all_collapsed| {
+                let (icon, tooltip) = if all_collapsed {
+                    (IconName::ChevronsUpDown, "Expand All Files")
+                } else {
+                    (IconName::ChevronsDownUp, "Collapse All Files")
+                };
+                this.child(
+                    Button::new("raw-fold-all")
+                        .ghost()
+                        .small()
+                        .icon(icon)
+                        .tooltip(tooltip)
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.set_all_sections_collapsed(!all_collapsed, cx);
+                        })),
+                )
+            })
             .when(is_log, |this| {
                 this.child(
                     ButtonGroup::new("view-mode")

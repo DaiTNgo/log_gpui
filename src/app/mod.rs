@@ -175,7 +175,11 @@ pub struct AppView {
     pub rule_counts: HashMap<u64, usize>,
     /// The floating bar of colors (or the palette of a rule).
     pub color_bar: Option<color::ColorBar>,
+    /// The hue menu of a Phrase of a search field: where it opened, the Phrase key, and whether
+    /// it opened in the Focus window.
+    pub phrase_menu: Option<(gpui::Point<gpui::Pixels>, String, bool)>,
     pub color_picker: Entity<ColorPickerState>,
+    /// The custom color of the Phrase menu; its hue becomes the Phrase's hue.
     /// What the last right-click landed on, for the context menu.
     pub cell_target: Option<text_select::CellTarget>,
     /// The "+ Add rule" form of the Highlights section.
@@ -368,6 +372,8 @@ impl AppView {
             let first = workspace_state.projects[0].id.clone();
             workspace_state.active_project_id = Some(first);
         }
+        crate::search_color::set_hue_overrides(workspace_state.phrase_hues.clone());
+        crate::search_color::set_rgb_overrides(workspace_state.phrase_rgbs.clone());
         let expanded_spaces: HashSet<String> = workspace_state
             .projects
             .iter()
@@ -543,6 +549,7 @@ impl AppView {
             highlight_paints: Arc::default(),
             rule_counts: HashMap::new(),
             color_bar: None,
+            phrase_menu: None,
             color_picker,
             cell_target: None,
             rule_form: None,
@@ -621,6 +628,7 @@ impl AppView {
         this.live.glob_limit = this.workspace_state.live_glob_limit.clamp(1, 500);
         this.live.glob_interval = this.workspace_state.live_glob_interval.clamp(2, 300);
         this.density = this.workspace_state.density;
+        this.workspace_state.theme.apply(cx);
         this.text_zoom = this.workspace_state.text_zoom;
         this.column_layout.update_density(this.text_scale());
         this.show_minimap = this.workspace_state.show_minimap;

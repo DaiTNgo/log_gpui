@@ -159,7 +159,8 @@ fn hue_of_a_phrase_is_stable_and_case_blind() {
     let h = search_color::hue_for_key("timeout");
     assert_eq!(h, search_color::hue_for_key("timeout"));
     assert!((0.0..360.0).contains(&h));
-    assert_eq!(search_color::phrase_hues(&["timeout"]), [h]);
+    // The first Phrase takes the first fixed vivid hue, not its key's hue.
+    assert_eq!(search_color::phrase_hues(&["timeout"]), [search_color::FIXED_HUES[0]]);
     assert_eq!(
         search_color::phrase_hues(&matcher("TimeOut").phrase_keys()),
         search_color::phrase_hues(&matcher("timeout").phrase_keys())
@@ -176,7 +177,7 @@ fn hue_of_a_phrase_never_changes_between_releases() {
 #[test]
 fn close_hues_are_pushed_apart_in_order_of_appearance() {
     let hues = search_color::phrase_hues(&["a", "a"]);
-    assert_eq!(hues[0], search_color::hue_for_key("a"));
+    assert_eq!(hues[0], search_color::FIXED_HUES[0]);
     assert!(hue_distance(hues[0], hues[1]) >= 30.0);
 }
 
@@ -200,6 +201,15 @@ fn past_twelve_phrases_closeness_is_accepted_but_hues_stay_valid_and_determinist
     assert_eq!(a.len(), 40);
     assert!(a.iter().all(|h| (0.0..360.0).contains(h)));
     assert_eq!(a, search_color::phrase_hues(&keys));
+}
+
+#[test]
+fn the_first_phrases_take_fixed_hues_and_later_ones_their_key_hue() {
+    let keys: Vec<String> = (0..9).map(|i| format!("kw{i}")).collect();
+    let keys: Vec<&str> = keys.iter().map(String::as_str).collect();
+    let hues = search_color::phrase_hues(&keys);
+    assert_eq!(&hues[..8], &search_color::FIXED_HUES);
+    assert!(!search_color::FIXED_HUES.contains(&hues[8]));
 }
 
 #[test]

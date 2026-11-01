@@ -33,6 +33,17 @@ Hệ thống SHALL hiện Raw View thành các File Section xếp chồng, mỗi
 - **WHEN** người dùng chuyển File View `api.log` sang Raw View
 - **THEN** Raw View chỉ có một File Section `api.log`
 
+### Requirement: Thu gọn hoặc mở rộng mọi File Section
+Khi Raw View có từ hai File Section trở lên, toolbar SHALL có một nút thu gọn hoặc mở rộng mọi section cùng lúc. Khi còn ít nhất một section đang mở rộng, nút SHALL là "Collapse All Files"; khi mọi section đã thu gọn, nút SHALL là "Expand All Files".
+
+#### Scenario: Collapse All
+- **WHEN** Raw View có `api.log` đang mở rộng và `worker.log` đang thu gọn, và người dùng bấm "Collapse All Files"
+- **THEN** cả hai section chỉ còn header và nút đổi thành "Expand All Files"
+
+#### Scenario: Một file
+- **WHEN** Raw View chỉ có một File Section
+- **THEN** toolbar không có nút này
+
 ### Requirement: Raw View hiện đúng nội dung file
 Hệ thống SHALL hiện trong Raw View mọi dòng của file đúng như lưu trữ, và SHALL NOT áp dụng Filter. Chỉ Search và Marker SHALL áp dụng trong Raw View.
 
@@ -59,7 +70,23 @@ Hệ thống SHALL hiện file Imported trong Raw View ở chế độ chỉ đ�
 - **THEN** nội dung không đổi
 
 ### Requirement: Sửa file scratch trong Raw View
-Hệ thống SHALL cho sửa file scratch trong Raw View. Parsed View của file scratch SHALL chỉ đọc, và SHALL được parse lại mỗi lần chuyển từ Raw View sang.
+Hệ thống SHALL cho sửa file scratch trong Raw View khi file đó là file duy nhất Raw View hiện: trong File View của nó, hoặc trong một Scratch Log Space chỉ có nó. Khi Scratch Log Space có từ hai file trở lên, Raw View của tab Log Space SHALL chỉ đọc, và header của mỗi File Section SHALL có nút "Edit" mở File View của file đó ở Raw View để sửa. Mỗi tab SHALL có nhiều nhất một editor. Parsed View của file scratch SHALL chỉ đọc, và SHALL được parse lại mỗi lần chuyển từ Raw View sang.
+
+#### Scenario: Một file sửa tại chỗ
+- **WHEN** người dùng mở Raw View của Scratch Log Space chỉ có `untitled.log`
+- **THEN** người dùng gõ được vào `untitled.log` ngay trong tab Log Space
+
+#### Scenario: Nhiều file chỉ đọc
+- **WHEN** Scratch Log Space có `untitled.log` và `untitled-2.log` và người dùng gõ chữ trong Raw View của tab Log Space
+- **THEN** nội dung không đổi, và header mỗi section có nút "Edit"
+
+#### Scenario: Edit mở File View
+- **WHEN** người dùng bấm "Edit" trên header của `untitled-2.log`
+- **THEN** File View `untitled-2.log` mở ở Raw View và người dùng gõ được vào đó
+
+#### Scenario: Thêm file thứ hai
+- **WHEN** người dùng đang sửa `untitled.log` trong tab Log Space rồi thêm file scratch mới
+- **THEN** Raw View của tab Log Space thành chỉ đọc và nội dung đã gõ vẫn được lưu
 
 #### Scenario: Dán log rồi parse
 - **WHEN** người dùng dán 100 dòng log vào `untitled.log` rồi chuyển sang Parsed View

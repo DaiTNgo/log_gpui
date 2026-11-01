@@ -30,6 +30,7 @@ pub mod search_expr;
 pub mod search_history;
 pub mod space_view;
 pub mod text_selection;
+pub mod theme;
 pub mod timeline;
 pub mod density;
 pub mod extract;

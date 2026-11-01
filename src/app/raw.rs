@@ -1,7 +1,7 @@
 //! Logic: Raw View. Each file of the open Log Space is a collapsible File
 //! Section showing its text line by line. Read-only files are one
-//! virtualized list (`raw_list`); a scratch file is
-//! edited in an editor and saved by itself after a pause.
+//! virtualized list (`raw_list`); a scratch file shown alone is edited in an
+//! editor and saved by itself after a pause.
 //!
 //! Raw View ignores Filter, so Search here looks at every line of every
 //! section, only highlights, and never hides anything.
@@ -14,7 +14,7 @@ use crate::workspace::log_space::{LogSpaceKind, line_hash};
 use crate::workspace::scratch_store;
 use crate::workspace::working_set::{TabTarget, ViewMode};
 use gpui::{
-    AppContext as _, Context, HighlightStyle, ScrollHandle, Subscription,
+    AppContext as _, Context, HighlightStyle, Subscription,
     UniformListScrollHandle, Window, hsla, point, px,
 };
 use gpui_component::input::{
@@ -29,13 +29,6 @@ use std::time::Duration;
 
 /// Idle time after typing before a scratch file is written to disk.
 pub const SCRATCH_SAVE_DEBOUNCE: Duration = Duration::from_millis(500);
-
-/// Height of a File Section header and of an imported line, in pixels.
-pub const RAW_ROW_HEIGHT: f32 = 22.0;
-/// Line height of a scratch editor, in pixels (1.5 x the 12px font).
-pub const EDITOR_LINE_HEIGHT: f32 = 18.0;
-/// Vertical padding the editor adds around its text.
-pub const EDITOR_PADDING: f32 = 16.0;
 
 /// A scratch file's editor.
 pub struct ScratchEditor {
@@ -56,15 +49,16 @@ pub struct RawSection {
     pub lines: crate::raw_view::RawLines,
     /// Breaks of a live file, by position of the line they are drawn above.
     pub breaks: Arc<std::collections::BTreeMap<usize, Arc<crate::live::BreakMark>>>,
-    /// A scratch file opened as a File View can be edited here.
+    /// A scratch file shown alone (its File View, or a Log Space holding
+    /// just it) can be edited here.
     pub editable: bool,
+    /// The file is a scratch file, edited here or in its own File View.
+    pub scratch: bool,
 }
 
 pub struct RawViewState {
     /// Scroll of the list of imported lines.
     pub scroll: UniformListScrollHandle,
-    /// Scroll of the stacked scratch editors.
-    pub section_scroll: ScrollHandle,
     pub editors: HashMap<String, ScratchEditor>,
     /// Current text of each edited scratch file.
     pub texts: HashMap<String, String>,
@@ -111,7 +105,6 @@ impl RawViewState {
     pub fn new() -> Self {
         Self {
             scroll: UniformListScrollHandle::new(),
-            section_scroll: ScrollHandle::new(),
             editors: HashMap::new(),
             texts: HashMap::new(),
             edited: HashSet::new(),
@@ -196,14 +189,17 @@ impl AppView {
         };
         let empty = crate::raw_view::RawLines::default();
         let no_breaks = Arc::<std::collections::BTreeMap<_, _>>::default();
-        space
-            .ordered_files()
+        let files = space.ordered_files();
+        // A scratch file is edited where it is the only file shown: its File
+        // View, or a Log Space holding just it. Several files are one
+        // read-only list, each with an Edit button opening its File View, so
+        // only one editor ever holds a file's text.
+        let editable = space.kind == LogSpaceKind::Scratch && (only.is_some() || files.len() == 1);
+        files
             .into_iter()
             .filter(|f| only.is_none_or(|id| id == f.file_id))
             .map(|f| {
                 let scratch = space.kind == LogSpaceKind::Scratch;
-                // Scratch files are edited in the Raw View, of a Log Space or a File View.
-                let editable = scratch;
                 let lines = match self.raw.texts.get(&f.file_id) {
                     Some(text) if scratch => crate::raw_view::RawLines::Held(
                         self.raw
@@ -229,6 +225,7 @@ impl AppView {
                         self.parsed_files.get(&f.file_id).map_or_else(|| no_breaks.clone(), |p| p.raw_breaks.clone())
                     },
                     editable,
+                    scratch,
                 }
             })
             .collect()
@@ -258,6 +255,38 @@ impl AppView {
     pub fn toggle_section(&mut self, file_id: &str, cx: &mut Context<Self>) {
         let collapsed = self.is_section_collapsed(file_id);
         self.set_section_collapsed(file_id, !collapsed, cx);
+    }
+
+    /// Open a scratch file of the focused Log Space in its own File View, in
+    /// the Raw View, to edit it.
+    pub fn edit_scratch_file(&mut self, file_id: &str, cx: &mut Context<Self>) {
+        let Some(space_id) = self.active_target().and_then(|t| t.space_id().map(str::to_string)) else { return };
+        self.open_file_view_tab(&space_id, file_id, cx);
+        self.set_view_mode(ViewMode::Raw, cx);
+    }
+
+    /// Whether every File Section of the focused tab is collapsed.
+    pub fn all_sections_collapsed(&self) -> bool {
+        self.raw_sections().iter().all(|s| self.is_section_collapsed(&s.file_id))
+    }
+
+    /// Collapse or expand every File Section of the focused tab.
+    pub fn set_all_sections_collapsed(&mut self, collapsed: bool, cx: &mut Context<Self>) {
+        let ids: Vec<String> = self.raw_sections().into_iter().map(|s| s.file_id).collect();
+        if let Some(tab) = self
+            .active_project_mut()
+            .and_then(|p| p.working_set.active_tab_mut())
+        {
+            for id in ids {
+                if collapsed {
+                    tab.session.collapsed_sections.insert(id);
+                } else {
+                    tab.session.collapsed_sections.remove(&id);
+                }
+            }
+        }
+        self.schedule_session_save(cx);
+        cx.notify();
     }
 
     // ── Scratch editors ─────────────────────────────────────────────────────
@@ -293,8 +322,11 @@ impl AppView {
             self.search_input.update(cx, |state, cx| state.focus(window, cx));
         }
         // Read-only sections are the list (task 8.1): only a section edited
-        // here has an editor.
-        for section in self.raw_sections().into_iter().filter(|s| s.editable) {
+        // here has an editor, and an editor no longer edited (its Log Space
+        // gained a file) is dropped. Its text stays in `texts` to be saved.
+        let editable: Vec<RawSection> = self.raw_sections().into_iter().filter(|s| s.editable).collect();
+        self.raw.editors.retain(|id, _| editable.iter().any(|s| &s.file_id == id));
+        for section in editable {
             if self.raw.editors.contains_key(&section.file_id) {
                 continue;
             }
@@ -779,19 +811,7 @@ impl AppView {
             self.reveal_raw_list_line(section_ix, line);
             return;
         }
-        let single = sections.len() == 1;
-        // Stacked editors: scroll the column to the line.
-        let mut offset = 0.0;
-        for (i, s) in sections.iter().enumerate() {
-            if i == section_ix {
-                let header = if single { 0.0 } else { RAW_ROW_HEIGHT };
-                offset += header + EDITOR_PADDING / 2.0 + line as f32 * EDITOR_LINE_HEIGHT;
-                break;
-            }
-            offset += section_height(s, self.is_section_collapsed(&s.file_id), self.text_scale().ratio());
-        }
-        let target = (offset - 80.0).max(0.0);
-        self.raw.section_scroll.set_offset(point(px(0.0), px(-target)));
+        // The one editor scrolls itself to the line.
         self.raw.pending_reveal = Some((section.file_id.clone(), line));
     }
 
@@ -945,27 +965,4 @@ impl AppView {
             }
         }
     }
-}
-
-/// Height of a File Section in the stacked scratch editors.
-pub fn section_height(section: &RawSection, collapsed: bool, ratio: f32) -> f32 {
-    if collapsed {
-        RAW_ROW_HEIGHT
-    } else {
-        RAW_ROW_HEIGHT + section_editor_height(section.lines.len(), ratio)
-    }
-}
-
-/// Tallest a stacked section's editor gets before it scrolls inside itself.
-pub const MAX_SECTION_EDITOR_HEIGHT: f32 = 480.0;
-
-/// Height of a section's editor among several stacked ones, its text
-/// `ratio` times the usual size (see `TextScale::ratio`).
-pub fn section_editor_height(lines: usize, ratio: f32) -> f32 {
-    (lines.max(4) as f32 * EDITOR_LINE_HEIGHT * ratio + EDITOR_PADDING).min(MAX_SECTION_EDITOR_HEIGHT)
-}
-
-/// Height of a scratch editor showing `lines` lines (at least a few).
-pub fn editor_height(lines: usize) -> f32 {
-    lines.max(4) as f32 * EDITOR_LINE_HEIGHT + EDITOR_PADDING
 }

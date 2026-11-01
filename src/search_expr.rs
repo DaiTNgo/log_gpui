@@ -227,6 +227,39 @@ impl<'a> Parser<'a> {
     }
 }
 
+/// The Phrases of `input` with the byte range each occupies in it, in order
+/// of appearance, each tagged with its case-folded key. Words next to each
+/// other form one Phrase, as in `parse`. Empty when `input` does not tokenize.
+pub fn phrase_spans(input: &str) -> Vec<(Range<usize>, String)> {
+    let Ok(tokens) = tokenize(input) else {
+        return Vec::new();
+    };
+    let mut spans = Vec::new();
+    let mut run: Vec<&Token> = Vec::new();
+    let mut flush = |run: &mut Vec<&Token>| {
+        if let (Some(first), Some(last)) = (run.first(), run.last()) {
+            let words: Vec<&str> = run
+                .iter()
+                .filter_map(|t| match &t.tok {
+                    Tok::Word(w) => Some(w.as_str()),
+                    _ => None,
+                })
+                .collect();
+            spans.push((first.span.start..last.span.end, crate::unicode_text::fold(&words.join(" "))));
+        }
+        run.clear();
+    };
+    for t in &tokens {
+        if matches!(t.tok, Tok::Word(_)) {
+            run.push(t);
+        } else {
+            flush(&mut run);
+        }
+    }
+    flush(&mut run);
+    spans
+}
+
 /// Parse a Search Expression. Empty or whitespace-only input is `Ok(None)`.
 pub fn parse(input: &str) -> Result<Option<SearchExpr>, SearchError> {
     let tokens = tokenize(input)?;
@@ -430,4 +463,16 @@ fn match_rest(rest: &[Needle], line: &str, mut pos: usize) -> Option<usize> {
         pos = word.match_at(line, after)?;
     }
     Some(pos)
+}
+
+#[cfg(test)]
+mod phrase_spans_tests {
+    use super::phrase_spans;
+
+    #[test]
+    fn spans_follow_the_typed_text() {
+        let spans = phrase_spans("backend && Blue || \"a b\"");
+        let got: Vec<_> = spans.iter().map(|(r, k)| (r.clone(), k.as_str())).collect();
+        assert_eq!(got, vec![(0..7, "backend"), (11..15, "blue"), (19..24, "a b")]);
+    }
 }

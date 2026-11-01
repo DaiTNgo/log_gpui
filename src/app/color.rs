@@ -43,6 +43,13 @@ pub fn default_bar_colors() -> Vec<HighlightColor> {
         .collect()
 }
 
+/// A color from the color picker, as `0xRRGGBB`.
+pub fn rgb_of_hsla(color: Hsla) -> u32 {
+    let rgba: gpui::Rgba = color.into();
+    let to8 = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() as u32;
+    (to8(rgba.r) << 16) | (to8(rgba.g) << 8) | to8(rgba.b)
+}
+
 /// A color from the color picker, as a free `#RRGGBB`.
 pub fn color_from_hsla(color: Hsla) -> HighlightColor {
     let rgba: gpui::Rgba = color.into();

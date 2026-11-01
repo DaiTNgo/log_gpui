@@ -1196,9 +1196,18 @@ pub struct SearchPaint {
     pub fill: gpui::Hsla,
 }
 
-fn phrase_fills_of_hues(hues: Vec<f32>, tone: Tone) -> Vec<PhraseFill> {
+fn phrase_fills_of_hues(keys: &[&str], hues: Vec<f32>, tone: Tone) -> Vec<PhraseFill> {
     hues.into_iter()
-        .map(|hue| {
+        .zip(keys)
+        .map(|(hue, key)| {
+            // A color the user picked is painted as it is, and stronger.
+            if let Some(rgb) = crate::search_color::rgb_override(key) {
+                let color = hsla_of(rgb);
+                return PhraseFill {
+                    normal: color.opacity(crate::search_color::CUSTOM_MATCH_OPACITY),
+                    current: color.opacity(crate::search_color::CUSTOM_CURRENT_MATCH_OPACITY),
+                };
+            }
             let color = hsla_of(crate::search_color::phrase_rgb(hue, tone));
             PhraseFill {
                 normal: color.opacity(crate::search_color::MATCH_OPACITY),
@@ -1212,14 +1221,14 @@ fn phrase_fills_of_hues(hues: Vec<f32>, tone: Tone) -> Vec<PhraseFill> {
 /// Search Expression, for the given theme. Hues are generated (see
 /// `search_color`).
 pub fn search_phrase_fills(keys: &[&str], tone: Tone) -> Vec<PhraseFill> {
-    phrase_fills_of_hues(crate::search_color::phrase_hues(keys), tone)
+    phrase_fills_of_hues(keys, crate::search_color::phrase_hues(keys), tone)
 }
 
 /// The paint of every distinct Phrase of a Focus Find expression. A Phrase
 /// that is also in the Search Expression (`search_keys`) has the color it has
 /// there, so one Phrase is one color on every surface.
 pub fn find_phrase_fills(keys: &[&str], search_keys: &[&str], tone: Tone) -> Vec<PhraseFill> {
-    phrase_fills_of_hues(crate::search_color::phrase_hues_following(keys, search_keys), tone)
+    phrase_fills_of_hues(keys, crate::search_color::phrase_hues_following(keys, search_keys), tone)
 }
 
 /// The Match ranges of a line (`Matcher::find_phrase_ranges`) with the paint

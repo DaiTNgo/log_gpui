@@ -177,16 +177,20 @@ impl FocusPane {
                 }),
         );
 
-        let find_chips_el = {
+        let find_layers = {
             let search_keys = state.search_matcher.as_ref().map(Matcher::phrase_keys).unwrap_or_default();
-            let chips = crate::ui::phrase_chips::find_chips(
-                &state.find.phrase_keys(),
-                &search_keys,
+            let text = state.find_input.read(cx).value();
+            crate::ui::phrase_chips::focus_field_layers(
+                &text,
+                Some(&search_keys),
                 state.colors.tone(),
                 state.phrase_colors,
-            );
-            crate::ui::phrase_chips::render_chips(&chips, crate::ui::phrase_chips::FIND_MAX_CHIPS, cx)
+                &state.view,
+                state.mode == PaneMode::Window,
+                "find-phrase",
+            )
         };
+        let (find_under, find_over) = find_layers.unzip();
         let find_label = state.find.label();
         let find_error = state.find.parse_error.is_some();
         let (v_prev, v_next, v_hide) = (state.view.clone(), state.view.clone(), state.view.clone());
@@ -213,17 +217,22 @@ impl FocusPane {
                     .bg(bg)
                     .child(Icon::new(IconName::Search).size_3().text_color(muted))
                     .child(
-                        div().flex_1().min_w(px(0.0)).child(
-                            Input::new(state.find_input)
-                                .appearance(false)
-                                .bordered(false)
-                                .focus_bordered(false)
-                                .h(px(22.0)),
-                        ),
+                        div()
+                            .flex_1()
+                            .min_w(px(0.0))
+                            .relative()
+                            .children(find_under)
+                            .child(
+                                Input::new(state.find_input)
+                                    .appearance(false)
+                                    .bordered(false)
+                                    .focus_bordered(false)
+                                    .h(px(22.0)),
+                            )
+                            .children(find_over),
                     )
                     .when(find_error, |this| this.child(Tag::danger().child("!"))),
             )
-            .children(find_chips_el)
             .child(
                 Button::new("focus-find-prev")
                     .ghost()
@@ -333,6 +342,17 @@ impl FocusPane {
             .border_b_1()
             .border_color(border)
             .when_some(state.search_input.filter(|_| state.mode == PaneMode::Window), |this, input| {
+                let text = input.read(cx).value();
+                let (under, over) = crate::ui::phrase_chips::focus_field_layers(
+                    &text,
+                    None,
+                    state.colors.tone(),
+                    state.phrase_colors,
+                    &state.view,
+                    true,
+                    "focus-search-phrase",
+                )
+                .unzip();
                 this.child(
                     h_flex()
                         .w(px(280.0))
@@ -347,9 +367,13 @@ impl FocusPane {
                         .bg(bg)
                         .child(Icon::new(IconName::Search).size_3().text_color(muted))
                         .child(
-                            div().flex_1().min_w(px(0.0)).child(
-                                Input::new(input).appearance(false).bordered(false).focus_bordered(false).h(px(22.0)),
-                            ),
+                            div()
+                                .flex_1()
+                                .min_w(px(0.0))
+                                .relative()
+                                .children(under)
+                                .child(Input::new(input).appearance(false).bordered(false).focus_bordered(false).h(px(22.0)))
+                                .children(over),
                         ),
                 )
             })

@@ -74,6 +74,7 @@ struct Values {
     phrase_colors: bool,
     wrap: bool,
     density: Density,
+    theme: crate::theme::AppTheme,
     /// Size of the log text, in points, and its zoom steps.
     text_size: (f32, i8),
     /// The Log Format library: id, name, template.
@@ -99,6 +100,7 @@ pub fn open_settings_dialog(view: Entity<AppView>, window: &mut Window, cx: &mut
                     phrase_colors: v.phrase_colors(),
                     wrap: v.raw.soft_wrap,
                     density: v.density,
+                    theme: v.workspace_state.theme,
                     text_size: (v.text_scale().font_size(), v.text_zoom),
                     formats: v.log_formats().iter().map(|f| (f.id.clone(), f.name.clone(), f.template.clone())).collect(),
                     keymap: v.keymap.clone(),
@@ -483,7 +485,8 @@ fn rows_of(section: SettingsSection, view: &Entity<AppView>, v: &Values, cx: &Ap
             }]
         }
         SettingsSection::Appearance => {
-            let (v_density, v_minimap) = (view.clone(), view.clone());
+            let (v_density, v_minimap, v_theme) = (view.clone(), view.clone(), view.clone());
+            let theme = v.theme;
             let (v_smaller, v_larger, v_reset) = (view.clone(), view.clone(), view.clone());
             let (text_pt, zoom) = v.text_size;
             let v_phrase_colors = view.clone();
@@ -495,6 +498,24 @@ fn rows_of(section: SettingsSection, view: &Entity<AppView>, v: &Values, cx: &Ap
             ];
             let density = v.density;
             vec![
+                Row {
+                    title: "Theme",
+                    description: "The colors of the app: Dark Bright lifts the dark surfaces and text.",
+                    control: ButtonGroup::new("settings-theme")
+                        .small()
+                        .children(crate::theme::AppTheme::ALL.map(|t| {
+                            Button::new(SharedString::from(format!("theme-{}", t.label())))
+                                .label(t.label())
+                                .selected(theme == t)
+                        }))
+                        .on_click(move |ix: &Vec<usize>, window, app| {
+                            if let Some(&i) = ix.first() {
+                                v_theme.update(app, |this, cx| this.set_theme(crate::theme::AppTheme::ALL[i], cx));
+                                window.refresh();
+                            }
+                        })
+                        .into_any_element(),
+                },
                 Row {
                     title: "Row density",
                     description: "How tall the rows of the log table are, and the size of their text.",

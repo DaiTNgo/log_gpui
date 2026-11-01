@@ -31,11 +31,17 @@ pub struct SessionManifest {
     #[serde(default)]
     pub density: crate::density::Density,
     #[serde(default)]
+    pub theme: crate::theme::AppTheme,
+    #[serde(default)]
     pub text_zoom: i8,
     #[serde(default = "crate::workspace::state::default_true")]
     pub show_minimap: bool,
     #[serde(default = "crate::workspace::state::default_true")]
     pub phrase_colors: bool,
+    #[serde(default)]
+    pub phrase_hues: std::collections::BTreeMap<String, f32>,
+    #[serde(default)]
+    pub phrase_rgbs: std::collections::BTreeMap<String, u32>,
     #[serde(default = "crate::workspace::state::default_true")]
     pub raw_soft_wrap: bool,
     #[serde(default = "crate::workspace::state::default_true")]
@@ -133,9 +139,12 @@ impl SessionManifest {
             live_glob_limit: ws.live_glob_limit,
             live_glob_interval: ws.live_glob_interval,
             density: ws.density,
+            theme: ws.theme,
             text_zoom: ws.text_zoom,
             show_minimap: ws.show_minimap,
             phrase_colors: ws.phrase_colors,
+            phrase_hues: ws.phrase_hues.clone(),
+            phrase_rgbs: ws.phrase_rgbs.clone(),
             raw_soft_wrap: ws.raw_soft_wrap,
             show_search_highlight: ws.show_search_highlight,
         }
@@ -172,9 +181,12 @@ impl SessionManifest {
         ws.live_glob_limit = self.live_glob_limit;
         ws.live_glob_interval = self.live_glob_interval;
         ws.density = self.density;
+        ws.theme = self.theme;
         ws.text_zoom = self.text_zoom;
         ws.show_minimap = self.show_minimap;
         ws.phrase_colors = self.phrase_colors;
+        ws.phrase_hues = self.phrase_hues;
+        ws.phrase_rgbs = self.phrase_rgbs;
         ws.raw_soft_wrap = self.raw_soft_wrap;
         ws.show_search_highlight = self.show_search_highlight;
         ws

@@ -115,7 +115,9 @@ impl Render for FocusWindowView {
         let view = self.app.clone();
         let (search_input, find_input) = (&self.search_input, &self.find_input);
         // Inside the app's own context, as the docked pane is drawn.
+        let mut phrase_menu = None;
         let (colors, body) = view.update(cx, |app, cx| {
+            phrase_menu = app.render_phrase_menu(true, cx);
             let colors = app.canvas_colors(cx);
             if app.active_tab_is_log_file() {
                 let parsed = app.view_mode == crate::workspace::working_set::ViewMode::Parsed;
@@ -172,6 +174,7 @@ impl Render for FocusWindowView {
             }))
             .child(title_bar)
             .child(div().flex_1().min_h(px(0.0)).child(body))
+            .children(phrase_menu)
     }
 }
 
