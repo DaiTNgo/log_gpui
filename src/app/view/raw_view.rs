@@ -126,6 +126,9 @@ impl AppView {
                             let text = section.lines.get(line).unwrap_or_default();
                             let len = text.len();
                             let mut layers: Vec<(std::ops::Range<usize>, gpui::HighlightStyle)> = Vec::new();
+                            for (range, color) in colors.syntax_paints(&text, crate::syntax_color::Scope::Line) {
+                                layers.push((range, gpui::HighlightStyle { color: Some(color), ..Default::default() }));
+                            }
                             if let Some(matcher) = &matcher {
                                 let is_current = current_match.is_some_and(|m| m.section == si && m.line == line);
                                 for p in crate::ui::canvas::line_match_paints(matcher, &text, is_current, phrase_fills.as_deref(), shared) {

@@ -286,6 +286,10 @@ impl AppView {
             stderr: crate::ui::canvas::stderr_color(cx.theme().is_dark()),
             text_selection: cx.theme().selection,
             dark: cx.theme().is_dark(),
+            syntax: self
+                .workspace_state
+                .show_syntax_color
+                .then(|| crate::ui::canvas::SyntaxPalette::new(cx.theme().is_dark())),
         }
     }
 }

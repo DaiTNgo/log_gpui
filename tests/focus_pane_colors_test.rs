@@ -26,6 +26,7 @@ fn colors() -> CanvasColors {
         stderr: c,
         text_selection: c,
         dark: false,
+        syntax: None,
     }
 }
 
@@ -103,4 +104,50 @@ fn a_phrase_in_both_expressions_has_the_same_color_even_when_separation_pushes_i
     let p = match_paints(&line, Some(&m), &find, true, &colors());
     assert_eq!(p.find.len(), 1);
     assert_eq!(p.find[0].fill, p.search[1].fill);
+}
+
+#[test]
+fn syntax_color_paints_only_when_on() {
+    use log_gpui::syntax_color::Scope;
+    use log_gpui::ui::canvas::SyntaxPalette;
+    let line = "10:22:03 ERROR boom";
+    let off = colors();
+    assert!(off.syntax_paints(line, Scope::Line).is_empty());
+    let on = CanvasColors { syntax: Some(SyntaxPalette::new(false)), ..colors() };
+    let paints = on.syntax_paints(line, Scope::Line);
+    assert_eq!(paints.iter().map(|(r, _)| r.clone()).collect::<Vec<_>>(), vec![0..8, 9..14]);
+    assert_eq!(paints[1].1, on.danger, "ERROR takes the color of its level");
+    assert_ne!(paints[0].1, on.muted, "the timestamp has its own color");
+}
+
+fn luminance(c: gpui::Hsla) -> f32 {
+    let rgb = c.to_rgb();
+    let lin = |v: f32| if v <= 0.03928 { v / 12.92 } else { ((v + 0.055) / 1.055).powf(2.4) };
+    0.2126 * lin(rgb.r) + 0.7152 * lin(rgb.g) + 0.0722 * lin(rgb.b)
+}
+
+fn contrast(a: gpui::Hsla, b: gpui::Hsla) -> f32 {
+    let (x, y) = (luminance(a), luminance(b));
+    (x.max(y) + 0.05) / (x.min(y) + 0.05)
+}
+
+#[test]
+fn syntax_palette_reads_on_the_lightest_dark_and_the_darkest_light_surface() {
+    use log_gpui::ui::canvas::SyntaxPalette;
+    // Dark Bright lifts the dark background by 0.07 over Dark's.
+    for (dark, bg) in [(true, hsla(0.0, 0.0, 0.24, 1.0)), (false, hsla(0.0, 0.0, 0.94, 1.0))] {
+        let p = SyntaxPalette::new(dark);
+        for (name, c) in [
+            ("timestamp", p.timestamp),
+            ("stack_trace", p.stack_trace),
+            ("caused_by", p.caused_by),
+            ("module", p.module),
+            ("number", p.number),
+            ("string", p.string),
+            ("identifier", p.identifier),
+            ("key", p.key),
+        ] {
+            assert!(contrast(c, bg) >= 4.5, "{name} (dark={dark}) has contrast {}", contrast(c, bg));
+        }
+    }
 }

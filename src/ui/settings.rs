@@ -72,6 +72,7 @@ struct Values {
     glob_interval: u64,
     minimap: bool,
     search_highlight: bool,
+    syntax_color: bool,
     phrase_colors: bool,
     wrap: bool,
     density: Density,
@@ -99,6 +100,7 @@ pub fn open_settings_dialog(view: Entity<AppView>, window: &mut Window, cx: &mut
                     glob_interval: v.live.glob_interval,
                     minimap: v.show_minimap,
                     search_highlight: v.workspace_state.show_search_highlight,
+                    syntax_color: v.workspace_state.show_syntax_color,
                     phrase_colors: v.phrase_colors(),
                     wrap: v.raw.soft_wrap,
                     density: v.density,
@@ -516,6 +518,7 @@ fn rows_of(section: SettingsSection, view: &Entity<AppView>, v: &Values, cx: &Ap
             let (text_pt, zoom) = v.text_size;
             let v_phrase_colors = view.clone();
             let v_highlight = view.clone();
+            let v_syntax = view.clone();
             let densities = [
                 (Density::Comfortable, "Comfortable"),
                 (Density::Compact, "Compact"),
@@ -631,6 +634,18 @@ fn rows_of(section: SettingsSection, view: &Entity<AppView>, v: &Values, cx: &Ap
                         .on_click(move |checked: &bool, window, app| {
                             let on = *checked;
                             v_highlight.update(app, |this, cx| this.set_show_search_highlight(on, cx));
+                            window.refresh();
+                        })
+                        .into_any_element(),
+                },
+                Row {
+                    title: "Syntax Color",
+                    description: "Paint the parts of a log line (timestamp, level, module, numbers, strings, ids, key=value, stack trace) in their own colors. Markers, Highlight Rules and Search Matches always paint over it.",
+                    control: Switch::new("show-syntax-color")
+                        .checked(v.syntax_color)
+                        .on_click(move |checked: &bool, window, app| {
+                            let on = *checked;
+                            v_syntax.update(app, |this, cx| this.set_show_syntax_color(on, cx));
                             window.refresh();
                         })
                         .into_any_element(),

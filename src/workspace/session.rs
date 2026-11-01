@@ -48,6 +48,8 @@ pub struct SessionManifest {
     pub raw_soft_wrap: bool,
     #[serde(default = "crate::workspace::state::default_true")]
     pub show_search_highlight: bool,
+    #[serde(default = "crate::workspace::state::default_true")]
+    pub show_syntax_color: bool,
 }
 
 /// Project-level snapshot inside a session manifest.
@@ -150,6 +152,7 @@ impl SessionManifest {
             phrase_rgbs: ws.phrase_rgbs.clone(),
             raw_soft_wrap: ws.raw_soft_wrap,
             show_search_highlight: ws.show_search_highlight,
+            show_syntax_color: ws.show_syntax_color,
         }
     }
 
@@ -193,6 +196,7 @@ impl SessionManifest {
         ws.phrase_rgbs = self.phrase_rgbs;
         ws.raw_soft_wrap = self.raw_soft_wrap;
         ws.show_search_highlight = self.show_search_highlight;
+        ws.show_syntax_color = self.show_syntax_color;
         ws
     }
 
