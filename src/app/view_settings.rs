@@ -146,6 +146,7 @@ impl AppView {
     /// every tab.
     pub fn set_show_syntax_color(&mut self, show: bool, cx: &mut Context<Self>) {
         self.workspace_state.show_syntax_color = show;
+        self.update_raw_highlights(cx);
         self.schedule_session_save(cx);
         cx.notify();
     }

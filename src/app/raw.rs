@@ -905,6 +905,7 @@ impl AppView {
         let all_bg = hsla(0.55, 0.85, 0.55, 0.35);
         let current_bg = hsla(0.55, 0.9, 0.55, 0.7);
         let tone = if cx.theme().is_dark() { Tone::Dark } else { Tone::Light };
+        let colors = self.canvas_colors(cx);
         let phrase_fills = (self.phrase_colors() && matcher.is_some()).then(|| {
             let keys = matcher.as_ref().map(|m| m.phrase_keys()).unwrap_or_default();
             crate::ui::canvas::search_phrase_fills(&keys, tone)
@@ -934,6 +935,20 @@ impl AppView {
         for (si, section) in sections.iter().enumerate() {
             let Some(editor) = self.raw.editors.get_mut(&section.file_id) else { continue };
             let mut decorations = Vec::new();
+            // Syntax Color is the lowest paint: the Matches and Markers below
+            // go over it.
+            if colors.syntax.is_some() {
+                let mut offset = 0usize;
+                for line in section.lines.all().iter().take(crate::syntax_color::MAX_EDITOR_LINES) {
+                    for (range, color) in colors.syntax_paints(line, crate::syntax_color::Scope::Line) {
+                        decorations.push(TextDecoration::new(
+                            offset + range.start..offset + range.end,
+                            HighlightStyle { color: Some(color), ..Default::default() },
+                        ));
+                    }
+                    offset += line.len() + 1;
+                }
+            }
             if let Some(matcher) = &matcher {
                 let mut offset = 0usize;
                 for (li, line) in section.lines.all().iter().enumerate() {
