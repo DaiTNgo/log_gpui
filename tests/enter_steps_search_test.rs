@@ -71,7 +71,7 @@ fn enter_in_the_search_field_steps_once(cx: &mut TestAppContext) {
 #[gpui::test]
 fn enter_in_another_input_leaves_the_search_alone(cx: &mut TestAppContext) {
     let mut h = searched(cx);
-    focus_input(&mut h, |app| app.rule_input.clone());
+    focus_input(&mut h, |app| app.rule_search.clone());
     press(&mut h, "enter");
     assert_eq!(current(&h), 0);
 }

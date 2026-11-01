@@ -19,10 +19,11 @@ pub struct FilterUi {
     pub picker_open: bool,
     /// Column whose values are being edited (at most one at a time).
     pub expanded: Option<String>,
-    /// "Add value" input of the expanded column.
-    pub value_input: Entity<InputState>,
-    /// Narrows the value list of the expanded column.
+    /// Narrows the value list of the expanded column; Enter adds the text
+    /// as a Custom Value.
     pub search_input: Entity<InputState>,
+    /// The From / To inputs of the Time Range are open.
+    pub time_open: bool,
     /// Column `search_input` was last reset for; a different column clears it.
     pub search_scope: Option<String>,
     pub from_input: Entity<InputState>,
@@ -35,31 +36,25 @@ pub struct FilterUi {
 
 impl FilterUi {
     pub fn new(window: &mut Window, cx: &mut Context<AppView>) -> Self {
-        let value_input = cx.new(|cx| InputState::new(window, cx).placeholder("Add value…"));
-        let search_input = cx.new(|cx| InputState::new(window, cx).placeholder("Search values…"));
+        let search_input = cx.new(|cx| InputState::new(window, cx).placeholder("Search or add a value…"));
         let from_input = cx.new(|cx| InputState::new(window, cx).placeholder("From"));
         let to_input = cx.new(|cx| InputState::new(window, cx).placeholder("To"));
 
         let mut subscriptions = Vec::new();
         subscriptions.push(cx.subscribe_in(
-            &value_input,
+            &search_input,
             window,
-            |this: &mut AppView, input, event: &InputEvent, window, cx| {
-                if let InputEvent::PressEnter { .. } = event {
+            |this: &mut AppView, input, event: &InputEvent, window, cx| match event {
+                InputEvent::Change => cx.notify(),
+                InputEvent::PressEnter { .. } => {
                     let text = input.read(cx).value().to_string();
                     if this.filter_add_expanded_custom(&text, cx) {
-                        input.update(cx, |state, cx| {
-                            state.set_value(SharedString::from(""), window, cx)
-                        });
+                        input.update(cx, |state, cx| state.set_value(SharedString::from(""), window, cx));
                     }
                 }
+                _ => {}
             },
         ));
-        subscriptions.push(cx.subscribe(&search_input, |_this: &mut AppView, _, event: &InputEvent, cx| {
-            if matches!(event, InputEvent::Change) {
-                cx.notify();
-            }
-        }));
         for input in [&from_input, &to_input] {
             subscriptions.push(cx.subscribe_in(
                 input,
@@ -77,8 +72,8 @@ impl FilterUi {
         Self {
             picker_open: false,
             expanded: None,
-            value_input,
             search_input,
+            time_open: false,
             search_scope: None,
             from_input,
             to_input,

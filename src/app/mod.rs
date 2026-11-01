@@ -7,6 +7,7 @@ pub mod color;
 mod connection_details;
 mod commands;
 pub mod columns;
+pub mod context_layout;
 pub mod line_config;
 pub mod formats;
 pub mod format_editor;
@@ -200,7 +201,6 @@ pub struct AppView {
     pub selection_menu: Option<selection_menu::SelectionTarget>,
     /// The "+ Add rule" form of the Highlights section.
     pub rule_form: Option<highlights::RuleForm>,
-    pub rule_input: Entity<InputState>,
     /// Narrows the value list of the New rule form.
     pub rule_search: Entity<InputState>,
     pub rule_search_scope: Option<String>,
@@ -279,6 +279,8 @@ pub struct AppView {
     // Sidebar state
     pub sidebar_state: LeftSidebarState,
     pub context_sidebar: ContextSidebarState,
+    /// Where the context sidebar's body was last drawn.
+    pub context_body_bounds: std::rc::Rc<std::cell::Cell<gpui::Bounds<gpui::Pixels>>>,
     pub expanded_projects: HashSet<String>,
     /// Log Spaces whose file list is open in the sidebar.
     pub expanded_spaces: HashSet<String>,
@@ -511,26 +513,20 @@ impl AppView {
             state.set_line_number(false, window, cx);
             state
         });
-        let rule_search = cx.new(|cx| InputState::new(window, cx).placeholder("Search values…"));
-        cx.subscribe(&rule_search, |_this: &mut Self, _, event: &InputEvent, cx| {
-            if matches!(event, InputEvent::Change) {
-                cx.notify();
-            }
-        })
-        .detach();
-        let rule_input = cx.new(|cx| InputState::new(window, cx).placeholder("Add value…  (contains)"));
+        // Typing narrows the values; Enter adds the text as a Custom Value.
+        let rule_search = cx.new(|cx| InputState::new(window, cx).placeholder("Search or add a value…"));
         cx.subscribe_in(
-            &rule_input,
+            &rule_search,
             window,
-            |this: &mut Self, input, event: &InputEvent, window, cx| {
-                if let InputEvent::PressEnter { .. } = event {
+            |this: &mut Self, input, event: &InputEvent, window, cx| match event {
+                InputEvent::Change => cx.notify(),
+                InputEvent::PressEnter { .. } => {
                     let text = input.read(cx).value().to_string();
                     if this.rule_form_add_custom(&text, cx) {
-                        input.update(cx, |state, cx| {
-                            state.set_value(gpui::SharedString::from(""), window, cx)
-                        });
+                        input.update(cx, |state, cx| state.set_value(gpui::SharedString::from(""), window, cx));
                     }
                 }
+                _ => {}
             },
         )
         .detach();
@@ -587,7 +583,6 @@ impl AppView {
             color_picker,
             selection_menu: None,
             rule_form: None,
-            rule_input,
             rule_search,
             rule_search_scope: None,
             inspector_editor,
@@ -631,6 +626,7 @@ impl AppView {
             project_rename_buffer: String::new(),
             sidebar_state: LeftSidebarState::new(),
             context_sidebar: ContextSidebarState::new(),
+            context_body_bounds: Default::default(),
             expanded_projects,
             expanded_spaces,
             renaming: None,

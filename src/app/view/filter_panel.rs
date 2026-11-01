@@ -13,12 +13,11 @@ use gpui::{
     div, px, Context, ElementId, InteractiveElement, IntoElement, ParentElement, SharedString,
     StatefulInteractiveElement, Styled,
 };
-use gpui_component::button::{Button, ButtonVariants as _};
+use gpui_component::button::{Button, ButtonGroup, ButtonVariants as _};
 use gpui_component::checkbox::Checkbox;
 use gpui_component::input::Input;
 use gpui_component::tag::Tag;
 use gpui_component::{h_flex, v_flex, ActiveTheme as _, Icon, Selectable as _, Sizable as _};
-use crate::ui::context_sidebar::count_badge;
 use gpui_kit::assets::IconName;
 
 /// Tallest the value list of an open filter card grows before it scrolls.
@@ -141,15 +140,17 @@ impl AppView {
             let folded = value.folded.clone();
             let checked = self.filter_state.is_value_ticked(&col.key, &value.folded);
             let view = view.clone();
-            list = list.child(
+            list = list.child(value_row(
                 Checkbox::new(ElementId::from(format!("filter-val-{}-{}", col.key, vix)))
-                    .label(SharedString::from(format!("{}  ({})", value.display, value.count)))
+                    .label(SharedString::from(value.display.clone()))
                     .checked(checked)
                     .on_click(move |_, _window, app| {
                         let (key, folded) = (key.clone(), folded.clone());
                         view.update(app, |this, cx| this.filter_toggle_value(&key, &folded, cx));
                     }),
-            );
+                value.count,
+                cx,
+            ));
         }
         // A ticked value whose last line left the Live Window stays, with 0.
         let missing: Vec<String> = self
@@ -168,15 +169,17 @@ impl AppView {
             let key = col.key.clone();
             let view = view.clone();
             let toggled = folded.clone();
-            list = list.child(
+            list = list.child(value_row(
                 Checkbox::new(ElementId::from(format!("filter-val-{}-missing-{}", col.key, i)))
-                    .label(SharedString::from(format!("{folded}  (0)")))
+                    .label(SharedString::from(folded))
                     .checked(true)
                     .on_click(move |_, _window, app| {
                         let (key, folded) = (key.clone(), toggled.clone());
                         view.update(app, |this, cx| this.filter_toggle_value(&key, &folded, cx));
                     }),
-            );
+                0,
+                cx,
+            ));
         }
         let many = col.values.len() >= VALUE_LIST_FIXED_FROM;
         // Capped, and fixed once the list is long: ticking or searching must
@@ -191,12 +194,7 @@ impl AppView {
             .when(!query.is_empty() && self.value_list_is_empty(col, &query), |d| {
                 d.child(div().text_xs().text_color(cx.theme().muted_foreground).child("No value matches."))
             });
-        v_flex()
-            .w_full()
-            .gap_1()
-            .child(Input::new(&self.filter_ui.search_input).small())
-            .child(scroller)
-            .into_any_element()
+        scroller.into_any_element()
     }
 
     fn value_list_is_empty(&self, col: &ColumnIndex, query: &str) -> bool {
@@ -212,14 +210,18 @@ impl AppView {
         let label = self.filter_column_name(key, &col.map_or_else(|| key.to_string(), |c| c.label.clone()));
         let cf = self.filter_state.column(key);
         let hide = cf.is_some_and(|c| c.hide);
-        let count = cf.map_or(0, |c| c.values.len() + c.custom.len());
         let expanded = self.filter_ui.expanded.as_deref() == Some(key);
+        let summary = cf.filter(|c| c.is_active()).map(|c| {
+            let text = c.chip_text("", |v| {
+                col.and_then(|col| col.values.iter().find(|x| x.folded == v)).map_or_else(|| v.to_string(), |x| x.display.clone())
+            });
+            text.trim_start_matches("not ").trim_start_matches(": ").to_string()
+        });
 
         let toggle_key = key.to_string();
         let clear_key = key.to_string();
         let header = h_flex()
             .w_full()
-            // Fixed height: the count / hide tags must not change the row.
             .h(px(24.0))
             .gap_2()
             .items_center()
@@ -228,7 +230,7 @@ impl AppView {
                     .id(ElementId::from(format!("filter-card-{}", ix)))
                     .flex_1()
                     .min_w(px(0.0))
-                    .gap_2()
+                    .gap_1p5()
                     .items_center()
                     .cursor_pointer()
                     .child(
@@ -236,15 +238,20 @@ impl AppView {
                             .size_3()
                             .text_color(cx.theme().muted_foreground),
                     )
+                    .when(hide && summary.is_some(), |this| {
+                        this.child(div().text_xs().text_color(cx.theme().danger).child("not"))
+                    })
+                    .child(div().flex_shrink_0().text_xs().font_weight(gpui::FontWeight::SEMIBOLD).child(label))
                     .child(
                         div()
                             .flex_1()
+                            .min_w(px(0.0))
+                            .truncate()
                             .text_xs()
-                            .font_weight(gpui::FontWeight::SEMIBOLD)
-                            .child(label),
+                            .text_color(cx.theme().muted_foreground)
+                            .when(self.filter_state.paused, |d| d.line_through())
+                            .children(summary),
                     )
-                    .when(hide && count > 0, |this| this.child(count_badge("hide", cx)))
-                    .when(count > 0, |this| this.child(count_badge(count.to_string(), cx)))
                     .on_click(cx.listener(move |this, _, _window, cx| {
                         this.toggle_filter_column(&toggle_key, cx);
                     })),
@@ -262,10 +269,8 @@ impl AppView {
         let mut card = v_flex()
             .w_full()
             .gap_1p5()
-            .p_2()
-            .rounded_md()
-            .border_1()
-            .border_color(cx.theme().border)
+            .when(expanded, |c| c.p_2().rounded_md().border_1().border_color(cx.theme().border))
+            .when(!expanded, |c| c.px_2())
             .child(header)
             .when_some(col.is_none().then(|| self.unread_column(key)).flatten(), |card, reason| {
                 let note = match reason {
@@ -276,17 +281,9 @@ impl AppView {
             });
 
         if expanded {
-            let view = cx.entity();
-            let hide_key = key.to_string();
-            card = card.child(
-                Checkbox::new(ElementId::from(format!("filter-hide-{}", ix)))
-                    .label("Hide the chosen values")
-                    .checked(hide)
-                    .on_click(move |checked, _window, app| {
-                        let (key, checked) = (hide_key.clone(), *checked);
-                        view.update(app, |this, cx| this.filter_set_hide(&key, checked, cx));
-                    }),
-            );
+            if col.is_none_or(|c| c.is_filterable()) {
+                card = card.child(Input::new(&self.filter_ui.search_input).small());
+            }
             match col {
                 Some(col) if col.is_filterable() => {
                     card = card.child(self.render_value_list(col, cx));
@@ -304,7 +301,7 @@ impl AppView {
                         div()
                             .text_xs()
                             .text_color(cx.theme().muted_foreground)
-                            .child("Lines whose message contains the text added."),
+                            .child("Lines whose message contains the text added (Enter)."),
                     );
                 }
                 None => {
@@ -335,17 +332,46 @@ impl AppView {
                 }
                 card = card.child(chips);
             }
-            if col.is_none_or(|c| c.is_filterable()) {
-                card = card.child(Input::new(&self.filter_ui.value_input).small());
-            }
+            let (show_key, hide_key) = (key.to_string(), key.to_string());
+            card = card.child(
+                ButtonGroup::new(ElementId::from(format!("filter-mode-{}", ix)))
+                    .outline()
+                    .xsmall()
+                    .child(Button::new(ElementId::from(format!("filter-show-{}", ix))).label("Show only these").selected(!hide))
+                    .child(Button::new(ElementId::from(format!("filter-hide-{}", ix))).label("Hide these").selected(hide))
+                    .on_click(cx.listener(move |this, selected: &Vec<usize>, _, cx| {
+                        let hide = selected.first() == Some(&1);
+                        let key = if hide { &hide_key } else { &show_key };
+                        this.filter_set_hide(key, hide, cx);
+                    })),
+            );
         }
         card.into_any_element()
     }
 
-    fn render_time_range(&self) -> gpui::AnyElement {
-        let from_ok = self.time_bound_is_valid(&self.filter_state.time_range.from);
-        let to_ok = self.time_bound_is_valid(&self.filter_state.time_range.to);
-        v_flex()
+    fn render_time_range(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let range = &self.filter_state.time_range;
+        let from_ok = self.time_bound_is_valid(&range.from);
+        let to_ok = self.time_bound_is_valid(&range.to);
+        let open = self.filter_ui.time_open;
+        let summary = match (range.from.is_empty(), range.to.is_empty()) {
+            (true, true) => "All lines".to_string(),
+            (false, true) => format!("From {}", range.from),
+            (true, false) => format!("Until {}", range.to),
+            (false, false) => format!("{} – {}", range.from, range.to),
+        };
+        let mut presets = h_flex().gap_1();
+        for (label, secs) in crate::app::context_layout::TIME_PRESETS {
+            presets = presets.child(
+                Button::new(ElementId::from(format!("time-preset-{label}")))
+                    .outline()
+                    .xsmall()
+                    .label(label)
+                    .selected(secs.is_none() && !range.is_active())
+                    .on_click(cx.listener(move |this, _, _, cx| this.apply_time_preset(secs, cx))),
+            );
+        }
+        let mut block = v_flex()
             .w_full()
             .gap_1()
             .child(
@@ -354,53 +380,45 @@ impl AppView {
                     .h(px(24.0))
                     .gap_2()
                     .items_center()
-                    .child(
-                        div()
-                            .flex_1()
-                            .text_xs()
-                            .font_weight(gpui::FontWeight::SEMIBOLD)
-                            .child("Time range"),
-                    )
+                    .child(div().flex_1().text_xs().font_weight(gpui::FontWeight::SEMIBOLD).child("Time range"))
                     .when(!from_ok || !to_ok, |this| this.child(Tag::danger().child("! invalid time"))),
             )
+            .child(presets)
             .child(
                 h_flex()
+                    .id("time-summary")
+                    .debug_selector(|| "time-summary".into())
                     .w_full()
-                    .gap_2()
-                    .child(div().flex_1().min_w(px(0.0)).child(Input::new(&self.filter_ui.from_input).small()))
-                    .child(div().flex_1().min_w(px(0.0)).child(Input::new(&self.filter_ui.to_input).small())),
-            )
-            .into_any_element()
+                    .gap_1()
+                    .items_center()
+                    .cursor_pointer()
+                    .text_xs()
+                    .text_color(cx.theme().muted_foreground)
+                    .child(Icon::new(if open { IconName::ChevronDown } else { IconName::ChevronRight }).size_3())
+                    .child(div().flex_1().min_w(px(0.0)).truncate().child(summary))
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.filter_ui.time_open = !this.filter_ui.time_open;
+                        cx.notify();
+                    })),
+            );
+        if open {
+            let field = |label: &'static str, input| {
+                v_flex()
+                    .w_full()
+                    .gap_0p5()
+                    .child(div().text_xs().text_color(cx.theme().muted_foreground).child(label))
+                    .child(Input::new(input).small())
+            };
+            block = block
+                .child(field("From", &self.filter_ui.from_input))
+                .child(field("To", &self.filter_ui.to_input));
+        }
+        block.into_any_element()
     }
 
     /// Filter section body: add filter, one card per filtered column, time range.
     pub(super) fn render_filter_panel_content(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
         let mut root = v_flex().w_full().gap_2();
-
-        root = root.child(
-            h_flex()
-                .w_full()
-                .h(px(24.0))
-                .items_center()
-                .justify_between()
-                .child(
-                    Button::new("filter-add")
-                        .ghost()
-                        .xsmall()
-                        .label("+ Add filter")
-                        .selected(self.filter_ui.picker_open)
-                        .on_click(cx.listener(|this, _, _window, cx| this.toggle_filter_picker(cx))),
-                )
-                .when(!self.filter_state.is_empty(), |this| {
-                    this.child(
-                        Button::new("filter-clear-all")
-                            .ghost()
-                            .xsmall()
-                            .label("Clear all")
-                            .on_click(cx.listener(|this, _, _window, cx| this.filter_clear_all(cx))),
-                    )
-                }),
-        );
 
         if let Some(percent) = self.filter_read_so_far() {
             root = root.child(
@@ -438,10 +456,21 @@ impl AppView {
                 div()
                     .text_xs()
                     .text_color(cx.theme().muted_foreground)
-                    .child("Add a filter to choose which values to show or hide."),
+                    .child("Press + to choose which values to show or hide, or right-click a cell."),
             );
         }
 
-        root.child(self.render_time_range()).into_any_element()
+        root.child(self.render_time_range(cx)).into_any_element()
     }
+}
+
+/// A value of the list: its checkbox, and its number of lines on the right.
+fn value_row(checkbox: Checkbox, count: usize, cx: &gpui::App) -> gpui::AnyElement {
+    h_flex()
+        .w_full()
+        .gap_2()
+        .items_center()
+        .child(div().flex_1().min_w(px(0.0)).child(checkbox))
+        .child(div().flex_shrink_0().text_xs().text_color(cx.theme().muted_foreground).child(crate::app::format_count(count)))
+        .into_any_element()
 }

@@ -4,7 +4,7 @@
 
 use super::AppView;
 use crate::highlight::{HighlightRule, MESSAGE_COLUMN};
-use crate::palette::{HighlightColor, Tone, palette_cells};
+use crate::palette::{HighlightColor, Tone};
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
     AppContext as _, Context, ElementId, InteractiveElement, IntoElement, ParentElement, Render, SharedString,
@@ -15,7 +15,8 @@ use gpui_component::checkbox::Checkbox;
 use gpui_component::input::Input;
 use gpui_component::switch::Switch;
 use crate::ui::context_sidebar::count_badge;
-use gpui_component::{ActiveTheme as _, Icon, Sizable as _, h_flex, v_flex};
+use gpui_component::menu::{ContextMenuExt as _, DropdownMenu as _, PopupMenuItem};
+use gpui_component::{ActiveTheme as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::assets::IconName;
 
 /// The payload of dragging a rule: its place in the list.
@@ -73,9 +74,13 @@ impl AppView {
         let column = self.column_label(&rule.column);
         let drag = DragRule { ix, label: format!("{column}: {}", rule.summary()) };
         let view = cx.entity();
+        let (menu_view, more_view) = (cx.entity(), cx.entity());
         let enabled = rule.enabled;
+        let group = SharedString::from(format!("hl-rule-{id}"));
         h_flex()
             .id(ElementId::from(format!("hl-rule-{id}")))
+            .group(group.clone())
+            .cursor_grab()
             .w_full()
             .gap_2()
             .px_1()
@@ -90,12 +95,6 @@ impl AppView {
             .on_drop(cx.listener(move |this, dragged: &DragRule, _window, cx| {
                 this.move_highlight_rule(dragged.ix, ix, cx);
             }))
-            .child(
-                div()
-                    .cursor_grab()
-                    .text_color(cx.theme().muted_foreground)
-                    .child(Icon::new(IconName::GripVertical).size(px(14.0))),
-            )
             .child(
                 swatch(ElementId::from(format!("hl-color-{id}")), &rule.color, tone, 18.0).on_click(
                     cx.listener(move |this, event: &gpui::ClickEvent, _window, cx| {
@@ -125,12 +124,15 @@ impl AppView {
                     }),
             )
             .child(
-                Button::new(ElementId::from(format!("hl-delete-{id}")))
-                    .ghost()
-                    .xsmall()
-                    .icon(IconName::Close)
-                    .on_click(cx.listener(move |this, _, _window, cx| this.remove_highlight_rule(id, cx))),
+                div().invisible().group_hover(group, |s| s.visible()).child(
+                    Button::new(ElementId::from(format!("hl-more-{id}")))
+                        .ghost()
+                        .xsmall()
+                        .icon(IconName::Ellipsis)
+                        .dropdown_menu(move |menu, _, _| rule_menu(menu, id, &more_view)),
+                ),
             )
+            .context_menu(move |menu, _, _| rule_menu(menu, id, &menu_view))
             .into_any_element()
     }
 
@@ -164,8 +166,9 @@ impl AppView {
 
         // Values
         if let Some(key) = form.column.as_deref() {
+            card = card.child(Input::new(&self.rule_search).small());
             if key == MESSAGE_COLUMN {
-                card = card.child(div().text_xs().text_color(muted).child("Rows whose message contains the added text."));
+                card = card.child(div().text_xs().text_color(muted).child("Rows whose message contains the text added (Enter)."));
             } else if let Some(col) = self.filter_index.column(key).filter(|c| c.is_filterable()) {
                 let view = cx.entity();
                 let query = crate::unicode_text::fold(self.rule_search.read(cx).value().trim());
@@ -194,7 +197,6 @@ impl AppView {
                     list = list.child(div().text_xs().text_color(muted).child("No value matches."));
                 }
                 let many = col.values.len() >= 12;
-                card = card.child(Input::new(&self.rule_search).small());
                 card = card.child(
                     div()
                         .id("hl-form-values")
@@ -227,20 +229,33 @@ impl AppView {
                 }
                 card = card.child(chips);
             }
-            card = card.child(Input::new(&self.rule_input).small());
         }
 
-        // Color
-        let mut grid = h_flex().w_full().flex_wrap().gap_1();
-        for (cix, color) in palette_cells().into_iter().enumerate() {
+        // Color: eight distinct ones, the chosen one, and the whole palette.
+        let mut colors = rule_form_colors();
+        if !colors.contains(&form.color) {
+            colors.push(form.color.clone());
+        }
+        let mut grid = h_flex().w_full().flex_wrap().gap_1().items_center();
+        for (cix, color) in colors.into_iter().enumerate() {
             let selected = form.color == color;
             let pick = color.clone();
             grid = grid.child(
-                swatch(ElementId::from(format!("hl-form-color-{cix}")), &color, tone, 14.0)
+                swatch(ElementId::from(format!("hl-form-color-{cix}")), &color, tone, 18.0)
                     .when(selected, |s| s.border_2().border_color(cx.theme().foreground))
                     .on_click(cx.listener(move |this, _, _window, cx| this.rule_form_set_color(pick.clone(), cx))),
             );
         }
+        grid = grid.child(
+            Button::new("hl-form-more-colors")
+                .ghost()
+                .xsmall()
+                .label("…")
+                .tooltip("All colors")
+                .on_click(cx.listener(|this, event: &gpui::ClickEvent, _window, cx| {
+                    this.open_rule_form_palette(event.position(), cx)
+                })),
+        );
         card = card.child(grid);
 
         if let Some(error) = form.error {
@@ -273,15 +288,6 @@ impl AppView {
     pub(super) fn render_highlights_panel_content(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
         let rules = self.highlight_rules();
         let mut root = v_flex().w_full().gap_2();
-        root = root.child(
-            h_flex().w_full().items_center().justify_between().child(
-                Button::new("hl-add-rule")
-                    .ghost()
-                    .xsmall()
-                    .label("+ Add rule")
-                    .on_click(cx.listener(|this, _, _window, cx| this.open_rule_form(cx))),
-            ),
-        );
         if let Some(form) = self.render_rule_form(cx) {
             root = root.child(form);
         }
@@ -293,7 +299,7 @@ impl AppView {
                 div()
                     .text_xs()
                     .text_color(cx.theme().muted_foreground)
-                    .child("A rule paints every row whose value in a column matches. Right-click a cell to start one."),
+                    .child("A rule paints every row whose value in a column matches. Press + or right-click a cell to start one."),
             );
         } else if rules.len() > 1 {
             root = root.child(
@@ -305,4 +311,23 @@ impl AppView {
         }
         root.into_any_element()
     }
+}
+
+/// The menu of a rule's row.
+fn rule_menu(menu: gpui_component::menu::PopupMenu, id: u64, view: &gpui::Entity<AppView>) -> gpui_component::menu::PopupMenu {
+    let view = view.clone();
+    menu.item(
+        PopupMenuItem::new("Delete rule")
+            .on_click(move |_, _, app| view.update(app, |this, cx| this.remove_highlight_rule(id, cx))),
+    )
+}
+
+/// The colors the New rule form offers at once: the medium shade of eight
+/// hues far apart.
+pub fn rule_form_colors() -> Vec<HighlightColor> {
+    use crate::palette::{Hue, Shade};
+    [Hue::Red, Hue::Orange, Hue::Amber, Hue::Green, Hue::Teal, Hue::Blue, Hue::Purple, Hue::Pink]
+        .into_iter()
+        .map(|h| HighlightColor::palette(h, Shade::Medium))
+        .collect()
 }

@@ -27,6 +27,8 @@ pub enum ColorTarget {
     RecolorTextHighlight { key: String, raw: bool },
     /// Change the color of a Highlight Rule.
     Rule(u64),
+    /// Choose the color of the New rule form.
+    RuleForm,
 }
 
 /// Where a color chosen for a selection goes.
@@ -238,6 +240,12 @@ impl AppView {
         cx.notify();
     }
 
+    /// Open the palette to choose the color of the New rule form.
+    pub fn open_rule_form_palette(&mut self, at: Point<Pixels>, cx: &mut Context<Self>) {
+        self.color_bar = Some(ColorBar { palette_open: true, ..ColorBar::new(at, ColorTarget::RuleForm) });
+        cx.notify();
+    }
+
     /// The text "Everywhere" would highlight: the selection, when it lies in
     /// one line and is not only whitespace.
     pub fn bar_everywhere_text(&self) -> Option<String> {
@@ -367,6 +375,7 @@ impl AppView {
             }
             ColorTarget::RecolorTextHighlight { key, .. } => self.recolor_text_highlight(&key, color, cx),
             ColorTarget::Rule(id) => self.set_highlight_rule_color(id, color, cx),
+            ColorTarget::RuleForm => self.rule_form_set_color(color, cx),
         }
         cx.notify();
     }

@@ -19,6 +19,9 @@ pub struct SessionManifest {
     /// Focus Pane visibility and height.
     #[serde(default)]
     pub focus_pane: crate::workspace::state::FocusPaneState,
+    /// Width of the context sidebar and the Inspector's height and mode.
+    #[serde(default)]
+    pub context_layout: crate::workspace::state::ContextSidebarLayout,
     /// Newest lines kept for each Remote File.
     #[serde(default = "crate::workspace::state::default_live_window")]
     pub live_window: usize,
@@ -143,6 +146,7 @@ impl SessionManifest {
             active_project_id: ws.active_project_id.clone(),
             projects,
             focus_pane: ws.focus_pane.clone(),
+            context_layout: ws.context_layout.clone(),
             live_window: ws.live_window,
             full_read_limit_lines: ws.full_read_limit_lines,
             live_glob_limit: ws.live_glob_limit,
@@ -183,6 +187,7 @@ impl SessionManifest {
         }
         ws.active_project_id = self.active_project_id;
         ws.focus_pane = self.focus_pane;
+        ws.context_layout = self.context_layout;
         // A session saved before kept the old default: it takes the new
         // one. A number the user chose stays.
         ws.live_window = if self.version < 5 && self.live_window == OLD_DEFAULT_LIVE_WINDOW {
