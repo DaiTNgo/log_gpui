@@ -28,7 +28,7 @@
 
 - [x] 5.1 Tách `ContextSidebar::render` thành vùng cuộn (Filter, Highlights, Columns) và Inspector ở đáy, có thanh chia kéo được (tối thiểu 120px mỗi bên)
 - [x] 5.2 Cạnh trái kéo được để đổi độ rộng (280–560px). Bỏ hằng `CONTEXT_SIDEBAR_WIDTH` ở chỗ vẽ
-- [x] 5.3 Header phạm vi: tên file/Log Space và loại view
+- [x] 5.3 Không có dòng ghi tên file/loại view (tab đã ghi); header section có nền riêng
 - [x] 5.4 Header section: phần tóm tắt bên phải và nút "+" / tìm field. Bỏ các dòng "+ Add filter" / "+ Add rule". Columns gập mặc định
 - [x] 5.5 Test: Inspector giữ chỗ khi mở form dài; chiều cao và độ rộng được lưu; Columns gập lần đầu
 
@@ -37,6 +37,7 @@
 - [x] 6.1 Viết `render_value_picker` dùng chung: một ô nhập (gõ để lọc, Enter thêm Custom Value), số đếm căn phải. Gộp `search_input` + `value_input` và `rule_search` + `rule_input`
 - [x] 6.2 Thẻ Filter dạng tóm tắt một dòng; bấm vào thì mở khối chọn giá trị; lựa chọn hiện / Hide Mode ở cuối khối
 - [x] 6.3 Time Range: preset 5m / 1h / 24h / All neo theo timestamp mới nhất của view; dòng tóm tắt; bấm vào mở hai ô Từ/Đến xếp dọc có nhãn
+- [x] 6.7 Mỗi mục trong section là một hàng 28px không viền (thẻ Filter, rule, cột); nhãn nhóm chữ nhỏ viết hoa; `contains "…"` thay `∋`; nút tạm tắt ghi chữ Pause/Resume
 - [x] 6.4 Hàng Highlight Rule: bỏ tay kéo riêng (kéo cả hàng), bỏ nút × thường trực, thêm "⋯" khi hover và menu chuột phải có Delete
 - [x] 6.5 Form New rule: 8 màu và "…" mở palette đầy đủ; "+" khi form đang mở không tạo lại form (`open_rule_form`)
 - [x] 6.6 Test: Enter trong ô nhập thêm Custom Value; preset 1h tính theo log chứ không theo giờ máy; "+" lần hai giữ nội dung form; xoá rule qua menu
@@ -44,9 +45,9 @@
 ## 7. Inspector
 
 - [x] 7.1 Chế độ Fields: lấy các cột có giá trị của Parent Line đang chọn; dòng không có cột nào parse được thì chỉ có Raw
-- [x] 7.2 Header Inspector: số dòng, Fields/Raw, Copy, ↑↓ (đi qua `selected_row_pos`)
+- [x] 7.2 Header Inspector: số dòng, Fields/Raw, Copy (không có nút ↑↓: phím ↑↓ của view đã làm việc này)
 - [x] 7.3 Ba nút khi trỏ vào field (Show only, Hide, Highlight rows), chỉ trong Parsed View, dùng `filter_from_selection` với `whole = true`
-- [x] 7.4 Test: Fields liệt kê đúng field; Raw giữ text lưu trữ và Continuation Line; Hide từ field tạo đúng điều kiện; ↓ chọn dòng hiển thị kế tiếp
+- [x] 7.4 Test: Fields liệt kê đúng field; Raw giữ text lưu trữ và Continuation Line; Hide từ field tạo đúng điều kiện
 
 ## 8. Tài liệu và kiểm tra
 

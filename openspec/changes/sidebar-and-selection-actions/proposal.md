@@ -19,21 +19,20 @@ Muốn lọc thì phải mở sidebar và đi qua bốn bước. Đóng sidebar 
 - **BREAKING (spec)**: Menu chuột phải được có lệnh lọc. Spec hiện tại cấm điều này ("Menu chuột phải SHALL NOT có lệnh lọc").
 - Filter vẫn chỉ nằm trong context sidebar, vì nó chỉ lọc Focus Pane còn bảng luôn hiện toàn bộ log. Header của section Filter có nút tạm tắt toàn bộ Filter mà không xoá điều kiện nào.
 - Context sidebar sắp xếp lại:
-  - Header ghi phạm vi (file/view đang áp dụng).
   - Nút "+" nằm trên header của section.
   - Mỗi điều kiện Filter là một dòng tóm tắt, bấm vào mới mở chi tiết.
   - Time Range có preset 5m / 1h / 24h / All và một dòng tóm tắt mở ra hai ô Từ/Đến xếp dọc.
   - Hàng Highlight Rule gọn hơn: xoá qua menu, kéo cả hàng để đổi thứ tự.
   - Columns gập mặc định.
   - Inspector ghim ở đáy với thanh chia kéo được.
-- Inspector có hai chế độ: **Fields** (key → value, mỗi field có nút lọc, ẩn và highlight) và **Raw** (text lưu trữ như hiện nay). Thêm nút Copy và ↑↓ để sang dòng khác.
+- Inspector có hai chế độ: **Fields** (key → value, mỗi field có nút lọc, ẩn và highlight) và **Raw** (text lưu trữ như hiện nay). Thêm nút Copy.
 - Form "New rule" và thẻ Filter dùng chung một khối chọn giá trị: một ô vừa tìm vừa thêm "contains", số đếm căn phải. Bảng màu của form rút còn 8 màu.
 - Sửa lỗi: "+ Add rule" khi form đang mở không xoá form nữa.
 
 ## Capabilities
 
 ### New Capabilities
-- `context-sidebar`: bố cục context sidebar (header phạm vi, các section tóm tắt, Inspector ghim ở đáy, đổi độ rộng), và Inspector chế độ Fields/Raw cùng các nút trên field.
+- `context-sidebar`: bố cục context sidebar (các section tóm tắt, Inspector ghim ở đáy, đổi độ rộng), và Inspector chế độ Fields/Raw cùng các nút trên field.
 - `selection-menu`: menu chuột phải trên vùng chọn, dùng chung cho Parsed View và Raw View.
 
 ### Modified Capabilities

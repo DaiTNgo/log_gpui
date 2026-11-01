@@ -1,9 +1,8 @@
 //! Logic: the size of the context sidebar (its width, the Inspector's
-//! height under the splitter), the line naming what it acts on, and the
-//! Time Range presets of its Filter section.
+//! height under the splitter), the Inspector's fields, and the Time Range
+//! presets of its Filter section.
 
 use super::AppView;
-use crate::workspace::TabTarget;
 use crate::workspace::state::{CONTEXT_SIDEBAR_WIDTH, InspectorMode};
 use crate::workspace::working_set::ViewMode;
 use gpui::{Context, Pixels};
@@ -21,26 +20,6 @@ pub fn preset_from(latest: f64, secs: i64) -> Option<String> {
 }
 
 impl AppView {
-    /// What the context sidebar acts on: `api.log · Parsed`.
-    pub fn context_scope_label(&self) -> String {
-        let project = self.active_project();
-        let name = match self.active_target() {
-            Some(TabTarget::LogSpace { space_id }) => {
-                project.and_then(|p| p.log_space(&space_id)).map_or(space_id.clone(), |s| s.name.clone())
-            }
-            Some(TabTarget::FileView { space_id, file_id }) => project
-                .and_then(|p| p.log_space(&space_id))
-                .and_then(|s| s.file(&file_id))
-                .map_or(file_id.clone(), |f| f.display_name.clone()),
-            _ => String::new(),
-        };
-        let view = match self.view_mode {
-            ViewMode::Parsed => "Parsed View",
-            ViewMode::Raw => "Raw View",
-        };
-        if name.is_empty() { view.to_string() } else { format!("{name} · {view}") }
-    }
-
     /// The splitter above the Inspector was dragged to window height `y`.
     pub fn drag_inspector_split(&mut self, y: Pixels, cx: &mut Context<Self>) {
         let body = self.context_body_bounds.get();
@@ -133,14 +112,6 @@ impl AppView {
             fields.push(InspectorField { key: crate::columns::MESSAGE_KEY.into(), label: "Message".into(), value: v.to_string() });
         }
         fields
-    }
-
-    /// The Inspector's ↑ / ↓: the row shown before or after the current one.
-    pub fn inspector_step(&mut self, down: bool, cx: &mut Context<Self>) {
-        use crate::go_to::RowKey;
-        if self.view_mode == ViewMode::Parsed {
-            self.move_row_by_key(if down { RowKey::Down } else { RowKey::Up }, cx);
-        }
     }
 
     /// Copy what the Inspector shows: the stored text, or the fields as `name: value` lines.

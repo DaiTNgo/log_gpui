@@ -241,7 +241,7 @@ impl AppView {
                     .when(hide && summary.is_some(), |this| {
                         this.child(div().text_xs().text_color(cx.theme().danger).child("not"))
                     })
-                    .child(div().flex_shrink_0().text_xs().font_weight(gpui::FontWeight::SEMIBOLD).child(label))
+                    .child(div().flex_shrink_0().text_xs().child(label))
                     .child(
                         div()
                             .flex_1()
@@ -269,8 +269,9 @@ impl AppView {
         let mut card = v_flex()
             .w_full()
             .gap_1p5()
-            .when(expanded, |c| c.p_2().rounded_md().border_1().border_color(cx.theme().border))
-            .when(!expanded, |c| c.px_2())
+            .px_1()
+            .rounded_md()
+            .when(expanded, |c| c.pb_2().bg(cx.theme().secondary))
             .child(header)
             .when_some(col.is_none().then(|| self.unread_column(key)).flatten(), |card, reason| {
                 let note = match reason {
@@ -364,10 +365,10 @@ impl AppView {
         for (label, secs) in crate::app::context_layout::TIME_PRESETS {
             presets = presets.child(
                 Button::new(ElementId::from(format!("time-preset-{label}")))
-                    .outline()
                     .xsmall()
                     .label(label)
-                    .selected(secs.is_none() && !range.is_active())
+                    .when(secs.is_none() && !range.is_active(), |b| b.primary())
+                    .when(secs.is_some() || range.is_active(), |b| b.ghost())
                     .on_click(cx.listener(move |this, _, _, cx| this.apply_time_preset(secs, cx))),
             );
         }
@@ -377,10 +378,9 @@ impl AppView {
             .child(
                 h_flex()
                     .w_full()
-                    .h(px(24.0))
                     .gap_2()
                     .items_center()
-                    .child(div().flex_1().text_xs().font_weight(gpui::FontWeight::SEMIBOLD).child("Time range"))
+                    .child(div().flex_1().child(super::columns_panel::group_title("Time range", cx)))
                     .when(!from_ok || !to_ok, |this| this.child(Tag::danger().child("! invalid time"))),
             )
             .child(presets)
@@ -394,8 +394,8 @@ impl AppView {
                     .cursor_pointer()
                     .text_xs()
                     .text_color(cx.theme().muted_foreground)
-                    .child(Icon::new(if open { IconName::ChevronDown } else { IconName::ChevronRight }).size_3())
                     .child(div().flex_1().min_w(px(0.0)).truncate().child(summary))
+                    .child(div().flex_shrink_0().child(if open { "Hide" } else { "Edit…" }))
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.filter_ui.time_open = !this.filter_ui.time_open;
                         cx.notify();

@@ -114,11 +114,11 @@ fn separate(menu: PopupMenu, group: &mut bool) -> PopupMenu {
     menu
 }
 
-/// The condition the filter items name: `level = error`, `message ∋ “time”`.
+/// The condition the filter items name: `level = error`, `message contains “time”`.
 pub fn condition_label(cell: &CellValue, custom: bool) -> String {
     let column = crate::columns::default_name(&cell.column).to_lowercase();
     let value = short_text(&cell.value, LABEL_CHARS);
-    if custom { format!("{column} ∋ “{value}”") } else { format!("{column} = {value}") }
+    if custom { format!("{column} contains “{value}”") } else { format!("{column} = {value}") }
 }
 
 /// A row of the menu: a label and the colors to pick. Clicking a color runs

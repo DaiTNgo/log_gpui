@@ -162,7 +162,7 @@ fn labels_name_the_condition() {
     let level = CellValue { column: "level".into(), value: "ERROR".into(), whole: true };
     assert_eq!(condition_label(&level, false), "level = ERROR");
     let message = CellValue { column: "message".into(), value: "timeout".into(), whole: false };
-    assert_eq!(condition_label(&message, true), "message ∋ “timeout”");
+    assert_eq!(condition_label(&message, true), "message contains “timeout”");
 }
 
 #[test]

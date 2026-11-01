@@ -38,13 +38,17 @@ impl AppView {
         let mut filter_actions = h_flex().gap_0p5();
         if active > 0 {
             let paused = self.filter_state.paused;
-            filter_actions = filter_actions.child(Self::header_button(
-                "ctx-filter-pause",
-                if paused { IconName::Play } else { IconName::Pause },
-                if paused { "Apply the Filter again" } else { "Pause the Filter" },
-                cx,
-                |this, cx| this.toggle_filter_paused(cx),
-            ));
+            filter_actions = filter_actions.child(
+                Button::new("ctx-filter-pause")
+                    .ghost()
+                    .xsmall()
+                    .label(if paused { "Resume" } else { "Pause" })
+                    .tooltip(if paused { "Apply the Filter again" } else { "Let every line into the Focus Pane, keeping the conditions" })
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        cx.stop_propagation();
+                        this.toggle_filter_paused(cx)
+                    })),
+            );
         }
         filter_actions = filter_actions.child(Self::header_button("ctx-filter-add", IconName::Plus, "Add a filter", cx, |this, cx| {
             this.context_sidebar.reveal(crate::workspace::ContextSection::Filter);
@@ -113,17 +117,8 @@ impl AppView {
             actions = actions
                 .child(Self::header_button("ctx-inspector-copy", IconName::Copy, "Copy", cx, |this, cx| this.copy_inspector(cx)));
         }
-        if parsed && has_line {
-            actions = actions
-                .child(Self::header_button("ctx-inspector-up", IconName::ChevronUp, "Line above", cx, |this, cx| {
-                    this.inspector_step(false, cx)
-                }))
-                .child(Self::header_button("ctx-inspector-down", IconName::ChevronDown, "Line below", cx, |this, cx| {
-                    this.inspector_step(true, cx)
-                }));
-        }
         let inspector = SectionParts { body, summary, actions: Some(actions.into_any_element()) };
 
-        ContextSections { scope: self.context_scope_label(), filter, highlights, columns, inspector, parsed }
+        ContextSections { filter, highlights, columns, inspector, parsed }
     }
 }

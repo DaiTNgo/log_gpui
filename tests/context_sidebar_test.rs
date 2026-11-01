@@ -158,7 +158,4 @@ fn the_inspector_lists_the_fields_and_filters_from_them(cx: &mut TestAppContext)
         let c = app.filter_state.column("module").unwrap();
         assert!(c.hide && c.values == ["db"]);
     });
-    // ↓ goes to the next row.
-    h.view.update(&mut h.cx, |app, cx| app.inspector_step(true, cx));
-    h.view.read_with(&h.cx, |app, _| assert_eq!(app.selected_row_pos, Some(2)));
 }

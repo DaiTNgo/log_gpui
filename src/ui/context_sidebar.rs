@@ -1,6 +1,6 @@
-//! Right context sidebar for the focused log file: a line naming what it
-//! acts on, the Filter / Highlights / Columns sections in a scrolling area,
-//! and the Inspector pinned at the bottom under a splitter. Every section
+//! Right context sidebar for the focused log file: the Filter / Highlights /
+//! Columns sections in a scrolling area, and the Inspector pinned at the
+//! bottom under a splitter. Every section
 //! reflects the state of the focused file only. The left edge sets the width.
 
 use crate::app::AppView;
@@ -21,8 +21,6 @@ use std::rc::Rc;
 const WINDOW_CHROME_HEIGHT: f32 = 170.0;
 /// Section headers keep this height with or without a summary.
 const SECTION_HEADER_HEIGHT: f32 = 32.0;
-/// Height of the line naming the file and the view.
-const SCOPE_HEIGHT: f32 = 28.0;
 
 /// Compact count badge. Fixed height, so it appearing never changes the row
 /// it sits in (gpui-component's `Tag` is taller than the 12px text beside it).
@@ -62,8 +60,8 @@ impl Render for ResizeContextSidebar {
     }
 }
 
-/// One section: its body, the summary shown on its header and the buttons
-/// at the header's end.
+/// One section: its body, the summary its header shows while it is folded,
+/// and the buttons at the header's end (shown while it is open).
 pub struct SectionParts {
     pub body: gpui::AnyElement,
     pub summary: Option<String>,
@@ -78,8 +76,6 @@ impl SectionParts {
 
 /// Pre-rendered sections.
 pub struct ContextSections {
-    /// What the sidebar acts on: the file or Log Space and the view.
-    pub scope: String,
     pub filter: SectionParts,
     pub highlights: SectionParts,
     pub columns: SectionParts,
@@ -100,6 +96,9 @@ impl ContextSidebar {
         cx: &mut gpui::Context<AppView>,
     ) -> gpui::AnyElement {
         let collapsed = state.is_collapsed(kind);
+        // Folded, the summary says what is inside; open, the content does,
+        // and the buttons act on it.
+        let (summary, actions) = if collapsed { (summary, None) } else { (None, actions) };
         h_flex()
             .id(ElementId::from(format!("ctx-section-{}", kind.as_str())))
             .w_full()
@@ -109,6 +108,9 @@ impl ContextSidebar {
             .pr_2()
             .gap_2()
             .items_center()
+            .bg(cx.theme().secondary)
+            .border_b_1()
+            .border_color(cx.theme().border)
             .cursor_pointer()
             .child(
                 Icon::new(if collapsed { IconName::ChevronRight } else { IconName::ChevronDown })
@@ -140,10 +142,8 @@ impl ContextSidebar {
         let SectionParts { body, summary, actions } = parts;
         v_flex()
             .w_full()
-            .border_b_1()
-            .border_color(cx.theme().border)
             .child(Self::section_header(state, kind, summary, actions, cx))
-            .when(!collapsed, |this| this.child(div().w_full().px_3().pb_3().child(body)))
+            .when(!collapsed, |this| this.child(div().w_full().px_3().pt_2().pb_4().child(body)))
             .into_any_element()
     }
 
@@ -158,7 +158,7 @@ impl ContextSidebar {
         sections: ContextSections,
         cx: &mut gpui::Context<AppView>,
     ) -> gpui::AnyElement {
-        let ContextSections { scope, filter, highlights, columns, inspector, parsed } = sections;
+        let ContextSections { filter, highlights, columns, inspector, parsed } = sections;
         let theme_border = cx.theme().border;
 
         let measured = f32::from(body_bounds.get().size.height);
@@ -270,19 +270,6 @@ impl ContextSidebar {
             .child(
                 v_flex()
                     .size_full()
-                    .child(
-                        h_flex()
-                            .id("ctx-scope")
-                            .h(px(SCOPE_HEIGHT))
-                            .flex_shrink_0()
-                            .px_3()
-                            .items_center()
-                            .border_b_1()
-                            .border_color(theme_border)
-                            .text_xs()
-                            .text_color(cx.theme().muted_foreground)
-                            .child(div().truncate().child(scope)),
-                    )
                     .child(
                         div()
                             .flex_1()

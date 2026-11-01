@@ -14,7 +14,6 @@ use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::checkbox::Checkbox;
 use gpui_component::input::Input;
 use gpui_component::switch::Switch;
-use crate::ui::context_sidebar::count_badge;
 use gpui_component::menu::{ContextMenuExt as _, DropdownMenu as _, PopupMenuItem};
 use gpui_component::{ActiveTheme as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::assets::IconName;
@@ -82,42 +81,43 @@ impl AppView {
             .group(group.clone())
             .cursor_grab()
             .w_full()
+            .h(px(28.0))
             .gap_2()
             .px_1()
-            .py_1()
             .items_center()
             .rounded_md()
-            .border_1()
-            .border_color(cx.theme().border)
+            .hover(|s| s.bg(cx.theme().secondary))
             .opacity(if enabled { 1.0 } else { 0.55 })
             .on_drag(drag, |drag, _, _, cx| cx.new(|_| drag.clone()))
-            .drag_over::<DragRule>(|style, _, _, cx| style.border_color(cx.theme().primary))
+            .drag_over::<DragRule>(|style, _, _, cx| style.bg(cx.theme().accent))
             .on_drop(cx.listener(move |this, dragged: &DragRule, _window, cx| {
                 this.move_highlight_rule(dragged.ix, ix, cx);
             }))
             .child(
-                swatch(ElementId::from(format!("hl-color-{id}")), &rule.color, tone, 18.0).on_click(
+                swatch(ElementId::from(format!("hl-color-{id}")), &rule.color, tone, 14.0).on_click(
                     cx.listener(move |this, event: &gpui::ClickEvent, _window, cx| {
                         this.open_rule_palette(id, event.position(), cx);
                     }),
                 ),
             )
             .child(
-                v_flex()
+                div()
                     .flex_1()
                     .min_w(px(0.0))
-                    .child(div().text_xs().font_weight(gpui::FontWeight::SEMIBOLD).child(column))
-                    .child(
-                        div()
-                            .text_xs()
-                            .text_color(cx.theme().muted_foreground)
-                            .truncate()
-                            .child(rule.summary()),
-                    ),
+                    .truncate()
+                    .text_xs()
+                    .child(rule_condition(&column, rule)),
             )
-            .child(count_badge(matches.to_string(), cx))
+            .child(
+                div()
+                    .flex_shrink_0()
+                    .text_xs()
+                    .text_color(cx.theme().muted_foreground)
+                    .child(super::columns_panel::lines_label(matches)),
+            )
             .child(
                 Switch::new(ElementId::from(format!("hl-switch-{id}")))
+                    .small()
                     .checked(enabled)
                     .on_click(move |_, _window, app| {
                         view.update(app, |this, cx| this.toggle_highlight_rule(id, cx));
@@ -330,4 +330,16 @@ pub fn rule_form_colors() -> Vec<HighlightColor> {
         .into_iter()
         .map(|h| HighlightColor::palette(h, Shade::Medium))
         .collect()
+}
+
+/// A rule's condition in one line: `Level = info, warn`,
+/// `Message contains "timeout"`.
+fn rule_condition(column: &str, rule: &HighlightRule) -> String {
+    let mut parts: Vec<String> = rule.values.iter().cloned().collect();
+    parts.extend(rule.custom.iter().map(|c| format!("contains “{c}”")));
+    if rule.values.is_empty() {
+        format!("{column} {}", parts.join(", "))
+    } else {
+        format!("{column} = {}", parts.join(", "))
+    }
 }

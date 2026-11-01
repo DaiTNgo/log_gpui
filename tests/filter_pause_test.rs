@@ -38,7 +38,7 @@ fn a_card_summary_names_its_values_and_counts_the_rest() {
     };
     assert_eq!(f.chip_text("Module", |v| v.to_string()), "not Module: db, api +2");
     let f = ColumnFilter { column: "message".into(), custom: vec!["timeout".into()], ..Default::default() };
-    assert_eq!(f.chip_text("Message", |v| v.to_string()), "Message: ∋ timeout");
+    assert_eq!(f.chip_text("Message", |v| v.to_string()), "Message: contains “timeout”");
 }
 
 #[test]

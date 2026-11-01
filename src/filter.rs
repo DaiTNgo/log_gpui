@@ -41,13 +41,13 @@ impl ColumnFilter {
     }
 
     /// A one-line summary of the column's condition, as its Filter card
-    /// shows it: `level: error, warn`, `not module: DB`, `message: ∋ timeout`;
+    /// shows it: `level: error, warn`, `not module: DB`, `message: contains “timeout”`;
     /// past two values, `+N`.
     /// `display` gives a Filter Value as the column shows it.
     pub fn chip_text(&self, label: &str, display: impl Fn(&str) -> String) -> String {
         const SHOWN: usize = 2;
         let mut values: Vec<String> = self.values.iter().map(|v| display(v)).collect();
-        values.extend(self.custom.iter().map(|c| format!("∋ {c}")));
+        values.extend(self.custom.iter().map(|c| format!("contains “{c}”")));
         let extra = values.len().saturating_sub(SHOWN);
         values.truncate(SHOWN);
         let mut text = format!("{}{label}: {}", if self.hide { "not " } else { "" }, values.join(", "));

@@ -72,7 +72,7 @@ Phương án khác: lưu cờ. Không chọn, vì mở lại một view thấy �
 Filter / Highlights / Columns nằm chung một vùng cuộn. Inspector nằm ngoài vùng cuộn, cao `inspector_height` (mặc định 45% chiều cao, tối thiểu 120px), kéo thanh chia để đổi. Cạnh trái sidebar kéo được để đổi `width` (280–560px, mặc định 320px). Cả hai giá trị lưu trong `ContextSidebarLayout` (trường `context_layout` của `WorkspaceState`, ghi cùng session như `focus_pane`), có default khi đọc session cũ. `ContextSidebarState` không được lưu nên không dùng nó. Chiều cao Inspector lưu dưới dạng tỉ lệ (`inspector_share`) để không phụ thuộc chiều cao cửa sổ. Gập Inspector thì vùng cuộn chiếm hết. Ở Raw View chỉ có Inspector, như hiện nay.
 
 **8. Section dạng tóm tắt.**
-- Header: tên section, phần tóm tắt bên phải ("2 active", "2 rules", "6 of 9 shown") và nút "+" (hoặc 🔍 ở Columns).
+- Header: dải nền riêng với tên section. Gập thì ghi tóm tắt ("2 active", "2 rules", "6 of 9 shown"); mở thì bỏ tóm tắt (nội dung đã cho thấy) và hiện nút "+" / Pause. Chỉ giữ những gì dùng thường xuyên: bỏ dòng tên file/view (tab đã ghi), bỏ ↑↓ của Inspector (phím ↑↓ đã có), bỏ viền thẻ.
 - Bỏ các dòng riêng "+ Add filter" và "+ Add rule".
 - Thẻ Filter mặc định gập thành một dòng: `Level  error, warn  ×`.
 - Hàng Highlight Rule: swatch, mô tả một dòng, số khớp, công tắc. Xoá qua menu chuột phải của hàng hoặc nút "⋯" hiện khi hover. Kéo cả hàng để đổi thứ tự (bỏ tay kéo riêng).
@@ -90,7 +90,6 @@ Hàm `render_value_picker(column, ticked, input, on_toggle, on_add)` dùng cho t
 - Mỗi field có ba nút hiện khi hover: Show only, Hide (theo quy tắc ở quyết định 4, coi như chọn trọn ô) và Highlight rows (mở form New rule đã điền sẵn).
 - Dòng không parse được, hoặc dòng của Raw View không có Log Format, chỉ có Raw.
 - Chế độ được nhớ trong `ContextSidebarLayout`, cùng chỗ với độ rộng.
-- ↑↓ chọn dòng trước/sau trong view đang hiện, đi qua `selected_row_pos` có sẵn.
 
 **12. Bảng màu của form New rule: 8 màu và nút "…".**
 8 màu là Recent rồi bù bằng palette. "…" mở palette đầy đủ ngay trong form. Màu mặc định vẫn là `next_rule_color`. "+ Add rule" khi form đang mở chỉ đưa focus về form, không tạo lại form.

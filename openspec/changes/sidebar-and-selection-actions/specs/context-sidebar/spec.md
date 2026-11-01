@@ -1,12 +1,5 @@
 ## ADDED Requirements
 
-### Requirement: Header phạm vi
-Context sidebar SHALL có một dòng header ghi tên view đang áp dụng (tên file của File View, hoặc file đầu và số file còn lại của Log Space) và loại view (Parsed hay Raw).
-
-#### Scenario: Log Space hai file
-- **WHEN** view đang mở là Log Space có `untitled.log` và `untitled-2.log` ở Parsed View
-- **THEN** header ghi `untitled.log + 1 file · Parsed`
-
 ### Requirement: Inspector ghim ở đáy
 Inspector SHALL nằm ở đáy context sidebar, ngoài vùng cuộn của các section khác, và SHALL luôn hiện khi chưa bị gập, dù các section phía trên dài tới đâu. Một thanh chia giữa vùng cuộn và Inspector SHALL kéo được để đổi chiều cao Inspector. Chiều cao này SHALL được nhớ. Inspector và vùng cuộn SHALL mỗi bên cao tối thiểu 120px.
 
@@ -26,12 +19,16 @@ Cạnh trái context sidebar SHALL kéo được để đổi độ rộng, tron
 - **THEN** sidebar rộng 440px và hai ô Time Range hiện đủ giá trị
 
 ### Requirement: Section dạng tóm tắt
-Header của mỗi section SHALL có tên section, phần tóm tắt bên phải và nút hành động chính:
-- Filter: số điều kiện đang bật, hoặc "paused"; nút "+".
-- Highlights: số rule; nút "+".
-- Columns: "<số cột đang hiện> of <tổng> shown"; nút tìm field.
+Header của mỗi section SHALL là một dải có nền riêng, tách rõ khỏi nội dung, ghi tên section. Khi section gập, header SHALL ghi phần tóm tắt:
+- Filter: số điều kiện đang bật, hoặc "paused".
+- Highlights: số rule.
+- Columns: "<số cột đang hiện> of <tổng> shown".
 
-Section SHALL NOT có thêm một dòng riêng "+ Add filter" hay "+ Add rule". Columns SHALL gập mặc định khi chưa có trạng thái lưu.
+Khi section mở, header SHALL bỏ phần tóm tắt và hiện nút của section: "+" ở Filter và Highlights, "Pause"/"Resume" ở Filter khi Filter khác rỗng.
+
+Trong section, mỗi mục (thẻ Filter, rule, cột) SHALL là một hàng cao một dòng, không viền, cùng một kiểu: tên, thông tin phụ màu mờ ở bên phải, rồi công tắc hoặc nút. Nhãn nhóm ("Time range", "Built-in") SHALL là chữ nhỏ viết hoa màu mờ. Điều kiện chứa text SHALL viết là `contains "…"`.
+
+Section SHALL NOT có thêm một dòng riêng "+ Add filter" hay "+ Add rule". Context sidebar SHALL NOT có dòng ghi tên file hay loại view, vì tab đã ghi. Columns SHALL gập mặc định khi chưa có trạng thái lưu.
 
 #### Scenario: Thêm filter từ header
 - **WHEN** người dùng bấm "+" trên header Filter
@@ -46,7 +43,7 @@ Inspector SHALL có hai chế độ:
 - **Fields**: mỗi cột có giá trị của dòng đang chọn là một hàng `tên → giá trị`.
 - **Raw**: text lưu trữ của dòng đang chọn, kèm Continuation Line, đúng từng ký tự, chọn và copy được.
 
-Chế độ đã chọn SHALL được nhớ. Khi dòng không có cột nào parse được (Raw View không có Log Format, hoặc dòng không khớp format), Inspector SHALL chỉ có Raw. Header của Inspector SHALL có số dòng, nút Copy (chép text lưu trữ của dòng) và nút ↑↓ để chọn dòng trước hoặc sau trong view đang hiện.
+Chế độ đã chọn SHALL được nhớ. Khi dòng không có cột nào parse được (Raw View không có Log Format, hoặc dòng không khớp format), Inspector SHALL chỉ có Raw. Header của Inspector SHALL ghi số dòng; khi Inspector mở, header SHALL có Fields/Raw và nút Copy. Đi sang dòng khác dùng phím ↑↓ của view, Inspector SHALL NOT có nút riêng cho việc đó.
 
 #### Scenario: Fields của dòng JSON
 - **WHEN** người dùng chọn một dòng có các field `event`, `method`, `status` ở chế độ Fields
@@ -55,10 +52,6 @@ Chế độ đã chọn SHALL được nhớ. Khi dòng không có cột nào pa
 #### Scenario: Raw giữ nguyên text
 - **WHEN** người dùng chuyển Inspector sang Raw trên một dòng có 4 dòng stack trace
 - **THEN** Inspector hiện dòng đó và 4 dòng stack trace, đúng như trong file
-
-#### Scenario: Sang dòng kế tiếp
-- **WHEN** Inspector đang hiện dòng 42 và người dùng bấm ↓
-- **THEN** dòng hiển thị kế tiếp được chọn trong view và Inspector hiện dòng đó
 
 ### Requirement: Hành động trên field của Inspector
 Ở chế độ Fields, khi trỏ chuột vào một hàng field của cột lọc được, Inspector SHALL hiện ba nút:
