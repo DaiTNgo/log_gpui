@@ -159,6 +159,12 @@ impl AppView {
             return;
         }
         self.persist_active_session();
+        // A selection and its color bar belong to the view they were made in.
+        self.color_bar = None;
+        self.text_selection = None;
+        self.selecting = false;
+        self.pane_selection = None;
+        self.clear_raw_selections(cx);
         if let Some(tab) = self
             .active_project_mut()
             .and_then(|p| p.working_set.active_tab_mut())

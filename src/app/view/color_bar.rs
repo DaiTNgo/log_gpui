@@ -171,9 +171,6 @@ impl AppView {
         let theme = cx.theme();
         let mut panel = v_flex()
             .id("color-bar")
-            .absolute()
-            .left(bar.pos.x)
-            .top(bar.pos.y + px(14.0))
             .gap_2()
             .p_2()
             .rounded_lg()
@@ -199,8 +196,12 @@ impl AppView {
                         .on_click(cx.listener(|this, _, _window, cx| this.close_color_bar(cx))),
                 );
         }
-        Some(
-            gpui::deferred(panel.when(false, |p| p)).with_priority(10).into_any_element(),
-        )
+        // Anchored at the pointer and pushed back inside the window, so a bar
+        // opened near an edge is not clipped.
+        let anchored = gpui::anchored()
+            .position(bar.pos + gpui::point(px(0.0), px(14.0)))
+            .snap_to_window_with_margin(px(8.0))
+            .child(panel);
+        Some(gpui::deferred(anchored).with_priority(10).into_any_element())
     }
 }
