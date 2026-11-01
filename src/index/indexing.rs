@@ -62,6 +62,16 @@ pub struct IndexedData {
     pub max_chars: FieldMaxChars,
 }
 
+impl IndexedData {
+    /// Timestamp of line `row` as the Time Range sees it: its own, else the
+    /// one of the line above that has one; none before the first.
+    pub fn effective_timestamp(&self, row: usize) -> Option<f64> {
+        let first = self.filter.first_timed_row()?;
+        let meta = self.file.meta.get(row).filter(|_| row >= first)?;
+        (meta.ts_us != crate::index::meta::NO_TIME).then(|| crate::index::meta::seconds(meta.ts_us))
+    }
+}
+
 /// How an Indexing ended.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Outcome {
@@ -75,7 +85,10 @@ pub enum Outcome {
 /// Indexing's state, shared with whoever shows the file.
 #[derive(Debug, Default)]
 pub struct Indexed {
-    pub data: RwLock<IndexedData>,
+    /// Readers take it with `read_recursive`: a view holds it while the rows
+    /// it reads lock it again, and a plain read would wait behind a writer
+    /// waiting for the view.
+    pub data: parking_lot::RwLock<IndexedData>,
     /// Bytes of the source when Indexing started.
     pub total: std::sync::atomic::AtomicU64,
     /// Whether the file locked on the fast reader.
@@ -88,7 +101,7 @@ impl Indexed {
     pub fn from_data(data: IndexedData) -> Self {
         let total = data.file.lines.end();
         Self {
-            data: RwLock::new(data),
+            data: parking_lot::RwLock::new(data),
             total: std::sync::atomic::AtomicU64::new(total),
             outcome: Mutex::new(Some(Outcome::Done)),
             ..Self::default()
@@ -102,7 +115,7 @@ impl Indexed {
 
     /// Bytes indexed, and of the source.
     pub fn progress(&self) -> (u64, u64) {
-        let done = self.data.read().unwrap().file.lines.end();
+        let done = self.data.read_recursive().file.lines.end();
         (done, self.total.load(Ordering::Acquire))
     }
 }
@@ -141,7 +154,7 @@ impl Indexing {
                     source.release();
                     *indexed.outcome.lock().unwrap() = Some(outcome.clone());
                     let (bytes, total) = indexed.progress();
-                    let lines = indexed.data.read().unwrap().file.len();
+                    let lines = indexed.data.read_recursive().file.len();
                     let _ = tx.try_send(Progress { lines, bytes, total, outcome: Some(outcome) });
                 })
                 .expect("spawn the indexing thread")
@@ -187,7 +200,7 @@ pub fn index_all(source: &dyn LineSource, options: &IndexOptions) -> (IndexedDat
     let (tx, _rx) = async_channel::unbounded();
     let outcome = run(source, options, &indexed, &AtomicBool::new(false), &tx);
     source.release();
-    (indexed.data.into_inner().unwrap(), outcome)
+    (indexed.data.into_inner(), outcome)
 }
 
 /// A line's metadata and facts, read the fast way when the file locked on
@@ -278,8 +291,23 @@ fn index_block(block: Block, options: &IndexOptions, locked: bool, overflowed: O
 /// Index `bytes`, the lines of the source right after those `data` holds,
 /// into `data`, as Indexing would have.
 pub fn index_more(data: &mut IndexedData, bytes: Vec<u8>, options: &IndexOptions, locked: bool) {
-    let out = index_block(Block { seq: 0, data: bytes }, options, locked, data.filter.overflowed());
-    add_block(data, out);
+    let more = read_more(bytes, options, locked, data.filter.overflowed());
+    add_more(data, more);
+}
+
+/// Lines read and parsed, to be added to a file's index (`add_more`): the
+/// reading needs no lock on the index, the adding a short one.
+pub struct MoreLines(BlockOut);
+
+/// Read the lines of `bytes` as Indexing would, for an index whose columns
+/// overflowed as `overflowed` says.
+pub fn read_more(bytes: Vec<u8>, options: &IndexOptions, locked: bool, overflowed: Overflowed) -> MoreLines {
+    MoreLines(index_block(Block { seq: 0, data: bytes }, options, locked, overflowed))
+}
+
+/// Add lines read by `read_more` after those `data` holds.
+pub fn add_more(data: &mut IndexedData, more: MoreLines) {
+    add_block(data, more.0);
 }
 
 fn add_block(data: &mut IndexedData, out: BlockOut) {
@@ -395,7 +423,7 @@ fn run(
             waiting.insert(out.seq, out);
             while let Some(out) = waiting.remove(&next) {
                 next += 1;
-                let mut data = indexed.data.write().unwrap();
+                let mut data = indexed.data.write();
                 add_block(&mut data, out);
                 *overflowed.write().unwrap() = data.filter.overflowed();
                 let lines = data.file.len();
@@ -416,7 +444,7 @@ fn run(
     if let Some(error) = failed.into_inner().unwrap() {
         outcome = Outcome::Failed(error);
     }
-    let mut data = indexed.data.write().unwrap();
+    let mut data = indexed.data.write();
     data.file.shrink_to_fit();
     outcome
 }

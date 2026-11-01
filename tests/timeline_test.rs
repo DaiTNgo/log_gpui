@@ -124,7 +124,9 @@ fn columns_are_united_by_name() {
     let view = build_space_view(&space, &parsed);
 
     // `region` exists only in the first file: the rows of the other file leave it empty.
-    let region = view.index.column("region").expect("union has the column");
+    let index = view.index.read(&view.view.rows);
+    assert!(index.column("region").is_some(), "union has the column");
+    let region = index.ids("region").unwrap();
     let empty_rows = view
         .materialize(&parsed)
         .iter()
@@ -156,13 +158,14 @@ fn the_source_column_is_filterable_by_file_name() {
     ]);
     let mut view = build_space_view(&space, &parsed);
 
-    let source = view.index.column("source").expect("Source is a column");
+    let index = view.index.read(&view.view.rows);
+    let source = index.column("source").expect("Source is a column");
     assert!(source.is_filterable());
     assert_eq!(source.values.len(), 2);
 
     let mut filter = FilterState::new();
     filter.toggle_value("source", "api.log");
-    let visible = filter.evaluate(&view.index, &view.materialize(&parsed));
+    let visible = filter.evaluate(&index, &view.materialize(&parsed));
     assert_eq!(visible.len(), 1);
     assert_eq!(view.materialize(&parsed)[visible[0]].source.as_deref(), Some("api.log"));
 }
@@ -174,7 +177,8 @@ fn the_filter_values_come_from_every_file() {
         ("/b.log", "2026-09-05 10:00:02 [INFO] [JOB] b\n"),
     ]);
     let view = build_space_view(&space, &parsed);
-    let module = view.index.column("module").unwrap();
+    let index = view.index.read(&view.view.rows);
+    let module = index.column("module").unwrap();
     let values: Vec<&str> = module.values.iter().map(|v| v.display.as_str()).collect();
     assert!(values.contains(&"API") && values.contains(&"JOB"));
 }
@@ -188,7 +192,7 @@ fn a_file_view_shows_only_its_file_and_has_no_source() {
     let view = build_file_view(space.file("/a.log").unwrap(), &parsed["/a.log"]);
     assert_eq!(view.materialize(&parsed).len(), 1);
     assert!(view.materialize(&parsed)[0].source.is_none());
-    assert!(view.index.columns_in_use().all(|c| c.key != "source"));
+    assert!(view.index.read(&view.view.rows).columns_in_use().all(|c| c.key != "source"));
 }
 
 #[test]

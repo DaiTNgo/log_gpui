@@ -425,7 +425,7 @@ impl AppView {
             Some(_) => self.apply_current_line(cx),
             None => {
                 if let Some(pos) = self.selected_row_pos {
-                    if pos < self.visible_indices.len() {
+                    if pos < self.view.len() {
                         self.scroll_handle.scroll_to_item(pos, ScrollStrategy::Center);
                     }
                 } else if self.active_space_is_live() && self.view_mode == ViewMode::Parsed {

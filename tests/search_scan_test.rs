@@ -27,7 +27,7 @@ fn enter_finds_the_matches_by_a_scan_and_goes_to_one(cx: &mut TestAppContext) {
     h.cx.run_until_parked();
     h.view.read_with(&h.cx, |app, _| {
         assert!(!app.search_scanning());
-        assert_eq!(app.focus.search().matched_visible_indices.len(), 429);
+        assert_eq!(app.focus.search().matched_rows.len(), 429);
         assert!(app.selected_row_pos.is_some(), "Enter goes to a Match");
     });
 }
@@ -44,6 +44,6 @@ fn rows_built_again_find_the_matches_again_by_a_scan(cx: &mut TestAppContext) {
     h.cx.run_until_parked();
     h.view.read_with(&h.cx, |app, _| {
         assert!(!app.search_scanning());
-        assert_eq!(app.focus.search().matched_visible_indices.len(), 429);
+        assert_eq!(app.focus.search().matched_rows.len(), 429);
     });
 }

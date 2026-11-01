@@ -108,7 +108,7 @@ impl Remote {
                 .map(|e| (e.index, e.generation, e.raw_line.to_string(), e.break_before.as_ref().map(|m| m.label.clone()), e.stream))
                 .collect();
             let hold = app.hold_info(&self.id).map(|i| i.lines);
-            (rows, app.filter_pass.to_vec(), app.focus.search().matched_visible_indices.to_vec(), hold)
+            (rows, app.filter_pass.to_vec(), app.focus.search().matched_rows.to_vec(), hold)
         })
     }
 }

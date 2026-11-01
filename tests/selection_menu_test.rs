@@ -40,7 +40,7 @@ fn draw(h: &mut Harness) {
 /// Select `text` in row `row` of the Parsed View.
 fn select(h: &mut Harness, row: usize, text: &str) {
     h.view.update(&mut h.cx, |app, _| {
-        let line = app.rows_snapshot()[app.visible_indices[row]].raw_line.to_string();
+        let line = app.rows_snapshot()[row].raw_line.to_string();
         let start = line.find(text).expect("text on the row");
         app.text_selection = Some(TextSelection::new(TextPos::new(row, start), TextPos::new(row, start + text.len())));
     });
@@ -116,7 +116,7 @@ fn remove_marker_removes_the_marker_under_the_pointer(cx: &mut TestAppContext) {
     let mut h = common::open_app_with_lines(cx, &lines());
     select(&mut h, 0, "conn-7f3a");
     h.view.update(&mut h.cx, |app, cx| app.mark_selection(red(), cx));
-    let byte = h.view.read_with(&h.cx, |app, _| app.rows_snapshot()[app.visible_indices[0]].raw_line.find("conn").unwrap());
+    let byte = h.view.read_with(&h.cx, |app, _| app.rows_snapshot()[0].raw_line.find("conn").unwrap());
     h.view.update(&mut h.cx, |app, _| {
         app.selection_menu = Some(SelectionTarget {
             source: MenuSource::Parsed,

@@ -12,8 +12,10 @@ use std::collections::{HashMap, HashSet};
 
 mod chunk;
 mod merge;
+mod view;
 pub use chunk::{ChunkColumns, LineFacts, Overflowed};
-pub use merge::MergeFile;
+pub use merge::{ColumnMap, MergeFile};
+pub use view::{RowIds, RowTable, SpaceIndex, ViewIndex, ViewIndexRead};
 
 /// A column with more distinct values than this cannot be filtered on.
 pub const MAX_DISTINCT: usize = 500;
@@ -127,6 +129,89 @@ pub struct ColumnValue {
     pub count: usize,
 }
 
+/// The value id of each row of a column. The rows before the first that
+/// has a value hold no id: a column no row has a value in keeps nothing
+/// per row (lean-view-memory, decision 7).
+#[derive(Debug, Clone, Default)]
+pub(crate) struct RowIdList {
+    /// Rows before the first id kept: all `MISSING`.
+    from: usize,
+    ids: Vec<u16>,
+}
+
+impl RowIdList {
+    /// `rows` rows with no value.
+    fn missing(rows: usize) -> Self {
+        Self { from: rows, ids: Vec::new() }
+    }
+
+    pub(crate) fn len(&self) -> usize {
+        self.from + self.ids.len()
+    }
+
+    pub(crate) fn get(&self, row: usize) -> Option<u16> {
+        if row < self.from {
+            Some(MISSING)
+        } else {
+            self.ids.get(row - self.from).copied()
+        }
+    }
+
+    pub(crate) fn push(&mut self, id: u16) {
+        if self.ids.is_empty() && id == MISSING {
+            self.from += 1;
+        } else {
+            self.ids.push(id);
+        }
+    }
+
+    fn set(&mut self, row: usize, id: u16) {
+        if row >= self.len() {
+            self.resize(row + 1);
+        }
+        if row < self.from {
+            if id == MISSING {
+                return;
+            }
+            let mut ids = vec![MISSING; self.from - row];
+            ids.append(&mut self.ids);
+            self.ids = ids;
+            self.from = row;
+        }
+        self.ids[row - self.from] = id;
+    }
+
+    /// As many rows as `rows`, the new ones with no value.
+    fn resize(&mut self, rows: usize) {
+        if rows <= self.from {
+            self.from = rows;
+            self.ids = Vec::new();
+        } else if self.ids.is_empty() {
+            self.from = rows;
+        } else {
+            self.ids.resize(rows - self.from, MISSING);
+        }
+    }
+
+    fn truncate(&mut self, rows: usize) {
+        if rows < self.len() {
+            self.resize(rows);
+        }
+    }
+
+    /// Forget the rows at `dropped` (ascending).
+    fn remove(&mut self, dropped: &[usize]) {
+        let before = dropped.partition_point(|&r| r < self.from);
+        let kept: Vec<usize> = dropped[before..].iter().map(|&r| r - self.from).collect();
+        self.from -= before;
+        remove_positions(&mut self.ids, &kept);
+    }
+
+    fn heap_bytes(&self) -> usize {
+        self.ids.capacity() * 2
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct ColumnIndex {
     pub key: String,
@@ -137,7 +222,7 @@ pub struct ColumnIndex {
     pub overflow: bool,
     source: Source,
     /// Value id per row (`MISSING` when absent). Empty when `overflow`.
-    row_ids: Vec<u16>,
+    row_ids: RowIdList,
     folded_ids: HashMap<String, u16>,
     /// Raw spelling -> (id, rows), to pick the most frequent display form.
     spellings: HashMap<String, (u16, usize)>,
@@ -155,7 +240,7 @@ impl ColumnIndex {
             values: Vec::new(),
             overflow: false,
             source,
-            row_ids: vec![MISSING; rows_before],
+            row_ids: RowIdList::missing(rows_before),
             folded_ids: HashMap::new(),
             spellings: HashMap::new(),
             rows: rows_before,
@@ -196,7 +281,7 @@ impl ColumnIndex {
 
     /// Value id of `row`, or `None` when ids are not tracked for it.
     pub fn id_of_row(&self, row: usize) -> Option<u16> {
-        self.row_ids.get(row).copied()
+        self.row_ids.get(row)
     }
 
     pub fn has_row_ids(&self) -> bool {
@@ -218,7 +303,7 @@ impl ColumnIndex {
             if entry.parent.is_some() && self.source.inherits() {
                 continue;
             }
-            let Some(&id) = self.row_ids.get(keep + i) else { continue };
+            let Some(id) = self.row_ids.get(keep + i) else { continue };
             if id == MISSING {
                 continue;
             }
@@ -246,7 +331,7 @@ impl ColumnIndex {
             if entry.parent.is_some() && self.source.inherits() {
                 continue;
             }
-            let Some(&id) = self.row_ids.get(dropped[i]) else { continue };
+            let Some(id) = self.row_ids.get(dropped[i]) else { continue };
             if id == MISSING {
                 continue;
             }
@@ -255,7 +340,7 @@ impl ColumnIndex {
                 *n = n.saturating_sub(1);
             }
         }
-        remove_positions(&mut self.row_ids, dropped);
+        self.row_ids.remove(dropped);
     }
 
     fn push_row(&mut self, entry: &LogEntry, source: Option<&str>, parent_row: usize) {
@@ -268,7 +353,7 @@ impl ColumnIndex {
         }
         if entry.parent.is_some() && self.source.inherits() {
             // A Continuation Line holds its Parent Line's value, uncounted.
-            let id = self.row_ids.get(parent_row).copied().unwrap_or(MISSING);
+            let id = self.row_ids.get(parent_row).unwrap_or(MISSING);
             self.row_ids.push(id);
             return;
         }
@@ -330,7 +415,7 @@ impl ColumnIndex {
     fn mark_overflow(&mut self) {
         self.overflow = true;
         self.values = Vec::new();
-        self.row_ids = Vec::new();
+        self.row_ids = RowIdList::default();
         self.folded_ids = HashMap::new();
         self.spellings = HashMap::new();
     }
@@ -346,6 +431,8 @@ pub struct FilterIndex {
     /// worker thread reads it without a copy.
     effective_ts: std::sync::Arc<Vec<f64>>,
     first_ts: Option<f64>,
+    /// The row `first_ts` is the time of: the rows before it have none.
+    first_ts_row: Option<usize>,
     min_entry: Option<(f64, String)>,
     max_entry: Option<(f64, String)>,
     /// Row of the latest line that is not a Continuation Line.
@@ -377,7 +464,7 @@ impl FilterIndex {
             .map(|c| {
                 let values: usize =
                     c.values.iter().map(|v| std::mem::size_of::<ColumnValue>() + v.display.capacity() + v.folded.capacity()).sum();
-                c.row_ids.capacity() * 2 + values + (c.folded_ids.len() + c.spellings.len()) * ENTRY
+                c.row_ids.heap_bytes() + values + (c.folded_ids.len() + c.spellings.len()) * ENTRY
             })
             .sum();
         self.effective_ts.capacity() * 8 + columns + (self.kv_counts.len() + self.field_cols.len()) * ENTRY
@@ -397,10 +484,10 @@ impl FilterIndex {
         if col.overflow {
             return;
         }
-        col.row_ids.resize(col.rows, MISSING);
+        col.row_ids.resize(col.rows);
         for row in rows {
             let Some(stream) = stream_of(row) else { continue };
-            if col.row_ids.get(row) != Some(&MISSING) {
+            if col.row_ids.get(row) != Some(MISSING) {
                 continue;
             }
             let raw = stream.as_str();
@@ -415,7 +502,7 @@ impl FilterIndex {
             };
             col.values[id as usize].count += 1;
             col.spellings.entry(raw.to_string()).or_insert((id, 0)).1 += 1;
-            col.row_ids[row] = id;
+            col.row_ids.set(row, id);
             if is_parent(row) {
                 col.covered += 1;
             }
@@ -557,23 +644,6 @@ impl FilterIndex {
         }
     }
 
-    /// `append` for rows of which some belong to a file with no time at all
-    /// (`untimed`): they have none, instead of the time of the row above.
-    pub fn append_marking_untimed<R: Rows + ?Sized>(&mut self, new_rows: &R, untimed: impl Fn(usize) -> bool) {
-        for row in 0..new_rows.len() {
-            let Some(entry) = new_rows.get(row) else { continue };
-            self.push_row(&entry, new_rows.source(row));
-            if untimed(row) {
-                if let Some(last) = std::sync::Arc::make_mut(&mut self.effective_ts).last_mut() {
-                    *last = f64::NAN;
-                }
-            }
-        }
-        for col in &mut self.columns {
-            col.finalize_display();
-        }
-    }
-
     /// Forget the rows after the first `kept.len()`; `removed` are the
     /// entries of those rows. They are meant to be added again with
     /// [`append`](Self::append), in a new order and with new rows among them,
@@ -591,8 +661,13 @@ impl FilterIndex {
             col.truncate(keep, removed);
         }
         self.rows = keep;
-        std::sync::Arc::make_mut(&mut self.effective_ts).truncate(keep);
-        self.first_ts = self.effective_ts.iter().copied().find(|t| !t.is_nan());
+        if !self.effective_ts.is_empty() {
+            std::sync::Arc::make_mut(&mut self.effective_ts).truncate(keep);
+        }
+        if self.first_ts_row.is_some_and(|r| r >= keep) {
+            self.first_ts = None;
+            self.first_ts_row = None;
+        }
         self.parent_row = parent_row;
         self.forget_counts(removed);
     }
@@ -670,6 +745,7 @@ impl FilterIndex {
             std::sync::Arc::make_mut(&mut self.effective_ts).push(entry.timestamp);
             if self.first_ts.is_none() {
                 self.first_ts = Some(entry.timestamp);
+                self.first_ts_row = Some(self.effective_ts.len() - 1);
             }
             if self.min_entry.as_ref().is_none_or(|(t, _)| entry.timestamp < *t) {
                 self.min_entry = Some((entry.timestamp, entry.time_str().to_string()));
@@ -691,14 +767,9 @@ impl FilterIndex {
             .filter(|c| c.overflow || c.values.iter().any(|v| v.count > 0))
     }
 
-    /// Timestamp of `row` as seen by the Time Range filter.
-    pub fn effective_timestamp(&self, row: usize) -> Option<f64> {
-        self.effective_ts.get(row).copied().filter(|t| !t.is_nan())
-    }
-
-    /// The timestamp of every row (`NAN` for a row with none), shared.
-    pub fn effective_ts(&self) -> &std::sync::Arc<Vec<f64>> {
-        &self.effective_ts
+    /// The row of the first timestamp: the rows before it have none.
+    pub fn first_timed_row(&self) -> Option<usize> {
+        self.first_ts_row
     }
 
     /// The earliest and latest timestamp of the rows.
@@ -742,3 +813,53 @@ pub(crate) fn remove_positions<T>(items: &mut Vec<T>, dropped: &[usize]) {
     });
 }
 
+
+#[cfg(test)]
+mod tests {
+    use super::{MISSING, RowIdList};
+
+    fn ids(list: &RowIdList) -> Vec<u16> {
+        (0..list.len()).map(|r| list.get(r).unwrap()).collect()
+    }
+
+    #[test]
+    fn rows_with_no_value_keep_nothing() {
+        let mut list = RowIdList::missing(3);
+        for _ in 0..1000 {
+            list.push(MISSING);
+        }
+        assert_eq!((list.len(), list.heap_bytes()), (1003, 0));
+        assert_eq!(list.get(500), Some(MISSING));
+        assert_eq!(list.get(1003), None);
+        list.push(7);
+        list.push(MISSING);
+        assert_eq!(list.len(), 1005);
+        assert_eq!((list.get(1002), list.get(1003), list.get(1004)), (Some(MISSING), Some(7), Some(MISSING)));
+    }
+
+    #[test]
+    fn a_value_set_before_the_first_kept_one_keeps_the_rows_from_it() {
+        let mut list = RowIdList::missing(5);
+        list.push(1);
+        list.set(2, 4);
+        assert_eq!(ids(&list), [MISSING, MISSING, 4, MISSING, MISSING, 1]);
+        list.set(8, 2);
+        assert_eq!(ids(&list), [MISSING, MISSING, 4, MISSING, MISSING, 1, MISSING, MISSING, 2]);
+    }
+
+    #[test]
+    fn rows_are_cut_and_dropped_across_the_first_kept_one() {
+        let mut list = RowIdList::missing(4);
+        for id in [1, 2, 3] {
+            list.push(id);
+        }
+        list.remove(&[0, 1, 4]);
+        assert_eq!(ids(&list), [MISSING, MISSING, 2, 3]);
+        list.truncate(3);
+        assert_eq!(ids(&list), [MISSING, MISSING, 2]);
+        list.truncate(1);
+        assert_eq!((ids(&list), list.heap_bytes()), (vec![MISSING], 0));
+        list.resize(4);
+        assert_eq!(ids(&list), [MISSING; 4]);
+    }
+}

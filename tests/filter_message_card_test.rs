@@ -37,9 +37,9 @@ fn message_is_picked_from_add_filter_and_takes_a_custom_value(cx: &mut TestAppCo
     });
     h.cx.run_until_parked();
     h.view.read_with(&h.cx, |app, _| {
-        let every_row = app.filter_state.evaluate(&app.filter_index, &app.rows());
+        let every_row = app.filter_state.evaluate(&app.index(), &app.rows());
         assert_eq!(every_row.len(), 43);
-        assert_eq!(*app.filter_pass, every_row);
+        assert_eq!(app.filter_pass, every_row);
         assert_eq!(app.unread_column("message"), None, "the message is not a column no longer read");
     });
 }

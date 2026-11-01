@@ -4134,6 +4134,7 @@ dependencies = [
  "lzma-rs",
  "memchr",
  "mimalloc",
+ "parking_lot",
  "regex",
  "rfd",
  "roaring",

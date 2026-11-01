@@ -2,7 +2,8 @@
 //! state of the Filter section's inputs.
 
 use super::AppView;
-use crate::filter::{TextCondition, parse_time_bound};
+use crate::filter::{FilterPass, TextCondition, parse_time_bound};
+use crate::filter_index::ViewIndex;
 use crate::filter_index::column_value;
 use crate::index::file::IndexedFile;
 use crate::index::scan::{Found, scan_blocks};
@@ -87,22 +88,12 @@ impl AppView {
     /// pane.
     pub fn apply_filters_and_refresh(&mut self, cx: &mut Context<Self>) {
         self.refreshes.full += 1;
+        self.sync_view_index();
         // The Matches are found again below: a scan under way is stale.
         self.rows_epoch += 1;
         self.supersede_search_scan();
         self.evaluate_filter_pass(cx);
-        if self.visible_indices.len() != self.view.len() {
-            // Always every row in order: grow or cut the list where it is, not
-            // a new one of the size of the file for every batch of live lines.
-            let rows = self.view.len();
-            let visible = std::sync::Arc::make_mut(&mut self.visible_indices);
-            let have = visible.len();
-            if have < rows {
-                visible.extend(have..rows);
-            } else {
-                visible.truncate(rows);
-            }
-        }
+        self.applied_rows = self.view.len();
         self.longest_row = self.find_longest_row();
         // A Field Column shows once a row has a value in it.
         self.sync_view_columns();
@@ -119,6 +110,36 @@ impl AppView {
         cx.notify();
     }
 
+    /// The view's index reads its files' index as it is now: a file read
+    /// again into a new Line Index (its Remote Cache rebuilt) is taken in.
+    pub(crate) fn sync_view_index(&mut self) {
+        let now: Vec<Option<Arc<crate::index::indexing::Indexed>>> = self
+            .view
+            .files
+            .iter()
+            .map(|f| self.parsed_files.get(&*f.file_id).and_then(|p| p.indexed.as_ref()).map(|i| i.indexed.clone()))
+            .collect();
+        match &self.filter_index {
+            ViewIndex::File(indexed) => {
+                if let Some(Some(now)) = now.first().filter(|n| n.as_ref().is_some_and(|n| !Arc::ptr_eq(n, indexed))) {
+                    self.filter_index = ViewIndex::File(now.clone());
+                }
+            }
+            ViewIndex::Space(space) if !space.reads(&now) => self.rebuild_space_index(),
+            _ => {}
+        }
+    }
+
+    /// Build the open Log Space's Filter columns again from its files' own,
+    /// over the rows it shows now.
+    pub(crate) fn rebuild_space_index(&mut self) {
+        let Some(log_space) = self.active_space().cloned() else { return };
+        let untimed: Vec<usize> = (0..self.view.files.len())
+            .filter(|&i| self.no_timestamp_files.contains(&*self.view.files[i].file_id))
+            .collect();
+        self.filter_index = crate::space_view::space_index(&log_space, &self.parsed_files, &self.view.rows, &untimed);
+    }
+
     /// Rows from `from` on were appended after the last row, and the rows
     /// before them did not change: the cost is that of the new rows. Filter,
     /// the longest row, highlight paints and counts, Matches and
@@ -127,20 +148,24 @@ impl AppView {
     /// the new rows in.
     pub fn apply_rows_appended(&mut self, from: usize, cx: &mut Context<Self>) {
         let rows = self.view.len();
-        if from > rows || self.visible_indices.len() != from || self.filter_pass.len() > from {
+        if from > rows || self.applied_rows != from || self.filter_pass.len() > from {
             return self.apply_filters_and_refresh(cx);
         }
         self.refreshes.appended += 1;
         let pass_before = self.filter_pass.len();
-        let passing = self.filter_state.evaluate_from(&self.filter_index, &self.view.bind(&self.parsed_files), from);
-        std::sync::Arc::make_mut(&mut self.filter_pass).extend(passing);
-        std::sync::Arc::make_mut(&mut self.visible_indices).extend(from..rows);
+        let passing = match self.filter_pass {
+            FilterPass::All { .. } => Vec::new(),
+            FilterPass::Rows(_) => self.filter_state.evaluate_from(&self.filter_index.read(&self.view.rows), &self.view.bind(&self.parsed_files), from),
+        };
+        self.filter_pass.append(rows, passing);
+        self.applied_rows = rows;
 
-        let mut longest_len = self.rows().get(self.longest_row).map_or(0, |e| e.payload().len());
-        for (i, entry) in crate::rows::entries_from(&self.view.bind(&self.parsed_files), from).enumerate() {
-            if entry.payload().len() > longest_len {
-                longest_len = entry.payload().len();
-                self.longest_row = from + i;
+        // As `find_longest_row` picks it, from the Line Index: no row is read.
+        let mut longest = self.longest_key(self.longest_row);
+        for row in from..rows {
+            let key = self.longest_key(row);
+            if key > longest {
+                (longest, self.longest_row) = (key, row);
             }
         }
         // A Field Column shows once a row has a value in it.
@@ -190,9 +215,13 @@ impl AppView {
         self.filter_scan = None;
         self.filter_scanning = None;
         let rows = self.view.bind(&self.parsed_files);
-        let (pass, text) = self.filter_state.evaluate_split(&self.filter_index, rows.len(), 0);
+        if !self.filter_state.is_applied() {
+            self.filter_pass = FilterPass::All { rows: rows.len() };
+            return;
+        }
+        let (pass, text) = self.filter_state.evaluate_split(&self.filter_index.read(&self.view.rows), rows.len(), 0);
         if text.is_empty() {
-            self.filter_pass = Arc::new(pass);
+            self.filter_pass = FilterPass::Rows(Arc::new(pass));
             return;
         }
         let mut held = Vec::new();
@@ -205,7 +234,7 @@ impl AppView {
                 held.push(row);
             }
         }
-        self.filter_pass = Arc::new(held.clone());
+        self.filter_pass = FilterPass::Rows(Arc::new(held.clone()));
         if !on_disk.is_empty() {
             self.start_filter_scan(held, on_disk, text, cx);
         }
@@ -268,7 +297,7 @@ impl AppView {
             // The lines could not be read: the Filter reads them here.
             self.filter_scan = None;
             self.filter_scanning = None;
-            self.filter_pass = Arc::new(self.filter_state.evaluate(&self.filter_index, &self.view.bind(&self.parsed_files)));
+            self.filter_pass = FilterPass::Rows(Arc::new(self.filter_state.evaluate(&self.filter_index.read(&self.view.rows), &self.view.bind(&self.parsed_files))));
             self.refresh_focus();
             self.clamp_selected_row();
             cx.notify();
@@ -278,8 +307,8 @@ impl AppView {
         let mut pass = merge_sorted(&scan.held, &found_rows);
         // Rows appended since passed the Filter as they came.
         let after = scan.scanned_rows;
-        pass.extend(self.filter_pass.iter().copied().filter(|&r| r >= after));
-        self.filter_pass = Arc::new(pass);
+        pass.extend(self.filter_pass.iter().filter(|&r| r >= after));
+        self.filter_pass = FilterPass::Rows(Arc::new(pass));
         if found.done {
             self.filter_scan = None;
             self.filter_scanning = None;
@@ -300,19 +329,10 @@ impl AppView {
 
     fn clamp_selected_row(&mut self) {
         if let Some(pos) = self.selected_row_pos {
-            if pos >= self.visible_indices.len() {
-                self.selected_row_pos = if self.visible_indices.is_empty() { None } else { Some(0) };
+            if pos >= self.view.len() {
+                self.selected_row_pos = if self.view.is_empty() { None } else { Some(0) };
             }
         }
-    }
-
-    /// Detect the columns and values of the loaded file. Call whenever
-    /// `all_entries` is replaced.
-    pub fn rebuild_filter_index(&mut self) {
-        self.filter_index = crate::filter_index::FilterIndex::build(&self.view.bind(&self.parsed_files));
-        self.filter_ui.picker_open = false;
-        self.filter_ui.expanded = None;
-        self.filter_ui.inputs_dirty = true;
     }
 
     pub fn toggle_filter_picker(&mut self, cx: &mut Context<Self>) {
@@ -332,7 +352,7 @@ impl AppView {
     /// value limit are not available. Message takes only Custom Values.
     pub fn pick_filter_column(&mut self, key: &str, cx: &mut Context<Self>) {
         let available = key == crate::columns::MESSAGE_KEY
-            || self.filter_index.column(key).is_some_and(|c| c.is_filterable());
+            || self.filter_index.read(&self.view.rows).column(key).is_some_and(|c| c.is_filterable());
         if available {
             self.filter_ui.expanded = Some(key.to_string());
             self.filter_ui.picker_open = false;
@@ -400,7 +420,7 @@ impl AppView {
     /// not the bounds already in use. Half-typed text waits.
     pub fn on_time_inputs_typed(&mut self, cx: &mut Context<Self>) {
         let (from, to) = self.typed_time_range(cx);
-        let anchor = self.filter_index.anchor_day();
+        let anchor = self.filter_index.read(&self.view.rows).anchor_day();
         let (Ok(new_from), Ok(new_to)) = (parse_time_bound(&from, anchor), parse_time_bound(&to, anchor)) else {
             return;
         };
@@ -440,7 +460,7 @@ impl AppView {
 
     /// Whether a typed time bound can be read; empty text is fine.
     pub fn time_bound_is_valid(&self, text: &str) -> bool {
-        parse_time_bound(text, self.filter_index.anchor_day()).is_ok()
+        parse_time_bound(text, self.filter_index.read(&self.view.rows).anchor_day()).is_ok()
     }
 
     /// Rewrite the Time Range inputs from the Filter and refresh their hints.
@@ -471,7 +491,7 @@ impl AppView {
             self.filter_state.time_range.from.clone(),
             self.filter_state.time_range.to.clone(),
         );
-        let (from_hint, to_hint) = match self.filter_index.time_hint() {
+        let (from_hint, to_hint) = match self.filter_index.read(&self.view.rows).time_hint() {
             Some((a, b)) => (a, b),
             None => ("From".to_string(), "To".to_string()),
         };
@@ -490,6 +510,17 @@ impl AppView {
 impl AppView {
     /// The row with the longest text, which sets how wide the list is: each
     /// file's Line Index gives its longest line.
+    /// What `find_longest_row` ranks row `row` by: its line's length in
+    /// bytes, then the first of equals in file order and line order.
+    fn longest_key(&self, row: usize) -> Option<(usize, std::cmp::Reverse<(usize, usize)>)> {
+        let (file, line) = self.view.rows.get(row)?;
+        let len = match self.rows().file(file)? {
+            crate::view_data::FileEntries::Indexed(indexed) => indexed.line_len(line)?,
+            crate::view_data::FileEntries::Empty => return None,
+        };
+        Some((len, std::cmp::Reverse((file, line))))
+    }
+
     pub(crate) fn find_longest_row(&self) -> usize {
         let rows = self.rows();
         let mut best: Option<(usize, usize, usize)> = None; // (length, file, position)

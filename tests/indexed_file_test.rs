@@ -51,7 +51,7 @@ fn detected_fields_are_read_with_the_lines() {
     for n in [0, 7, 500, want.len() - 1] {
         assert_eq!(debug(&file.entry(n).unwrap()), debug(&want[n]), "line {n}");
     }
-    let user = file.indexed.data.read().unwrap().filter.column("user").map(|c| c.values.len());
+    let user = file.indexed.data.read_recursive().filter.column("user").map(|c| c.values.len());
     assert_eq!(user, Some(7), "the Filter column of the Detected Field");
 }
 
@@ -116,7 +116,7 @@ fn lines_written_since_are_indexed_on() {
     }
     // The Filter columns are those of the whole file.
     let whole = log_gpui::filter_index::FilterIndex::build(&want);
-    let got = file.indexed.data.read().unwrap();
+    let got = file.indexed.data.read_recursive();
     for key in ["level", "module", "user"] {
         let (a, b) = (got.filter.column(key).map(|c| c.values.clone()), whole.column(key).map(|c| c.values.clone()));
         assert_eq!(a, b, "{key}");
@@ -240,4 +240,77 @@ fn a_file_that_grew_a_lot_is_indexed_a_batch_at_a_time() {
     }
     assert_eq!(calls, 3);
     assert_eq!(file.len(), before + lines);
+}
+
+/// A source whose reads take a while once `slow` is set, saying when one
+/// is under way.
+struct SlowSource {
+    bytes: std::sync::Mutex<Vec<u8>>,
+    slow: std::sync::atomic::AtomicBool,
+    reading: std::sync::atomic::AtomicBool,
+}
+
+impl log_gpui::index::LineSource for SlowSource {
+    fn len(&self) -> std::io::Result<u64> {
+        Ok(self.bytes.lock().unwrap().len() as u64)
+    }
+
+    fn read_at(&self, offset: u64, buf: &mut [u8]) -> std::io::Result<usize> {
+        use std::sync::atomic::Ordering;
+        if self.slow.load(Ordering::SeqCst) {
+            self.reading.store(true, Ordering::SeqCst);
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+        let bytes = self.bytes.lock().unwrap();
+        let start = (offset as usize).min(bytes.len());
+        let n = buf.len().min(bytes.len() - start);
+        buf[..n].copy_from_slice(&bytes[start..start + n]);
+        Ok(n)
+    }
+}
+
+/// Lines written since are read from the file with no lock on the index:
+/// it is locked to write only to add them.
+#[test]
+fn reading_new_lines_leaves_the_index_readable() {
+    use std::sync::atomic::Ordering;
+    let line = |i: usize| format!("2026-09-05 10:00:00 [INFO] line {i}\n");
+    let source = std::sync::Arc::new(SlowSource {
+        bytes: std::sync::Mutex::new((0..100).flat_map(|i| line(i).into_bytes()).collect()),
+        slow: false.into(),
+        reading: false.into(),
+    });
+    let file = std::sync::Arc::new(log_gpui::index::file::IndexedFile::index_now(source.clone(), Default::default()).unwrap());
+    source.bytes.lock().unwrap().extend((100..200).flat_map(|i| line(i).into_bytes()));
+    source.slow.store(true, Ordering::SeqCst);
+    let extending = std::thread::spawn({
+        let file = file.clone();
+        move || file.extend().unwrap()
+    });
+    while !source.reading.load(Ordering::SeqCst) {
+        std::thread::yield_now();
+    }
+    assert!(file.indexed.data.try_write().is_some(), "not locked while the new lines are read");
+    let extended = extending.join().unwrap();
+    assert!(matches!(extended, log_gpui::index::file::Extended::Appended { .. }), "{extended:?}");
+    assert_eq!(file.len(), 200);
+}
+
+/// A view holds the index while a row it reads locks it again; a writer
+/// waiting meanwhile (Indexing) does not make that read wait for it.
+#[test]
+fn a_row_read_while_the_index_is_held_does_not_wait_for_a_writer() {
+    let text: String = (0..1000).map(|i| format!("2026-09-05 10:00:00 [INFO] line {i}\n")).collect();
+    let file = Arc::new(IndexedFile::index_now(Arc::new(BytesSource::new(text.into_bytes())), Default::default()).unwrap());
+    file.forget_cached();
+    let held = file.indexed.data.read_recursive();
+    let writer = std::thread::spawn({
+        let file = file.clone();
+        move || drop(file.indexed.data.write())
+    });
+    // Let the writer start waiting.
+    std::thread::sleep(std::time::Duration::from_millis(50));
+    assert!(file.entry(500).is_some(), "the row is read");
+    drop(held);
+    writer.join().unwrap();
 }

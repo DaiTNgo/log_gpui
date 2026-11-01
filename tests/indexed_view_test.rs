@@ -16,14 +16,14 @@ fn indexed(text: &str) -> ParsedFile {
     ParsedFile::from_indexed(IndexedFile::index_now(source, IndexOptions::default()).unwrap())
 }
 
-fn describe(f: &FilterIndex) -> String {
+fn describe(f: &log_gpui::filter_index::ViewIndexRead) -> String {
     let mut out = format!("rows {} parents {} timed {} hint {:?}\n", f.rows(), f.parent_lines(), f.timed_lines(), f.time_hint());
     for row in 0..f.rows() {
         out += &format!("ts {row} {:?}\n", f.effective_timestamp(row));
     }
     for c in &f.columns {
         out += &format!("col {} overflow {} covered {} values {:?}\n", c.key, c.overflow, c.covered(), c.values);
-        let ids: Vec<_> = (0..f.rows()).map(|r| c.id_of_row(r)).collect();
+        let ids: Vec<_> = (0..f.rows()).map(|r| f.ids(&c.key).and_then(|ids| ids.id_of_row(r))).collect();
         out += &format!("  {ids:?}\n");
     }
     out
@@ -69,7 +69,7 @@ fn a_log_space_with_indexed_files_shows_the_same_rows() {
             v.materialize(p).iter().map(|e| format!("{e:?}")).collect()
         };
         assert_eq!(rows(&got, &mixed), rows(&want, &held), "{indexed_files:?}: rows");
-        assert_eq!(describe(&got.index), describe(&want.index), "{indexed_files:?}: Filter");
+        assert_eq!(describe(&got.index.read(&got.view.rows)), describe(&want.index.read(&want.view.rows)), "{indexed_files:?}: Filter");
         assert_eq!(got.no_timestamp_files, want.no_timestamp_files);
         assert_eq!(got.max_chars, want.max_chars);
     }
@@ -91,7 +91,7 @@ fn a_file_view_of_an_indexed_file_shows_the_same_rows() {
             v.materialize(p).iter().map(|e| format!("{e:?}")).collect()
         };
         assert_eq!(rows(&got, &p_got), rows(&want, &p_held), "{path}");
-        assert_eq!(describe(&got.index), describe(&want.index), "{path}");
+        assert_eq!(describe(&got.index.read(&got.view.rows)), describe(&want.index.read(&want.view.rows)), "{path}");
         assert_eq!(got.max_chars, want.max_chars, "{path}");
     }
 }
@@ -139,15 +139,15 @@ fn merged_filter_columns_are_those_of_a_build_on_the_merged_rows() {
     let fields = log_gpui::timeline::union_field_names(&lists);
     let rows = view.materialize(&held);
     let want = FilterIndex::build_merged(&rows, &fields, &timeline.effective_ts);
-    assert_eq!(describe(&view.index), describe(&want));
-    assert_eq!(view.index.column("module").map(|c| c.overflow), Some(true));
-    assert!(view.index.column("level").unwrap().values.iter().any(|v| v.folded == "info" && v.count > 300));
+    assert_eq!(describe(&view.index.read(&view.view.rows)), describe(&want.read()));
+    assert_eq!(view.index.read(&view.view.rows).column("module").map(|c| c.overflow), Some(true));
+    assert!(view.index.read(&view.view.rows).column("level").unwrap().values.iter().any(|v| v.folded == "info" && v.count > 300));
     let mut want_kv: Vec<_> = want.kv_counts().iter().map(|(k, n)| (k.to_string(), *n)).collect();
-    let mut got_kv: Vec<_> = view.index.kv_counts().iter().map(|(k, n)| (k.to_string(), *n)).collect();
+    let mut got_kv: Vec<_> = view.index.read(&view.view.rows).kv_counts().iter().map(|(k, n)| (k.to_string(), *n)).collect();
     want_kv.sort();
     got_kv.sort();
     assert_eq!(got_kv, want_kv);
-    assert_eq!(view.index.anchor_day(), want.anchor_day());
+    assert_eq!(view.index.read(&view.view.rows).anchor_day(), want.anchor_day());
 }
 
 #[test]

@@ -12,15 +12,15 @@ pub struct SearchState {
     pub is_open: bool,
     #[serde(skip)]
     pub query: String,
-    /// Indices of matching rows in the `visible_indices` list: the one list
+    /// The matching rows, ascending: the one list
     /// of the Matches, shared with the canvas.
     #[serde(skip)]
-    pub matched_visible_indices: Arc<Vec<usize>>,
+    pub matched_rows: Arc<Vec<usize>>,
     /// A newer Search Expression is waiting for its scan: the Matches are
     /// those of the one before it, and rows that arrive are left to the scan.
     #[serde(skip)]
     pub pending: bool,
-    /// Current selected match position in `matched_visible_indices` (0-based)
+    /// Current selected match position in `matched_rows` (0-based)
     #[serde(skip)]
     pub current_match_idx: usize,
     /// Matcher compiled from the last Search Expression that parsed cleanly.
@@ -43,7 +43,7 @@ impl SearchState {
     }
 
     pub fn total_matches(&self) -> usize {
-        self.matched_visible_indices.len()
+        self.matched_rows.len()
     }
 
     /// The Match counter: "–" with no Search Expression in use, else
@@ -62,23 +62,23 @@ impl SearchState {
     }
 
     pub fn next_match(&mut self) -> Option<usize> {
-        if self.matched_visible_indices.is_empty() {
+        if self.matched_rows.is_empty() {
             return None;
         }
-        self.current_match_idx = (self.current_match_idx + 1) % self.matched_visible_indices.len();
-        Some(self.matched_visible_indices[self.current_match_idx])
+        self.current_match_idx = (self.current_match_idx + 1) % self.matched_rows.len();
+        Some(self.matched_rows[self.current_match_idx])
     }
 
     pub fn prev_match(&mut self) -> Option<usize> {
-        if self.matched_visible_indices.is_empty() {
+        if self.matched_rows.is_empty() {
             return None;
         }
         if self.current_match_idx == 0 {
-            self.current_match_idx = self.matched_visible_indices.len() - 1;
+            self.current_match_idx = self.matched_rows.len() - 1;
         } else {
             self.current_match_idx -= 1;
         }
-        Some(self.matched_visible_indices[self.current_match_idx])
+        Some(self.matched_rows[self.current_match_idx])
     }
 
     /// Re-parse the typed text. A valid expression replaces the matcher, empty
@@ -124,11 +124,11 @@ impl SearchState {
         }
         let Some(matcher) = &self.matcher else {
             self.current_match_idx = 0;
-            self.matched_visible_indices = Arc::new(Vec::new());
+            self.matched_rows = Arc::new(Vec::new());
             return;
         };
-        self.matched_visible_indices = Arc::new(find(matcher));
-        if self.current_match_idx >= self.matched_visible_indices.len() {
+        self.matched_rows = Arc::new(find(matcher));
+        if self.current_match_idx >= self.matched_rows.len() {
             self.current_match_idx = 0;
         }
     }
@@ -139,7 +139,7 @@ impl SearchState {
     pub fn set_scanned_matches<R: Rows + ?Sized>(&mut self, found: Vec<usize>, entries: &R, scanned: usize) {
         self.pending = false;
         self.current_match_idx = 0;
-        self.matched_visible_indices = Arc::new(found);
+        self.matched_rows = Arc::new(found);
         self.extend_matches(entries, scanned);
     }
 
@@ -151,13 +151,13 @@ impl SearchState {
         let rows: Vec<usize> = (from..entries.len()).collect();
         let found = crate::par::filter(&rows, |ix| entries.get(ix).is_some_and(|e| matcher.is_match(&e.raw_line)));
         if !found.is_empty() {
-            Arc::make_mut(&mut self.matched_visible_indices).extend(found);
+            Arc::make_mut(&mut self.matched_rows).extend(found);
         }
     }
 
     /// Position (in the visible list) of the selected match, if any.
     pub fn current_match_pos(&self) -> Option<usize> {
-        self.matched_visible_indices.get(self.current_match_idx).copied()
+        self.matched_rows.get(self.current_match_idx).copied()
     }
 
     /// Find match byte ranges in a given text for highlight rendering, based on

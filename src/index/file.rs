@@ -126,7 +126,7 @@ impl IndexedFile {
     /// The file `source` as Indexing (with `options`) read it into `indexed`.
     pub fn new(source: Arc<dyn LineSource>, indexed: Arc<Indexed>, options: IndexOptions) -> Self {
         let fingerprint = {
-            let end = indexed.data.read().unwrap().file.lines.end();
+            let end = indexed.data.read_recursive().file.lines.end();
             Mutex::new(fingerprint_of(&*source, end))
         };
         let generations = Mutex::new(vec![GenerationStart { pos: 0, first_number: 1, generation: 0, mark: None }]);
@@ -259,7 +259,7 @@ impl IndexedFile {
     /// The lines indexed since are given theirs in the Filter's index too.
     pub fn set_streams(&self, streams: super::meta::Runs<Option<crate::model::Stream>>) {
         {
-            let mut data = self.indexed.data.write().unwrap();
+            let mut data = self.indexed.data.write();
             let mut filled = self.streams_filled.lock().unwrap();
             let len = data.file.len();
             if *filled < len {
@@ -334,7 +334,7 @@ impl IndexedFile {
 
     /// Lines indexed.
     pub fn len(&self) -> usize {
-        self.indexed.data.read().unwrap().file.len()
+        self.indexed.data.read_recursive().file.len()
     }
 
     pub fn is_empty(&self) -> bool {
@@ -343,13 +343,13 @@ impl IndexedFile {
 
     /// The metadata of line `n` (0-based).
     pub fn meta(&self, n: usize) -> Option<LineMeta> {
-        self.indexed.data.read().unwrap().file.meta.get(n).copied()
+        self.indexed.data.read_recursive().file.meta.get(n).copied()
     }
 
     /// The longest line (0-based) and its length in bytes, from the Line
     /// Index: nothing is read from the file.
     pub fn longest_line(&self) -> Option<(usize, u64)> {
-        self.indexed.data.read().unwrap().file.lines.longest()
+        self.indexed.data.read_recursive().file.lines.longest()
     }
 
     /// Let go of every entry kept: they are read again when asked for.
@@ -368,7 +368,7 @@ impl IndexedFile {
         if let Some(entry) = rows().shard(self.file_key).get((self.file_key, 0, n)) {
             return Some(entry);
         }
-        let data = self.indexed.data.read().unwrap();
+        let data = self.indexed.data.read_recursive();
         let len = data.file.len();
         if n >= len {
             return None;
@@ -411,7 +411,7 @@ impl IndexedFile {
             }
             let (first, last) = (lines[i], lines[j - 1]);
             let (start, entries) = {
-                let data = self.indexed.data.read().unwrap();
+                let data = self.indexed.data.read_recursive();
                 if last >= data.file.len() {
                     return Err(std::io::Error::other("the file no longer has these lines"));
                 }
@@ -447,7 +447,7 @@ impl IndexedFile {
     /// The text of every line, read from the file now: nothing keeps it
     /// (empty when the file no longer has them).
     pub fn all_lines(&self) -> Arc<Vec<gpui::SharedString>> {
-        let data = self.indexed.data.read().unwrap();
+        let data = self.indexed.data.read_recursive();
         let lines = super::read_lines(&*self.source, &data.file.lines, 0..data.file.len()).unwrap_or_default();
         Arc::new(lines.into_iter().map(gpui::SharedString::from).collect())
     }
@@ -455,7 +455,7 @@ impl IndexedFile {
     /// The length in bytes of line `n`, line break included, from the Line
     /// Index: nothing is read.
     pub fn line_len(&self, n: usize) -> Option<usize> {
-        self.indexed.data.read().unwrap().file.lines.span(n).map(|(_, len)| len as usize)
+        self.indexed.data.read_recursive().file.lines.span(n).map(|(_, len)| len as usize)
     }
 
     /// The text of line `n`, through the cache of the rows last read.
@@ -468,8 +468,14 @@ impl IndexedFile {
     /// still being written (no line break yet) waits for its line break.
     pub fn extend(&self) -> std::io::Result<Extended> {
         let len = self.source.len()?;
-        let mut data = self.indexed.data.write().unwrap();
-        let end = data.file.lines.end();
+        // Read from the file and parsed with no lock held; the index is
+        // locked to write only to add the lines (lean-view-memory, decision
+        // 9). What it holds is looked at under a short read lock.
+        let (end, count, last_span) = {
+            let data = self.indexed.data.read_recursive();
+            let count = data.file.len();
+            (data.file.lines.end(), count, count.checked_sub(1).and_then(|n| data.file.lines.span(n)))
+        };
         if len < end {
             return Ok(Extended::Shrunk);
         }
@@ -486,8 +492,7 @@ impl IndexedFile {
             }
         }
         // A last line without its line break is read again with what came.
-        let count = data.file.len();
-        let cut_last = match count.checked_sub(1).and_then(|n| data.file.lines.span(n)) {
+        let cut_last = match last_span {
             Some((start, line_len)) => {
                 let last = self.source.read_range(start + line_len - 1, 1)?;
                 (last != b"\n").then_some((count - 1, start))
@@ -513,18 +518,32 @@ impl IndexedFile {
         // What is left may be only a line still being written: then the
         // next call finds nothing new.
         let more = want < (len - from) as usize;
-        if let Some((last, _)) = cut_last {
-            let removed = self.read_back(&data, last)?;
+        let (removed, overflowed) = {
+            let data = self.indexed.data.read_recursive();
+            let removed = match cut_last {
+                Some((last, _)) => Some(self.read_back(&data, last)?),
+                None => None,
+            };
+            (removed, data.filter.overflowed())
+        };
+        let locked = self.indexed.locked.load(std::sync::atomic::Ordering::Acquire);
+        let lines = super::indexing::read_more(bytes, &self.options, locked, overflowed);
+        let mut data = self.indexed.data.write();
+        if data.file.lines.end() != end || data.file.len() != count {
+            // Indexed meanwhile by someone else: what was read is not news.
+            return Ok(Extended::Same);
+        }
+        if let (Some((last, _)), Some(removed)) = (cut_last, removed) {
             data.file.lines.pop();
             data.file.meta.truncate(last);
             let parent_row = (0..last).rev().find(|&r| data.file.meta.get(r).is_some_and(|m| m.parent_dist == 0)).unwrap_or(0);
             data.filter.truncate_to(last, parent_row, &[removed][..]);
             rows().forget(self.file_key);
         }
-        let locked = self.indexed.locked.load(std::sync::atomic::Ordering::Acquire);
-        super::indexing::index_more(&mut data, bytes, &self.options, locked);
-        let new_len = data.file.len();
-        *self.fingerprint.lock().unwrap() = fingerprint_of(&*self.source, data.file.lines.end());
+        super::indexing::add_more(&mut data, lines);
+        let (new_len, new_end) = (data.file.len(), data.file.lines.end());
+        drop(data);
+        *self.fingerprint.lock().unwrap() = fingerprint_of(&*self.source, new_end);
         let first = cut_last.map_or(count, |(last, _)| last);
         Ok(Extended::Appended { range: first..new_len, replaced_last: cut_last.is_some(), more })
     }
@@ -559,7 +578,7 @@ impl IndexedFile {
     /// more). Not its rows in the Row Cache, which has a budget of its own.
     /// What a Warm Tab is counted at.
     pub fn memory_bytes(&self) -> usize {
-        let data = self.indexed.data.read().unwrap();
+        let data = self.indexed.data.read_recursive();
         data.file.lines.heap_bytes() + data.file.meta.heap_bytes() + data.filter.heap_bytes()
     }
 
@@ -570,7 +589,7 @@ impl IndexedFile {
 
     /// Memory the index of the file holds (not the cache).
     pub fn heap_bytes(&self) -> usize {
-        let data = self.indexed.data.read().unwrap();
+        let data = self.indexed.data.read_recursive();
         let ids = data.filter.columns.iter().filter(|c| c.has_row_ids()).count() * 2 * data.file.len();
         data.file.heap_bytes() + ids
     }

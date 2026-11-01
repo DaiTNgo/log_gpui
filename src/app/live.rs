@@ -5,6 +5,7 @@
 
 use crate::rows::Rows as _;
 use super::AppView;
+use crate::filter_index::ViewIndex;
 use crate::focus::LineRef;
 use crate::live::{
     BreakKind, LineSource, LocalFileSource, SourceCommand, SourceEvent, SourceHandle,
@@ -15,6 +16,7 @@ use crate::workspace::working_set::{TabTarget, ViewMode};
 use gpui::{Context, Pixels, point};
 use std::collections::{HashMap, HashSet};
 use std::ops::Range;
+use std::sync::Arc;
 use std::time::Duration;
 
 /// How long the app gathers new lines before applying them.
@@ -475,7 +477,7 @@ impl AppView {
             let Some(parsed) = self.parsed_files.get(&file_id) else { continue };
             // A file read through its Line Index follows from what is indexed.
             let Some(indexed) = &parsed.indexed else { continue };
-            let local_offset = indexed.indexed.data.read().unwrap().file.lines.end();
+            let local_offset = indexed.indexed.data.read_recursive().file.lines.end();
             let handle = match (&file.remote, &file.path) {
                 (Some(remote), _) => {
                     let spawned = match &remote.target {
@@ -1274,6 +1276,11 @@ impl AppView {
     fn append_to_open_view(&mut self, relevant: &[&(String, FileDelta)], cx: &mut Context<Self>) -> bool {
         let Some(target) = self.active_target() else { return false };
         let is_space = matches!(target, TabTarget::LogSpace { .. });
+        // The values read so far while files are read: built again.
+        if matches!(self.filter_index, ViewIndex::Owned(_)) {
+            return false;
+        }
+        self.sync_view_index();
         let Some(space) = self.active_space().cloned() else { return false };
         let order: HashMap<&str, usize> = space
             .ordered_files()
@@ -1286,7 +1293,7 @@ impl AppView {
         // of a file read so far without a time is one of them.
         let untimed: HashSet<String> = if is_space {
             self.no_timestamp_files.clone()
-        } else if self.filter_index.timed_lines() == 0 {
+        } else if self.filter_index.read(&self.view.rows).timed_lines() == 0 {
             relevant.iter().map(|(id, _)| id.clone()).collect()
         } else {
             HashSet::new()
@@ -1362,7 +1369,7 @@ impl AppView {
             return false;
         }
         let first_key = (rows[0].class, rows[0].ts, rows[0].file);
-        let ts_index = &self.filter_index;
+        let ts_index = self.filter_index.read(&self.view.rows);
         let view_rows = self.rows();
         let key_of = |r: usize| {
             let file = view_rows.file_id(r).and_then(|id| order.get(id).copied()).unwrap_or(0);
@@ -1373,6 +1380,8 @@ impl AppView {
         };
         let from = partition_rows(view_rows.len(), |r| key_of(r) <= first_key);
         let tail_keys: Vec<(u8, f64, usize)> = (from..view_rows.len()).map(key_of).collect();
+        drop(view_rows);
+        drop(ts_index);
         let selected = self.selected_row_pos.filter(|pos| *pos >= from).and_then(|pos| self.line_ref_of_entry(pos));
         let anchor = self.top_row_anchor().filter(|a| a.row >= from);
 
@@ -1381,11 +1390,7 @@ impl AppView {
         // follow it in line order, so they stay under it.
         // Rows that all sort after the last one only add to the view.
         let at_end = from == self.view.len();
-        let tail: Vec<u64> = self.view.rows.to_mut().split_off(from);
-        {
-            let bound = self.view.bind(&self.parsed_files);
-            self.filter_index.truncate(&bound, &bound.picked(&tail));
-        }
+        let tail: Vec<u64> = self.view.rows.split_off(from);
         let mut merged: Vec<u64> = Vec::with_capacity(tail.len() + rows.len());
         let mut fresh: Vec<u64> = Vec::with_capacity(rows.len());
         let mut old = tail.into_iter().zip(tail_keys).peekable();
@@ -1419,13 +1424,14 @@ impl AppView {
         if std::env::var_os("LOG_GPUI_LIVE_TRACE").is_some() {
             eprintln!("live insert: {} rows from row {grew_from} of {}", merged.len(), grew_from + merged.len());
         }
-        self.view.rows.to_mut().extend(merged);
-        {
-            let added_rows: Vec<u64> = self.view.rows.iter().skip(grew_from).collect();
-            let bound = self.view.bind(&self.parsed_files);
-            let added = bound.picked(&added_rows);
-            self.filter_index
-                .append_marking_untimed(&added, |r| added.file_id(r).is_some_and(|id| untimed.contains(id)));
+        self.view.rows.extend(merged);
+        // A File View's index is its file's, which took the lines in; a Log
+        // Space's columns add up its files' again.
+        if let ViewIndex::Space(index) = &mut self.filter_index {
+            let untimed: Vec<bool> = self.view.files.iter().map(|f| untimed.contains(&*f.file_id)).collect();
+            if !Arc::make_mut(index).append(&self.view.rows, from, untimed) {
+                self.rebuild_space_index();
+            }
         }
         if at_end {
             self.apply_rows_appended(grew_from, cx);

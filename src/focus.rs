@@ -500,7 +500,7 @@ impl From<FocusTabs> for FocusTabsRepr {
 /// matches on its own.
 pub fn compute_focus_rows<R: crate::rows::Rows + ?Sized>(
     entries: &R,
-    filter_pass: &[usize],
+    filter_pass: &crate::filter::FilterPass,
     filter_active: bool,
     matcher: Option<&Matcher>,
 ) -> Vec<FocusRow> {
@@ -513,7 +513,7 @@ pub fn compute_focus_rows<R: crate::rows::Rows + ?Sized>(
         None => ix < entries.len(),
     };
     if filter_active {
-        filter_pass.iter().copied().filter(|&ix| keep(ix)).map(FocusRow::Entry).collect()
+        filter_pass.iter().filter(|&ix| keep(ix)).map(FocusRow::Entry).collect()
     } else {
         (0..entries.len()).filter(|&ix| keep(ix)).map(FocusRow::Entry).collect()
     }

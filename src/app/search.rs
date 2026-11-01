@@ -131,7 +131,7 @@ impl AppView {
     /// counter reflects the new position.
     pub fn jump_to_match_by_entry(&mut self, entry_ix: usize, cx: &mut Context<Self>) {
         let search = self.focus.search_mut();
-        if let Ok(match_idx) = search.matched_visible_indices.binary_search(&entry_ix) {
+        if let Ok(match_idx) = search.matched_rows.binary_search(&entry_ix) {
             search.current_match_idx = match_idx;
         }
         self.jump_to_row(entry_ix, cx);
@@ -140,14 +140,14 @@ impl AppView {
     /// Select a row of the view and scroll to it. The view shows every entry,
     /// so a row position is the entry's position.
     pub fn jump_to_row(&mut self, vis_pos: usize, cx: &mut Context<Self>) {
-        if vis_pos < self.visible_indices.len() {
+        if vis_pos < self.view.len() {
             self.goto_entry(vis_pos, Origin::Jump, cx);
         }
     }
 
     /// A row of the view was clicked: select it; the pane follows.
     pub fn select_view_row(&mut self, vis_pos: usize, cx: &mut Context<Self>) {
-        if vis_pos < self.visible_indices.len() {
+        if vis_pos < self.view.len() {
             self.goto_entry(vis_pos, Origin::View, cx);
         }
     }
@@ -271,8 +271,8 @@ impl AppView {
             let search = self.focus.search_mut();
             search.scanning = Some((found.scanned, found.total));
             if found.error.is_none() {
-                search.matched_visible_indices = Arc::new(matches);
-                if search.current_match_idx >= search.matched_visible_indices.len() {
+                search.matched_rows = Arc::new(matches);
+                if search.current_match_idx >= search.matched_rows.len() {
                     search.current_match_idx = 0;
                 }
                 cx.notify();

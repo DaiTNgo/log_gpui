@@ -33,8 +33,9 @@ pub fn unpack(row: u64) -> (usize, usize) {
 pub enum ViewRows {
     /// A File View: line `n` is row `n`.
     File { lines: usize },
-    /// A Log Space: the merged rows, packed.
-    Merged(Vec<u64>),
+    /// A Log Space: the merged rows, packed. Shared, so a Scan or a count
+    /// of the rows takes them without a copy.
+    Merged(Arc<Vec<u64>>),
 }
 
 impl Default for ViewRows {
@@ -80,15 +81,37 @@ impl ViewRows {
         (0..lines).map(|n| pack(0, n)).chain(merged.iter().copied())
     }
 
-    /// The rows as a list, to change them in place (live rows arriving or
-    /// leaving): a File View's rows are written out first.
-    pub fn to_mut(&mut self) -> &mut Vec<u64> {
-        if let Self::File { lines } = *self {
-            *self = Self::Merged((0..lines).map(|n| pack(0, n)).collect());
-        }
+    /// The merged rows `rows`.
+    pub fn merged(rows: Vec<u64>) -> Self {
+        Self::Merged(Arc::new(rows))
+    }
+
+    /// Take the rows from `at` on out (live rows merged in again after).
+    pub fn split_off(&mut self, at: usize) -> Vec<u64> {
         match self {
-            Self::Merged(rows) => rows,
-            Self::File { .. } => unreachable!("written out above"),
+            Self::File { lines } => {
+                let at = at.min(*lines);
+                let tail = (at..*lines).map(|n| pack(0, n)).collect();
+                *lines = at;
+                tail
+            }
+            Self::Merged(rows) => Arc::make_mut(rows).split_off(at),
+        }
+    }
+
+    /// Add `more` after the rows. A File View stays its lines while they
+    /// come in line order; rows out of it write its list out.
+    pub fn extend(&mut self, more: Vec<u64>) {
+        if let Self::File { lines } = self {
+            let next = *lines;
+            if more.iter().enumerate().all(|(i, &r)| r == pack(0, next + i)) {
+                *lines += more.len();
+                return;
+            }
+            *self = Self::merged((0..next).map(|n| pack(0, n)).collect());
+        }
+        if let Self::Merged(rows) = self {
+            Arc::make_mut(rows).extend(more);
         }
     }
 

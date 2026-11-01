@@ -29,6 +29,10 @@ lzma-rs = "=0.3.0"
 bzip2 = "=0.6.1"
 # Finding line breaks while indexing a file.
 memchr = "2.8.3"
+# The lock of a file's index: a view reads it while its rows are read
+# (`read_recursive`), which std's RwLock may deadlock on while Indexing
+# waits to write. Already in the tree through gpui.
+parking_lot = "0.12.5"
 # The app's allocator: it gives the memory of a file let go back to the
 # system when asked (`release_freed_memory`), where macOS malloc keeps it.
 mimalloc = "0.1.48"

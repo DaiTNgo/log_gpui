@@ -36,7 +36,7 @@ impl AppView {
     /// listed too, so the user can clear them.
     fn filter_card_keys(&self) -> Vec<String> {
         let mut keys: Vec<String> = Vec::new();
-        for col in self.filter_index.columns_in_use() {
+        for col in self.filter_index.read(&self.view.rows).columns_in_use() {
             let active = self
                 .filter_state
                 .column(&col.key)
@@ -48,7 +48,7 @@ impl AppView {
         for cf in &self.filter_state.columns {
             if (cf.is_active() || cf.hide)
                 && !keys.contains(&cf.column)
-                && self.filter_index.column(&cf.column).is_none()
+                && self.filter_index.read(&self.view.rows).column(&cf.column).is_none()
             {
                 keys.push(cf.column.clone());
             }
@@ -62,7 +62,7 @@ impl AppView {
     fn render_column_picker(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
         let mut list = v_flex().w_full().gap_0p5().py_1();
         let mut any = false;
-        for (ix, col) in self.filter_index.columns_in_use().enumerate() {
+        for (ix, col) in self.filter_index.read(&self.view.rows).columns_in_use().enumerate() {
             any = true;
             let key = col.key.clone();
             let available = col.is_filterable();
@@ -206,7 +206,8 @@ impl AppView {
     }
 
     fn render_filter_card(&self, ix: usize, key: &str, cx: &mut Context<Self>) -> gpui::AnyElement {
-        let col = self.filter_index.column(key);
+        let index = self.filter_index.read(&self.view.rows);
+        let col = index.column(key);
         let label = self.filter_column_name(key, &col.map_or_else(|| key.to_string(), |c| c.label.clone()));
         let cf = self.filter_state.column(key);
         let hide = cf.is_some_and(|c| c.hide);

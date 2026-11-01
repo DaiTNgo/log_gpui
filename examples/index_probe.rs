@@ -885,7 +885,7 @@ fn app_probe(path: &str) {
         let first_at = started.elapsed();
         let indexed = indexing.wait();
         let total = started.elapsed();
-        let data = indexed.data.read().unwrap();
+        let data = indexed.data.read_recursive();
         let lines = data.file.len();
         let index_bytes = data.file.heap_bytes();
         let row_ids: usize = data.filter.columns.iter().filter(|c| c.has_row_ids()).count() * 2 * lines;
@@ -911,7 +911,7 @@ fn app_probe(path: &str) {
 fn app_scan(path: &str, indexed: Arc<log_gpui::index::Indexed>) {
     use log_gpui::index::scan::{FileTexts, Matcher as ScanMatcher, Scan};
     use log_gpui::index::{DiskSource, HandleBudget, LineSource};
-    let lines = indexed.data.read().unwrap().file.len();
+    let lines = indexed.data.read_recursive().file.len();
     for query in ["timeout", "user=42"] {
         let matcher = Matcher::compile(&search_expr::parse(query).unwrap().unwrap());
         let matcher: Arc<ScanMatcher> = Arc::new(move |first: usize, texts: &[&str]| {

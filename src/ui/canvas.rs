@@ -177,7 +177,8 @@ impl CanvasColors {
 
 pub struct CanvasViewState<'a> {
     pub view: gpui::Entity<crate::app::AppView>,
-    pub visible_indices: Arc<Vec<usize>>,
+    /// Rows of the view: every row shows, row `n` at position `n`.
+    pub rows: usize,
     /// Position of the row with the longest message (sets the list's width).
     pub longest_row: usize,
     pub selected_row_pos: Option<usize>,
@@ -220,7 +221,7 @@ pub const ROW_FLASH: std::time::Duration = std::time::Duration::from_millis(900)
 
 impl LogCanvas {
     pub fn render(state: CanvasViewState) -> gpui::AnyElement {
-        let total_visible = state.visible_indices.len();
+        let total_visible = state.rows;
         let row_height = state.density.row_height();
         let font_size = state.density.font_size();
 
@@ -325,7 +326,7 @@ impl LogCanvas {
         // The view shows every entry, so an entry's position is its row.
         let longest_vis_pos = state.longest_row.min(total_visible.saturating_sub(1));
         let env = RowEnv {
-            visible: state.visible_indices.clone(),
+            rows: total_visible,
             view: state.view.clone(),
             colors: state.colors,
             selected_pos: state.selected_row_pos,
@@ -340,7 +341,7 @@ impl LogCanvas {
                     .unwrap_or_default(),
             ),
             search_matcher: state.search_state.matcher.clone(),
-            matched_positions: state.search_state.matched_visible_indices.clone(),
+            matched_positions: state.search_state.matched_rows.clone(),
             current_match_pos: state.search_state.current_match_pos(),
             scroll_handle: state.scroll_handle.clone(),
             layout: state.column_layout.clone(),
@@ -383,8 +384,7 @@ impl LogCanvas {
         // 3. Minimap: the whole log as one thin bar per row, with the part in view shaded.
         let colors = state.colors;
         let minimap_view = state.view.clone();
-        let minimap_visible = state.visible_indices.clone();
-        let minimap_matches = state.search_state.matched_visible_indices.clone();
+        let minimap_matches = state.search_state.matched_rows.clone();
         let minimap_selected = state.selected_row_pos;
         let minimap_handle = state.scroll_handle.clone();
         let minimap_current = state.search_state.current_match_pos();
@@ -400,7 +400,7 @@ impl LogCanvas {
             move |bounds, _, window, cx| {
                 let (start, rows_fit, first_visible, visible_rows) = minimap_window(
                     &minimap_handle,
-                    minimap_visible.len(),
+                    total_visible,
                     bounds.size.height,
                     row_height,
                 );
@@ -411,7 +411,10 @@ impl LogCanvas {
                 let mut missing = Vec::new();
                 for r in 0..rows_fit {
                     let pos = start + r;
-                    let Some(&entry_ix) = minimap_visible.get(pos) else { break };
+                    if pos >= total_visible {
+                        break;
+                    }
+                    let entry_ix = pos;
                     let Some(entry) = entries.cached(entry_ix) else {
                         missing.push(entry_ix);
                         continue;
@@ -850,7 +853,7 @@ struct RowEnv {
     phrase_colors: bool,
     /// Paint of each Phrase of the Search Expression.
     phrase_fills: Arc<Vec<PhraseFill>>,
-    visible: Arc<Vec<usize>>,
+    rows: usize,
     view: gpui::Entity<crate::app::AppView>,
     colors: CanvasColors,
     selected_pos: Option<usize>,
@@ -902,7 +905,10 @@ impl RowEnv {
         missing: &mut Vec<usize>,
     ) -> Option<gpui::Stateful<gpui::Div>> {
         let colors = self.colors;
-        let &entry_ix = self.visible.get(vis_pos)?;
+        if vis_pos >= self.rows {
+            return None;
+        }
+        let entry_ix = vis_pos;
         let Some(entry) = entries.cached(entry_ix) else {
             if entry_ix >= entries.len() {
                 return None;

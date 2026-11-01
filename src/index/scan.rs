@@ -38,11 +38,11 @@ impl LineSpans for LineIndex {
 
 impl LineSpans for Indexed {
     fn lines(&self) -> usize {
-        self.data.read().unwrap().file.len()
+        self.data.read_recursive().file.len()
     }
 
     fn byte_range(&self, from: usize, to: usize) -> Option<Range<u64>> {
-        self.data.read().unwrap().file.lines.byte_range(from, to)
+        self.data.read_recursive().file.lines.byte_range(from, to)
     }
 }
 

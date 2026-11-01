@@ -74,7 +74,7 @@ fn a_drag_sets_the_time_range_and_a_click_jumps(cx: &mut TestAppContext) {
         let range = &app.filter_state.time_range;
         assert_eq!((range.from.as_str(), range.to.as_str()), ("10:30:00", "10:35:00"));
         let pane: Vec<usize> = app.focus_rows.iter().filter_map(|r| if let FocusRow::Entry(ix) = r { Some(*ix) } else { None }).collect();
-        let times: Vec<f64> = pane.iter().map(|&r| app.filter_index.effective_timestamp(r).unwrap()).collect();
+        let times: Vec<f64> = pane.iter().map(|&r| app.index().effective_timestamp(r).unwrap()).collect();
         assert!(!times.is_empty() && times.iter().all(|&t| t >= at(30.0) && t <= at(35.0)), "{times:?}");
         assert_eq!(app.histogram_time_range(), Some((Some(at(30.0)), Some(at(35.0)))));
     });
@@ -108,7 +108,7 @@ fn a_drag_sets_the_time_range_and_a_click_jumps(cx: &mut TestAppContext) {
     h.cx.run_until_parked();
     h.view.read_with(&h.cx, |app, _| {
         let row = app.selected_row_pos.expect("a selected row");
-        assert_eq!(app.filter_index.effective_timestamp(row), Some(at(33.0)));
+        assert_eq!(app.index().effective_timestamp(row), Some(at(33.0)));
         assert_eq!(app.filter_pass, pass_before);
         assert!(app.filter_state.time_range.is_active());
     });
