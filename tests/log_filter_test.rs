@@ -29,7 +29,7 @@ fn sample() -> Vec<LogEntry> {
 
 fn visible(state: &FilterState, entries: &[LogEntry]) -> Vec<usize> {
     let index = FilterIndex::build(entries);
-    state.evaluate(&index, entries)
+    state.evaluate(&index.read(), entries)
 }
 
 // ─── Detection ───────────────────────────────────────────────────────────────
@@ -135,7 +135,7 @@ fn a_column_of_800_values_still_filters() {
     assert_eq!(module.distinct_label(), "800");
     let mut f = FilterState::new();
     f.toggle_value("module", "thread-650");
-    assert_eq!(f.evaluate(&index, &entries), vec![650]);
+    assert_eq!(f.evaluate(&index.read(), &entries), vec![650]);
 }
 
 // ─── Filter Values, Custom Values, Hide Mode ─────────────────────────────────
@@ -254,7 +254,7 @@ fn counts_do_not_change_with_other_filters() {
     let api = before.column("module").unwrap().values.iter().find(|v| v.display == "API").unwrap().count;
     let mut f = FilterState::new();
     f.toggle_value("level", "ERROR");
-    let _ = f.evaluate(&before, &entries);
+    let _ = f.evaluate(&before.read(), &entries);
     let after = FilterIndex::build(&entries);
     assert_eq!(
         after.column("module").unwrap().values.iter().find(|v| v.display == "API").unwrap().count,
@@ -317,7 +317,7 @@ fn stale_index_falls_back_to_comparing_text() {
     entries.push(entry(7, 106.0, "API", LogLevel::Info, "late"));
     let mut f = FilterState::new();
     f.toggle_value("module", "API");
-    assert_eq!(f.evaluate(&index, &entries), vec![0, 2, 6]);
+    assert_eq!(f.evaluate(&index.read(), &entries), vec![0, 2, 6]);
 }
 
 #[test]
@@ -358,7 +358,7 @@ fn tail_appends_new_values_and_counts() {
 
     let mut f = FilterState::new();
     f.toggle_value("module", "SEARCH");
-    assert_eq!(f.evaluate(&index, &entries), vec![6]);
+    assert_eq!(f.evaluate(&index.read(), &entries), vec![6]);
 }
 
 #[test]
@@ -377,7 +377,7 @@ fn tail_crossing_the_limit_keeps_existing_conditions() {
     entries.extend(new);
 
     assert!(!index.column("module").unwrap().is_filterable());
-    assert_eq!(f.evaluate(&index, &entries), vec![7], "condition keeps working");
+    assert_eq!(f.evaluate(&index.read(), &entries), vec![7], "condition keeps working");
 }
 
 // ─── Time Range ──────────────────────────────────────────────────────────────

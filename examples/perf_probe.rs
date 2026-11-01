@@ -59,9 +59,9 @@ fn main() {
     let index = time("FilterIndex::build", || FilterIndex::build(&entries));
 
     let mut filter = FilterState::new();
-    let pass = time("Filter evaluate (none)", || filter.evaluate(&index, &mut entries));
+    let pass = time("Filter evaluate (none)", || filter.evaluate(&index.read(), &mut entries));
     filter.toggle_value("level", "error");
-    let pass_err = time("Filter evaluate (level=error)", || filter.evaluate(&index, &mut entries));
+    let pass_err = time("Filter evaluate (level=error)", || filter.evaluate(&index.read(), &mut entries));
     println!("  pass {} / {}", pass_err.len(), pass.len());
 
     let rule = HighlightRule::new(1, "level", &["warn".into()], &[], log_gpui::palette::next_rule_color(0)).ok();
@@ -113,16 +113,15 @@ fn histogram_probe(n: usize) {
     let rows = RowFacts { ts: &ts, class: &class };
     time(&format!("histogram count_buckets {}M", n / 1_000_000), || count_buckets(rows, &axis, None, &matches, None));
     let b = time(&format!("histogram count_buckets {}M + Filter", n / 1_000_000), || {
-        count_buckets(rows, &axis, Some(&pass), &matches, None)
+        count_buckets(rows, &axis, Some(log_gpui::filter::PassFrom::Rows(&pass)), &matches, None)
     });
     println!("  {} columns of {}s", b.counts.len(), axis.step.seconds());
     for values in [8usize, 1000] {
         // A Parent Line in 50 has no value.
         let ids: Vec<u16> = (0..n).map(|i| if i % 50 == 48 { u16::MAX } else { (i * 7 % values) as u16 }).collect();
-        let copy = time(&format!("  copy of the lane ids ({} MB)", n * 2 / 1_000_000), || ids.clone());
-        let lanes = Some(LaneIds { ids: &copy, values });
+        let lanes = Some(LaneIds { ids: &ids, values });
         let b = time(&format!("histogram count_buckets {}M + Filter + lanes of {values} values", n / 1_000_000), || {
-            count_buckets(rows, &axis, Some(&pass), &matches, lanes)
+            count_buckets(rows, &axis, Some(log_gpui::filter::PassFrom::Rows(&pass)), &matches, lanes)
         });
         let l = b.lanes.expect("lanes");
         println!("  {} lanes, {} values in Other, empty lane: {}", l.set.slots.len(), l.set.other_count, l.set.has_empty);
@@ -177,7 +176,7 @@ fn app_probe(n: usize) {
         h.view.update(&mut h.cx, |app, cx| app.trigger_search_query("user=42", cx));
         h.cx.run_until_parked();
     });
-    let matches = h.view.read_with(&h.cx, |app, _| app.focus.search().matched_visible_indices.len());
+    let matches = h.view.read_with(&h.cx, |app, _| app.focus.search().matched_rows.len());
     println!("  matches {matches}");
 
     // A source that stands for a Remote File: the probe sends its events.

@@ -60,7 +60,7 @@ impl AppView {
         let mut pieces = Vec::new();
         let rows = self.rows();
         for row in start.row..=end.row {
-            let Some(&entry_ix) = self.visible_indices.get(row) else { continue };
+            let Some(entry_ix) = self.row_at(row) else { continue };
             let Some(entry) = rows.get(entry_ix) else { continue };
             if let Some(range) = sel.range_in_row(row, entry.raw_line.len()) {
                 pieces.push(LinePiece { entry_ix, range });
@@ -95,13 +95,13 @@ impl AppView {
 
     /// The Marker under a byte of a row, if any.
     pub fn marker_under(&self, vis_pos: usize, byte: usize) -> Option<TextMarker> {
-        let &entry_ix = self.visible_indices.get(vis_pos)?;
+        let entry_ix = self.row_at(vis_pos)?;
         marker_at(self.rows().markers(entry_ix), byte).cloned()
     }
 
     /// The key of the Text Highlight painting a byte of a row, if any.
     pub fn text_highlight_under(&self, vis_pos: usize, byte: usize) -> Option<String> {
-        let &entry_ix = self.visible_indices.get(vis_pos)?;
+        let entry_ix = self.row_at(vis_pos)?;
         let entry = self.rows().get(entry_ix)?;
         crate::text_highlight::HighlightMatcher::new(self.text_highlights())
             .key_at(&entry.raw_line, byte)
@@ -110,7 +110,7 @@ impl AppView {
 
     /// Remove the whole Marker under a byte of a row.
     pub fn remove_marker_under(&mut self, vis_pos: usize, byte: usize, cx: &mut Context<Self>) {
-        let Some(&entry_ix) = self.visible_indices.get(vis_pos) else { return };
+        let Some(entry_ix) = self.row_at(vis_pos) else { return };
         let Some(file_id) = self.file_id_of_entry(entry_ix) else { return };
         let Some(entry) = self.rows().get(entry_ix) else { return };
         let (line, text, generation) = (entry.index, entry.raw_line.clone(), entry.generation);
@@ -132,7 +132,7 @@ impl AppView {
         color: HighlightColor,
         cx: &mut Context<Self>,
     ) {
-        let Some(&entry_ix) = self.visible_indices.get(vis_pos) else { return };
+        let Some(entry_ix) = self.row_at(vis_pos) else { return };
         let Some(file_id) = self.file_id_of_entry(entry_ix) else { return };
         let Some(entry) = self.rows().get(entry_ix) else { return };
         let (line, text, generation) = (entry.index, entry.raw_line.clone(), entry.generation);

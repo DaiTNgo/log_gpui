@@ -72,7 +72,7 @@ impl AppView {
         if !time.is_empty() {
             fields.push(InspectorField { key: "timestamp".into(), label: "Timestamp".into(), value: time.to_string() });
         }
-        for col in self.filter_index.columns_in_use() {
+        for col in self.filter_index.read(&self.view.rows).columns_in_use() {
             if let Some(v) = crate::filter_index::column_value(&entry, &col.key) {
                 fields.push(InspectorField { key: col.key.clone(), label: col.label.clone(), value: v.to_string() });
             }

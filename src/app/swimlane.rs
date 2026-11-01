@@ -5,9 +5,9 @@
 
 use super::AppView;
 use crate::columns::{LOG_NAME_KEY, SOURCE_KEY};
-use crate::filter_index::FilterIndex;
+use crate::filter_index::{RowIds, ViewIndexRead};
 use crate::model::LogLevel;
-use crate::time_histogram::{self as th, Lane, LaneBy, LaneIds};
+use crate::time_histogram::{self as th, Lane, LaneBy};
 use crate::workspace::working_set::TabTarget;
 use gpui::Context;
 
@@ -30,11 +30,11 @@ fn severity(level: LogLevel) -> i8 {
     if level == LogLevel::Unknown { -1 } else { level as i8 }
 }
 
-/// The value ids of each row in the column `key` of `index`, when it has
-/// them all: what the lanes are counted from.
-pub(crate) fn lane_ids<'a>(index: &'a FilterIndex, key: &str) -> Option<LaneIds<'a>> {
-    let col = index.column(key).filter(|c| c.has_row_ids())?;
-    Some(LaneIds { ids: col.row_ids(), values: col.values.len() })
+/// The value id of each row in the column `key` of the view's index, and
+/// how many values it has, when it keeps them: what the lanes are counted
+/// from.
+pub(crate) fn lane_ids<'a>(index: &'a ViewIndexRead, key: &str) -> Option<(RowIds<'a>, usize)> {
+    Some((index.ids(key)?, index.column(key)?.values.len()))
 }
 
 /// A column in the "Lane by" menu.
@@ -62,14 +62,15 @@ impl AppView {
     /// chosen column the lanes cannot split by (gone from the view, past
     /// the limit of values, or still read) falls back to it (decision 5).
     pub fn lane_column(&self) -> Option<String> {
+        let index = self.filter_index.read(&self.view.rows);
         let chosen = match self.lane_by() {
             LaneBy::None => return None,
-            LaneBy::Column(key) => Some(key).filter(|k| lane_ids(&self.filter_index, k).is_some()),
+            LaneBy::Column(key) => Some(key).filter(|k| index.ids(k).is_some()),
             LaneBy::Default => None,
         };
         chosen.or_else(|| {
-            let log_name = self.filter_index.column(LOG_NAME_KEY).filter(|c| c.has_row_ids())?;
-            (self.active_is_log_space() && log_name.values.len() >= 2).then(|| LOG_NAME_KEY.to_string())
+            let two = index.ids(LOG_NAME_KEY).is_some() && index.column(LOG_NAME_KEY)?.values.len() >= 2;
+            (self.active_is_log_space() && two).then(|| LOG_NAME_KEY.to_string())
         })
     }
 
@@ -80,7 +81,8 @@ impl AppView {
         if self.lane_column().is_some() {
             return None;
         }
-        let choosable: Vec<_> = self.filter_index.columns_in_use().filter(|c| c.has_row_ids()).collect();
+        let index = self.filter_index.read(&self.view.rows);
+        let choosable: Vec<_> = index.columns_in_use().filter(|c| index.ids(&c.key).is_some()).collect();
         if choosable.iter().any(|c| c.key == "module") {
             return Some("module".to_string());
         }
@@ -93,15 +95,15 @@ impl AppView {
     /// view, and those that cannot be chosen with the reason.
     pub fn lane_choices(&self) -> Vec<LaneChoice> {
         let suggested = self.lane_suggestion();
-        let mut choices: Vec<LaneChoice> = self
-            .filter_index
+        let index = self.filter_index.read(&self.view.rows);
+        let mut choices: Vec<LaneChoice> = index
             .columns_in_use()
             .map(|c| LaneChoice {
                 key: c.key.clone(),
                 label: c.label.clone(),
                 unavailable: if c.overflow {
                     Some(format!("Too many values (> {})", crate::filter_index::MAX_DISTINCT))
-                } else if !c.has_row_ids() {
+                } else if index.ids(&c.key).is_none() {
                     Some("Still reading".to_string())
                 } else {
                     None
@@ -140,13 +142,15 @@ impl AppView {
     /// The name a lane shows.
     pub fn lane_name(&self, lane: Lane) -> String {
         match lane {
-            Lane::Value(v) => self
-                .histogram
-                .lanes_for
-                .as_deref()
-                .and_then(|key| self.filter_index.column(key))
-                .and_then(|c| c.values.get(usize::from(v)))
-                .map_or_else(String::new, |v| v.display.clone()),
+            Lane::Value(v) => {
+                let index = self.filter_index.read(&self.view.rows);
+                self.histogram
+                    .lanes_for
+                    .as_deref()
+                    .and_then(|key| index.column(key))
+                    .and_then(|c| c.values.get(usize::from(v)))
+                    .map_or_else(String::new, |v| v.display.clone())
+            }
             Lane::Empty => "(empty)".to_string(),
             Lane::Other => {
                 // Short enough for the names' room; the tooltip says more.
@@ -215,13 +219,14 @@ impl AppView {
         let (mut lines, mut level) = (0, None);
         {
             let rows = self.rows();
-            for row in self.lane_rows_in(lane, col) {
+            self.each_lane_row(lane, col, |row| {
                 lines += 1;
                 let l = rows.level(row).unwrap_or(LogLevel::Unknown);
                 if level.is_none_or(|top| severity(l) > severity(top)) {
                     level = Some(l);
                 }
-            }
+                true
+            });
         }
         self.histogram.lane_hover = Some(LaneHover { lane, col, lines, level });
         cx.notify();
@@ -240,7 +245,7 @@ impl AppView {
         let hover = self.histogram.lane_hover.as_ref()?;
         let grid = self.histogram.shown.grid?;
         let step = self.histogram.axis.as_ref().map_or(th::Step(1.0), |a| a.step);
-        let anchor = self.filter_index.anchor_day();
+        let anchor = self.filter_index.read(&self.view.rows).anchor_day();
         let (from, to) = th::format_time_range(grid.start_of(hover.col), grid.start_of(hover.col + 1), anchor, step);
         let name = self.lane_name(hover.lane);
         if hover.lines == 0 {
@@ -261,29 +266,45 @@ impl AppView {
 
     /// The first Parent Line of `lane` in column `col` of the counted grid.
     pub fn first_row_of_lane(&self, lane: Lane, col: usize) -> Option<usize> {
-        self.lane_rows_in(lane, col).next()
+        let mut first = None;
+        self.each_lane_row(lane, col, |row| {
+            first = Some(row);
+            false
+        });
+        first
     }
 
-    /// The Parent Lines of `lane` in column `col` of the counted grid, in
-    /// order.
-    fn lane_rows_in(&self, lane: Lane, col: usize) -> Box<dyn Iterator<Item = usize> + '_> {
+    /// Call `f` with each Parent Line of `lane` in column `col` of the
+    /// counted grid, in order, until it returns false. The view's index is
+    /// read (its files locked) meanwhile.
+    fn each_lane_row(&self, lane: Lane, col: usize, mut f: impl FnMut(usize) -> bool) {
         let buckets = &self.histogram.shown;
-        let found = (|| {
-            let (grid, lanes) = (buckets.grid?, buckets.lanes.as_ref()?);
-            let column = self.filter_index.column(self.histogram.lanes_for.as_deref()?)?;
-            let (start, end) = (grid.start_of(col), grid.start_of(col + 1));
-            let ts = self.filter_index.effective_ts();
-            let sorted = self.view_times_ascend();
-            let from = if sorted { th::first_row_at(ts, start, true)? } else { 0 };
-            let rows = self.rows();
-            Some((from..ts.len())
-                .take_while(move |&r| !sorted || ts[r] < end)
-                .filter(move |&r| ts[r] >= start && ts[r] < end && !rows.continues(r))
-                .filter(move |&r| column.id_of_row(r).is_some_and(|id| lanes.holds(lane, id))))
-        })();
-        match found {
-            Some(rows) => Box::new(rows),
-            None => Box::new(std::iter::empty()),
+        let (Some(grid), Some(lanes), Some(key)) = (buckets.grid, buckets.lanes.as_ref(), self.histogram.lanes_for.as_deref())
+        else {
+            return;
+        };
+        let index = self.filter_index.read(&self.view.rows);
+        let Some(ids) = index.ids(key) else { return };
+        let (start, end) = (grid.start_of(col), grid.start_of(col + 1));
+        let sorted = self.view_times_ascend();
+        let from = if sorted {
+            match th::first_row_at(&index, start, true) {
+                Some(row) => row,
+                None => return,
+            }
+        } else {
+            0
+        };
+        let rows = self.rows();
+        for row in from..index.len() {
+            let t = index.ts(row);
+            if sorted && !(t < end) {
+                break;
+            }
+            let in_col = t >= start && t < end && !rows.continues(row);
+            if in_col && ids.id_of_row(row).is_some_and(|id| lanes.holds(lane, id)) && !f(row) {
+                break;
+            }
         }
     }
 }

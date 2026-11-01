@@ -24,7 +24,7 @@ fn matches_the_whole_raw_line() {
     let mut s = SearchState::new();
     s.query = "error".into();
     s.update_matches(&e, &all(4));
-    assert_eq!(*s.matched_visible_indices, vec![1]);
+    assert_eq!(*s.matched_rows, vec![1]);
 }
 
 #[test]
@@ -33,7 +33,7 @@ fn boolean_expression() {
     let mut s = SearchState::new();
     s.query = "(refused || timeout) && db".into();
     s.update_matches(&e, &all(4));
-    assert_eq!(*s.matched_visible_indices, vec![1, 2]);
+    assert_eq!(*s.matched_rows, vec![1, 2]);
 }
 
 #[test]
@@ -50,8 +50,8 @@ fn lines_failing_filter_are_still_matches() {
     s.update_matches(&e, &rows);
     assert_eq!(s.total_matches(), 17);
     // Filter does not touch the view's Matches; a Match is the entry's own position.
-    assert_eq!(s.matched_visible_indices.first(), Some(&0));
-    assert!(s.matched_visible_indices.contains(&2));
+    assert_eq!(s.matched_rows.first(), Some(&0));
+    assert!(s.matched_rows.contains(&2));
 }
 
 #[test]
@@ -60,19 +60,19 @@ fn invalid_expression_keeps_last_matches_and_reports_error() {
     let mut s = SearchState::new();
     s.query = "timeout".into();
     s.update_matches(&e, &all(4));
-    assert_eq!(*s.matched_visible_indices, vec![1, 2]);
+    assert_eq!(*s.matched_rows, vec![1, 2]);
     s.next_match();
 
     s.query = "timeout ||".into();
     s.update_matches(&e, &all(4));
     assert!(s.parse_error.is_some());
-    assert_eq!(*s.matched_visible_indices, vec![1, 2]);
+    assert_eq!(*s.matched_rows, vec![1, 2]);
     assert_eq!(s.current_match_idx, 1);
 
     s.query = "timeout || refused".into();
     s.update_matches(&e, &all(4));
     assert!(s.parse_error.is_none());
-    assert_eq!(*s.matched_visible_indices, vec![0, 1, 2]);
+    assert_eq!(*s.matched_rows, vec![0, 1, 2]);
     assert_eq!(s.current_match_idx, 0);
 }
 
@@ -83,7 +83,7 @@ fn never_valid_expression_has_no_matches() {
     s.query = "(timeout".into();
     s.update_matches(&e, &all(4));
     assert!(s.parse_error.is_some());
-    assert!(s.matched_visible_indices.is_empty());
+    assert!(s.matched_rows.is_empty());
 }
 
 #[test]
@@ -94,7 +94,7 @@ fn empty_query_clears_matches_and_error() {
     s.update_matches(&e, &all(4));
     s.query = "  ".into();
     s.update_matches(&e, &all(4));
-    assert!(s.matched_visible_indices.is_empty());
+    assert!(s.matched_rows.is_empty());
     assert!(s.parse_error.is_none());
     assert_eq!(s.current_match_display(), (0, 0));
 }

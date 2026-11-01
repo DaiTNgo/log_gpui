@@ -27,7 +27,7 @@ fn color(hue: Hue) -> HighlightColor {
 /// Select `text` in row `row` of the Parsed View and open the bar there.
 fn select(h: &mut common::Harness, row: usize, text: &str) {
     h.view.update(&mut h.cx, |app, cx| {
-        let line = app.rows_snapshot()[app.visible_indices[row]].raw_line.to_string();
+        let line = app.rows_snapshot()[row].raw_line.to_string();
         let start = line.find(text).expect("text on the row");
         app.text_selection = Some(TextSelection::new(TextPos::new(row, start), TextPos::new(row, start + text.len())));
         app.open_mark_bar(point(px(10.0), px(10.0)), cx);
@@ -47,7 +47,7 @@ fn markers(h: &common::Harness) -> usize {
 /// Bytes of `text` in row `row`.
 fn byte_of(h: &common::Harness, row: usize, text: &str) -> usize {
     h.view.read_with(&h.cx, |app, _| {
-        let line = app.rows_snapshot()[app.visible_indices[row]].raw_line.to_string();
+        let line = app.rows_snapshot()[row].raw_line.to_string();
         line.find(text).unwrap()
     })
 }

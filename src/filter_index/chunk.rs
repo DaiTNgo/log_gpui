@@ -324,7 +324,7 @@ impl ColumnIndex {
                 continue;
             }
             if is_cont && self.source.inherits() {
-                let inherited = self.row_ids.get(parent_rows[j]).copied().unwrap_or(MISSING);
+                let inherited = self.row_ids.get(parent_rows[j]).unwrap_or(MISSING);
                 self.row_ids.push(inherited);
                 continue;
             }
@@ -460,15 +460,15 @@ impl FilterIndex {
             col.push_chunk(local, &cont, &parent_rows);
         }
 
-        let effective_ts = std::sync::Arc::make_mut(&mut self.effective_ts);
-        for ts in &chunk.timestamps {
-            if ts.is_nan() {
-                let prev = effective_ts.last().copied().unwrap_or(f64::NAN);
-                effective_ts.push(prev);
-            } else {
+        // No time is kept per row: a file's index reads them from its
+        // `LineMeta` (lean-view-memory, decision 8).
+        for (j, ts) in chunk.timestamps.iter().enumerate() {
+            if !ts.is_nan() {
                 self.timed_lines += 1;
-                effective_ts.push(*ts);
-                self.first_ts.get_or_insert(*ts);
+                if self.first_ts.is_none() {
+                    self.first_ts = Some(*ts);
+                    self.first_ts_row = Some(start + j);
+                }
             }
         }
         if let Some((ts, text)) = chunk.min_entry {

@@ -72,21 +72,21 @@ fn the_picker_shows_the_values_read_so_far_and_keeps_what_was_ticked(cx: &mut Te
         assert!(app.is_reading());
         // Indexing has read the first half of the file.
         let indexed = app.loads.values().next().and_then(|l| l.indexed().cloned()).expect("read through its Line Index");
-        index_more(&mut indexed.data.write().unwrap(), first.clone().into_bytes(), &IndexOptions::default(), false);
+        index_more(&mut indexed.data.write(), first.clone().into_bytes(), &IndexOptions::default(), false);
         app.show_values_read_so_far();
-        assert_eq!(counts(&app.filter_index, "module"), [("API".to_string(), 50), ("DB".to_string(), 50)]);
+        assert_eq!(counts(&app.index(), "module"), [("API".to_string(), 50), ("DB".to_string(), 50)]);
         assert!(app.filter_read_so_far().is_some(), "the picker tells the file is not read whole");
 
         app.pick_filter_column("module", cx);
         app.filter_toggle_value("module", "api", cx);
         // What the test read by hand goes: Indexing reads the file itself.
-        *indexed.data.write().unwrap() = IndexedData::default();
+        *indexed.data.write() = IndexedData::default();
     });
     h.cx.run_until_parked();
     h.view.read_with(&h.cx, |app, _| {
         assert!(!app.is_reading());
         assert_eq!(app.filter_read_so_far(), None);
-        assert_eq!(counts(&app.filter_index, "module").last(), Some(&("SEARCH".to_string(), 25)));
+        assert_eq!(counts(&app.index(), "module").last(), Some(&("SEARCH".to_string(), 25)));
         assert!(app.filter_state.is_value_ticked("module", "api"), "the value ticked while reading stays");
         assert_eq!(app.filter_pass.len(), 125, "and filters the file once it is read");
         assert_eq!(app.filter_ui.expanded.as_deref(), Some("module"), "the picker stays open");

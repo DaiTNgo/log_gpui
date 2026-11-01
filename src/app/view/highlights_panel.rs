@@ -61,9 +61,7 @@ impl AppView {
         if key == MESSAGE_COLUMN {
             return "Message".to_string();
         }
-        self.filter_index
-            .column(key)
-            .map_or_else(|| key.to_string(), |c| c.label.clone())
+        self.filter_index.read(&self.view.rows).column(key).map_or_else(|| key.to_string(), |c| c.label.clone())
     }
 
     fn render_rule_row(&self, ix: usize, rule: &HighlightRule, cx: &mut Context<Self>) -> gpui::AnyElement {
@@ -169,7 +167,7 @@ impl AppView {
             card = card.child(Input::new(&self.rule_search).small());
             if key == MESSAGE_COLUMN {
                 card = card.child(div().text_xs().text_color(muted).child("Rows whose message contains the text added (Enter)."));
-            } else if let Some(col) = self.filter_index.column(key).filter(|c| c.is_filterable()) {
+            } else if let Some(col) = self.filter_index.read(&self.view.rows).column(key).filter(|c| c.is_filterable()) {
                 let view = cx.entity();
                 let query = crate::unicode_text::fold(self.rule_search.read(cx).value().trim());
                 // Capped so ticking values leaves the rest of the sidebar where it is.
@@ -206,7 +204,7 @@ impl AppView {
                         .overflow_y_scroll()
                         .child(list),
                 );
-            } else if self.filter_index.column(key).is_some() {
+            } else if self.filter_index.read(&self.view.rows).column(key).is_some() {
                 card = card.child(div().text_xs().text_color(muted).child(format!(
                     "More than {} values: add text the value contains.",
                     crate::filter_index::MAX_DISTINCT

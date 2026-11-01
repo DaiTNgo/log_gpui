@@ -69,6 +69,24 @@ pub fn count<T: Copy + Send + Sync>(items: &[T], keep: impl Fn(T) -> bool + Sync
     })
 }
 
+/// How many rows of `rows` satisfy `keep`, as `count` over a range with no
+/// list of the rows.
+pub fn count_range(rows: std::ops::Range<usize>, keep: impl Fn(usize) -> bool + Sync) -> usize {
+    if rows.len() < MIN_PARALLEL {
+        return rows.filter(|&i| keep(i)).count();
+    }
+    let chunk = chunk_len(rows.len());
+    let keep = &keep;
+    thread::scope(|s| {
+        let parts: Vec<_> = rows
+            .clone()
+            .step_by(chunk)
+            .map(|start| s.spawn(move || (start..(start + chunk).min(rows.end)).filter(|&i| keep(i)).count()))
+            .collect();
+        parts.into_iter().map(|p| p.join().expect("row scan panicked")).sum()
+    })
+}
+
 /// How many rows a cancellable scan looks at between two looks at its flag.
 const CANCEL_CHECK_ROWS: usize = 4096;
 

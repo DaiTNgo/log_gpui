@@ -5,7 +5,7 @@
 use super::AppView;
 use crate::filter_index::column_value;
 use crate::highlight::{
-    HighlightRule, MESSAGE_COLUMN, RuleError, TextRule, count_matches_with, move_rule, next_rule_id, paint_rows_split,
+    HighlightRule, MESSAGE_COLUMN, RuleError, TextRule, count_matches_from, count_matches_with, move_rule, next_rule_id, paint_rows_split,
     paint_rows_with,
 };
 use crate::index::file::IndexedFile;
@@ -60,7 +60,8 @@ impl AppView {
         self.paint_scan_wanted = None;
         let rules = self.highlight_rules().to_vec();
         let rows = self.view.bind(&self.parsed_files);
-        let columns = Some(&self.filter_index);
+        let index = self.filter_index.read(&self.view.rows);
+        let columns = Some(&index);
         let top = self.top_row_anchor().map_or(0, |a| a.row);
         let around = top.saturating_sub(PAINTED_AT_ONCE / 4)..top + PAINTED_AT_ONCE;
         let read = |row: usize| around.contains(&row);
@@ -84,8 +85,12 @@ impl AppView {
             .map(|r| {
                 // A rule that needs the text counts the rows read here; the
                 // Scan adds the others.
-                let counted = if text_ids.contains(&r.id) && !split.unread.is_empty() { &read_rows } else { &*self.visible_indices };
-                (r.id, count_matches_with(r, &rows, columns, counted))
+                let count = if text_ids.contains(&r.id) && !split.unread.is_empty() {
+                    count_matches_with(r, &rows, columns, &read_rows)
+                } else {
+                    count_matches_from(r, &rows, columns, 0)
+                };
+                (r.id, count)
             })
             .collect();
         drop(rows);
@@ -189,10 +194,11 @@ impl AppView {
         }
         let rules = self.highlight_rules().to_vec();
         let rows = self.view.bind(&self.parsed_files);
-        let columns = Some(&self.filter_index);
+        let index = self.filter_index.read(&self.view.rows);
+        let columns = Some(&index);
         let new = paint_rows_with(&rules, &rows, columns, from);
         let counts: Vec<(u64, usize)> =
-            rules.iter().map(|r| (r.id, count_matches_with(r, &rows, columns, &self.visible_indices[from..]))).collect();
+            rules.iter().map(|r| (r.id, count_matches_from(r, &rows, columns, from))).collect();
         drop(rows);
         Arc::make_mut(&mut self.highlight_paints).extend(new);
         for (id, n) in counts {
@@ -290,7 +296,7 @@ impl AppView {
     /// TIMESTAMP.
     pub fn rule_columns(&self) -> Vec<(String, String)> {
         let mut columns: Vec<(String, String)> = self
-            .filter_index
+            .index()
             .columns_in_use()
             .map(|c| (c.key.clone(), c.label.clone()))
             .collect();

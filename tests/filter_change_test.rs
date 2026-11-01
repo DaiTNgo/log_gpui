@@ -30,7 +30,7 @@ fn matches_and_highlights_survive_a_filter_change(cx: &mut TestAppContext) {
     h.cx.run_until_parked();
     let (matches, paints, counts, total) = h.view.read_with(&h.cx, |app, _| {
         (
-            app.focus.search().matched_visible_indices.clone(),
+            app.focus.search().matched_rows.clone(),
             app.highlight_paints.clone(),
             app.rule_counts.clone(),
             app.focus.search().total_matches(),
@@ -40,20 +40,20 @@ fn matches_and_highlights_survive_a_filter_change(cx: &mut TestAppContext) {
 
     h.view.update(&mut h.cx, |app, cx| app.filter_toggle_value("level", "error", cx));
     h.view.read_with(&h.cx, |app, _| {
-        assert!(Arc::ptr_eq(&matches, &app.focus.search().matched_visible_indices), "Matches were not recomputed");
+        assert!(Arc::ptr_eq(&matches, &app.focus.search().matched_rows), "Matches were not recomputed");
         assert!(Arc::ptr_eq(&paints, &app.highlight_paints), "paints were not recomputed");
         assert_eq!(counts, app.rule_counts);
         assert_eq!(app.focus.search().total_matches(), total);
         // The pane lists the Matches that also pass the Filter.
         let expected: Vec<usize> =
-            app.focus.search().matched_visible_indices.iter().copied().filter(|ix| app.filter_pass.contains(ix)).collect();
+            app.focus.search().matched_rows.iter().copied().filter(|ix| app.filter_pass.contains(*ix)).collect();
         assert_eq!(pane(app), expected);
         assert_eq!(app.filter_pass.len(), 10);
     });
 
     h.view.update(&mut h.cx, |app, cx| app.filter_clear_all(cx));
     h.view.read_with(&h.cx, |app, _| {
-        assert!(Arc::ptr_eq(&matches, &app.focus.search().matched_visible_indices));
+        assert!(Arc::ptr_eq(&matches, &app.focus.search().matched_rows));
         assert_eq!(app.filter_pass.len(), 40);
     });
 }
@@ -65,5 +65,45 @@ fn the_focus_pane_follows_the_filter_without_a_search(cx: &mut TestAppContext) {
     h.view.read_with(&h.cx, |app, _| {
         let expected: Vec<usize> = (0..40).filter(|i| i % 4 == 2).collect();
         assert_eq!(pane(app), expected);
+    });
+}
+
+#[gpui::test]
+fn no_filter_keeps_no_list_of_rows(cx: &mut TestAppContext) {
+    use log_gpui::filter::FilterPass;
+    let mut h = common::open_app_with_lines(cx, &lines());
+    h.view.read_with(&h.cx, |app, _| assert_eq!(app.filter_pass, FilterPass::All { rows: 40 }));
+    h.view.update(&mut h.cx, |app, cx| app.filter_toggle_value("level", "error", cx));
+    h.view.read_with(&h.cx, |app, _| assert!(matches!(app.filter_pass, FilterPass::Rows(_))));
+    // Paused, every row passes again: no list either.
+    h.view.update(&mut h.cx, |app, cx| app.toggle_filter_paused(cx));
+    h.view.read_with(&h.cx, |app, _| assert_eq!(app.filter_pass, FilterPass::All { rows: 40 }));
+    h.view.update(&mut h.cx, |app, cx| app.toggle_filter_paused(cx));
+    h.view.update(&mut h.cx, |app, cx| app.filter_clear_all(cx));
+    h.view.read_with(&h.cx, |app, _| assert_eq!(app.filter_pass, FilterPass::All { rows: 40 }));
+}
+
+#[gpui::test]
+fn no_painting_rule_keeps_no_byte_per_row(cx: &mut TestAppContext) {
+    let mut h = common::open_app_with_lines(cx, &lines());
+    h.view.read_with(&h.cx, |app, _| {
+        assert_eq!(app.highlight_paints.len(), 40);
+        assert_eq!(app.highlight_paints.heap_bytes(), 0);
+    });
+    let id = h.view.update(&mut h.cx, |app, cx| {
+        let color = log_gpui::palette::next_rule_color(0);
+        app.add_highlight_rule("level", &["warn".to_string()], &[], color, cx).unwrap();
+        app.highlight_rules()[0].id
+    });
+    h.cx.run_until_parked();
+    h.view.read_with(&h.cx, |app, _| {
+        assert!(app.highlight_paints.heap_bytes() >= 40);
+        assert_eq!(app.highlight_paints.iter().filter(|p| p.is_some()).count(), 10);
+    });
+    h.view.update(&mut h.cx, |app, cx| app.toggle_highlight_rule(id, cx));
+    h.cx.run_until_parked();
+    h.view.read_with(&h.cx, |app, _| {
+        assert_eq!(app.highlight_paints.heap_bytes(), 0, "the last rule turned off");
+        assert!(app.highlight_paints.iter().all(|p| p.is_none()));
     });
 }

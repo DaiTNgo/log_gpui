@@ -114,11 +114,11 @@ impl AppView {
     /// value in a row that pass `keep`.
     fn field_keys(&self, extra: Vec<String>, keep: impl Fn(&str) -> bool) -> Vec<crate::model::FieldKey> {
         let mut keys: Vec<String> = self.formats.view_fields.clone();
-        keys.extend(self.filter_index.field_columns().map(|c| c.key.clone()));
+        keys.extend(self.filter_index.read(&self.view.rows).field_columns().map(|c| c.key.clone()));
         keys.extend(extra);
         crate::columns::pane_fields(keys)
             .into_iter()
-            .filter(|k| keep(k) && self.filter_index.coverage(k).0 > 0)
+            .filter(|k| keep(k) && self.filter_index.read(&self.view.rows).coverage(k).0 > 0)
             .map(|k| crate::model::FieldKey::new(&k))
             .collect()
     }
@@ -216,7 +216,7 @@ impl AppView {
     /// The rows of the Columns section, with Detected Fields narrowed to
     /// those whose name contains `query`.
     pub fn column_groups(&self, query: &str) -> ColumnGroups {
-        let index = &self.filter_index;
+        let index = &self.filter_index.read(&self.view.rows);
         let parents = index.parent_lines();
         let row = |key: &str, lines: usize, shown: bool, switchable: bool| ColumnRow {
             key: key.to_string(),

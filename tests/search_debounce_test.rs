@@ -8,7 +8,7 @@ use gpui::TestAppContext;
 use std::time::Duration;
 
 fn matches(f: &common::fake_live::Files) -> Vec<usize> {
-    f.h.view.read_with(&f.h.cx, |app, _| app.focus.search().matched_visible_indices.to_vec())
+    f.h.view.read_with(&f.h.cx, |app, _| app.focus.search().matched_rows.to_vec())
 }
 
 fn type_text(f: &mut common::fake_live::Files, text: &str) {

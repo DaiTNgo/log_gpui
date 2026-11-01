@@ -196,28 +196,28 @@ fn recomputing_hits_keeps_the_selected_one() {
 fn filter_and_search_both_apply() {
     let e = entries();
     let errors = vec![0, 2, 4];
-    let got = compute_focus_rows(&e, &errors, true, Some(&matcher("timeout")));
+    let got = compute_focus_rows(&e, &errors.clone().into(), true, Some(&matcher("timeout")));
     assert_eq!(got, rows(&[0, 4]));
 }
 
 #[test]
 fn filter_alone_lists_the_lines_that_pass() {
     let e = entries();
-    let got = compute_focus_rows(&e, &[0, 3], true, None);
+    let got = compute_focus_rows(&e, &[0, 3].to_vec().into(), true, None);
     assert_eq!(got, rows(&[0, 3]));
 }
 
 #[test]
 fn search_alone_lists_the_matches() {
     let e = entries();
-    let got = compute_focus_rows(&e, &[0, 1, 2, 3, 4], false, Some(&matcher("timeout")));
+    let got = compute_focus_rows(&e, &[0, 1, 2, 3, 4].to_vec().into(), false, Some(&matcher("timeout")));
     assert_eq!(got, rows(&[0, 1, 3, 4]));
 }
 
 #[test]
 fn neither_filter_nor_search_lists_nothing() {
     let e = entries();
-    assert!(compute_focus_rows(&e, &[0, 1, 2, 3, 4], false, None).is_empty());
+    assert!(compute_focus_rows(&e, &[0, 1, 2, 3, 4].to_vec().into(), false, None).is_empty());
 }
 
 #[test]
@@ -230,7 +230,7 @@ fn a_continuation_line_is_listed_only_when_it_matches() {
     ];
     e[1].parent = Some(1);
     e[2].parent = Some(1);
-    let got = compute_focus_rows(&e, &[0, 1, 2, 3], false, Some(&matcher("NullPointerException")));
+    let got = compute_focus_rows(&e, &[0, 1, 2, 3].to_vec().into(), false, Some(&matcher("NullPointerException")));
     assert_eq!(got, rows(&[2]));
 }
 

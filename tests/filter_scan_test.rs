@@ -45,8 +45,8 @@ fn a_custom_value_on_the_message_is_found_by_a_scan(cx: &mut TestAppContext) {
     h.view.read_with(&h.cx, |app, _| {
         assert!(!app.filter_is_scanning());
         assert_eq!(app.filter_scanning, None);
-        let every_row = app.filter_state.evaluate(&app.filter_index, &app.rows());
-        assert_eq!(*app.filter_pass, every_row);
+        let every_row = app.filter_state.evaluate(&app.index(), &app.rows());
+        assert_eq!(app.filter_pass, every_row);
         // Each timeout line, and the stack line under one.
         assert_eq!(every_row.len(), 429 + 86);
     });
@@ -56,7 +56,7 @@ fn a_custom_value_on_the_message_is_found_by_a_scan(cx: &mut TestAppContext) {
 fn a_custom_value_on_a_column_with_too_many_values_is_found_by_a_scan(cx: &mut TestAppContext) {
     let mut h = open_app_with_lines(cx, &json_lines());
     h.view.update(&mut h.cx, |app, cx| {
-        assert!(app.filter_index.column("user").is_some_and(|c| !c.is_filterable()));
+        assert!(app.index().column("user").is_some_and(|c| !c.is_filterable()));
         // A Filter saved before the column had too many values.
         app.filter_state.add_custom("user", "u12");
         app.apply_filter_change(cx);
@@ -65,7 +65,7 @@ fn a_custom_value_on_a_column_with_too_many_values_is_found_by_a_scan(cx: &mut T
     h.cx.run_until_parked();
     h.view.read_with(&h.cx, |app, _| {
         let expected: Vec<usize> = (0..2000).filter(|i| format!("u{i}").contains("u12")).collect();
-        assert_eq!(*app.filter_pass, expected);
+        assert_eq!(app.filter_pass, expected);
     });
 }
 
@@ -81,8 +81,8 @@ fn a_new_filter_stops_the_scan_of_the_one_before(cx: &mut TestAppContext) {
     });
     h.cx.run_until_parked();
     h.view.read_with(&h.cx, |app, _| {
-        let every_row = app.filter_state.evaluate(&app.filter_index, &app.rows());
-        assert_eq!(*app.filter_pass, every_row, "only the rows of the new Filter");
+        let every_row = app.filter_state.evaluate(&app.index(), &app.rows());
+        assert_eq!(app.filter_pass, every_row, "only the rows of the new Filter");
         assert!(!every_row.is_empty());
     });
 }

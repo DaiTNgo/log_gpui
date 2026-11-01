@@ -21,7 +21,7 @@ fn entries_of(bytes: &[u8], options: &IndexOptions) -> Vec<LogEntry> {
 }
 
 /// Everything a `FilterIndex` shows, to compare two.
-fn describe(f: &FilterIndex) -> String {
+fn describe(f: &FilterIndex, ts: impl Fn(usize) -> Option<f64>) -> String {
     let mut out = format!(
         "rows {} parents {} timed {} anchor {} hint {:?}\n",
         f.rows(),
@@ -34,7 +34,7 @@ fn describe(f: &FilterIndex) -> String {
     kv.sort();
     out += &format!("kv {kv:?}\n");
     for row in 0..f.rows() {
-        out += &format!("ts {row} {:?}\n", f.effective_timestamp(row));
+        out += &format!("ts {row} {:?}\n", ts(row));
     }
     for c in &f.columns {
         out += &format!(
@@ -71,7 +71,8 @@ fn check(name: &str, bytes: &[u8], options: &IndexOptions) -> IndexedData {
     }
 
     let want = FilterIndex::build(&entries);
-    assert_eq!(describe(&data.filter), describe(&want), "{name}: FilterIndex");
+    let (have, want) = (describe(&data.filter, |r| data.effective_timestamp(r)), describe(&want, |r| want.read().effective_timestamp(r)));
+    assert_eq!(have, want, "{name}: FilterIndex");
     assert_eq!(data.max_chars, FieldMaxChars::scan_entries(&entries), "{name}: column widths");
     data
 }
@@ -154,7 +155,7 @@ fn a_log_format_is_read_while_indexing() {
 fn a_column_overflows_while_indexing() {
     let mut text = String::new();
     for i in 0..1500 {
-        text += &format!("2026-09-05 10:00:{:02} [INFO] [t{}] id={i} in {}\n", i % 60, i % 600, i % 3);
+        text += &format!("2026-09-05 10:00:{:02} [INFO] [t{}] id={i} in {}\n", i % 60, i % 1200, i % 3);
     }
     let config = Arc::new(LineConfig::new(&["id".to_string(), "in".to_string()]));
     let options = IndexOptions { config, block_bytes: Some(4096), ..Default::default() };
@@ -211,7 +212,7 @@ fn cancelled_indexing_keeps_the_lines_read() {
     indexing.cancel();
     let indexed = indexing.wait();
     assert_eq!(indexed.outcome(), Some(Outcome::Cancelled));
-    let data = indexed.data.read().unwrap();
+    let data = indexed.data.read_recursive();
     let n = data.file.len();
     let reference = index_source(&BytesSource::new(bytes), None).unwrap();
     assert!(n < reference.len(), "stopped early: {n} lines");

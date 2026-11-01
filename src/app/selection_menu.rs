@@ -145,7 +145,7 @@ impl AppView {
         }
         target.highlight = self.text_highlight_under(pos.row, pos.byte);
 
-        let entry_ix = *self.visible_indices.get(pos.row)?;
+        let entry_ix = self.row_at(pos.row)?;
         let entry = self.rows().get(entry_ix)?;
         let selected = match pieces.as_slice() {
             [piece] if has_selection && piece.entry_ix == entry_ix => Some(Some(piece.range.clone())),
@@ -341,7 +341,7 @@ impl AppView {
     pub fn filters_as_custom(&self, column: &str, whole: bool) -> bool {
         !whole
             || column == crate::columns::MESSAGE_KEY
-            || !self.filter_index.column(column).is_some_and(|c| c.is_filterable())
+            || !self.filter_index.read(&self.view.rows).column(column).is_some_and(|c| c.is_filterable())
     }
 
     /// Show only (or hide) the rows whose `column` is `value`, from a
@@ -364,7 +364,7 @@ impl AppView {
     pub fn open_rule_form_with(&mut self, column: &str, value: &str, cx: &mut Context<Self>) {
         let color = crate::palette::next_rule_color(self.highlight_rules().len());
         let custom = column == crate::highlight::MESSAGE_COLUMN
-            || !self.filter_index.column(column).is_some_and(|c| c.is_filterable());
+            || !self.filter_index.read(&self.view.rows).column(column).is_some_and(|c| c.is_filterable());
         let (values, customs) = if custom { (Vec::new(), vec![value.to_string()]) } else { (vec![value.to_string()], Vec::new()) };
         self.rule_form = Some(super::highlights::RuleForm {
             column: Some(column.to_string()),

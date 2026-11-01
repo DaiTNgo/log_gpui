@@ -167,11 +167,47 @@ pub fn class_of(level: Option<LogLevel>, continues: bool) -> u8 {
     }) as u8
 }
 
+/// The effective time of each row of a view (`NAN` when it has none):
+/// read from the view's index row by row, with no list of them.
+pub trait RowTimes {
+    fn len(&self) -> usize;
+    fn ts(&self, row: usize) -> f64;
+
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// The time of `row`, `None` past the last row.
+    fn get(&self, row: usize) -> Option<f64> {
+        (row < self.len()).then(|| self.ts(row))
+    }
+}
+
+impl RowTimes for Vec<f64> {
+    fn len(&self) -> usize {
+        Vec::len(self)
+    }
+
+    fn ts(&self, row: usize) -> f64 {
+        self[row]
+    }
+}
+
+impl RowTimes for crate::filter_index::ViewIndexRead<'_> {
+    fn len(&self) -> usize {
+        crate::filter_index::ViewIndexRead::len(self)
+    }
+
+    fn ts(&self, row: usize) -> f64 {
+        crate::filter_index::ViewIndexRead::ts(self, row)
+    }
+}
+
 /// The per-row facts a count reads: each row's effective time (`NAN` when
 /// it has none) and class ([`class_of`]).
-#[derive(Debug, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub struct RowFacts<'a> {
-    pub ts: &'a [f64],
+    pub ts: &'a dyn RowTimes,
     pub class: &'a [u8],
 }
 
@@ -194,11 +230,30 @@ pub const MAX_LANES: usize = 8;
 /// The value id of a row with no value.
 use crate::filter_index::MISSING as NO_VALUE;
 
-/// The value of each row in the column the lanes split by (its Filter value
-/// ids, `u16::MAX` for none), and how many values the column has.
-#[derive(Debug, Clone, Copy)]
+/// The value id of each row in the column the lanes split by (its Filter
+/// value ids, `MISSING` for none), read row by row with no list of them.
+pub trait RowValueIds {
+    /// The id of `row`, `None` when it is not known.
+    fn id(&self, row: usize) -> Option<u16>;
+}
+
+impl RowValueIds for Vec<u16> {
+    fn id(&self, row: usize) -> Option<u16> {
+        self.get(row).copied()
+    }
+}
+
+impl RowValueIds for crate::filter_index::RowIds<'_> {
+    fn id(&self, row: usize) -> Option<u16> {
+        self.id_of_row(row)
+    }
+}
+
+/// The value of each row in the column the lanes split by, and how many
+/// values the column has.
+#[derive(Clone, Copy)]
 pub struct LaneIds<'a> {
-    pub ids: &'a [u16],
+    pub ids: &'a dyn RowValueIds,
     pub values: usize,
 }
 
@@ -379,7 +434,7 @@ impl Lanes {
 /// each row when the lanes are counted.
 #[derive(Clone, Copy)]
 struct Alongside<'a> {
-    filter_pass: Option<&'a [usize]>,
+    filter_pass: Option<crate::filter::PassFrom<'a>>,
     matches: &'a [usize],
     lanes: Option<LaneIds<'a>>,
 }
@@ -446,7 +501,12 @@ impl Buckets {
     ) -> Result<(), NeedsRecount> {
         let Alongside { filter_pass, matches, lanes } = along;
         let Some(grid) = self.grid else { return Ok(()) };
-        let mut pass = filter_pass.map(|p| p.iter().copied().peekable());
+        use crate::filter::PassFrom;
+        // `None`: every row passes.
+        let mut pass = filter_pass.map(|p| match p {
+            PassFrom::All => None,
+            PassFrom::Rows(rows) => Some(rows.iter().copied().peekable()),
+        });
         let mut outside = false;
         for row in from..rows.len() {
             let class = rows.class[row];
@@ -454,15 +514,16 @@ impl Buckets {
                 continue;
             }
             let passes = match pass.as_mut() {
-                Some(p) => {
+                Some(Some(p)) => {
                     while p.next_if(|&r| r < row).is_some() {}
                     p.next_if_eq(&row).is_some()
                 }
+                Some(None) => true,
                 None => false,
             };
-            let t = rows.ts[row];
+            let t = rows.ts.ts(row);
             if let Some(lanes) = lanes {
-                let id = lanes.ids.get(row).copied().unwrap_or(NO_VALUE);
+                let id = lanes.ids.id(row).unwrap_or(NO_VALUE);
                 let col = if t.is_nan() { None } else { grid.column_of(t) };
                 match tally.as_deref_mut() {
                     Some(tally) => {
@@ -499,7 +560,7 @@ impl Buckets {
         }
         // A Match marks its column, whether a Parent Line or not.
         for &row in matches {
-            if let Some(col) = rows.ts.get(row).and_then(|&t| grid.column_of(t)) {
+            if let Some(col) = rows.ts.get(row).and_then(|t| grid.column_of(t)) {
                 self.matched[col] = true;
             }
         }
@@ -517,14 +578,13 @@ impl Buckets {
         rows: RowFacts,
         axis: &TimeAxis,
         from: usize,
-        filter_pass: Option<&[usize]>,
+        filter_pass: Option<crate::filter::PassFrom<'_>>,
         matches: &[usize],
         lanes: Option<LaneIds>,
     ) -> Result<(), NeedsRecount> {
         if self.grid != Some(axis.grid())
             || filter_pass.is_some() != self.filtered.is_some()
             || lanes.is_some() != self.lanes.is_some()
-            || lanes.is_some_and(|l| l.ids.len() < rows.len())
         {
             return Err(NeedsRecount);
         }
@@ -540,13 +600,12 @@ impl Buckets {
 pub fn count_buckets(
     rows: RowFacts,
     axis: &TimeAxis,
-    filter_pass: Option<&[usize]>,
+    filter_pass: Option<crate::filter::PassFrom<'_>>,
     matches: &[usize],
     lanes: Option<LaneIds>,
 ) -> Buckets {
     let grid = axis.grid();
     let mut buckets = Buckets::empty(grid, filter_pass.is_some());
-    let lanes = lanes.filter(|l| l.ids.len() >= rows.len());
     let mut tally = lanes.map(|l| LaneTally { flat: vec![0; (l.values + 1) * grid.len], total: vec![0; l.values + 1] });
     // The axis comes from these rows: none is outside it.
     let along = Alongside { filter_pass, matches, lanes };
@@ -570,9 +629,9 @@ pub enum LaneBy {
 }
 
 /// The earliest and latest time among `ts` (`NAN` skipped).
-pub fn span_of(ts: &[f64]) -> Option<Range<f64>> {
+pub fn span_of(ts: impl IntoIterator<Item = f64>) -> Option<Range<f64>> {
     let mut span: Option<Range<f64>> = None;
-    for &t in ts.iter().filter(|t| !t.is_nan()) {
+    for t in ts.into_iter().filter(|t| !t.is_nan()) {
         span = Some(match span {
             None => t..t,
             Some(s) => s.start.min(t)..s.end.max(t),
@@ -614,14 +673,25 @@ pub fn grow_full(full: &Range<f64>, t: f64) -> Range<f64> {
 /// The first row whose time is `time` or later. With `sorted` the times
 /// ascend, those with none (`NAN`) last, and the row is found by halving;
 /// else every row is looked at (a File View's times may go back).
-pub fn first_row_at(ts: &[f64], time: f64, sorted: bool) -> Option<usize> {
+pub fn first_row_at(ts: &dyn RowTimes, time: f64, sorted: bool) -> Option<usize> {
     if sorted {
-        let timed = ts.partition_point(|t| !t.is_nan());
-        let at = ts[..timed].partition_point(|&t| t < time);
+        let timed = partition_point(ts.len(), |row| !ts.ts(row).is_nan());
+        let at = partition_point(timed, |row| ts.ts(row) < time);
         (at < timed).then_some(at)
     } else {
-        ts.iter().position(|&t| t >= time)
+        (0..ts.len()).find(|&row| ts.ts(row) >= time)
     }
+}
+
+/// The first of `0..len` for which `before` is false (`before` is true
+/// for a run of rows, then false).
+fn partition_point(len: usize, before: impl Fn(usize) -> bool) -> usize {
+    let (mut lo, mut hi) = (0, len);
+    while lo < hi {
+        let mid = lo + (hi - lo) / 2;
+        if before(mid) { lo = mid + 1 } else { hi = mid }
+    }
+    lo
 }
 
 /// A time bound as the Time Range shows it: `HH:MM:SS` (with milliseconds
@@ -733,7 +803,7 @@ mod tests {
         let r = RowFacts { ts: &ts, class: &class };
         let a = axis(hm(10, 30), hm(10, 45));
         // Filter: level = ERROR. Matches of `timeout`: rows 1 and 2.
-        let b = count_buckets(r, &a, Some(&[1, 4]), &[1, 2], None);
+        let b = count_buckets(r, &a, Some(crate::filter::PassFrom::Rows(&[1, 4])), &[1, 2], None);
         let filtered = b.filtered.as_ref().unwrap();
         assert_eq!((b.counts[1], filtered[1]), ([0, 0, 1], [0, 0, 1]));
         assert_eq!((b.counts[0], filtered[0]), ([1, 0, 0], [0, 0, 0]));
@@ -795,12 +865,12 @@ mod tests {
 
     #[test]
     fn first_row_at_a_time() {
-        let sorted = [hm(10, 0), hm(10, 0), hm(10, 2), hm(10, 5), f64::NAN];
+        let sorted = vec![hm(10, 0), hm(10, 0), hm(10, 2), hm(10, 5), f64::NAN];
         assert_eq!(first_row_at(&sorted, hm(10, 0), true), Some(0));
         assert_eq!(first_row_at(&sorted, hm(10, 1), true), Some(2), "an empty column");
         assert_eq!(first_row_at(&sorted, hm(10, 6), true), None);
         // Times that go back: looked at in order.
-        let unsorted = [f64::NAN, hm(10, 5), hm(10, 1), hm(10, 3)];
+        let unsorted = vec![f64::NAN, hm(10, 5), hm(10, 1), hm(10, 3)];
         assert_eq!(first_row_at(&unsorted, hm(10, 2), false), Some(1));
         assert_eq!(first_row_at(&unsorted, hm(10, 6), false), None);
     }
@@ -947,7 +1017,7 @@ mod tests {
         ]);
         // Only `db` (value 0) passes the Filter.
         let lanes = Some(LaneIds { ids: &ids, values: 3 });
-        let b = count_buckets(RowFacts { ts: &ts, class: &class }, &axis(hm(10, 0), hm(10, 3)), Some(&[0]), &[], lanes);
+        let b = count_buckets(RowFacts { ts: &ts, class: &class }, &axis(hm(10, 0), hm(10, 3)), Some(crate::filter::PassFrom::Rows(&[0])), &[], lanes);
         let l = b.lanes.unwrap();
         assert_eq!(l.order().len(), 3);
         assert_eq!((l.level(Lane::Value(1))[1], l.level(Lane::Value(2))[2]), (3, 1));

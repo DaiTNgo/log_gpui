@@ -142,7 +142,7 @@ impl Default for HistogramState {
 /// The class of every row of `rows`, from the files' line metadata: each
 /// file is locked once for the whole pass.
 fn build_classes(rows: &ViewRows, files: &[Option<Arc<IndexedFile>>]) -> Vec<u8> {
-    let guards: Vec<_> = files.iter().map(|f| f.as_ref().map(|f| f.indexed.data.read().unwrap())).collect();
+    let guards: Vec<_> = files.iter().map(|f| f.as_ref().map(|f| f.indexed.data.read_recursive())).collect();
     rows.iter()
         .map(|packed| {
             let (file, pos) = crate::index::view_rows::unpack(packed);
@@ -177,7 +177,7 @@ impl AppView {
         self.view_mode != ViewMode::Raw
             && self.active_tab_is_log_file()
             && self.empty_canvas().is_none()
-            && self.filter_index.timed_lines() > 0
+            && self.filter_index.read(&self.view.rows).timed_lines() > 0
     }
 
     /// The width of the axis, from whichever strip was drawn.
@@ -190,7 +190,7 @@ impl AppView {
     /// The span of the view's times, and while files are read, how far
     /// they are.
     fn histogram_span(&self) -> Option<(Range<f64>, Option<f64>)> {
-        let (first, last) = self.filter_index.time_span()?;
+        let (first, last) = self.filter_index.read(&self.view.rows).time_span()?;
         // A file still read: the axis reaches as far as the part read so far
         // suggests the whole will.
         let reading: Vec<u8> = self
@@ -245,8 +245,8 @@ impl AppView {
         let key = CountKey {
             rows_epoch: self.rows_epoch,
             rows: self.view.len(),
-            pass: (!self.filter_state.is_empty()).then(|| list_key(&self.filter_pass)),
-            matches: list_key(&self.focus.search().matched_visible_indices),
+            pass: (!self.filter_state.is_empty()).then(|| self.filter_pass.key()),
+            matches: list_key(&self.focus.search().matched_rows),
             grid: axis.grid(),
             full: axis.full.clone(),
             // Lanes are counted only while their strip shows.
@@ -296,20 +296,20 @@ impl AppView {
             (from..key.rows).map(|r| th::class_of(rows.level(r), rows.continues(r))).collect()
         };
         Arc::make_mut(&mut self.histogram.classes).extend(added);
-        let pass = key.pass.map(|_| {
-            let at = self.filter_pass.partition_point(|&r| r < from);
-            &self.filter_pass[at..]
-        });
-        let matches = &self.focus.search().matched_visible_indices;
+        let pass = key.pass.map(|_| self.filter_pass.from_row(from));
+        let matches = &self.focus.search().matched_rows;
         let matches = &matches[matches.partition_point(|&r| r < from)..];
-        let facts = RowFacts { ts: self.filter_index.effective_ts(), class: &self.histogram.classes };
-        // The fields are borrowed apart: the counts change, the index does not.
-        let lanes = key.lanes.as_deref().and_then(|k| super::swimlane::lane_ids(&self.filter_index, k));
+        let index = self.filter_index.read(&self.view.rows);
+        let facts = RowFacts { ts: &index, class: &self.histogram.classes };
+        let lanes = key.lanes.as_deref().and_then(|k| super::swimlane::lane_ids(&index, k));
         if key.lanes.is_some() && lanes.is_none() {
+            drop(index);
             return self.schedule_histogram_recount(key, cx);
         }
         let Some(axis) = self.histogram.axis.as_ref() else { return };
+        let lanes = lanes.as_ref().map(|(ids, values)| th::LaneIds { ids, values: *values });
         let appended = Arc::make_mut(&mut self.histogram.shown).append(facts, axis, from, pass, matches, lanes);
+        drop(index);
         if appended.is_err() {
             return self.schedule_histogram_recount(key, cx);
         }
@@ -326,7 +326,7 @@ impl AppView {
         self.histogram.generation += 1;
         let generation = self.histogram.generation;
         self.histogram.asked = Some(key.clone());
-        let ts = self.filter_index.effective_ts().clone();
+        let (index, view_rows) = (self.filter_index.clone(), self.view.rows.clone());
         // The classes are built again when the rows changed other than at the end.
         let classes = (self.histogram.classes_epoch == Some(self.rows_epoch) && self.histogram.classes.len() == key.rows)
             .then(|| self.histogram.classes.clone());
@@ -340,9 +340,8 @@ impl AppView {
             (self.view.rows.clone(), files)
         });
         let pass = key.pass.map(|_| self.filter_pass.clone());
-        let matches = self.focus.search().matched_visible_indices.clone();
-        // The value of each row, copied for the worker (two bytes a row).
-        let lanes = key.lanes.as_deref().and_then(|k| super::swimlane::lane_ids(&self.filter_index, k)).map(|l| (l.ids.to_vec(), l.values));
+        let matches = self.focus.search().matched_rows.clone();
+        let lane_key = key.lanes.clone();
         let epoch = self.rows_epoch;
         cx.spawn(async move |this, cx| {
             let counted = cx
@@ -352,8 +351,12 @@ impl AppView {
                         let (rows, files) = rebuild.expect("rows to build the classes from");
                         Arc::new(build_classes(&rows, &files))
                     });
-                    let facts = RowFacts { ts: &ts, class: &classes };
-                    let shown = th::count_buckets(facts, &axis, pass.as_deref().map(Vec::as_slice), &matches, lanes.as_ref().map(|(ids, values)| th::LaneIds { ids, values: *values }));
+                    let index = index.read(&view_rows);
+                    let facts = RowFacts { ts: &index, class: &classes };
+                    // Each row's value is read through the view's index, like its time.
+                    let lanes = lane_key.as_deref().and_then(|k| super::swimlane::lane_ids(&index, k));
+                    let lanes = lanes.as_ref().map(|(ids, values)| th::LaneIds { ids, values: *values });
+                    let shown = th::count_buckets(facts, &axis, pass.as_ref().map(|p| p.from_row(0)), &matches, lanes);
                     (classes, shown)
                 })
                 .await;
@@ -462,8 +465,7 @@ impl AppView {
                 .histogram
                 .lanes_for
                 .as_deref()
-                .and_then(|k| self.filter_index.column(k))
-                .map(|c| (c.key.clone(), c.label.clone())),
+                .and_then(|k| self.filter_index.read(&self.view.rows).column(k).map(|c| (c.key.clone(), c.label.clone()))),
             choices: self.lane_choices(),
             suggested: self.lane_suggestion(),
         };
@@ -486,9 +488,12 @@ impl AppView {
         let height = f32::from(self.canvas_bounds.get().size.height);
         let in_sight = if height > 0.0 { (height / row_height).ceil() as usize } else { 0 };
         let top = self.scroll_handle.0.borrow().base_handle.logical_scroll_top().0;
-        let ts = self.filter_index.effective_ts();
-        let end = (top + in_sight.max(1)).min(ts.len());
-        th::span_of(ts.get(top..end)?)
+        let index = self.filter_index.read(&self.view.rows);
+        let end = (top + in_sight.max(1)).min(index.len());
+        if top > end {
+            return None;
+        }
+        th::span_of((top..end).map(|row| index.ts(row)))
     }
 
     /// Show the part of the axis from `visible` (zoom); nothing else changes.
@@ -533,13 +538,13 @@ impl AppView {
     /// The Time Range as times, when one is set.
     pub fn histogram_time_range(&self) -> Option<(Option<f64>, Option<f64>)> {
         let range = &self.filter_state.time_range;
-        range.is_active().then(|| range.bounds(self.filter_index.anchor_day()))
+        range.is_active().then(|| range.bounds(self.filter_index.read(&self.view.rows).anchor_day()))
     }
 
     /// Jump to the first row at or after `time`: a column was clicked. The
     /// Filter and the Focus Pane stay as they are.
     pub fn histogram_jump_to(&mut self, time: f64, cx: &mut Context<Self>) {
-        let Some(row) = th::first_row_at(self.filter_index.effective_ts(), time, self.view_times_ascend()) else { return };
+        let Some(row) = th::first_row_at(&self.filter_index.read(&self.view.rows), time, self.view_times_ascend()) else { return };
         self.histogram_jump_to_row(row, cx);
     }
 
@@ -562,7 +567,7 @@ impl AppView {
     pub fn histogram_set_time_range(&mut self, from: f64, to: f64, cx: &mut Context<Self>) {
         let (from, to) = (from.min(to), from.max(to));
         let step = self.histogram.axis.as_ref().map_or(th::Step(1.0), |a| a.step);
-        let (from, to) = th::format_time_range(from, to, self.filter_index.anchor_day(), step);
+        let (from, to) = th::format_time_range(from, to, self.filter_index.read(&self.view.rows).anchor_day(), step);
         self.set_time_range_text(&from, &to, cx);
     }
 

@@ -3,10 +3,12 @@
 //! the rows again. Each file's value ids are mapped to ids of the Log
 //! Space, the values in the order the merged rows first show them; the
 //! counts, spellings and Coverage add up; the Source column holds each
-//! file's name, and the Log Name column its Log Name.
+//! file's name, and the Log Name column its Log Name. No value id is kept per merged row: a row finds its id
+//! through its file's column and the map of that file (lean-view-memory,
+//! decision 3).
 
 use super::{ColumnIndex, ColumnValue, FilterIndex, MAX_DISTINCT, MISSING, Source};
-use crate::index::view_rows::unpack;
+use crate::index::view_rows::{ViewRows, unpack};
 use crate::model::FieldKey;
 use crate::unicode_text;
 
@@ -17,33 +19,40 @@ pub struct MergeFile<'a> {
     pub source: Option<&'a str>,
 }
 
+/// How a row of a Log Space finds its value id in one of the space's
+/// columns.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum ColumnMap {
+    /// Not read by value ids: the column overflows, or a file's does.
+    #[default]
+    None,
+    /// The Source column: the id of each file's name.
+    Source(Vec<u16>),
+    /// For each file, the position of the column among the file's columns
+    /// and the space's id of each of that column's ids; `None` for a file
+    /// without the column.
+    Ids(Vec<Option<(usize, Vec<u16>)>>),
+}
+
 impl FilterIndex {
     /// The Filter columns of the merged rows `rows` (packed (file, line)) of
-    /// `files`. `field_order` is the union of the files' fields in column
-    /// order, `effective_ts` the timestamp each merged row sorts by,
-    /// `own_ts` a line's own timestamp and `continues` whether a line is a
-    /// Continuation Line.
+    /// `files`, with no value id per row, and for each column the map a row
+    /// finds its id through. `field_order` is the union of the files'
+    /// fields in column order, `own_ts` a line's own timestamp and
+    /// `continues` whether a line is a Continuation Line.
     pub fn merge_files(
         files: &[MergeFile],
-        rows: &[u64],
+        rows: &ViewRows,
         field_order: &[String],
-        effective_ts: Vec<f64>,
         own_ts: impl Fn(usize, usize) -> Option<f64>,
         continues: impl Fn(usize, usize) -> bool,
-    ) -> Self {
+    ) -> (Self, Vec<ColumnMap>) {
         let mut index = FilterIndex::default();
+        let mut maps = Vec::new();
         if rows.is_empty() {
-            return index;
+            return (index, maps);
         }
         index.rows = rows.len();
-        // Where each line of each file is among the merged rows.
-        let mut row_of: Vec<Vec<u32>> = files.iter().map(|f| vec![u32::MAX; f.index.rows()]).collect();
-        for (row, &packed) in rows.iter().enumerate() {
-            let (file, pos) = unpack(packed);
-            if let Some(slot) = row_of.get_mut(file).and_then(|r| r.get_mut(pos)) {
-                *slot = row as u32;
-            }
-        }
         let mut sources = vec![
             Source::SourceFile,
             Source::LogName,
@@ -58,78 +67,146 @@ impl FilterIndex {
             index.field_cols.insert(key);
             sources.push(Source::Field(key));
         }
-        for source in sources {
-            let column = match source {
-                Source::SourceFile => source_column(files, rows, &row_of),
-                Source::LogName => log_name_column(files, rows, &row_of),
-                _ => merge_column(source, files, rows, &row_of),
+        let first = first_rows(files, rows, &sources);
+        for (source, values) in sources.into_iter().zip(&first.values) {
+            let (column, map) = match source {
+                Source::SourceFile => source_column(files, rows, &first.files),
+                Source::LogName => log_name_column(files, rows, &first.files),
+                _ => merge_column(source, files, rows, values),
             };
             index.columns.push(column);
+            maps.push(map);
         }
 
-        for file in files {
-            index.parent_lines += file.index.parent_lines;
-            index.timed_lines += file.index.timed_lines;
-            for (key, n) in &file.index.kv_counts {
-                *index.kv_counts.entry(*key).or_default() += n;
-            }
-            // The first of the earliest and of the latest, in file order as
-            // the merged rows have them.
-            if let Some((ts, text)) = &file.index.min_entry {
-                if index.min_entry.as_ref().is_none_or(|(t, _)| ts < t) {
-                    index.min_entry = Some((*ts, text.clone()));
-                }
-            }
-            if let Some((ts, text)) = &file.index.max_entry {
-                if index.max_entry.as_ref().is_none_or(|(t, _)| ts > t) {
-                    index.max_entry = Some((*ts, text.clone()));
-                }
-            }
-        }
-        index.first_ts = rows.iter().find_map(|&r| {
+        let own: Vec<&FilterIndex> = files.iter().map(|f| f.index).collect();
+        add_up_totals(&mut index, &own);
+        index.first_ts = rows.iter().find_map(|r| {
             let (file, pos) = unpack(r);
             own_ts(file, pos)
         });
-        index.parent_row = rows
-            .iter()
-            .rposition(|&r| {
-                let (file, pos) = unpack(r);
-                !continues(file, pos)
-            })
+        index.parent_row = (0..rows.len())
+            .rev()
+            .find(|&row| rows.get(row).is_some_and(|(file, pos)| !continues(file, pos)))
             .unwrap_or(0);
-        index.effective_ts = std::sync::Arc::new(effective_ts);
-        index
+        (index, maps)
     }
 }
 
+/// The counts of lines and of `key=value` keys of `files` added up into
+/// `index`, and the first of the earliest and of the latest time, in file
+/// order as the merged rows have them.
+pub(super) fn add_up_totals(index: &mut FilterIndex, files: &[&FilterIndex]) {
+    index.parent_lines = 0;
+    index.timed_lines = 0;
+    index.kv_counts.clear();
+    index.min_entry = None;
+    index.max_entry = None;
+    for file in files {
+        index.parent_lines += file.parent_lines;
+        index.timed_lines += file.timed_lines;
+        for (key, n) in &file.kv_counts {
+            *index.kv_counts.entry(*key).or_default() += n;
+        }
+        if let Some((ts, text)) = &file.min_entry {
+            if index.min_entry.as_ref().is_none_or(|(t, _)| ts < t) {
+                index.min_entry = Some((*ts, text.clone()));
+            }
+        }
+        if let Some((ts, text)) = &file.max_entry {
+            if index.max_entry.as_ref().is_none_or(|(t, _)| ts > t) {
+                index.max_entry = Some((*ts, text.clone()));
+            }
+        }
+    }
+}
+
+/// Where things first show among the merged rows (`u32::MAX`: never).
+struct FirstRows {
+    /// Each file's first line.
+    files: Vec<u32>,
+    /// Per column, per file, each value of the file's column; empty for a
+    /// column not read by value ids.
+    values: Vec<Vec<Vec<u32>>>,
+}
+
+/// One pass over the merged rows, until every file and every value of the
+/// files' columns `sources` (those that keep value ids) has shown.
+fn first_rows(files: &[MergeFile], rows: &ViewRows, sources: &[Source]) -> FirstRows {
+    let cols: Vec<Vec<Option<&ColumnIndex>>> = sources
+        .iter()
+        .map(|source| {
+            let own: Vec<Option<&ColumnIndex>> = files.iter().map(|f| f.index.columns.iter().find(|c| &c.source == source)).collect();
+            let by_ids = own.iter().flatten().all(|c| !c.overflow && c.has_row_ids());
+            if by_ids { own } else { vec![None; files.len()] }
+        })
+        .collect();
+    let mut firsts = FirstRows {
+        files: vec![u32::MAX; files.len()],
+        values: cols.iter().map(|own| own.iter().map(|c| vec![u32::MAX; c.map_or(0, |c| c.values.len())]).collect()).collect(),
+    };
+    let mut left = files.len() + cols.iter().flatten().flatten().map(|c| c.values.iter().filter(|v| v.count > 0).count()).sum::<usize>();
+    for (row, packed) in rows.iter().enumerate() {
+        if left == 0 {
+            break;
+        }
+        let (f, line) = unpack(packed);
+        let Some(first) = firsts.files.get_mut(f) else { continue };
+        if *first == u32::MAX {
+            *first = row as u32;
+            left -= 1;
+        }
+        for (own, values) in cols.iter().zip(&mut firsts.values) {
+            let Some(col) = own[f] else { continue };
+            let Some(id) = col.row_ids.get(line).filter(|&id| id != MISSING) else { continue };
+            if let Some(slot) = values[f].get_mut(id as usize).filter(|slot| **slot == u32::MAX) {
+                *slot = row as u32;
+                left = left.saturating_sub(1);
+            }
+        }
+    }
+    firsts
+}
+
+/// The id of `local` (a file's value) among `col`'s values, the value
+/// added when new; `None` past [`MAX_DISTINCT`] values.
+pub(super) fn value_id(col: &mut ColumnIndex, local: &ColumnValue) -> Option<u16> {
+    if let Some(&m) = col.folded_ids.get(&local.folded) {
+        return Some(m);
+    }
+    if col.values.len() >= MAX_DISTINCT {
+        return None;
+    }
+    let m = col.values.len() as u16;
+    col.values.push(ColumnValue { display: local.display.clone(), folded: local.folded.clone(), count: 0 });
+    col.folded_ids.insert(local.folded.clone(), m);
+    Some(m)
+}
+
 /// The Source column: each row holds its file's name.
-fn source_column(files: &[MergeFile], rows: &[u64], row_of: &[Vec<u32>]) -> ColumnIndex {
-    name_column(Source::SourceFile, files, rows, row_of, |name| name)
+fn source_column(files: &[MergeFile], rows: &ViewRows, first_of_file: &[u32]) -> (ColumnIndex, ColumnMap) {
+    name_column(Source::SourceFile, files, rows, first_of_file, |name| name)
 }
 
 /// The Log Name column: each row holds its file's Log Name, so the files
 /// of one log (`app.log`, `app.log.1`) share a value.
-fn log_name_column(files: &[MergeFile], rows: &[u64], row_of: &[Vec<u32>]) -> ColumnIndex {
-    name_column(Source::LogName, files, rows, row_of, crate::rotation_name::log_name)
+fn log_name_column(files: &[MergeFile], rows: &ViewRows, first_of_file: &[u32]) -> (ColumnIndex, ColumnMap) {
+    name_column(Source::LogName, files, rows, first_of_file, crate::rotation_name::log_name)
 }
 
 /// A column whose value is a file's: `name_of` its name, for every line of
-/// it.
+/// it. A row finds its id through its file (`ColumnMap::Source`).
 fn name_column(
     source: Source,
     files: &[MergeFile],
-    rows: &[u64],
-    row_of: &[Vec<u32>],
+    rows: &ViewRows,
+    first_of_file: &[u32],
     name_of: impl Fn(&str) -> &str,
-) -> ColumnIndex {
+) -> (ColumnIndex, ColumnMap) {
     let mut col = ColumnIndex::new(source, 0);
     col.rows = rows.len();
     // Files in the order their first row shows.
-    let mut order: Vec<(u32, usize)> = row_of
-        .iter()
-        .enumerate()
-        .filter_map(|(f, rows)| rows.iter().copied().filter(|&r| r != u32::MAX).min().map(|r| (r, f)))
-        .collect();
+    let mut order: Vec<(u32, usize)> =
+        first_of_file.iter().enumerate().filter(|(_, r)| **r != u32::MAX).map(|(f, &r)| (r, f)).collect();
     order.sort();
     let mut id_of_file: Vec<u16> = vec![MISSING; files.len()];
     for (_, f) in order {
@@ -152,53 +229,36 @@ fn name_column(
     }
     if col.values.len() > MAX_DISTINCT {
         col.mark_overflow();
-        return col;
+        return (col, ColumnMap::None);
     }
-    col.row_ids = rows.iter().map(|&r| id_of_file[unpack(r).0]).collect();
     col.finalize_display();
-    col
+    (col, ColumnMap::Source(id_of_file))
 }
 
 /// A column of the files' own, with their value ids mapped to the merged
 /// column's.
-fn merge_column(source: Source, files: &[MergeFile], rows: &[u64], row_of: &[Vec<u32>]) -> ColumnIndex {
+fn merge_column(source: Source, files: &[MergeFile], rows: &ViewRows, first_rows: &[Vec<u32>]) -> (ColumnIndex, ColumnMap) {
     let mut col = ColumnIndex::new(source.clone(), 0);
     col.rows = rows.len();
-    let own: Vec<Option<&ColumnIndex>> =
-        files.iter().map(|f| f.index.columns.iter().find(|c| c.source == source)).collect();
+    let at: Vec<Option<usize>> = files.iter().map(|f| f.index.columns.iter().position(|c| c.source == source)).collect();
+    let own: Vec<Option<&ColumnIndex>> = files.iter().zip(&at).map(|(f, at)| at.map(|at| &f.index.columns[at])).collect();
     col.covered = own.iter().flatten().map(|c| c.covered).sum();
     if own.iter().flatten().any(|c| c.overflow || !c.has_row_ids()) {
         col.mark_overflow();
-        return col;
+        return (col, ColumnMap::None);
     }
     // Each value of each file, by the merged row it first shows in.
     let mut firsts: Vec<(u32, usize, u16)> = Vec::new();
-    for (f, c) in own.iter().enumerate() {
-        let Some(c) = c else { continue };
-        let mut seen = vec![false; c.values.len()];
-        for (pos, &id) in c.row_ids.iter().enumerate() {
-            if id != MISSING && !seen[id as usize] {
-                seen[id as usize] = true;
-                firsts.push((row_of[f].get(pos).copied().unwrap_or(u32::MAX), f, id));
-            }
-        }
+    for (f, rows) in first_rows.iter().enumerate() {
+        firsts.extend(rows.iter().enumerate().filter(|(_, r)| **r != u32::MAX).map(|(id, &r)| (r, f, id as u16)));
     }
     firsts.sort();
     let mut remap: Vec<Vec<u16>> = own.iter().map(|c| vec![MISSING; c.map_or(0, |c| c.values.len())]).collect();
     for (_, f, id) in firsts {
         let local = &own[f].expect("a file with values has the column").values[id as usize];
-        let merged = match col.folded_ids.get(&local.folded) {
-            Some(&m) => m,
-            None => {
-                if col.values.len() >= MAX_DISTINCT {
-                    col.mark_overflow();
-                    return col;
-                }
-                let m = col.values.len() as u16;
-                col.values.push(ColumnValue { display: local.display.clone(), folded: local.folded.clone(), count: 0 });
-                col.folded_ids.insert(local.folded.clone(), m);
-                m
-            }
+        let Some(merged) = value_id(&mut col, local) else {
+            col.mark_overflow();
+            return (col, ColumnMap::None);
         };
         col.values[merged as usize].count += local.count;
         remap[f][id as usize] = merged;
@@ -212,21 +272,9 @@ fn merge_column(source: Source, files: &[MergeFile], rows: &[u64], row_of: &[Vec
             }
         }
     }
-    col.row_ids = rows
-        .iter()
-        .map(|&r| {
-            let (f, pos) = unpack(r);
-            match own.get(f).copied().flatten() {
-                Some(c) => match c.row_ids.get(pos).copied() {
-                    Some(id) if id != MISSING => remap[f][id as usize],
-                    _ => MISSING,
-                },
-                None => MISSING,
-            }
-        })
-        .collect();
     col.finalize_display();
-    col
+    let map = at.into_iter().zip(remap).map(|(at, remap)| at.map(|at| (at, remap))).collect();
+    (col, ColumnMap::Ids(map))
 }
 
 impl FilterIndex {
@@ -308,18 +356,9 @@ fn column_so_far(source: Source, files: &[MergeFile]) -> ColumnIndex {
         }
         let mut remap = vec![MISSING; own.values.len()];
         for (id, value) in own.values.iter().enumerate() {
-            let merged = match col.folded_ids.get(&value.folded) {
-                Some(&m) => m,
-                None => {
-                    if col.values.len() >= MAX_DISTINCT {
-                        overflow = true;
-                        break;
-                    }
-                    let m = col.values.len() as u16;
-                    col.values.push(ColumnValue { display: value.display.clone(), folded: value.folded.clone(), count: 0 });
-                    col.folded_ids.insert(value.folded.clone(), m);
-                    m
-                }
+            let Some(merged) = value_id(&mut col, value) else {
+                overflow = true;
+                break;
             };
             col.values[merged as usize].count += value.count;
             remap[id] = merged;

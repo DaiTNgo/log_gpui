@@ -163,7 +163,7 @@ fn filtering_error_keeps_the_stack_trace() {
     let index = FilterIndex::build(&es);
     let mut f = FilterState::new();
     f.toggle_value("level", "ERROR");
-    let visible = f.evaluate(&index, &es);
+    let visible = f.evaluate(&index.read(), &es);
     assert_eq!(visible, (1..=21).collect::<Vec<_>>());
 }
 
@@ -174,7 +174,7 @@ fn hiding_a_level_hides_its_continuation_lines_too() {
     let mut f = FilterState::new();
     f.toggle_value("level", "ERROR");
     f.set_hide("level", true);
-    let visible = f.evaluate(&index, &es);
+    let visible = f.evaluate(&index.read(), &es);
     assert_eq!(visible, vec![0, 22]);
 }
 
@@ -229,5 +229,5 @@ fn time_range_reads_every_format_the_parser_reads() {
     let index = FilterIndex::build(&es);
     let mut f = FilterState::new();
     f.set_time_range("2026-10-18 10:00:00", "");
-    assert_eq!(f.evaluate(&index, &es), vec![1]);
+    assert_eq!(f.evaluate(&index.read(), &es), vec![1]);
 }

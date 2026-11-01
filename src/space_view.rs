@@ -3,7 +3,8 @@
 
 use crate::archive::{FileSource, read_source};
 use crate::column::FieldMaxChars;
-use crate::filter_index::FilterIndex;
+use crate::filter_index::{FilterIndex, SpaceIndex, ViewIndex};
+use crate::index::view_rows::ViewRows;
 use crate::model::LogEntry;
 use crate::view_data::{ViewData, ViewFile};
 use crate::marker::TextMarker;
@@ -46,7 +47,7 @@ impl ParsedFile {
 
     /// A file read through its Line Index.
     pub fn from_indexed(file: crate::index::file::IndexedFile) -> Self {
-        let max_chars = file.indexed.data.read().unwrap().max_chars.clone();
+        let max_chars = file.indexed.data.read_recursive().max_chars.clone();
         Self { max_chars, indexed: Some(Arc::new(file)), ..Self::empty() }
     }
 
@@ -179,7 +180,7 @@ impl EmptyCanvas {
 #[derive(Debug, Clone, Default)]
 pub struct BuiltView {
     pub view: ViewData,
-    pub index: FilterIndex,
+    pub index: ViewIndex,
     pub max_chars: FieldMaxChars,
     /// `file_id`s of the files with no timestamp at all.
     pub no_timestamp_files: Vec<String>,
@@ -200,16 +201,12 @@ pub fn build_space_view(space: &LogSpace, parsed: &HashMap<String, ParsedFile>) 
     let empty = ParsedFile::empty();
     let files = space.ordered_files();
     let parsed_of: Vec<&ParsedFile> = files.iter().map(|f| parsed.get(&f.file_id).unwrap_or(&empty)).collect();
-    let (rows, effective_ts, no_timestamp) = merge_by_meta(&parsed_of);
-    let mut view = ViewData {
-        rows: crate::index::view_rows::ViewRows::Merged(rows),
-        files: files.iter().map(|f| ViewFile::new(&f.file_id, Some(&f.display_name))).collect(),
-    };
+    let (rows, no_timestamp) = merge_by_meta(&parsed_of);
+    let mut view = ViewData { rows, files: files.iter().map(|f| ViewFile::new(&f.file_id, Some(&f.display_name))).collect() };
     view.set_markers(files.iter().copied());
 
     let field_order = union_field_names(&parsed_of);
-    let rows: Vec<u64> = view.rows.iter().collect();
-    let index = merge_filter_indexes(&files, &parsed_of, &rows, &field_order, effective_ts);
+    let index = merge_filter_indexes(&files, &parsed_of, &view.rows, &field_order, &no_timestamp);
     let max_chars = merged_max_chars(&files, &parsed_of);
     BuiltView {
         view,
@@ -217,6 +214,17 @@ pub fn build_space_view(space: &LogSpace, parsed: &HashMap<String, ParsedFile>) 
         max_chars,
         no_timestamp_files: no_timestamp.iter().map(|i| files[*i].file_id.clone()).collect(),
     }
+}
+
+/// The Filter columns of `space` over the rows `rows` (in the space's file
+/// order), built from its files' own; `untimed` are the files (by place)
+/// with no timestamp at all.
+pub fn space_index(space: &LogSpace, parsed: &HashMap<String, ParsedFile>, rows: &ViewRows, untimed: &[usize]) -> ViewIndex {
+    let empty = ParsedFile::empty();
+    let files = space.ordered_files();
+    let parsed_of: Vec<&ParsedFile> = files.iter().map(|f| parsed.get(&f.file_id).unwrap_or(&empty)).collect();
+    let field_order = union_field_names(&parsed_of);
+    merge_filter_indexes(&files, &parsed_of, rows, &field_order, untimed)
 }
 
 /// The fields of the files by name, the first file's order first (as
@@ -228,7 +236,7 @@ fn union_field_names(files: &[&ParsedFile]) -> Vec<String> {
     for file in files {
         let Some(indexed) = &file.indexed else { continue };
         let in_file: Vec<String> = {
-            let data = indexed.indexed.data.read().unwrap();
+            let data = indexed.indexed.data.read_recursive();
             data.filter.field_columns().filter_map(|c| c.field()).map(|k| k.as_str().to_string()).collect()
         };
         for name in in_file {
@@ -245,12 +253,12 @@ fn union_field_names(files: &[&ParsedFile]) -> Vec<String> {
 fn merge_filter_indexes(
     files: &[&LogFile],
     parsed: &[&ParsedFile],
-    rows: &[u64],
+    rows: &ViewRows,
     field_order: &[String],
-    effective_ts: Vec<f64>,
-) -> FilterIndex {
+    untimed: &[usize],
+) -> ViewIndex {
     use crate::filter_index::MergeFile;
-    let guards: Vec<_> = parsed.iter().map(|p| p.indexed.as_ref().map(|f| f.indexed.data.read().unwrap())).collect();
+    let guards: Vec<_> = parsed.iter().map(|p| p.indexed.as_ref().map(|f| f.indexed.data.read_recursive())).collect();
     let empty = FilterIndex::default();
     let merge: Vec<MergeFile> = files
         .iter()
@@ -273,7 +281,12 @@ fn merge_filter_indexes(
         Some(data) => data.file.meta.get(pos).is_some_and(|m| m.parent_dist > 0),
         None => false,
     };
-    FilterIndex::merge_files(&merge, rows, field_order, effective_ts, own_ts, continues)
+    let (meta, maps) = FilterIndex::merge_files(&merge, rows, field_order, own_ts, continues);
+    drop(merge);
+    drop(guards);
+    let indexed = parsed.iter().map(|p| p.indexed.as_ref().map(|f| f.indexed.clone())).collect();
+    let untimed = (0..parsed.len()).map(|f| untimed.contains(&f)).collect();
+    ViewIndex::Space(Arc::new(SpaceIndex::new(meta, indexed, maps, untimed)))
 }
 
 /// The longest texts of a Log Space's rows: each file's, and its name in
@@ -285,7 +298,7 @@ fn merged_max_chars(files: &[&LogFile], parsed: &[&ParsedFile]) -> FieldMaxChars
             continue;
         }
         if let Some(indexed) = &p.indexed {
-            max.merge(&indexed.indexed.data.read().unwrap().max_chars);
+            max.merge(&indexed.indexed.data.read_recursive().max_chars);
         }
         max.source = max.source.max(file.display_name.chars().count());
         max.log_name = max.log_name.max(crate::rotation_name::log_name(&file.display_name).chars().count());
@@ -296,11 +309,18 @@ fn merged_max_chars(files: &[&LogFile], parsed: &[&ParsedFile]) -> FieldMaxChars
 use crate::index::meta::seconds;
 
 /// Merge the files by the `LineMeta` of their Line Index, with `Merger`:
-/// the merged rows, the timestamp each sorts by (`NAN` for none), and the
-/// files with no timestamp at all. A file not read has no lines.
-fn merge_by_meta(files: &[&ParsedFile]) -> (Vec<u64>, Vec<f64>, Vec<usize>) {
-    use crate::index::view_rows::{Lane, Merger, unpack};
-    let guards: Vec<_> = files.iter().map(|p| p.indexed.as_ref().map(|f| f.indexed.data.read().unwrap())).collect();
+/// the merged rows and the files with no timestamp at all. A file not
+/// read has no lines. One file's rows are its lines, with no list.
+fn merge_by_meta(files: &[&ParsedFile]) -> (ViewRows, Vec<usize>) {
+    use crate::index::view_rows::{Lane, Merger};
+    let guards: Vec<_> = files.iter().map(|p| p.indexed.as_ref().map(|f| f.indexed.data.read_recursive())).collect();
+    if let [one] = guards.as_slice() {
+        // A merge of one file keeps its lines in order; with no timestamp
+        // at all (its first line has none) it is untimed.
+        let meta = one.as_ref().map_or(&[][..], |data| data.file.meta.as_slice());
+        let untimed = meta.first().is_some_and(|m| m.ts_us == crate::index::meta::NO_TIME);
+        return (ViewRows::File { lines: meta.len() }, if untimed { vec![0] } else { Vec::new() });
+    }
     let lanes: Vec<Lane> = guards
         .iter()
         .map(|g| match g {
@@ -312,17 +332,7 @@ fn merge_by_meta(files: &[&ParsedFile]) -> (Vec<u64>, Vec<f64>, Vec<usize>) {
     let mut rows = Vec::new();
     merger.advance(&lanes, &mut rows);
     let untimed: Vec<usize> = (0..files.len()).filter(|&f| merger.is_untimed(f)).collect();
-    let effective_ts = rows
-        .iter()
-        .map(|&r| {
-            let (file, pos) = unpack(r);
-            if untimed.contains(&file) {
-                return f64::NAN;
-            }
-            guards[file].as_ref().and_then(|data| data.file.meta.get(pos)).map_or(f64::NAN, |m| seconds(m.ts_us))
-        })
-        .collect();
-    (rows, effective_ts, untimed)
+    (ViewRows::merged(rows), untimed)
 }
 
 /// The rows of a single file (a File View): no Source Column.
@@ -332,8 +342,8 @@ pub fn build_file_view(file: &LogFile, parsed: &ParsedFile) -> BuiltView {
         files: vec![ViewFile::new(&file.file_id, None)],
     };
     view.set_markers([file]);
-    // Indexing built it as a build from every row would.
-    let index = parsed.indexed.as_ref().map(|indexed| indexed.indexed.data.read().unwrap().filter.clone()).unwrap_or_default();
+    // Its file's own index, which Indexing keeps up to date.
+    let index = parsed.indexed.as_ref().map_or_else(ViewIndex::default, |indexed| ViewIndex::File(indexed.indexed.clone()));
     BuiltView { max_chars: parsed.max_chars.clone(), index, no_timestamp_files: Vec::new(), view }
 }
 

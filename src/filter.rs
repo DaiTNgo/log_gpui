@@ -5,11 +5,110 @@
 //! Range combine with AND. Hide Mode flips a column from "show only these" to
 //! "hide these". A row with no value in a column never matches it.
 
-use crate::filter_index::{ColumnIndex, FilterIndex, MISSING, with_value_of};
+use crate::filter_index::{ColumnIndex, RowIds, RowTable, ViewIndexRead, with_value_of};
 use crate::rows::Rows;
 use crate::unicode_text::{self, Needle};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
+use std::sync::Arc;
+
+/// The rows that pass the Filter, ascending. With no Filter in effect every
+/// row passes, and no list of them is kept (lean-view-memory, decision 5).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FilterPass {
+    /// Every row of the view, `0..rows`.
+    All { rows: usize },
+    /// The rows that pass, ascending.
+    Rows(Arc<Vec<usize>>),
+}
+
+/// The passing rows from some row on, to walk alongside the rows.
+#[derive(Debug, Clone, Copy)]
+pub enum PassFrom<'a> {
+    All,
+    Rows(&'a [usize]),
+}
+
+impl Default for FilterPass {
+    fn default() -> Self {
+        Self::All { rows: 0 }
+    }
+}
+
+impl FilterPass {
+    pub fn len(&self) -> usize {
+        match self {
+            Self::All { rows } => *rows,
+            Self::Rows(rows) => rows.len(),
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    pub fn contains(&self, row: usize) -> bool {
+        match self {
+            Self::All { rows } => row < *rows,
+            Self::Rows(rows) => rows.binary_search(&row).is_ok(),
+        }
+    }
+
+    /// The passing rows, ascending.
+    pub fn iter(&self) -> impl Iterator<Item = usize> + '_ {
+        self.iter_from_pos(0)
+    }
+
+    /// The passing rows from the `pos`-th on.
+    pub fn iter_from_pos(&self, pos: usize) -> impl Iterator<Item = usize> + '_ {
+        let (range, list) = match self {
+            Self::All { rows } => (pos.min(*rows)..*rows, &[][..]),
+            Self::Rows(rows) => (0..0, &rows[pos.min(rows.len())..]),
+        };
+        range.chain(list.iter().copied())
+    }
+
+    /// The passing rows from row `row` on.
+    pub fn from_row(&self, row: usize) -> PassFrom<'_> {
+        match self {
+            Self::All { .. } => PassFrom::All,
+            Self::Rows(rows) => PassFrom::Rows(&rows[rows.partition_point(|&r| r < row)..]),
+        }
+    }
+
+    /// Rows appended after the last: with every row passing they all pass,
+    /// else `passing` (ascending, after the rows before) join the list.
+    pub fn append(&mut self, rows_now: usize, passing: impl IntoIterator<Item = usize>) {
+        match self {
+            Self::All { rows } => *rows = rows_now,
+            Self::Rows(rows) => Arc::make_mut(rows).extend(passing),
+        }
+    }
+
+    /// What tells two results apart cheaply: the list and its length.
+    pub fn key(&self) -> (usize, usize) {
+        match self {
+            Self::All { rows } => (0, *rows),
+            Self::Rows(rows) => (Arc::as_ptr(rows) as usize, rows.len()),
+        }
+    }
+
+    pub fn to_vec(&self) -> Vec<usize> {
+        self.iter().collect()
+    }
+}
+
+impl From<Vec<usize>> for FilterPass {
+    fn from(rows: Vec<usize>) -> Self {
+        Self::Rows(Arc::new(rows))
+    }
+}
+
+impl PartialEq<Vec<usize>> for FilterPass {
+    fn eq(&self, other: &Vec<usize>) -> bool {
+        self.len() == other.len() && self.iter().eq(other.iter().copied())
+    }
+}
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ColumnFilter {
@@ -252,14 +351,14 @@ impl FilterState {
     }
 
     /// The indices of the rows that pass the Filter.
-    pub fn evaluate<R: Rows + ?Sized>(&self, index: &FilterIndex, rows: &R) -> Vec<usize> {
+    pub fn evaluate<R: Rows + ?Sized>(&self, index: &ViewIndexRead, rows: &R) -> Vec<usize> {
         self.evaluate_from(index, rows, 0)
     }
 
     /// The indices of the rows from `start` on that pass the Filter. Values
     /// come from `index`; `rows` reads the text of a value the index does
     /// not keep (a column with too many values, rows it does not cover).
-    pub fn evaluate_from<R: Rows + ?Sized>(&self, index: &FilterIndex, rows: &R, start: usize) -> Vec<usize> {
+    pub fn evaluate_from<R: Rows + ?Sized>(&self, index: &ViewIndexRead, rows: &R, start: usize) -> Vec<usize> {
         let (mut visible, text) = self.evaluate_split(index, rows.len(), start);
         if !text.is_empty() {
             visible.retain(|&row| text.iter().all(|c| c.passes_row(rows, row)));
@@ -272,7 +371,7 @@ impl FilterState {
     /// the Time Range), and the conditions that need the text of a row's
     /// value, for those rows to pass as well: a Scan reads it for lines
     /// read from disk.
-    pub fn evaluate_split(&self, index: &FilterIndex, len: usize, start: usize) -> (Vec<usize>, Vec<TextCondition>) {
+    pub fn evaluate_split(&self, index: &ViewIndexRead, len: usize, start: usize) -> (Vec<usize>, Vec<TextCondition>) {
         if self.paused {
             return ((start..len).collect(), Vec::new());
         }
@@ -281,7 +380,7 @@ impl FilterState {
         let mut by_ids: Vec<(&ColumnFilter, CompiledColumn)> = Vec::new();
         let mut text = Vec::new();
         for cf in self.columns.iter().filter(|c| c.is_active()) {
-            match CompiledColumn::compile(cf, index.column(&cf.column), stale) {
+            match CompiledColumn::compile(cf, index.column(&cf.column), index.ids(&cf.column), stale) {
                 Some(compiled) => by_ids.push((cf, compiled)),
                 None => text.push(TextCondition::new(cf)),
             }
@@ -341,15 +440,14 @@ impl TextCondition {
 /// A column's condition read from the column's value ids: a lookup table
 /// over its (at most 500) values.
 struct CompiledColumn<'a> {
-    col: &'a ColumnIndex,
-    table: Vec<bool>,
+    table: RowTable<'a>,
 }
 
 impl<'a> CompiledColumn<'a> {
     /// `None` when the column has no value ids for the rows: the condition
     /// then needs their text.
-    fn compile(cf: &ColumnFilter, col: Option<&'a ColumnIndex>, stale: bool) -> Option<Self> {
-        let col = col.filter(|c| !stale && c.has_row_ids())?;
+    fn compile(cf: &ColumnFilter, col: Option<&ColumnIndex>, ids: Option<RowIds<'a>>, stale: bool) -> Option<Self> {
+        let (col, ids) = col.zip(ids).filter(|_| !stale)?;
         let custom: Vec<Needle> = cf.custom.iter().map(|c| Needle::new(c)).collect();
         let ticked: HashSet<&str> = cf.values.iter().map(String::as_str).collect();
         let table = col
@@ -357,13 +455,10 @@ impl<'a> CompiledColumn<'a> {
             .iter()
             .map(|v| ticked.contains(v.folded.as_str()) || custom.iter().any(|n| n.is_in(&v.display)))
             .collect();
-        Some(Self { col, table })
+        Some(Self { table: ids.with_table(table) })
     }
 
     fn matches(&self, row: usize) -> bool {
-        match self.col.id_of_row(row) {
-            Some(MISSING) | None => false,
-            Some(id) => self.table.get(id as usize).copied().unwrap_or(false),
-        }
+        self.table.get(row).unwrap_or(false)
     }
 }

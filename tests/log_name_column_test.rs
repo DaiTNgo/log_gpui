@@ -60,7 +60,7 @@ fn space(h: &mut Harness, files: &[(&str, String)]) {
 fn passing_sources(h: &mut Harness) -> Vec<String> {
     h.view.read_with(&h.cx, |app, _| {
         let rows = app.rows();
-        let mut names: Vec<String> = app.filter_pass.iter().filter_map(|&r| rows.source(r).map(str::to_string)).collect();
+        let mut names: Vec<String> = app.filter_pass.iter().filter_map(|r| rows.source(r).map(str::to_string)).collect();
         names.sort();
         names.dedup();
         names
@@ -71,7 +71,7 @@ fn passing_sources(h: &mut Harness) -> Vec<String> {
 fn ticking_a_log_name_keeps_every_file_of_it(cx: &mut TestAppContext) {
     let mut h = common::open_app(cx);
     space(&mut h, &[("api.log", lines("API", 4, 0)), ("api.log.1", lines("API", 4, 20)), ("db.log", lines("DB", 4, 40))]);
-    let names = h.view.read_with(&h.cx, |app, _| values(&app.filter_index, "log_name"));
+    let names = h.view.read_with(&h.cx, |app, _| values(&app.filter_index.read(&app.view.rows), "log_name"));
     assert_eq!(names.iter().map(|(n, _)| n.as_str()).collect::<Vec<_>>(), ["api.log", "db.log"]);
     h.view.update(&mut h.cx, |app, cx| {
         app.pick_filter_column("log_name", cx);

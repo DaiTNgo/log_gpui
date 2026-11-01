@@ -157,13 +157,13 @@ impl AppView {
         let (first, last) = self.timed_span().ok_or(GoToError::NotALineNumber)?;
         let rows = self.rows();
         let time_of = |row: usize| rows.own_time(row).unwrap_or(0.0);
-        let selected = self.selected_row_pos.and_then(|pos| self.visible_indices.get(pos).copied());
+        let selected = self.selected_row_pos.and_then(|pos| self.row_at(pos));
         let day_of = selected.and_then(|ix| rows.own_time(ix)).unwrap_or(time_of(first));
         let at = go_to::parse_time(text, Some(day_of)).ok_or(GoToError::NotALineNumber)?;
         if at < time_of(first) || at > time_of(last) {
             return Err(GoToError::TimeOutside);
         }
-        let ix = crate::time_histogram::first_row_at(self.filter_index.effective_ts(), at, self.view_times_ascend())
+        let ix = crate::time_histogram::first_row_at(&self.filter_index.read(&self.view.rows), at, self.view_times_ascend())
             .ok_or(GoToError::TimeOutside)?;
         self.line_ref_of_entry(ix).map(GoToTarget::Row).ok_or(GoToError::NoLines)
     }

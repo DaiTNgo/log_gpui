@@ -87,7 +87,7 @@ fn clicking_a_bar_goes_to_the_lanes_first_line_there_and_a_name_filters(cx: &mut
     h.view.read_with(&h.cx, |app, _| {
         let row = app.selected_row_pos.expect("a selected row");
         assert!(app.rows().source(row).is_some_and(|s| s.ends_with("db.log")));
-        assert_eq!(app.filter_index.effective_timestamp(row), Some(TEN + 30.0 * 60.0));
+        assert_eq!(app.filter_index.read(&app.view.rows).effective_timestamp(row), Some(TEN + 30.0 * 60.0));
         assert_eq!(app.filter_pass, pass_before, "the Filter is not changed");
     });
 
@@ -97,7 +97,7 @@ fn clicking_a_bar_goes_to_the_lanes_first_line_there_and_a_name_filters(cx: &mut
         let ticked = app.filter_state.column("log_name").map(|c| c.values.clone());
         assert_eq!(ticked, Some(vec!["db.log".to_string()]));
         let rows = app.rows();
-        assert!(app.filter_pass.iter().all(|&r| rows.source(r).is_some_and(|s| s.ends_with("db.log"))));
+        assert!(app.filter_pass.iter().all(|r| rows.source(r).is_some_and(|s| s.ends_with("db.log"))));
         assert_eq!(lane_names(app).len(), 2, "the lanes count every line, whatever the Filter");
     });
     // Other and (empty) change nothing.
