@@ -159,6 +159,12 @@ impl AppView {
             return;
         }
         self.persist_active_session();
+        // A selection and its color bar belong to the view they were made in.
+        self.color_bar = None;
+        self.text_selection = None;
+        self.selecting = false;
+        self.pane_selection = None;
+        self.clear_raw_selections(cx);
         if let Some(tab) = self
             .active_project_mut()
             .and_then(|p| p.working_set.active_tab_mut())
@@ -397,13 +403,13 @@ impl AppView {
                     }
                     cx.notify();
                 }
+                this.schedule_syntax_check(cx);
             });
             self.raw.editors.insert(
                 section.file_id.clone(),
                 ScratchEditor { state, highlights: None, syntax_lines: None, _subscription: subscription, _observe: observe },
             );
             created = true;
-                this.schedule_syntax_check(cx);
         }
         if created {
             self.update_raw_highlights(cx);
@@ -903,12 +909,6 @@ impl AppView {
         .detach();
     }
 
-    /// Highlight every Match in the scratch editors; the current one stronger.
-    pub(crate) fn update_raw_highlights(&mut self, cx: &mut Context<Self>) {
-        let sections = self.raw_sections();
-        let matcher = self.focus.search().matcher.clone();
-        let current = self.raw.matches.get(self.raw.current).copied();
-        let all_bg = hsla(0.55, 0.85, 0.55, 0.35);
     /// Look, a moment from now, at whether a scratch editor scrolled past the
     /// lines Syntax Color is painted on, and paint again if so. The editor
     /// lays itself out after the scroll, so its visible lines are only known
@@ -937,6 +937,12 @@ impl AppView {
         .detach();
     }
 
+    /// Highlight every Match in the scratch editors; the current one stronger.
+    pub(crate) fn update_raw_highlights(&mut self, cx: &mut Context<Self>) {
+        let sections = self.raw_sections();
+        let matcher = self.focus.search().matcher.clone();
+        let current = self.raw.matches.get(self.raw.current).copied();
+        let all_bg = hsla(0.55, 0.85, 0.55, 0.35);
         let current_bg = hsla(0.55, 0.9, 0.55, 0.7);
         let tone = if cx.theme().is_dark() { Tone::Dark } else { Tone::Light };
         let colors = self.canvas_colors(cx);
@@ -971,6 +977,9 @@ impl AppView {
             let mut decorations = Vec::new();
             // Syntax Color is the lowest paint: the Matches and Markers below
             // go over it.
+            // Only the lines on screen and a margin around them: the editor
+            // says which they are, and `visible` changes as it scrolls.
+            editor.syntax_lines = None;
             if colors.syntax.is_some() {
                 let lines = section.lines.all();
                 let margin = crate::syntax_color::EDITOR_LINE_MARGIN;
@@ -985,20 +994,17 @@ impl AppView {
                     for (range, color) in colors.syntax_paints(line, crate::syntax_color::Scope::Line) {
                         decorations.push(TextDecoration::new(
                             offset + range.start..offset + range.end,
-            // Only the lines on screen and a margin around them: the editor
-            // says which they are, and `visible` changes as it scrolls.
-            editor.syntax_lines = None;
                             HighlightStyle { color: Some(color), ..Default::default() },
                         ));
                     }
                 }
+                editor.syntax_lines = Some(span);
             }
             if let Some(matcher) = &matcher {
                 let mut offset = 0usize;
                 for (li, line) in section.lines.all().iter().enumerate() {
                     let is_current = current.is_some_and(|m| m.section == si && m.line == li);
                     // Only a line that satisfies the whole expression is a Match;
-                editor.syntax_lines = Some(span);
                     // `a && b` must not paint `a` on a line without `b`.
                     let paints = crate::ui::canvas::line_match_paints(
                         matcher,
