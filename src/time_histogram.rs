@@ -156,11 +156,47 @@ pub fn class_of(level: Option<LogLevel>, continues: bool) -> u8 {
     }) as u8
 }
 
+/// The effective time of each row of a view (`NAN` when it has none):
+/// read from the view's index row by row, with no list of them.
+pub trait RowTimes {
+    fn len(&self) -> usize;
+    fn ts(&self, row: usize) -> f64;
+
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// The time of `row`, `None` past the last row.
+    fn get(&self, row: usize) -> Option<f64> {
+        (row < self.len()).then(|| self.ts(row))
+    }
+}
+
+impl RowTimes for Vec<f64> {
+    fn len(&self) -> usize {
+        Vec::len(self)
+    }
+
+    fn ts(&self, row: usize) -> f64 {
+        self[row]
+    }
+}
+
+impl RowTimes for crate::filter_index::ViewIndexRead<'_> {
+    fn len(&self) -> usize {
+        crate::filter_index::ViewIndexRead::len(self)
+    }
+
+    fn ts(&self, row: usize) -> f64 {
+        crate::filter_index::ViewIndexRead::ts(self, row)
+    }
+}
+
 /// The per-row facts a count reads: each row's effective time (`NAN` when
 /// it has none) and class ([`class_of`]).
-#[derive(Debug, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub struct RowFacts<'a> {
-    pub ts: &'a [f64],
+    pub ts: &'a dyn RowTimes,
     pub class: &'a [u8],
 }
 
@@ -223,11 +259,16 @@ impl Buckets {
         rows: RowFacts,
         from: usize,
         full: &Range<f64>,
-        filter_pass: Option<&[usize]>,
+        filter_pass: Option<crate::filter::PassFrom<'_>>,
         matches: &[usize],
     ) -> Result<(), NeedsRecount> {
         let Some(grid) = self.grid else { return Ok(()) };
-        let mut pass = filter_pass.map(|p| p.iter().copied().peekable());
+        use crate::filter::PassFrom;
+        // `None`: every row passes.
+        let mut pass = filter_pass.map(|p| match p {
+            PassFrom::All => None,
+            PassFrom::Rows(rows) => Some(rows.iter().copied().peekable()),
+        });
         let mut outside = false;
         for row in from..rows.len() {
             let class = rows.class[row];
@@ -235,13 +276,14 @@ impl Buckets {
                 continue;
             }
             let passes = match pass.as_mut() {
-                Some(p) => {
+                Some(Some(p)) => {
                     while p.next_if(|&r| r < row).is_some() {}
                     p.next_if_eq(&row).is_some()
                 }
+                Some(None) => true,
                 None => false,
             };
-            let t = rows.ts[row];
+            let t = rows.ts.ts(row);
             if t.is_nan() {
                 self.untimed += 1;
                 self.first_untimed.get_or_insert(row);
@@ -261,7 +303,7 @@ impl Buckets {
         }
         // A Match marks its column, whether a Parent Line or not.
         for &row in matches {
-            if let Some(col) = rows.ts.get(row).and_then(|&t| grid.column_of(t)) {
+            if let Some(col) = rows.ts.get(row).and_then(|t| grid.column_of(t)) {
                 self.matched[col] = true;
             }
         }
@@ -277,7 +319,7 @@ impl Buckets {
         rows: RowFacts,
         axis: &TimeAxis,
         from: usize,
-        filter_pass: Option<&[usize]>,
+        filter_pass: Option<crate::filter::PassFrom<'_>>,
         matches: &[usize],
     ) -> Result<(), NeedsRecount> {
         if self.grid != Some(axis.grid()) || filter_pass.is_some() != self.filtered.is_some() {
@@ -291,7 +333,7 @@ impl Buckets {
 /// class, those in `filter_pass` (ascending rows; `None` with no Filter)
 /// apart, the columns holding one of `matches` (ascending rows), and the
 /// rows with no time.
-pub fn count_buckets(rows: RowFacts, axis: &TimeAxis, filter_pass: Option<&[usize]>, matches: &[usize]) -> Buckets {
+pub fn count_buckets(rows: RowFacts, axis: &TimeAxis, filter_pass: Option<crate::filter::PassFrom<'_>>, matches: &[usize]) -> Buckets {
     let mut buckets = Buckets::empty(axis.grid(), filter_pass.is_some());
     // The axis comes from these rows: none is outside it.
     let _ = buckets.count(rows, 0, &(f64::NEG_INFINITY..f64::INFINITY), filter_pass, matches);
@@ -299,9 +341,9 @@ pub fn count_buckets(rows: RowFacts, axis: &TimeAxis, filter_pass: Option<&[usiz
 }
 
 /// The earliest and latest time among `ts` (`NAN` skipped).
-pub fn span_of(ts: &[f64]) -> Option<Range<f64>> {
+pub fn span_of(ts: impl IntoIterator<Item = f64>) -> Option<Range<f64>> {
     let mut span: Option<Range<f64>> = None;
-    for &t in ts.iter().filter(|t| !t.is_nan()) {
+    for t in ts.into_iter().filter(|t| !t.is_nan()) {
         span = Some(match span {
             None => t..t,
             Some(s) => s.start.min(t)..s.end.max(t),
@@ -343,14 +385,25 @@ pub fn grow_full(full: &Range<f64>, t: f64) -> Range<f64> {
 /// The first row whose time is `time` or later. With `sorted` the times
 /// ascend, those with none (`NAN`) last, and the row is found by halving;
 /// else every row is looked at (a File View's times may go back).
-pub fn first_row_at(ts: &[f64], time: f64, sorted: bool) -> Option<usize> {
+pub fn first_row_at(ts: &dyn RowTimes, time: f64, sorted: bool) -> Option<usize> {
     if sorted {
-        let timed = ts.partition_point(|t| !t.is_nan());
-        let at = ts[..timed].partition_point(|&t| t < time);
+        let timed = partition_point(ts.len(), |row| !ts.ts(row).is_nan());
+        let at = partition_point(timed, |row| ts.ts(row) < time);
         (at < timed).then_some(at)
     } else {
-        ts.iter().position(|&t| t >= time)
+        (0..ts.len()).find(|&row| ts.ts(row) >= time)
     }
+}
+
+/// The first of `0..len` for which `before` is false (`before` is true
+/// for a run of rows, then false).
+fn partition_point(len: usize, before: impl Fn(usize) -> bool) -> usize {
+    let (mut lo, mut hi) = (0, len);
+    while lo < hi {
+        let mid = lo + (hi - lo) / 2;
+        if before(mid) { lo = mid + 1 } else { hi = mid }
+    }
+    lo
 }
 
 /// A time bound as the Time Range shows it: `HH:MM:SS` (with milliseconds
@@ -462,7 +515,7 @@ mod tests {
         let r = RowFacts { ts: &ts, class: &class };
         let a = axis(hm(10, 30), hm(10, 45));
         // Filter: level = ERROR. Matches of `timeout`: rows 1 and 2.
-        let b = count_buckets(r, &a, Some(&[1, 4]), &[1, 2]);
+        let b = count_buckets(r, &a, Some(crate::filter::PassFrom::Rows(&[1, 4])), &[1, 2]);
         let filtered = b.filtered.as_ref().unwrap();
         assert_eq!((b.counts[1], filtered[1]), ([0, 0, 1], [0, 0, 1]));
         assert_eq!((b.counts[0], filtered[0]), ([1, 0, 0], [0, 0, 0]));
@@ -524,12 +577,12 @@ mod tests {
 
     #[test]
     fn first_row_at_a_time() {
-        let sorted = [hm(10, 0), hm(10, 0), hm(10, 2), hm(10, 5), f64::NAN];
+        let sorted = vec![hm(10, 0), hm(10, 0), hm(10, 2), hm(10, 5), f64::NAN];
         assert_eq!(first_row_at(&sorted, hm(10, 0), true), Some(0));
         assert_eq!(first_row_at(&sorted, hm(10, 1), true), Some(2), "an empty column");
         assert_eq!(first_row_at(&sorted, hm(10, 6), true), None);
         // Times that go back: looked at in order.
-        let unsorted = [f64::NAN, hm(10, 5), hm(10, 1), hm(10, 3)];
+        let unsorted = vec![f64::NAN, hm(10, 5), hm(10, 1), hm(10, 3)];
         assert_eq!(first_row_at(&unsorted, hm(10, 2), false), Some(1));
         assert_eq!(first_row_at(&unsorted, hm(10, 6), false), None);
     }

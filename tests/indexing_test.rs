@@ -21,7 +21,7 @@ fn entries_of(bytes: &[u8], options: &IndexOptions) -> Vec<LogEntry> {
 }
 
 /// Everything a `FilterIndex` shows, to compare two.
-fn describe(f: &FilterIndex) -> String {
+fn describe(f: &FilterIndex, ts: impl Fn(usize) -> Option<f64>) -> String {
     let mut out = format!(
         "rows {} parents {} timed {} anchor {} hint {:?}\n",
         f.rows(),
@@ -34,7 +34,7 @@ fn describe(f: &FilterIndex) -> String {
     kv.sort();
     out += &format!("kv {kv:?}\n");
     for row in 0..f.rows() {
-        out += &format!("ts {row} {:?}\n", f.effective_timestamp(row));
+        out += &format!("ts {row} {:?}\n", ts(row));
     }
     for c in &f.columns {
         out += &format!(
@@ -71,7 +71,8 @@ fn check(name: &str, bytes: &[u8], options: &IndexOptions) -> IndexedData {
     }
 
     let want = FilterIndex::build(&entries);
-    assert_eq!(describe(&data.filter), describe(&want), "{name}: FilterIndex");
+    let (have, want) = (describe(&data.filter, |r| data.effective_timestamp(r)), describe(&want, |r| want.read().effective_timestamp(r)));
+    assert_eq!(have, want, "{name}: FilterIndex");
     assert_eq!(data.max_chars, FieldMaxChars::scan_entries(&entries), "{name}: column widths");
     data
 }
@@ -211,7 +212,7 @@ fn cancelled_indexing_keeps_the_lines_read() {
     indexing.cancel();
     let indexed = indexing.wait();
     assert_eq!(indexed.outcome(), Some(Outcome::Cancelled));
-    let data = indexed.data.read().unwrap();
+    let data = indexed.data.read_recursive();
     let n = data.file.len();
     let reference = index_source(&BytesSource::new(bytes), None).unwrap();
     assert!(n < reference.len(), "stopped early: {n} lines");

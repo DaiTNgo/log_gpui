@@ -31,8 +31,8 @@ fn turning_a_detected_field_on_keeps_the_rows_and_reads_it_at_once(cx: &mut Test
     h.view.update(&mut h.cx, |app, cx| {
         assert!(!app.is_reading());
         assert_eq!(app.view.len(), 3000);
-        let user = app.filter_index.column("user").expect("Filter has the new column");
-        assert_eq!(user.values.iter().map(|v| v.count).sum::<usize>(), 3000);
+        let count: usize = app.index().column("user").expect("Filter has the new column").values.iter().map(|v| v.count).sum();
+        assert_eq!(count, 3000);
         app.filter_toggle_value("user", "bob", cx);
         assert_eq!(app.filter_pass.len(), 1000);
     });
@@ -49,7 +49,7 @@ fn turning_it_on_and_off_again_quickly_reads_the_file_once_more(cx: &mut TestApp
     h.cx.run_until_parked();
     h.view.read_with(&h.cx, |app, _| {
         assert!(!app.is_reading());
-        assert!(app.filter_index.column("user").is_none());
+        assert!(app.index().column("user").is_none());
         assert_eq!(app.view.len(), 3000);
     });
 }

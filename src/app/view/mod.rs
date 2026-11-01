@@ -73,7 +73,7 @@ impl Render for AppView {
         } else {
             LogCanvas::render(CanvasViewState {
                 view: cx.entity().clone(),
-                visible_indices: self.visible_indices.clone(),
+                rows: self.view.len(),
                 longest_row: self.longest_row,
                 selected_row_pos: self.selected_row_pos,
                 // Dropped once over, so a row scrolled back into sight does not flash again.
@@ -96,7 +96,7 @@ impl Render for AppView {
                     .column_layout
                     .fields
                     .iter()
-                    .map(|k| (*k, self.filter_index.coverage(k.as_str())))
+                    .map(|k| (*k, self.filter_index.read(&self.view.rows).coverage(k.as_str())))
                     .collect(),
                 reading_fields: !self.loads.is_empty(),
                 source_tints: Arc::new(self.source_tints(colors.dark)),

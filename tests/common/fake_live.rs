@@ -136,7 +136,7 @@ pub struct View {
 pub fn view(app: &AppView) -> View {
     let mut counts: Vec<(u64, usize)> = app.rule_counts.iter().map(|(k, v)| (*k, *v)).collect();
     counts.sort();
-    let index = &app.filter_index;
+    let index = &app.index();
     View {
         rows: app
             .rows_snapshot()
@@ -153,7 +153,7 @@ pub fn view(app: &AppView) -> View {
         pass: app.filter_pass.to_vec(),
         paints: app.highlight_paints.iter().map(|p| p.map(|p| p.rule)).collect(),
         counts,
-        matches: app.focus.search().matched_visible_indices.to_vec(),
+        matches: app.focus.search().matched_rows.to_vec(),
         focus: app.focus_rows.to_vec(),
         hits: app.focus.find().hits.clone(),
         longest: app.longest_row,

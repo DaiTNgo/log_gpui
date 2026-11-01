@@ -127,9 +127,9 @@ impl AppView {
                     // those that also pass Filter.
                     let limited = self.filter_limits_focus();
                     search
-                        .matched_visible_indices
+                        .matched_rows
                         .iter()
-                        .filter(|&&ix| !limited || self.filter_pass.binary_search(&ix).is_ok())
+                        .filter(|&&ix| !limited || self.filter_pass.contains(ix))
                         .map(|&ix| FocusRow::Entry(ix))
                         .collect()
                 } else {
@@ -235,13 +235,13 @@ impl AppView {
         let first_new = self.focus_rows.len();
         let search = self.focus.search();
         let new_rows: Vec<FocusRow> = if search.matcher.is_some() {
-            search.matched_visible_indices[matches_before.min(search.matched_visible_indices.len())..]
+            search.matched_rows[matches_before.min(search.matched_rows.len())..]
                 .iter()
-                .filter(|&&ix| !limited || self.filter_pass.binary_search(&ix).is_ok())
+                .filter(|&&ix| !limited || self.filter_pass.contains(ix))
                 .map(|&ix| FocusRow::Entry(ix))
                 .collect()
         } else if limited {
-            self.filter_pass[pass_before..].iter().map(|&ix| FocusRow::Entry(ix)).collect()
+            self.filter_pass.iter_from_pos(pass_before).map(FocusRow::Entry).collect()
         } else {
             Vec::new()
         };

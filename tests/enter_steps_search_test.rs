@@ -41,7 +41,7 @@ fn searched(cx: &mut TestAppContext) -> Harness {
     h.cx.simulate_input("line 1");
     h.cx.executor().advance_clock(std::time::Duration::from_millis(150));
     h.cx.run_until_parked();
-    assert_eq!(h.view.read_with(&h.cx, |app, _| app.focus.search().matched_visible_indices.len()), 11);
+    assert_eq!(h.view.read_with(&h.cx, |app, _| app.focus.search().matched_rows.len()), 11);
     assert_eq!(current(&h), 0);
     h
 }

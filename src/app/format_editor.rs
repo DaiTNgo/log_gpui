@@ -126,7 +126,7 @@ impl AppView {
     /// The Log Space and Source File of the line at `row` of the open view,
     /// when it is a Log Space's.
     pub fn log_format_target_of_row(&self, row: usize) -> Option<(String, String)> {
-        let file = self.rows().file_id(*self.visible_indices.get(row)?)?;
+        let file = self.rows().file_id(self.row_at(row)?)?;
         let space = self.active_space()?;
         space.file(file)?;
         Some((space.id.clone(), file.to_string()))
@@ -176,7 +176,7 @@ impl AppView {
     /// A line of the preview was clicked: the view goes to it, the editor
     /// stays open.
     pub fn jump_to_preview_line(&mut self, entry_ix: usize, cx: &mut Context<Self>) {
-        if let Some(pos) = self.visible_indices.iter().position(|&i| i == entry_ix) {
+        if let Some(pos) = self.row_at(entry_ix) {
             self.jump_to_row(pos, cx);
         }
     }
@@ -208,7 +208,7 @@ impl AppView {
     /// The lines the preview shows: up to 20 lines that are not Continuation
     /// Lines, from the selected row on (else from the top).
     fn format_preview_rows(&self) -> Vec<usize> {
-        let start = self.selected_row_pos.and_then(|p| self.visible_indices.get(p).copied()).unwrap_or(0);
+        let start = self.selected_row_pos.and_then(|p| self.row_at(p)).unwrap_or(0);
         let entries = self.rows();
         let parents = |range: std::ops::Range<usize>| {
             range.filter(|&i| entries.get(i).is_some_and(|e| !e.is_continuation())).collect::<Vec<_>>()

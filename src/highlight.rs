@@ -3,7 +3,7 @@
 //! Custom Values containing text, joined by OR) but never hides a row.
 
 use crate::rows::Rows;
-use crate::filter_index::{ColumnIndex, FilterIndex, MISSING, with_value_of};
+use crate::filter_index::{RowTable, ViewIndexRead, with_value_of};
 use crate::palette::HighlightColor;
 use crate::unicode_text::{self, Needle};
 use serde::{Deserialize, Serialize};
@@ -114,20 +114,30 @@ pub struct RowPaint {
 pub const MAX_PAINTING_RULES: usize = u8::MAX as usize;
 
 /// The paint of each row: one byte per row, the rule that won (0: none),
-/// and the paints of the rules (task 7.1).
+/// and the paints of the rules (task 7.1). With no rule that paints, no
+/// byte is kept: every row is unpainted.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct RowPaints {
     paints: Vec<Arc<RowPaint>>,
     rows: Vec<u8>,
+    /// The rows painted, `rows.len()` unless no rule paints.
+    covered: usize,
 }
 
 impl RowPaints {
+    /// Paints of `covered` rows; `rows` is empty when no rule paints.
+    fn new(paints: Vec<Arc<RowPaint>>, rows: Vec<u8>, covered: usize) -> Self {
+        debug_assert!(rows.is_empty() || rows.len() == covered);
+        Self { paints, rows, covered }
+    }
+
+    /// The rows painted.
     pub fn len(&self) -> usize {
-        self.rows.len()
+        self.covered
     }
 
     pub fn is_empty(&self) -> bool {
-        self.rows.is_empty()
+        self.covered == 0
     }
 
     /// The paint of `row`, if a rule paints it.
@@ -143,12 +153,12 @@ impl RowPaints {
             .iter()
             .map(|p| if p.rule == rule { Arc::new(RowPaint { color: color.clone(), ..(**p).clone() }) } else { p.clone() })
             .collect();
-        Self { paints, rows: self.rows.clone() }
+        Self { paints, rows: self.rows.clone(), covered: self.covered }
     }
 
     /// The paint of each row in order.
     pub fn iter(&self) -> impl Iterator<Item = Option<&RowPaint>> + '_ {
-        (0..self.rows.len()).map(|row| self.get(row))
+        (0..self.covered).map(|row| self.get(row))
     }
 
     /// Add the paints of the rows after these, painted by the same rules.
@@ -157,6 +167,12 @@ impl RowPaints {
             self.paints = more.paints;
         }
         self.rows.extend(more.rows);
+        self.covered += more.covered;
+    }
+
+    /// Bytes kept on the heap for the rows.
+    pub fn heap_bytes(&self) -> usize {
+        self.rows.capacity()
     }
 
     /// The byte of each row, to drop or move rows with.
@@ -174,11 +190,11 @@ struct CompiledRule<'a> {
     paint: Arc<RowPaint>,
     /// With the column's value ids: whether each value meets the rule, so a
     /// row is tested by its id instead of its text.
-    ids: Option<(&'a ColumnIndex, Vec<bool>)>,
+    ids: Option<RowTable<'a>>,
 }
 
 impl<'a> CompiledRule<'a> {
-    fn new(index: usize, rule: &'a HighlightRule, columns: Option<&'a FilterIndex>) -> Self {
+    fn new(index: usize, rule: &'a HighlightRule, columns: Option<&'a ViewIndexRead<'a>>) -> Self {
         let mut compiled = Self {
             column: &rule.column,
             values: rule.values.iter().map(|v| Needle::new(v)).collect(),
@@ -186,14 +202,15 @@ impl<'a> CompiledRule<'a> {
             paint: Arc::new(RowPaint { rule: index, color: rule.color.clone(), column: rule.column.clone() }),
             ids: None,
         };
-        if let Some(col) = columns.and_then(|c| c.column(&rule.column)).filter(|c| c.has_row_ids()) {
+        let col = columns.and_then(|c| c.column(&rule.column).zip(c.ids(&rule.column)));
+        if let Some((col, ids)) = col {
             let ticked: Vec<&str> = rule.values.iter().map(String::as_str).collect();
             let table = col
                 .values
                 .iter()
                 .map(|v| ticked.contains(&v.folded.as_str()) || compiled.custom.iter().any(|n| n.is_in(&v.display)))
                 .collect();
-            compiled.ids = Some((col, table));
+            compiled.ids = Some(ids.with_table(table));
         }
         compiled
     }
@@ -206,16 +223,14 @@ impl<'a> CompiledRule<'a> {
     /// Whether `row` meets the rule: by its value id when the column keeps
     /// them, else by its text.
     fn matches_row<R: Rows + ?Sized>(&self, entries: &R, row: usize) -> bool {
-        if let Some((col, table)) = &self.ids {
-            if let Some(id) = col.id_of_row(row) {
-                return id != MISSING && table.get(id as usize).copied().unwrap_or(false);
-            }
+        if let Some(meets) = self.ids.as_ref().and_then(|t| t.get(row)) {
+            return meets;
         }
         with_value_of(entries, row, self.column, |v| self.matches_value(v))
     }
 }
 
-fn compile<'a>(rules: &'a [HighlightRule], columns: Option<&'a FilterIndex>) -> Vec<CompiledRule<'a>> {
+fn compile<'a>(rules: &'a [HighlightRule], columns: Option<&'a ViewIndexRead<'a>>) -> Vec<CompiledRule<'a>> {
     rules
         .iter()
         .enumerate()
@@ -251,7 +266,7 @@ pub fn paint_rows_from<R: Rows + ?Sized>(rules: &[HighlightRule], entries: &R, f
 pub fn paint_rows_with<R: Rows + ?Sized>(
     rules: &[HighlightRule],
     entries: &R,
-    columns: Option<&FilterIndex>,
+    columns: Option<&ViewIndexRead>,
     from: usize,
 ) -> RowPaints {
     // Value ids of rows other than these say nothing of them.
@@ -260,12 +275,12 @@ pub fn paint_rows_with<R: Rows + ?Sized>(
     let count = entries.len().saturating_sub(from);
     let paints = compiled.iter().map(|rule| rule.paint.clone()).collect();
     if compiled.is_empty() {
-        return RowPaints { paints, rows: vec![0; count] };
+        return RowPaints::new(paints, Vec::new(), count);
     }
     let rows = crate::par::map_rows(count, |i| {
         compiled.iter().position(|rule| rule.matches_row(entries, from + i)).map_or(0, |at| at as u8 + 1)
     });
-    RowPaints { paints, rows }
+    RowPaints::new(paints, rows, count)
 }
 
 /// A rule whose column has no value ids: telling whether it meets a row
@@ -305,7 +320,7 @@ pub struct SplitPaints {
 pub fn paint_rows_split<R: Rows + ?Sized>(
     rules: &[HighlightRule],
     entries: &R,
-    columns: Option<&FilterIndex>,
+    columns: Option<&ViewIndexRead>,
     from: usize,
     read: impl Fn(usize) -> bool + Sync,
 ) -> SplitPaints {
@@ -350,7 +365,7 @@ pub fn paint_rows_split<R: Rows + ?Sized>(
             if byte != 0 && byte < first_text { byte } else { 0 }
         })
         .collect();
-    SplitPaints { paints: RowPaints { paints, rows }, text, unread }
+    SplitPaints { paints: RowPaints::new(paints, rows, count), text, unread }
 }
 
 /// How many of `rows` (positions in `entries`) `rule` matches by its own
@@ -364,12 +379,19 @@ pub fn count_matches<R: Rows + ?Sized>(rule: &HighlightRule, entries: &R, rows: 
 pub fn count_matches_with<R: Rows + ?Sized>(
     rule: &HighlightRule,
     entries: &R,
-    columns: Option<&FilterIndex>,
+    columns: Option<&ViewIndexRead>,
     rows: &[usize],
 ) -> usize {
     let columns = columns.filter(|c| c.rows() == entries.len());
     let compiled = CompiledRule::new(0, rule, columns);
     crate::par::count(rows, |row| !entries.continues(row) && compiled.matches_row(entries, row))
+}
+
+/// `count_matches_with` over the rows from `from` on.
+pub fn count_matches_from<R: Rows + ?Sized>(rule: &HighlightRule, entries: &R, columns: Option<&ViewIndexRead>, from: usize) -> usize {
+    let columns = columns.filter(|c| c.rows() == entries.len());
+    let compiled = CompiledRule::new(0, rule, columns);
+    crate::par::count_range(from..entries.len(), |row| !entries.continues(row) && compiled.matches_row(entries, row))
 }
 
 /// The next unused rule id of a list.

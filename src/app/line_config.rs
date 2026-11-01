@@ -45,10 +45,10 @@ impl AppView {
     /// Why the column `key` is not read, when the view has no such column.
     pub fn unread_column(&self, key: &str) -> Option<UnreadReason> {
         // The message is read on every line, but has no values to list.
-        if self.filter_index.column(key).is_some() || key == crate::columns::MESSAGE_KEY {
+        if self.filter_index.read(&self.view.rows).column(key).is_some() || key == crate::columns::MESSAGE_KEY {
             return None;
         }
-        if self.filter_index.kv_counts().contains_key(&crate::model::FieldKey::new(key)) {
+        if self.filter_index.read(&self.view.rows).kv_counts().contains_key(&crate::model::FieldKey::new(key)) {
             return Some(UnreadReason::DetectedOff);
         }
         Some(UnreadReason::NotRead)

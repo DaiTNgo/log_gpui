@@ -267,8 +267,8 @@ fn with_no_format_applied_the_editor_opens_new_with_a_sample_line_and_applies_to
 /// The row of the open view whose line is from `file`.
 fn row_of_file(h: &mut Harness, file: &str) -> usize {
     h.view.read_with(&h.cx, |a, _| {
-        (0..a.visible_indices.len())
-            .find(|&r| a.rows_snapshot()[a.visible_indices[r]].file_id.as_deref() == Some(file))
+        (0..a.view.len())
+            .find(|&r| a.rows_snapshot()[r].file_id.as_deref() == Some(file))
             .expect("a row of the file")
     })
 }

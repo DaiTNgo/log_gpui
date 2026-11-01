@@ -143,7 +143,7 @@ const COMMANDS: &str = "commands";
 /// A `ParsedFile` reading the lines of `cached` through its Line Index.
 fn cached_parsed(cached: &crate::live::cached::CachedFile) -> ParsedFile {
     let file = cached.file();
-    let max_chars = file.indexed.data.read().unwrap().max_chars.clone();
+    let max_chars = file.indexed.data.read_recursive().max_chars.clone();
     ParsedFile {
         max_chars,
         raw_breaks: std::sync::Arc::new(cached.marks_by_position()),

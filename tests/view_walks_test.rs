@@ -37,7 +37,7 @@ fn the_focus_pane_lists_the_passing_rows_without_reading_them(cx: &mut TestAppCo
     file.forget_cached();
     h.view.read_with(&h.cx, |app, _| {
         let pass: Vec<usize> = (0..app.view.len()).step_by(3).collect();
-        let rows = log_gpui::focus::compute_focus_rows(&app.rows(), &pass, true, None);
+        let rows = log_gpui::focus::compute_focus_rows(&app.rows(), &pass.clone().into(), true, None);
         assert_eq!(rows.len(), pass.len());
     });
     assert_eq!(file.cached(), 0);

@@ -19,7 +19,7 @@ impl AppView {
     /// inside the rows shown) and the byte of its stored line. `None` when
     /// there are no rows.
     pub fn text_pos_at(&self, at: Point<Pixels>, window: &Window, cx: &gpui::App) -> Option<(TextPos, Hit)> {
-        let total = self.visible_indices.len();
+        let total = self.view.len();
         if total == 0 {
             return None;
         }
@@ -30,7 +30,7 @@ impl AppView {
         let row = ((y / row_h).floor().max(0.0) as usize).min(total - 1);
         let x = f32::from(at.x - bounds.origin.x);
         let hit = hit_cell(&self.column_layout, x, f32::from(horizontal_scroll_x(&self.scroll_handle)));
-        let entry = self.rows().get(*self.visible_indices.get(row)?)?;
+        let entry = self.rows().get(self.row_at(row)?)?;
         let font_size = self.text_scale().font_size();
         let byte = byte_for_hit(&entry, hit, |text, x| {
             crate::ui::mono::index_for_x(text, x, font_size, window, cx)
@@ -139,7 +139,7 @@ impl AppView {
 
     fn step_autoscroll(&mut self, window: &Window, cx: &mut Context<Self>) {
         let (dx, dy) = self.autoscroll_dir;
-        let total = self.visible_indices.len();
+        let total = self.view.len();
         if dy != 0 && total > 0 {
             // Scroll a row at a time by moving to the row past the edge.
             let (pos, _) = self.text_pos_at(self.autoscroll_pointer, window, cx).unzip();
@@ -166,11 +166,10 @@ impl AppView {
     pub fn selected_text(&self) -> Option<String> {
         let sel = self.text_selection.filter(|s| !s.is_empty())?;
         let entries = self.rows();
-        let rows: Vec<(usize, gpui::SharedString)> = self
-            .visible_indices
-            .iter()
-            .enumerate()
-            .filter_map(|(pos, &ix)| entries.get(ix).map(|e| (pos, e.raw_line.clone())))
+        // Only the rows the selection covers are read.
+        let (start, end) = sel.ordered();
+        let rows: Vec<(usize, gpui::SharedString)> = (start.row..=end.row.min(self.view.len().saturating_sub(1)))
+            .filter_map(|pos| entries.get(pos).map(|e| (pos, e.raw_line.clone())))
             .collect();
         Some(sel.copy_text(rows.iter().map(|(pos, t)| (*pos, t.as_str()))))
     }

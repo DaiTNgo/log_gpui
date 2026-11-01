@@ -107,13 +107,17 @@ pub struct RefreshCounts {
 pub struct AppView {
     /// The rows of the open view: lines of the files in `parsed_files`.
     pub view: crate::view_data::ViewData,
-    pub visible_indices: Arc<Vec<usize>>,
+    /// The rows the Filter, paints, Matches and Focus Pane were last worked
+    /// out for: rows after it were appended since (`apply_rows_appended`).
+    pub applied_rows: usize,
     pub filter_state: FilterState,
-    pub filter_index: FilterIndex,
+    /// The open view's Filter columns and times: its files' own index
+    /// (lean-view-memory), read with `filter_index.read(&view.rows)`.
+    pub filter_index: crate::filter_index::ViewIndex,
     pub filter_ui: filter::FilterUi,
     /// The Filter result: the entries that pass it, ascending. The view shows
     /// every entry; Filter only narrows the Focus Pane.
-    pub filter_pass: Arc<Vec<usize>>,
+    pub filter_pass: crate::filter::FilterPass,
     /// The row with the longest message, which sets the view's width. Found
     /// when the rows change, never while drawing.
     pub longest_row: usize,
@@ -536,11 +540,11 @@ impl AppView {
 
         let mut this = Self {
             view: Default::default(),
-            visible_indices: Arc::new(Vec::new()),
+            applied_rows: 0,
             filter_state,
-            filter_index,
+            filter_index: filter_index.into(),
             filter_ui,
-            filter_pass: Arc::new(Vec::new()),
+            filter_pass: Default::default(),
             longest_row: 0,
             focus: FocusTabs::new(),
             focus_rows: Arc::new(Vec::new()),

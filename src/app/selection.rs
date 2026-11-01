@@ -6,9 +6,19 @@ use gpui::Context;
 
 impl AppView {
     pub fn selected_entry(&self) -> Option<crate::rows::RowRef<'_>> {
-        self.selected_row_pos
-            .and_then(|pos| self.visible_indices.get(pos))
-            .and_then(|&ix| self.rows().get(ix))
+        self.selected_row_pos.and_then(|pos| self.row_at(pos)).and_then(|ix| self.rows().get(ix))
+    }
+
+    /// The open view's index, read: its files stay locked while it lives,
+    /// so it is kept no longer than one piece of work.
+    pub fn index(&self) -> crate::filter_index::ViewIndexRead<'_> {
+        self.filter_index.read(&self.view.rows)
+    }
+
+    /// The row shown at position `pos`: the view lists every row, in order
+    /// (Filter only narrows the Focus Pane).
+    pub fn row_at(&self, pos: usize) -> Option<usize> {
+        (pos < self.view.len()).then_some(pos)
     }
 
     /// The text the Inspector shows: the current line as stored, followed by
@@ -84,10 +94,10 @@ impl AppView {
     }
 
     fn jump_to_marker(&mut self, forward: bool, cx: &mut Context<Self>) {
-        let total = self.visible_indices.len();
+        let total = self.view.len();
         // From the Markers' table: no line is read (task 7.3).
         let marked_rows = self.rows().marked_rows();
-        let marked = |pos: usize| self.visible_indices.get(pos).is_some_and(|ix| marked_rows.binary_search(ix).is_ok());
+        let marked = |pos: usize| marked_rows.binary_search(&pos).is_ok();
         // With nothing selected the search starts just before the first row
         // (or after the last), so that row counts too.
         let found = (1..=total).find_map(|offset| {
@@ -111,15 +121,14 @@ impl AppView {
     /// Whether the row shown at `pos` is an Error or Fatal line.
     fn is_error_row(&self, pos: usize) -> bool {
         let rows = self.rows();
-        self.visible_indices
-            .get(pos)
-            .and_then(|&ix| rows.level(ix))
+        self.row_at(pos)
+            .and_then(|ix| rows.level(ix))
             .is_some_and(|level| matches!(level, LogLevel::Fatal | LogLevel::Error))
     }
 
     pub fn jump_to_next_error(&mut self, cx: &mut Context<Self>) {
         let current_pos = self.selected_row_pos.unwrap_or(0);
-        let total = self.visible_indices.len();
+        let total = self.view.len();
         let found = (1..total).map(|offset| (current_pos + offset) % total).find(|&pos| self.is_error_row(pos));
         if let Some(pos) = found {
             self.jump_to_row(pos, cx);
@@ -128,7 +137,7 @@ impl AppView {
 
     pub fn jump_to_prev_error(&mut self, cx: &mut Context<Self>) {
         let current_pos = self.selected_row_pos.unwrap_or(0);
-        let total = self.visible_indices.len();
+        let total = self.view.len();
         let found = (1..total).map(|offset| (current_pos + total - offset) % total).find(|&pos| self.is_error_row(pos));
         if let Some(pos) = found {
             self.jump_to_row(pos, cx);

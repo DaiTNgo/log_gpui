@@ -29,7 +29,7 @@ fn rows() -> Vec<LogEntry> {
 
 fn visible(filter: &FilterState, rows: &mut [LogEntry]) -> Vec<usize> {
     let index = FilterIndex::build(rows);
-    filter.evaluate(&index, rows)
+    filter.evaluate(&index.read(), rows)
 }
 
 #[test]

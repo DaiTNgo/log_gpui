@@ -34,7 +34,7 @@ fn truncate_then_append_equals_a_full_build() {
             }
         }
         for row in 0..full.rows() {
-            assert_eq!(index.effective_timestamp(row), full.effective_timestamp(row));
+            assert_eq!(index.read().effective_timestamp(row), full.read().effective_timestamp(row));
         }
         assert_eq!(index.time_hint(), full.time_hint());
         assert_eq!(index.anchor_day(), full.anchor_day());

@@ -439,7 +439,7 @@ impl AppView {
             let Some(indexed) = indexed else { continue };
             parts.push((several.then(|| file.display_name.clone()), indexed));
         }
-        let data: Vec<_> = parts.iter().map(|(_, indexed)| indexed.data.read().unwrap()).collect();
+        let data: Vec<_> = parts.iter().map(|(_, indexed)| indexed.data.read_recursive()).collect();
         let files: Vec<MergeFile> = parts
             .iter()
             .zip(&data)
@@ -448,7 +448,7 @@ impl AppView {
         let so_far = FilterIndex::values_so_far(&files);
         drop(files);
         drop(data);
-        self.filter_index = so_far;
+        self.filter_index = so_far.into();
     }
 
     /// How far the open tab's files are read while its Filter shows the

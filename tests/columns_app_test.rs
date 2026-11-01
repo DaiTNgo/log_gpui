@@ -103,7 +103,7 @@ fn field_columns_pin_in_view_order_and_auto_fit(cx: &mut TestAppContext) {
 #[gpui::test]
 fn coverage_shows_99_percent(cx: &mut TestAppContext) {
     let h = common::open_app_with_lines(cx, &json_lines());
-    let (covered, total) = h.view.read_with(&h.cx, |app, _| app.filter_index.coverage("region"));
+    let (covered, total) = h.view.read_with(&h.cx, |app, _| app.index().coverage("region"));
     assert_eq!((covered, total), (99, 100));
     assert_eq!(log_gpui::columns::coverage_label(covered, total).as_deref(), Some("99%"));
 }

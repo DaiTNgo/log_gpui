@@ -100,7 +100,7 @@ fn turning_a_detected_field_on_makes_a_column_that_filters(cx: &mut TestAppConte
     let user = detected.iter().find(|r| r.key == "user").expect("user is detected");
     assert!(!user.shown);
     assert_eq!(user.lines, 20);
-    assert!(h.view.read_with(&h.cx, |a, _| a.filter_index.column("user").is_none()), "off: not filterable");
+    assert!(h.view.read_with(&h.cx, |a, _| a.index().column("user").is_none()), "off: not filterable");
 
     show(&mut h, "user", true);
     assert!(h.view.read_with(&h.cx, |a, _| a.pane_columns().unwrap().columns().contains(&user_col())));

@@ -643,7 +643,7 @@ pub fn copy_dirs(files: &[&LogFile]) -> HashMap<String, PathBuf> {
 /// A `ParsedFile` reading the lines of a Remote Copy through its Line Index.
 fn copy_parsed(copy: &crate::live::copy_file::CopyFile) -> ParsedFile {
     let file = copy.file();
-    let max_chars = file.indexed.data.read().unwrap().max_chars.clone();
+    let max_chars = file.indexed.data.read_recursive().max_chars.clone();
     ParsedFile {
         max_chars,
         raw_breaks: Arc::new(copy.marks_by_position()),

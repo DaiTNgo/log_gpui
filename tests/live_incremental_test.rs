@@ -54,12 +54,12 @@ fn snapshot(app: &AppView) -> Snapshot {
     counts.sort();
     Snapshot {
         pass: app.filter_pass.to_vec(),
-        visible: app.visible_indices.to_vec(),
+        visible: (0..app.view.len()).collect(),
         longest: app.longest_row,
         paints: app.highlight_paints.iter().map(|p| p.map(|p| p.rule)).collect(),
         counts,
-        matches: app.focus.search().matched_visible_indices.to_vec(),
-        shared: app.focus.search().matched_visible_indices.to_vec(),
+        matches: app.focus.search().matched_rows.to_vec(),
+        shared: app.focus.search().matched_rows.to_vec(),
         focus: app.focus_rows.to_vec(),
         focus_longest: app.focus_longest,
         hits: app.focus.find().hits.clone(),
@@ -205,5 +205,49 @@ fn the_same_without_search_or_filter_and_with_a_time_range(cx: &mut TestAppConte
         h.view.update(&mut h.cx, |app, cx| app.apply_filters_and_refresh(cx));
         let full = h.view.read_with(&h.cx, |app, _| snapshot(app));
         assert_same(&incremental, &full, &format!("batch {n}"));
+    }
+}
+
+#[gpui::test]
+fn a_file_view_taking_live_lines_lists_no_rows(cx: &mut TestAppContext) {
+    use log_gpui::index::view_rows::ViewRows;
+    let mut h = common::open_app_with_lines(cx, &file_lines(0..60));
+    let (space, file_id) = h.view.read_with(&h.cx, |app, _| {
+        let project = app.workspace_state.active_project().unwrap();
+        let space = project.working_set.active_tab().unwrap().target.space_id().unwrap().to_string();
+        (space.clone(), project.log_space(&space).unwrap().files[0].file_id.clone())
+    });
+    h.view.update(&mut h.cx, |app, cx| app.open_file_view_tab(&space, &file_id, cx));
+    h.cx.run_until_parked();
+    // Sources start again for the tab chosen: the test's goes in after.
+    let (tx, _) = fake_source(&mut h);
+    let rows_before = h.view.read_with(&h.cx, |app, _| app.view.len());
+    for n in 0..4 {
+        send(&tx, batch(60 + n * 2500..60 + (n + 1) * 2500));
+        h.view.update(&mut h.cx, |app, cx| app.pump_live(cx));
+        h.cx.run_until_parked();
+    }
+    h.view.read_with(&h.cx, |app, _| {
+        assert!(app.view.len() >= rows_before + 10_000, "the lines arrived: {} rows", app.view.len());
+        assert_eq!(app.view.rows, ViewRows::File { lines: app.view.len() });
+    });
+}
+
+/// The longest row after Live lines are added in place is the one a full
+/// build picks: the longest line in bytes, the first of equals in file
+/// order, not the longest message.
+#[gpui::test]
+fn the_longest_row_added_in_place_is_the_one_a_rebuild_picks(cx: &mut TestAppContext) {
+    use common::fake_live::{lines, open, view};
+    let mut f = open(cx, &[("alpha", 0), ("beta", 1)], 60, 1_000_000);
+    for n in 0..5 {
+        let start = 60 + n * 300;
+        f.send("alpha", lines("alpha", start..start + 300, 0));
+        f.send("beta", lines("beta", start..start + 150, 1));
+        f.pump();
+        let in_place = f.h.view.read_with(&f.h.cx, |app, _| view(app).longest);
+        f.h.view.update(&mut f.h.cx, |app, cx| app.rebuild_open_view_keeping_position(cx));
+        let rebuilt = f.h.view.read_with(&f.h.cx, |app, _| view(app).longest);
+        assert_eq!(in_place, rebuilt, "batch {n}");
     }
 }

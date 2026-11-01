@@ -116,7 +116,7 @@ fn view_rows_of_a_file_and_of_a_space() {
     let file = ViewRows::File { lines: 3 };
     assert_eq!((file.len(), file.get(2), file.get(3)), (3, Some((0, 2)), None));
     assert_eq!(file.row_of(0, 1), Some(1));
-    let space = ViewRows::Merged(vec![pack(1, 0), pack(0, 0), pack(0, 1)]);
+    let space = ViewRows::merged(vec![pack(1, 0), pack(0, 0), pack(0, 1)]);
     assert_eq!(space.get(0), Some((1, 0)));
     assert_eq!(space.row_of(0, 1), Some(2));
     assert_eq!(unpack(pack(65535, (1 << 48) - 1)), (65535, (1 << 48) - 1));
@@ -127,10 +127,19 @@ fn a_file_view_lists_no_rows_until_they_change() {
     let mut rows = ViewRows::File { lines: 3 };
     assert_eq!(rows.packed(1), Some(pack(0, 1)));
     assert_eq!(rows.iter().collect::<Vec<_>>(), [pack(0, 0), pack(0, 1), pack(0, 2)]);
-    // Live rows arriving write the list out first.
-    rows.to_mut().push(pack(0, 3));
-    assert_eq!(rows, ViewRows::Merged(vec![pack(0, 0), pack(0, 1), pack(0, 2), pack(0, 3)]));
-    assert_eq!(rows.get(3), Some((0, 3)));
+    // Live rows arriving in line order only make it longer.
+    rows.extend(vec![pack(0, 3)]);
+    assert_eq!(rows, ViewRows::File { lines: 4 });
+    // Taken out and merged in again in the same order: still its lines.
+    let tail = rows.split_off(2);
+    assert_eq!(tail, [pack(0, 2), pack(0, 3)]);
+    rows.extend(tail);
+    assert_eq!(rows, ViewRows::File { lines: 4 });
+    // Rows out of line order write the list out.
+    let tail = rows.split_off(2);
+    rows.extend(vec![tail[1], tail[0]]);
+    assert_eq!(rows, ViewRows::merged(vec![pack(0, 0), pack(0, 1), pack(0, 3), pack(0, 2)]));
+    assert_eq!(rows.get(3), Some((0, 2)));
 }
 
 /// A File View of a file read through its Line Index holds no row list:
