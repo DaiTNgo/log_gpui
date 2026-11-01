@@ -31,12 +31,14 @@ impl AppView {
                 let view = view.clone();
                 window.on_mouse_event(move |event: &gpui::ScrollWheelEvent, phase, _, cx| {
                     let up = event.delta.pixel_delta(px(20.0)).y > px(0.0);
-                    if phase == gpui::DispatchPhase::Capture && up && bounds.contains(&event.position) {
+                    if phase == gpui::DispatchPhase::Capture && bounds.contains(&event.position) {
                         view.update(cx, |this, cx| {
-                            if this.live.follow {
+                            if up && this.live.follow {
                                 this.live.follow = false;
                                 cx.notify();
                             }
+                            // A scratch editor's Syntax Color follows the scroll.
+                            this.schedule_syntax_check(cx);
                         })
                         .ok();
                     }

@@ -9,9 +9,9 @@ use std::ops::Range;
 /// color.
 pub const MAX_TOKENIZE_BYTES: usize = 4096;
 
-/// Lines of a scratch editor that are painted: the editor cannot say which
-/// lines are on screen, so the cost is bounded by the first lines.
-pub const MAX_EDITOR_LINES: usize = 5000;
+/// Lines painted above and below those on screen in a scratch editor, so a
+/// quick scroll does not show uncolored lines before the next repaint.
+pub const EDITOR_LINE_MARGIN: usize = 200;
 
 /// How far into the line (after the timestamp) a level keyword is looked for.
 const LEVEL_WINDOW: usize = 64;

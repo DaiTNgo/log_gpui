@@ -34,6 +34,8 @@ pub const SCRATCH_SAVE_DEBOUNCE: Duration = Duration::from_millis(500);
 pub struct ScratchEditor {
     pub state: gpui::Entity<EditorState>,
     pub highlights: Option<TextDecorationCollection>,
+    /// The lines Syntax Color was last painted on.
+    pub syntax_lines: Option<std::ops::Range<usize>>,
     _subscription: Subscription,
     /// Re-renders the view when the editor's selection moves, so the color
     /// bar follows it.
@@ -79,6 +81,8 @@ pub struct RawViewState {
     /// count (an older flash stops fading once a newer one starts).
     flash: Option<RangeDecorationCollection>,
     flash_count: u64,
+    /// A look at whether the editors scrolled off their Syntax Color is due.
+    syntax_check_pending: bool,
     /// The split lines of each edited scratch file, so rendering does not
     /// split the whole text again every frame.
     /// Selection each editor had when the view last re-rendered for it.
@@ -118,6 +122,7 @@ impl RawViewState {
             selected: None,
             flash: None,
             flash_count: 0,
+            syntax_check_pending: false,
             last_selection: HashMap::new(),
             lines_cache: Default::default(),
             pending_appends: HashMap::new(),
@@ -395,9 +400,10 @@ impl AppView {
             });
             self.raw.editors.insert(
                 section.file_id.clone(),
-                ScratchEditor { state, highlights: None, _subscription: subscription, _observe: observe },
+                ScratchEditor { state, highlights: None, syntax_lines: None, _subscription: subscription, _observe: observe },
             );
             created = true;
+                this.schedule_syntax_check(cx);
         }
         if created {
             self.update_raw_highlights(cx);
@@ -903,6 +909,34 @@ impl AppView {
         let matcher = self.focus.search().matcher.clone();
         let current = self.raw.matches.get(self.raw.current).copied();
         let all_bg = hsla(0.55, 0.85, 0.55, 0.35);
+    /// Look, a moment from now, at whether a scratch editor scrolled past the
+    /// lines Syntax Color is painted on, and paint again if so. The editor
+    /// lays itself out after the scroll, so its visible lines are only known
+    /// once the frame is drawn.
+    pub(crate) fn schedule_syntax_check(&mut self, cx: &mut Context<Self>) {
+        if self.raw.syntax_check_pending || self.raw.editors.is_empty() {
+            return;
+        }
+        self.raw.syntax_check_pending = true;
+        cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(Duration::from_millis(40)).await;
+            this.update(cx, |this, cx| {
+                this.raw.syntax_check_pending = false;
+                let off_screen = this.raw.editors.values().any(|e| {
+                    match (&e.syntax_lines, e.state.read(cx).visible_row_range()) {
+                        (Some(painted), Some(visible)) => visible.start < painted.start || visible.end > painted.end,
+                        _ => false,
+                    }
+                });
+                if off_screen {
+                    this.update_raw_highlights(cx);
+                }
+            })
+            .ok();
+        })
+        .detach();
+    }
+
         let current_bg = hsla(0.55, 0.9, 0.55, 0.7);
         let tone = if cx.theme().is_dark() { Tone::Dark } else { Tone::Light };
         let colors = self.canvas_colors(cx);
@@ -938,15 +972,25 @@ impl AppView {
             // Syntax Color is the lowest paint: the Matches and Markers below
             // go over it.
             if colors.syntax.is_some() {
-                let mut offset = 0usize;
-                for line in section.lines.all().iter().take(crate::syntax_color::MAX_EDITOR_LINES) {
+                let lines = section.lines.all();
+                let margin = crate::syntax_color::EDITOR_LINE_MARGIN;
+                let visible = editor.state.read(cx).visible_row_range().unwrap_or(0..0);
+                // Not cut at the last line: the editor counts one more line
+                // after a final newline, and a `visible` past `painted` would
+                // paint again for ever.
+                let span = visible.start.saturating_sub(margin)..visible.end + margin;
+                let starts = raw_view::line_starts(&lines);
+                for line_ix in span.start..span.end.min(lines.len()) {
+                    let (Some(line), Some(&offset)) = (lines.get(line_ix), starts.get(line_ix)) else { continue };
                     for (range, color) in colors.syntax_paints(line, crate::syntax_color::Scope::Line) {
                         decorations.push(TextDecoration::new(
                             offset + range.start..offset + range.end,
+            // Only the lines on screen and a margin around them: the editor
+            // says which they are, and `visible` changes as it scrolls.
+            editor.syntax_lines = None;
                             HighlightStyle { color: Some(color), ..Default::default() },
                         ));
                     }
-                    offset += line.len() + 1;
                 }
             }
             if let Some(matcher) = &matcher {
@@ -954,6 +998,7 @@ impl AppView {
                 for (li, line) in section.lines.all().iter().enumerate() {
                     let is_current = current.is_some_and(|m| m.section == si && m.line == li);
                     // Only a line that satisfies the whole expression is a Match;
+                editor.syntax_lines = Some(span);
                     // `a && b` must not paint `a` on a line without `b`.
                     let paints = crate::ui::canvas::line_match_paints(
                         matcher,
